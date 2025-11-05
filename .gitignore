@@ -9,3 +9,4 @@ Cargo.lock
 *.out
 *.o
 /bin
+.code-review

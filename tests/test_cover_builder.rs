@@ -1,9 +1,12 @@
 //! Test that CoverBuilder actually works
 
-use espresso_logic::CoverBuilder;
+use espresso_logic::{CoverBuilder, Espresso};
 
 #[test]
 fn test_cover_builder_populates_cubes() {
+    // CoverBuilder requires Espresso to be initialized first
+    let _esp = Espresso::new(2, 1);
+
     let mut builder = CoverBuilder::new(2, 1);
 
     // Add two cubes (XOR function)
@@ -23,6 +26,9 @@ fn test_cover_builder_populates_cubes() {
 
 #[test]
 fn test_cover_builder_empty() {
+    // CoverBuilder requires Espresso to be initialized first
+    let _esp = Espresso::new(2, 1);
+
     let builder = CoverBuilder::new(2, 1);
     let cover = builder.build();
 
@@ -32,6 +38,9 @@ fn test_cover_builder_empty() {
 
 #[test]
 fn test_cover_builder_many_cubes() {
+    // CoverBuilder requires Espresso to be initialized first
+    let _esp = Espresso::new(3, 1);
+
     let mut builder = CoverBuilder::new(3, 1);
 
     // Add 4 cubes

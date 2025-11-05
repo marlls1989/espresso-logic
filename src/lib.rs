@@ -53,6 +53,37 @@
 //! minimized.to_file("output.pla", espresso_logic::PLAType::F)
 //!     .expect("Failed to write PLA file");
 //! ```
+//!
+//! ## Thread Safety and Concurrency
+//!
+//! **IMPORTANT**: This library is **NOT thread-safe**. The underlying C library uses
+//! extensive global state (cube structure, configuration variables), which means:
+//!
+//! - Only one `Espresso` or `PLA` operation should be active at a time
+//! - Concurrent operations from multiple threads **will cause undefined behavior**
+//! - Tests must run sequentially (use `cargo test -- --test-threads=1`)
+//!
+//! ### Multi-threaded Applications
+//!
+//! If you need to use Espresso in a multi-threaded application, you must:
+//!
+//! ```no_run
+//! use espresso_logic::Espresso;
+//! use std::sync::Mutex;
+//! use std::sync::Arc;
+//!
+//! // Wrap all Espresso operations in a mutex
+//! let espresso_lock = Arc::new(Mutex::new(()));
+//!
+//! // In each thread:
+//! let _guard = espresso_lock.lock().unwrap();
+//! let mut esp = Espresso::new(2, 1);
+//! // ... perform operations ...
+//! // Lock is released when _guard goes out of scope
+//! ```
+//!
+//! For applications requiring high concurrency, consider process-based isolation
+//! where the C library runs in a separate process with IPC for communication.
 
 pub mod sys;
 
@@ -164,6 +195,23 @@ impl EspressoConfig {
 }
 
 /// A safe wrapper around the Espresso logic minimizer
+///
+/// # Thread Safety
+///
+/// **This struct is NOT thread-safe**. The underlying C library uses global state.
+/// Only one `Espresso` instance should be active at a time. In multi-threaded applications,
+/// wrap all Espresso operations in a `Mutex`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use espresso_logic::{Espresso, CoverBuilder};
+///
+/// let mut esp = Espresso::new(2, 1);
+/// let mut builder = CoverBuilder::new(2, 1);
+/// builder.add_cube(&[0, 1], &[1]);
+/// let minimized = esp.minimize(builder.build(), None, None);
+/// ```
 pub struct Espresso {
     initialized: bool,
     #[allow(dead_code)]
@@ -176,7 +224,39 @@ impl Espresso {
     /// Create a new Espresso instance for functions with the given number of inputs and outputs
     pub fn new(num_inputs: usize, num_outputs: usize) -> Self {
         unsafe {
+            // Always tear down existing cube state to avoid interference
+            if !sys::cube.fullset.is_null() {
+                sys::setdown_cube();
+                // Note: setdown_cube() does NOT free part_size, so we need to do it
+                if !sys::cube.part_size.is_null() {
+                    libc::free(sys::cube.part_size as *mut libc::c_void);
+                    sys::cube.part_size = ptr::null_mut();
+                }
+            }
+
+            // Initialize the cube structure before calling cube_setup()
+            // This mimics what parse_pla() does when reading .i and .o directives
+            sys::cube.num_binary_vars = num_inputs as c_int;
+            sys::cube.num_vars = (num_inputs + 1) as c_int;
+
+            // Allocate part_size array
+            let part_size_ptr =
+                libc::malloc((sys::cube.num_vars as usize) * std::mem::size_of::<c_int>())
+                    as *mut c_int;
+            if part_size_ptr.is_null() {
+                panic!("Failed to allocate part_size array");
+            }
+            sys::cube.part_size = part_size_ptr;
+
+            // Set the output size (cube_setup will set binary var sizes to 2)
+            *sys::cube.part_size.add(num_inputs) = num_outputs as c_int;
+
+            // Now it's safe to call cube_setup()
             sys::cube_setup();
+
+            // Apply default configuration (like the CLI does)
+            let config = EspressoConfig::default();
+            config.apply();
         }
 
         Espresso {
@@ -198,9 +278,28 @@ impl Espresso {
     ///
     /// A minimized cover representing the Boolean function
     pub fn minimize(&mut self, f: Cover, d: Option<Cover>, r: Option<Cover>) -> Cover {
-        let f_ptr = f.into_raw();
-        let d_ptr = d.map(|c| c.into_raw()).unwrap_or(ptr::null_mut());
-        let r_ptr = r.map(|c| c.into_raw()).unwrap_or(ptr::null_mut());
+        // espresso() makes its own copies (via sf_save), so we need to keep our covers alive
+        // and clone them to pass in
+        let f_ptr = f.clone().into_raw();
+
+        // D and R cannot be NULL - they must be empty covers if not provided
+        // (see cvrin.c line 454-455: PLA->D = new_cover(10); PLA->R = new_cover(10);)
+        let d_ptr = d
+            .as_ref()
+            .map(|c| c.clone().into_raw())
+            .unwrap_or_else(|| unsafe { sys::sf_new(0, sys::cube.size as c_int) });
+
+        // CRITICAL: If R (OFF-set) is not provided, compute it as complement(F, D)
+        // This is what read_pla does at cvrin.c line 558:
+        //   PLA->R = complement(cube2list(PLA->F, PLA->D));
+        let r_ptr = r
+            .as_ref()
+            .map(|c| c.clone().into_raw())
+            .unwrap_or_else(|| unsafe {
+                // Compute R = complement(F, D)
+                let cube_list = sys::cube2list(f_ptr, d_ptr);
+                sys::complement(cube_list)
+            });
 
         let result = unsafe { sys::espresso(f_ptr, d_ptr, r_ptr) };
 
@@ -209,11 +308,18 @@ impl Espresso {
 
     /// Perform exact minimization (slower but guarantees minimal result)
     pub fn minimize_exact(&mut self, f: Cover, d: Option<Cover>, r: Option<Cover>) -> Cover {
-        let f_ptr = f.into_raw();
-        let d_ptr = d.map(|c| c.into_raw()).unwrap_or(ptr::null_mut());
-        let r_ptr = r.map(|c| c.into_raw()).unwrap_or(ptr::null_mut());
+        // Copy covers before passing to minimize_exact (like PLA::minimize does)
+        let f_copy = unsafe { sys::sf_save(f.into_raw()) };
 
-        let result = unsafe { sys::minimize_exact(f_ptr, d_ptr, r_ptr, 1) };
+        // D and R cannot be NULL - they must be empty covers if not provided
+        let d_copy = d
+            .map(|c| unsafe { sys::sf_save(c.into_raw()) })
+            .unwrap_or_else(|| unsafe { sys::sf_new(0, sys::cube.size as c_int) });
+        let r_copy = r
+            .map(|c| unsafe { sys::sf_save(c.into_raw()) })
+            .unwrap_or_else(|| unsafe { sys::sf_new(0, sys::cube.size as c_int) });
+
+        let result = unsafe { sys::minimize_exact(f_copy, d_copy, r_copy, 1) };
 
         unsafe { Cover::from_raw(result) }
     }
@@ -224,6 +330,11 @@ impl Drop for Espresso {
         if self.initialized {
             unsafe {
                 sys::setdown_cube();
+                // setdown_cube() does not free part_size, so we must do it
+                if !sys::cube.part_size.is_null() {
+                    libc::free(sys::cube.part_size as *mut libc::c_void);
+                    sys::cube.part_size = ptr::null_mut();
+                }
             }
         }
     }
@@ -270,6 +381,29 @@ impl Cover {
     pub fn cube_size(&self) -> usize {
         unsafe { (*self.ptr).sf_size as usize }
     }
+
+    /// Debug: dump cube contents as hex (for debugging/testing)
+    pub fn debug_dump(&self) {
+        unsafe {
+            println!(
+                "Cover: count={}, size={}, wsize={}",
+                (*self.ptr).count,
+                (*self.ptr).sf_size,
+                (*self.ptr).wsize
+            );
+            let data = (*self.ptr).data;
+            let wsize = (*self.ptr).wsize as usize;
+            let count = (*self.ptr).count as usize;
+            for i in 0..count {
+                let cube_ptr = data.add(i * wsize);
+                print!("  Cube {}: ", i);
+                for w in 0..wsize {
+                    print!("{:08x} ", *cube_ptr.add(w));
+                }
+                println!();
+            }
+        }
+    }
 }
 
 impl Drop for Cover {
@@ -299,6 +433,25 @@ impl fmt::Debug for Cover {
 }
 
 /// Builder for creating covers programmatically
+///
+/// # Important
+///
+/// `CoverBuilder` requires the global cube structure to be initialized via
+/// [`Espresso::new`] before calling [`build`](CoverBuilder::build).
+///
+/// # Examples
+///
+/// ```no_run
+/// use espresso_logic::{Espresso, CoverBuilder};
+///
+/// // MUST call Espresso::new first to initialize global state
+/// let _esp = Espresso::new(2, 1);
+///
+/// let mut builder = CoverBuilder::new(2, 1);
+/// builder.add_cube(&[0, 1], &[1]); // 01 -> 1
+/// builder.add_cube(&[1, 0], &[1]); // 10 -> 1
+/// let cover = builder.build();
+/// ```
 pub struct CoverBuilder {
     num_inputs: usize,
     num_outputs: usize,
@@ -331,87 +484,81 @@ impl CoverBuilder {
 
     /// Build the cover
     pub fn build(self) -> Cover {
-        // Calculate cube size: 2 bits per input + 1 bit per output
-        let cube_size = self.num_inputs * 2 + self.num_outputs;
+        // Get the cube size from the global cube structure
+        // (which was initialized by Espresso::new())
+        let cube_size = unsafe { sys::cube.size as usize };
 
         // Create empty cover with capacity
         let mut cover = Cover::new(self.cubes.len(), cube_size);
 
-        // Add each cube to the cover
+        // Add each cube to the cover (following read_cube pattern from cvrin.c)
         for (inputs, outputs) in self.cubes {
             unsafe {
-                // Calculate set size needed (from SET_SIZE macro in espresso.h)
-                let set_size = if cube_size <= 32 {
-                    2
-                } else {
-                    ((cube_size - 1) >> 5) + 2
-                };
+                // Use cube.temp[0] as temporary working cube (like read_cube does)
+                let cf = *sys::cube.temp.add(0);
 
-                // Allocate and clear a new cube (set)
-                let cube_words = set_size;
-                let cube = libc::malloc(cube_words * std::mem::size_of::<u32>()) as *mut u32;
-                if cube.is_null() {
-                    panic!("Failed to allocate cube");
-                }
+                // Clear the cube (like read_cube does: set_clear(cf, cube.size))
+                sys::set_clear(cf, cube_size as c_int);
 
-                // Clear the cube (set_clear implementation)
-                let loop_init = if cube_size <= 32 {
-                    1
-                } else {
-                    (cube_size - 1) >> 5
-                };
-                *cube = loop_init as u32;
-                for i in 1..=loop_init {
-                    *cube.add(i) = 0;
-                }
-
-                // Set input values (2 bits per input: 00=DC, 01=0, 10=1, 11=DC)
-                for (i, &val) in inputs.iter().enumerate() {
-                    let bit_pos = i * 2;
+                // Set input values for binary variables (following read_cube from cvrin.c)
+                // In read_cube: case '-': set_insert(cf, var*2+1); case '0': set_insert(cf, var*2);
+                //               case '1': set_insert(cf, var*2+1);
+                for (var, &val) in inputs.iter().enumerate() {
                     match val {
                         0 => {
-                            // Variable must be 0 (bit pattern: 01)
+                            // PLA '0': set_insert(cf, var*2)
+                            let bit_pos = var * 2;
                             let word = (bit_pos >> 5) + 1;
                             let bit = bit_pos & 31;
-                            *cube.add(word) |= 1 << bit;
+                            *cf.add(word) |= 1 << bit;
                         }
                         1 => {
-                            // Variable must be 1 (bit pattern: 10)
-                            let word = ((bit_pos + 1) >> 5) + 1;
-                            let bit = (bit_pos + 1) & 31;
-                            *cube.add(word) |= 1 << bit;
+                            // PLA '1': set_insert(cf, var*2+1)
+                            let bit_pos = var * 2 + 1;
+                            let word = (bit_pos >> 5) + 1;
+                            let bit = bit_pos & 31;
+                            *cf.add(word) |= 1 << bit;
                         }
                         2 => {
-                            // Don't care (bit pattern: 11)
-                            let word0 = (bit_pos >> 5) + 1;
-                            let bit0 = bit_pos & 31;
-                            let word1 = ((bit_pos + 1) >> 5) + 1;
-                            let bit1 = (bit_pos + 1) & 31;
-                            *cube.add(word0) |= 1 << bit0;
-                            *cube.add(word1) |= 1 << bit1;
+                            // PLA '-' (don't care): set both bits
+                            // set_insert(cf, var*2+1) and set_insert(cf, var*2)
+                            let bit0 = var * 2;
+                            let word0 = (bit0 >> 5) + 1;
+                            let b0 = bit0 & 31;
+                            *cf.add(word0) |= 1 << b0;
+
+                            let bit1 = var * 2 + 1;
+                            let word1 = (bit1 >> 5) + 1;
+                            let b1 = bit1 & 31;
+                            *cf.add(word1) |= 1 << b1;
                         }
                         _ => panic!("Invalid input value: {} (must be 0, 1, or 2)", val),
                     }
                 }
 
-                // Set output values (1 bit per output)
-                let output_start = self.num_inputs * 2;
+                // Set output values (last variable, following read_cube pattern)
+                // In read_cube: case '1': set_insert(cf, i) where i is bit in output range
+                let output_var = sys::cube.num_vars - 1;
+                let output_first = *sys::cube.first_part.add(output_var as usize) as usize;
+
                 for (i, &val) in outputs.iter().enumerate() {
                     if val == 1 {
-                        let bit_pos = output_start + i;
+                        // case '1': set_insert(cf, i)
+                        let bit_pos = output_first + i;
                         let word = (bit_pos >> 5) + 1;
                         let bit = bit_pos & 31;
-                        *cube.add(word) |= 1 << bit;
+                        *cf.add(word) |= 1 << bit;
                     }
+                    // case '0': do nothing
                 }
 
-                // Add cube to the cover
-                cover.ptr = sys::sf_addset(cover.ptr, cube);
-
-                // Free the cube (sf_addset makes a copy)
-                libc::free(cube as *mut libc::c_void);
+                // Add cube to cover (like read_cube: PLA->F = sf_addset(PLA->F, cf))
+                cover.ptr = sys::sf_addset(cover.ptr, cf);
             }
         }
+
+        // NOTE: Do NOT call sf_active() here - cubes should not have ACTIVE flag set
+        // before being passed to espresso(). The ACTIVE flag is managed internally by espresso.
 
         cover
     }
@@ -419,7 +566,7 @@ impl CoverBuilder {
 
 /// Represents a PLA (Programmable Logic Array) structure
 pub struct PLA {
-    ptr: sys::pPLA,
+    pub(crate) ptr: sys::pPLA,
 }
 
 impl PLA {
@@ -438,6 +585,19 @@ impl PLA {
 
         if file.is_null() {
             return Err(io::Error::last_os_error());
+        }
+
+        // CRITICAL: read_pla will IGNORE .i and .o directives if cube is already initialized!
+        // (see cvrin.c lines 231 and 245: "if (cube.fullset != NULL) { fprintf(stderr, "extra .i ignored"); ... }")
+        // We must tear down existing cube state to allow read_pla to parse dimensions correctly.
+        unsafe {
+            if !sys::cube.fullset.is_null() {
+                sys::setdown_cube();
+                if !sys::cube.part_size.is_null() {
+                    libc::free(sys::cube.part_size as *mut libc::c_void);
+                    sys::cube.part_size = ptr::null_mut();
+                }
+            }
         }
 
         let mut pla_ptr: sys::pPLA = ptr::null_mut();
@@ -483,15 +643,18 @@ impl PLA {
             let r = (*self.ptr).R;
 
             let f_copy = sys::sf_save(f);
+
+            // D and R cannot be NULL - they must be empty covers if not provided
+            // (see cvrin.c line 454-455 and espresso.c line 49 which calls sf_save(D1))
             let d_copy = if !d.is_null() {
                 sys::sf_save(d)
             } else {
-                ptr::null_mut()
+                sys::sf_new(0, sys::cube.size as c_int)
             };
             let r_copy = if !r.is_null() {
                 sys::sf_save(r)
             } else {
-                ptr::null_mut()
+                sys::sf_new(0, sys::cube.size as c_int)
             };
 
             let minimized_f = sys::espresso(f_copy, d_copy, r_copy);
@@ -516,6 +679,62 @@ impl PLA {
                 num_cubes_f: if !f.is_null() { (*f).count as usize } else { 0 },
                 num_cubes_d: if !d.is_null() { (*d).count as usize } else { 0 },
                 num_cubes_r: if !r.is_null() { (*r).count as usize } else { 0 },
+            }
+        }
+    }
+
+    /// Debug: dump F cover contents
+    pub fn debug_dump_f(&self) {
+        unsafe {
+            let f = (*self.ptr).F;
+            if f.is_null() {
+                println!("F is null");
+                return;
+            }
+
+            println!(
+                "F Cover: count={}, size={}, wsize={}",
+                (*f).count,
+                (*f).sf_size,
+                (*f).wsize
+            );
+            let data = (*f).data;
+            let wsize = (*f).wsize as usize;
+            let count = (*f).count as usize;
+            for i in 0..count {
+                let cube_ptr = data.add(i * wsize);
+                print!("  Cube {}: ", i);
+                for w in 0..wsize {
+                    print!("{:08x} ", *cube_ptr.add(w));
+                }
+                println!();
+            }
+        }
+    }
+
+    /// Get F cover as a Cover (for testing)
+    pub fn get_f(&self) -> Cover {
+        unsafe {
+            let f = (*self.ptr).F;
+            // Make a copy so we don't invalidate the PLA
+            Cover::from_raw(sys::sf_save(f))
+        }
+    }
+
+    /// Debug: check D and R status
+    pub fn debug_check_d_r(&self) {
+        unsafe {
+            let d = (*self.ptr).D;
+            let r = (*self.ptr).R;
+
+            println!("D: {:?} (null: {})", d, d.is_null());
+            if !d.is_null() {
+                println!("  D count: {}, size: {}", (*d).count, (*d).sf_size);
+            }
+
+            println!("R: {:?} (null: {})", r, r.is_null());
+            if !r.is_null() {
+                println!("  R count: {}, size: {}", (*r).count, (*r).sf_size);
             }
         }
     }

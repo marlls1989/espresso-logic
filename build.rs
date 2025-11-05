@@ -67,12 +67,12 @@ fn main() {
 
     // Add include directory
     build.include(&espresso_src);
-    
+
     // Set compiler flags
     build
         .flag_if_supported("-w") // Suppress warnings from C code
         .opt_level(2);
-    
+
     // Support for cargo-zigbuild
     // Zig provides a better C compiler with excellent cross-compilation support
     if env::var("CARGO_CFG_TARGET_ENV").is_ok() {
@@ -80,7 +80,7 @@ fn main() {
         // Just ensure we have the right flags
         build.flag_if_supported("-fno-sanitize=undefined");
     }
-    
+
     // Compile
     build.compile("espresso");
 
@@ -111,8 +111,10 @@ fn main() {
         .allowlist_function("minimize_exact")
         .allowlist_function("verify")
         .allowlist_function("sf_addset")
-        .allowlist_function("set_new")
-        .allowlist_function("set_free")
+        .allowlist_function("sf_active")
+        .allowlist_function("complement")
+        .allowlist_function("cube1list")
+        .allowlist_function("cube2list")
         .allowlist_function("set_clear")
         .allowlist_type("PLA_t")
         .allowlist_type("pPLA")

@@ -57,6 +57,9 @@ fn test_pla_from_file() {
 
 #[test]
 fn test_cover_builder() {
+    // CoverBuilder requires Espresso::new() to be called first to initialize cube structure
+    let _esp = Espresso::new(2, 1);
+
     let mut builder = CoverBuilder::new(2, 1);
     builder.add_cube(&[0, 1], &[1]);
     builder.add_cube(&[1, 0], &[1]);
