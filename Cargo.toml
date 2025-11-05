@@ -1,0 +1,40 @@
+[package]
+name = "espresso-logic"
+version = "2.3.0"
+edition = "2021"
+authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
+description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"
+license = "MIT"
+repository = "https://github.com/marlls1989/espresso-logic"
+keywords = ["logic", "minimization", "boolean", "pla", "espresso"]
+categories = ["algorithms", "science"]
+
+[dependencies]
+libc = "0.2"
+tempfile = "3.8"
+clap = { version = "4.4", features = ["derive"] }
+
+[build-dependencies]
+cc = "1.0"
+bindgen = "0.69"
+
+[lib]
+name = "espresso_logic"
+path = "src/lib.rs"
+
+[[example]]
+name = "minimize"
+path = "examples/minimize.rs"
+
+[[example]]
+name = "pla_file"
+path = "examples/pla_file.rs"
+
+[[bin]]
+name = "espresso"
+path = "src/bin/espresso.rs"
+
+[[example]]
+name = "xor_function"
+path = "examples/xor_function.rs"
+

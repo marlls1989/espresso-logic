@@ -1,3 +1,52 @@
+# License
+
+This project contains three layers of work, each with its own license:
+
+1. **Original UC Berkeley Espresso** (1988-1989)
+2. **Modernized C Version by Sébastien Cottinet** (2016) - MIT License
+3. **Rust Wrapper by Marcos Sartori** (2024) - MIT License
+
+---
+
+## 1. Original Espresso Logic Minimizer (UC Berkeley)
+
+**Copyright (c) 1988, 1989, Regents of the University of California.**  
+**All rights reserved.**
+
+The original Espresso source code is distributed under the following license:
+
+```
+Oct Tools Distribution 3.0
+
+Copyright (c) 1988, 1989, Regents of the University of California.
+All rights reserved.
+
+Use and copying of this software and preparation of derivative works
+based upon this software are permitted. However, any distribution of
+this software or derivative works must include the above copyright
+notice.
+
+This software is made available AS IS, and neither the Electronics
+Research Laboratory or the University of California make any
+warranty about the software, its performance or its conformity to
+any specification.
+
+Suggestions, comments, or improvements are welcome and should be
+addressed to:
+
+  octtools@eros.berkeley.edu
+  ..!ucbvax!eros!octtools
+```
+
+---
+
+## 2. Modernized C Version (Sébastien Cottinet)
+
+**Copyright (c) 2016 Sébastien Cottinet**
+
+The modernization of the Espresso C code for compatibility with modern compilers (C99) is distributed under the MIT License:
+
+```
 MIT License
 
 Copyright (c) 2016 Sébastien Cottinet
@@ -19,3 +68,86 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+---
+
+## 3. Rust Wrapper and Bindings (Marcos Sartori)
+
+**Copyright (c) 2024 Marcos Sartori**
+
+The Rust wrapper, FFI bindings, CLI, examples, documentation, and build scripts are distributed under the MIT License:
+
+```
+MIT License
+
+Copyright (c) 2024 Marcos Sartori
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
+## License Compliance Summary
+
+When using this combined work, you must comply with all three licenses:
+
+1. **UC Berkeley License:**
+   - Include the UC Berkeley copyright notice
+   - Acknowledge the original authors
+
+2. **Sébastien Cottinet's MIT License:**
+   - Include his copyright notice and MIT License text
+   - Acknowledge his 2016 modernization work
+
+3. **Marcos Sartori's MIT License:**
+   - Include copyright notice and MIT License text for Rust wrapper
+
+All three licenses are permissive and allow commercial use, modification, and distribution.
+
+---
+
+## No Warranty
+
+ALL SOFTWARE IN THIS PROJECT IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL ANY COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.
+
+---
+
+## Attribution Requirements
+
+If you distribute this software or derivative works:
+
+1. **Preserve** all copyright notices (UC Berkeley, Sébastien Cottinet, Marcos Sartori)
+2. **Include** this LICENSE file or equivalent notices
+3. **Include** MIT License text for both Sébastien Cottinet's and Marcos Sartori's work
+4. **Reference** the [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) file for complete attribution
+
+---
+
+## File-by-File Breakdown
+
+- **espresso-src/*.c, *.h** - UC Berkeley (1988-1989) + Sébastien Cottinet modernization (2016, MIT)
+- **src/lib.rs, src/bin/**, etc. - Marcos Sartori (2024, MIT)
+- **build.rs, Cargo.toml** - Marcos Sartori (2024, MIT)
+- **examples/, tests/** - Marcos Sartori (2024, MIT)
+- **docs/** - Marcos Sartori (2024, MIT)
+
+---
+
+For the complete acknowledgment of all contributors, see [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
