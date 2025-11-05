@@ -25,18 +25,15 @@ TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
 
-# Ensure binaries exist
-if [ ! -f "$C_BINARY" ]; then
-    echo -e "${RED}Error: C binary not found at $C_BINARY${NC}"
-    echo "Please run: cd espresso-src && make"
-    exit 1
-fi
+# Always build C binary to ensure it's up to date
+echo -e "${YELLOW}Building C binary...${NC}"
+(cd espresso-src && make clean && make) || { echo -e "${RED}Failed to build C binary${NC}"; exit 1; }
+echo ""
 
-if [ ! -f "$RUST_BINARY" ]; then
-    echo -e "${RED}Error: Rust binary not found at $RUST_BINARY${NC}"
-    echo "Please run: cargo build --release --bin espresso"
-    exit 1
-fi
+# Always build Rust binary to ensure it's up to date
+echo -e "${YELLOW}Building Rust binary...${NC}"
+cargo build --release --bin espresso || { echo -e "${RED}Failed to build Rust binary${NC}"; exit 1; }
+echo ""
 
 # Create temp directory
 mkdir -p "$TEMP_DIR"

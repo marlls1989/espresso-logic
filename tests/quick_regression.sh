@@ -6,6 +6,15 @@
 C_BINARY="./bin/espresso"
 RUST_BINARY="./target/release/espresso"
 
+# Always build C binary to ensure it's up to date
+echo "Building C binary..."
+(cd espresso-src && make clean && make) || { echo "Failed to build C binary"; exit 1; }
+
+# Always build Rust binary to ensure it's up to date
+echo "Building Rust binary..."
+cargo build --release --bin espresso || { echo "Failed to build Rust binary"; exit 1; }
+echo ""
+
 echo "Quick Regression Test"
 echo "═══════════════════════════════════════"
 
