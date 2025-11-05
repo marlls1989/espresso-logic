@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2025-11-05
+
+### Fixed
+- **CRITICAL**: Segfault from NULL pointers passed to espresso() - now create empty covers instead
+- **CRITICAL**: Incorrect minimization results - OFF-set now auto-computed as complement(F,D) when not provided
+- ACTIVE flag interference in CoverBuilder causing wrong results
+- Cube structure initialization in Espresso::new() - properly initialize global state
+- Memory leak in Espresso::drop() - now frees part_size
+- PLA::from_file() dimension conflicts - tears down existing cube state before loading
+- PLA::minimize() NULL pointer inconsistency - now matches Espresso::minimize()
+
+### Added
+- Comprehensive thread safety documentation (library is NOT thread-safe)
+- Mutex usage example for multi-threaded applications
+- CoverBuilder initialization requirement documentation
+- Debug methods: Cover::debug_dump(), PLA::debug_dump_f(), PLA::debug_check_d_r(), PLA::get_f()
+- Extensive test coverage: test_unsafe_api.rs (19 tests), test_pla_unsafe.rs (11 tests)
+
+### Changed
+- CoverBuilder::build() now uses cube.temp[0] following C API patterns from cvrin.c
+- Espresso::minimize() and minimize_exact() now clone input covers (espresso makes own copies)
+- PLA struct ptr field now pub(crate) for internal testing access
+
+### Breaking
+- Library explicitly documented as single-threaded only
+- Tests must run with --test-threads=1
+- CoverBuilder requires Espresso::new() to be called first
+
 ## [2.3.0] - 2024-11-05
 
 ### Added
