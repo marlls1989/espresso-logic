@@ -73,6 +73,14 @@ fn main() {
         .flag_if_supported("-w") // Suppress warnings from C code
         .opt_level(2);
     
+    // Support for cargo-zigbuild
+    // Zig provides a better C compiler with excellent cross-compilation support
+    if env::var("CARGO_CFG_TARGET_ENV").is_ok() {
+        // When using zigbuild, Zig's compiler is already configured
+        // Just ensure we have the right flags
+        build.flag_if_supported("-fno-sanitize=undefined");
+    }
+    
     // Compile
     build.compile("espresso");
 
