@@ -566,15 +566,24 @@ impl PLA {
     /// Write this PLA to stdout
     pub fn write_to_stdout(&self, pla_type: PLAType) -> io::Result<()> {
         unsafe {
-            // Use file descriptor 1 (stdout)
-            let stdout_ptr = libc::fdopen(1, c"w".as_ptr());
+            // Duplicate stdout fd so we can safely close the FILE* without affecting the original stdout
+            let dup_fd = libc::dup(1);
+            if dup_fd == -1 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let stdout_ptr = libc::fdopen(dup_fd, c"w".as_ptr());
             if stdout_ptr.is_null() {
+                libc::close(dup_fd);
                 return Err(io::Error::other("Failed to open stdout"));
             }
 
             sys::fprint_pla(stdout_ptr as *mut _, self.ptr, pla_type as c_int);
             libc::fflush(stdout_ptr);
-            // Don't close stdout - it's owned by the process
+
+            // Close the FILE* (which also closes the duplicated fd)
+            // This prevents the FILE structure leak
+            libc::fclose(stdout_ptr);
 
             Ok(())
         }
