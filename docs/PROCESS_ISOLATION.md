@@ -1,8 +1,13 @@
 # Process Isolation Architecture
 
+> **⚠️ HISTORICAL DOCUMENT**  
+> This document describes the **previous implementation** used before version 2.6.2.  
+> **Current implementation** (since 2.6.2): See [THREAD_LOCAL_IMPLEMENTATION.md](THREAD_LOCAL_IMPLEMENTATION.md)  
+> The library now uses C11 thread-local storage instead of process isolation for better performance.
+
 ## Overview
 
-This document describes how the Espresso logic minimizer achieves **transparent thread-safety** through process isolation. The global state problem inherent in the C library is completely hidden from users - the API is simply safe by default.
+This document describes how the Espresso logic minimizer previously achieved **transparent thread-safety** through process isolation (versions 2.6.0-2.6.1). The global state problem inherent in the C library was hidden from users through process isolation.
 
 ## The Problem
 
@@ -229,9 +234,51 @@ match unsafe { fork() } {
 - Worth it for safety and simplicity in most cases
 - For microsecond-level performance needs, consider batching operations
 
+## Alternative: Thread-Local Implementation
+
+### Thread-Local Global Variables (Available)
+
+An alternative thread-safety approach is now available using C11 `_Thread_local` storage:
+
+**Status**: ✅ Implemented and fully working
+- All ~50+ global variables converted to `_Thread_local`
+- C accessor functions provide clean Rust FFI (`get_cube()`, `set_debug()`, etc.)
+- All 102 tests pass including 8 new multi-threaded stress tests
+- 640 concurrent operations validated in stress testing
+
+**How it works**:
+- Each thread gets its own copy of all global state
+- C11 `_Thread_local` provides native thread safety
+- Accessor functions solve bindgen's limitation with thread-local variables
+- Direct function calls - no process spawning or IPC overhead
+
+**Trade-offs vs Process Isolation**:
+
+| Aspect | Process Isolation | Thread-Local |
+|--------|------------------|--------------|
+| Overhead | ~10-20ms per operation | Microseconds |
+| Memory | 5-10 MB per worker | ~Few KB per thread |
+| Thread safety | Guaranteed by OS | Guaranteed by C11 TLS |
+| Setup complexity | Process spawn + IPC | Direct calls |
+| Platform support | Unix only | All platforms (C11) |
+| Validation status | Production-proven | Tested, ready for use |
+
+**When to use thread-local**:
+- ✓ High-frequency operations (thousands per second)
+- ✓ Memory-constrained environments  
+- ✓ Windows platform support needed
+- ✓ Lower latency requirements
+
+**When to use process isolation**:
+- ✓ Maximum isolation and safety
+- ✓ Paranoid about memory corruption
+- ✓ Legacy/proven approach preferred
+
+See `docs/THREAD_LOCAL_IMPLEMENTATION.md` for complete details.
+
 ## Limitations and Future Work
 
-### Current Limitations
+### Current Limitations (Process Isolation)
 
 1. **Fork from multi-threaded processes**
    - Forking from a multi-threaded process can be problematic
@@ -248,10 +295,12 @@ match unsafe { fork() } {
 
 ### Future Improvements
 
-- [ ] Implement worker process pooling for reuse
+- [ ] Make thread-local the default (after memory leak validation)
+- [ ] Keep process isolation as optional feature
+- [ ] Implement worker process pooling for reuse (if keeping process isolation)
 - [ ] Dynamic shared memory sizing
 - [ ] Performance tuning and benchmarks
-- [ ] Support for platforms without `fork()` (Windows)
+- [ ] Support for platforms without `fork()` (Windows) - now possible with thread-local
 - [ ] Async/await API
 
 ## Examples

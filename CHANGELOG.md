@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2024-11-06
+
+### Removed
+
+**Process Isolation Architecture:**
+- Removed worker process spawning infrastructure (fork/exec pattern)
+- Removed `worker.rs` module entirely
+- Removed IPC layer (shared memory communication)
+- Removed serialization layer (`SerializedCube`, `SerializedCover`, `WorkerSerializable` trait)
+- Removed `IpcConfig` type (now uses `EspressoConfig` directly)
+- Removed all serialization/deserialization in minimization path
+
+**Dependencies:**
+- `ctor` - No longer needed without worker mode detection
+- `nix` - No longer needed without fork/IPC
+- `memmap2` - No longer needed without shared memory
+- `serde` - No longer needed without serialization
+- `bincode` - No longer needed without serialization
+
+### Changed
+
+**Implementation:**
+- Switched from process isolation to direct C calls using thread-local storage
+- Minimization now calls C functions directly in the same thread
+- No serialization overhead - direct type conversions only
+- Simplified architecture with fewer layers
+
+**Performance:**
+- Eliminated ~10-20ms process spawning overhead per operation
+- Eliminated serialization/deserialization overhead
+- Better memory efficiency (no worker processes or shared memory buffers)
+
+**Documentation:**
+- Updated README.md to reflect thread-local implementation
+- Marked `docs/PROCESS_ISOLATION.md` as historical (pre-2.6.2)
+- Updated all examples and API documentation
+
+### Technical Notes
+
+The C library uses C11 `_Thread_local` storage for all global variables (~50+ variables across 17 C files), enabling safe concurrent execution without process isolation or mutexes. Each thread gets independent global state. Accessor functions provide Rust FFI compatibility.
+
+**C Code Modifications:**
+- All global and static variables converted to `_Thread_local`
+- `main.c` modified to use runtime initialization instead of static initialization (thread-local variables cannot use static initializers with complex values)
+- Accessor functions added for Rust FFI compatibility
+- C source synchronized with reference implementation while preserving thread-local modifications
+
+### Migration
+
+**No API changes** - This is a patch release. All public APIs remain unchanged. Users will automatically benefit from improved performance and simpler architecture.
+
 ## [2.6.1] - 2024-11-06
 
 ### Removed

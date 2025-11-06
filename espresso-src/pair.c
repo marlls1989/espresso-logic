@@ -339,14 +339,14 @@ int **find_pairing_cost(pPLA PLA, int strategy)
     PLA->pair = NULL;
     return cost_array;
 }
-
-static int best_cost;
-static int **cost_array;
-static ppair best_pair;
-static pset best_phase;
-static pPLA global_PLA;
-static pcover best_F, best_D, best_R;
-static int pair_minim_strategy;
+
+static _Thread_local int best_cost;
+static _Thread_local int **cost_array;
+static _Thread_local ppair best_pair;
+static _Thread_local pset best_phase;
+static _Thread_local pPLA global_PLA;
+static _Thread_local pcover best_F, best_D, best_R;
+static _Thread_local int pair_minim_strategy;
 
 
 void print_pair(ppair pair)

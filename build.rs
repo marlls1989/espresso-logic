@@ -56,6 +56,7 @@ fn main() {
         "solution.c",
         "sparse.c",
         "strdup.c",
+        "thread_local_accessors.c",
         "unate.c",
         "util_signature.c",
         "verify.c",
@@ -73,8 +74,19 @@ fn main() {
 
     // Set compiler flags
     build
-        .flag_if_supported("-w") // Suppress warnings from C code
-        .opt_level(2);
+        .flag("-std=c11") // Ensure C11 standard for _Thread_local support
+        .flag_if_supported("-w"); // Suppress warnings from C code
+
+    // Add sanitizer flags if requested via environment
+    if let Ok(cflags) = env::var("CFLAGS") {
+        if cflags.contains("-fsanitize=address") {
+            build
+                .flag("-fsanitize=address")
+                .flag("-fno-omit-frame-pointer");
+        }
+    } else {
+        build.opt_level(2);
+    }
 
     // Support for cargo-zigbuild
     // Zig provides a better C compiler with excellent cross-compilation support
@@ -89,7 +101,7 @@ fn main() {
 
     // Generate bindings
     let bindings = bindgen::Builder::default()
-        .header("espresso-src/espresso.h")
+        .header("espresso-src/thread_local_accessors.h")
         .clang_arg(format!("-I{}", espresso_src.display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Whitelist the functions and types we want to expose
@@ -125,11 +137,6 @@ fn main() {
         .allowlist_type("pset_family")
         .allowlist_type("pset")
         .allowlist_type("cost_t")
-        .allowlist_var("cube")
-        .allowlist_var("debug")
-        .allowlist_var("trace")
-        .allowlist_var("summary")
-        .allowlist_var("verbose_debug")
         .allowlist_var("F_type")
         .allowlist_var("FD_type")
         .allowlist_var("FR_type")
@@ -143,20 +150,31 @@ fn main() {
         .allowlist_var("GASP")
         .allowlist_var("SHARP")
         .allowlist_var("MINCOV")
-        // Espresso options
-        .allowlist_var("single_expand")
-        .allowlist_var("remove_essential")
-        .allowlist_var("force_irredundant")
-        .allowlist_var("use_super_gasp")
-        .allowlist_var("use_random_order")
-        .allowlist_var("unwrap_onset")
-        .allowlist_var("recompute_onset")
-        .allowlist_var("skip_make_sparse")
-        .allowlist_var("pos")
-        .allowlist_var("kiss")
-        .allowlist_var("echo_comments")
-        .allowlist_var("echo_unknown_commands")
-        .allowlist_var("print_solution")
+        // Thread-local accessors (replacing direct global variable access)
+        .allowlist_function("get_cube")
+        .allowlist_function("get_cdata")
+        .allowlist_function("get_debug_ptr")
+        .allowlist_function("set_debug")
+        .allowlist_function("get_verbose_debug_ptr")
+        .allowlist_function("set_verbose_debug")
+        .allowlist_function("get_trace_ptr")
+        .allowlist_function("set_trace")
+        .allowlist_function("get_summary_ptr")
+        .allowlist_function("set_summary")
+        .allowlist_function("get_remove_essential_ptr")
+        .allowlist_function("set_remove_essential")
+        .allowlist_function("get_force_irredundant_ptr")
+        .allowlist_function("set_force_irredundant")
+        .allowlist_function("get_unwrap_onset_ptr")
+        .allowlist_function("set_unwrap_onset")
+        .allowlist_function("get_single_expand_ptr")
+        .allowlist_function("set_single_expand")
+        .allowlist_function("get_use_super_gasp_ptr")
+        .allowlist_function("set_use_super_gasp")
+        .allowlist_function("get_use_random_order_ptr")
+        .allowlist_function("set_use_random_order")
+        .allowlist_function("get_skip_make_sparse_ptr")
+        .allowlist_function("set_skip_make_sparse")
         // Generate good Rust types
         .derive_default(true)
         .derive_debug(true)

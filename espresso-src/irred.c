@@ -5,7 +5,7 @@ static void ftautology(pset *T, sm_matrix *table);
 static bool ftaut_special_cases(pset *T, sm_matrix *table);
 
 
-static int Rp_current;
+static _Thread_local int Rp_current;
 
 /*
  *   irredundant -- Return a minimal subset of F

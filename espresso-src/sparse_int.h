@@ -78,9 +78,9 @@
 
 
 #ifdef FAST_AND_LOOSE
-extern sm_element *sm_element_freelist;
-extern sm_row *sm_row_freelist;
-extern sm_col *sm_col_freelist;
+extern _Thread_local sm_element *sm_element_freelist;
+extern _Thread_local sm_row *sm_row_freelist;
+extern _Thread_local sm_col *sm_col_freelist;
 
 #define sm_element_alloc(newobj) \
     if (sm_element_freelist == NIL(sm_element)) { \

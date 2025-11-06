@@ -9,7 +9,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::pla::PLASerializable;
-use crate::worker::Worker;
 use crate::EspressoConfig;
 
 /// Type alias for complex cube iterator return type
@@ -173,22 +172,9 @@ impl<T: Minimizable + PLASerializable> Cover for T {
     }
 
     fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()> {
-        // Convert config
-        let ipc_config = crate::worker::IpcConfig {
-            debug: config.debug,
-            verbose_debug: config.verbose_debug,
-            trace: config.trace,
-            summary: config.summary,
-            remove_essential: config.remove_essential,
-            force_irredundant: config.force_irredundant,
-            unwrap_onset: config.unwrap_onset,
-            single_expand: config.single_expand,
-            use_super_gasp: config.use_super_gasp,
-            use_random_order: config.use_random_order,
-        };
+        use crate::r#unsafe::{UnsafeCover, UnsafeEspresso};
 
-        // Split cubes into F, D, R sets for worker based on cube type
-        // With typed cubes, this is now simple - just group by type
+        // Split cubes into F, D, R sets based on cube type
         let mut f_cubes = Vec::new();
         let mut d_cubes = Vec::new();
         let mut r_cubes = Vec::new();
@@ -219,32 +205,39 @@ impl<T: Minimizable + PLASerializable> Cover for T {
             }
         }
 
-        // Call worker with appropriate sets based on cover type
-        let (f_serialized, d_serialized, r_serialized) = Worker::execute_minimize(
-            self.num_inputs(),
-            self.num_outputs(),
-            ipc_config,
-            f_cubes,
-            if d_cubes.is_empty() {
-                None
-            } else {
-                Some(d_cubes)
-            },
-            if r_cubes.is_empty() {
-                None
-            } else {
-                Some(r_cubes)
-            },
-        )?;
+        // Direct C calls - thread-safe via thread-local storage
+        let mut esp =
+            UnsafeEspresso::new_with_config(self.num_inputs(), self.num_outputs(), config);
 
-        // Decode worker results into typed Cubes
-        let all_cubes = crate::worker::decode_worker_result(
-            &f_serialized,
-            d_serialized.as_ref(),
-            r_serialized.as_ref(),
-            self.num_inputs(),
-            self.num_outputs(),
-        );
+        // Build covers from cube data
+        let f_cover = UnsafeCover::build_from_cubes(f_cubes, self.num_inputs(), self.num_outputs());
+        let d_cover = if !d_cubes.is_empty() {
+            Some(UnsafeCover::build_from_cubes(
+                d_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            ))
+        } else {
+            None
+        };
+        let r_cover = if !r_cubes.is_empty() {
+            Some(UnsafeCover::build_from_cubes(
+                r_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            ))
+        } else {
+            None
+        };
+
+        // Minimize
+        let (f_result, d_result, r_result) = esp.minimize(f_cover, d_cover, r_cover);
+
+        // Direct conversion to typed Cubes - no serialization needed!
+        let mut all_cubes = Vec::new();
+        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
+        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
+        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
 
         // Update cubes with type information preserved
         self.set_cubes(all_cubes);

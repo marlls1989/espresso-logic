@@ -9,7 +9,7 @@
 
 #include "espresso.h"
 
-static bool toggle = TRUE;
+static _Thread_local bool toggle = TRUE;
 
 
 /*

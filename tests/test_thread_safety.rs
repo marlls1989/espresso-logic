@@ -1,20 +1,21 @@
-//! Tests for process isolation feature
+//! Tests for thread safety feature
 //!
-//! These tests verify that the transparent API works correctly
-//! with process isolation.
+//! These tests verify that the library is thread-safe using C11 thread-local
+//! storage for global state. Multiple threads can safely use the library
+//! concurrently without synchronization.
 
 use espresso_logic::{Cover, CoverBuilder};
 use std::thread;
 use std::time::Duration;
 
 #[test]
-fn test_basic_process_isolation() {
+fn test_basic_thread_safety() {
     // Create a cover and add cubes
     let mut cover = CoverBuilder::<2, 1>::new();
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
-    // Minimize using transparent process isolation
+    // Minimize using thread-safe C library
     cover.minimize().expect("Minimization failed");
 
     // Verify result
@@ -23,16 +24,15 @@ fn test_basic_process_isolation() {
 
 #[test]
 fn test_concurrent_execution() {
-    // Each thread creates its own cover - no shared state!
+    // Each thread executes Espresso independently - no shared state due to thread-local storage!
     let handles: Vec<_> = (0..4)
         .map(|i| {
             thread::spawn(move || {
-                // Create cover (pure Rust)
                 let mut cover = CoverBuilder::<2, 1>::new();
                 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
                 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
-                // This works concurrently without conflicts!
+                // Thread-safe - each thread executes with independent global state
                 cover.minimize().expect("Minimization failed");
 
                 let num_cubes = cover.num_cubes();

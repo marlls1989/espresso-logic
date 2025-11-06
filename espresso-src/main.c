@@ -17,8 +17,27 @@
 #include "main.h"		/* table definitions for options */
 #include <unistd.h>
 
-static FILE *last_fp;
-static int input_type = FD_type;
+static _Thread_local FILE *last_fp;
+static _Thread_local int input_type = FD_type;
+
+/* Define the esp_opt_table (initialized at runtime due to thread-local variables) */
+struct esp_opt_entry esp_opt_table[12];
+
+/* Initialize the esp_opt_table at runtime */
+void init_esp_opt_table(void) {
+    esp_opt_table[0] = (struct esp_opt_entry){"eat", &echo_comments, FALSE};
+    esp_opt_table[1] = (struct esp_opt_entry){"eatdots", &echo_unknown_commands, FALSE};
+    esp_opt_table[2] = (struct esp_opt_entry){"fast", &single_expand, TRUE};
+    esp_opt_table[3] = (struct esp_opt_entry){"kiss", &kiss, TRUE};
+    esp_opt_table[4] = (struct esp_opt_entry){"ness", &remove_essential, FALSE};
+    esp_opt_table[5] = (struct esp_opt_entry){"nirr", &force_irredundant, FALSE};
+    esp_opt_table[6] = (struct esp_opt_entry){"nunwrap", &unwrap_onset, FALSE};
+    esp_opt_table[7] = (struct esp_opt_entry){"onset", &recompute_onset, TRUE};
+    esp_opt_table[8] = (struct esp_opt_entry){"pos", &pos, TRUE};
+    esp_opt_table[9] = (struct esp_opt_entry){"random", &use_random_order, TRUE};
+    esp_opt_table[10] = (struct esp_opt_entry){"strong", &use_super_gasp, TRUE};
+    esp_opt_table[11] = (struct esp_opt_entry){0, 0, 0};
+}
 
 void getPLA(int opt, int argc, char **argv, int option, pPLA *PLA, int out_type);
 void delete_arg(int *argc, register char **argv, int num);
@@ -44,6 +63,7 @@ int main(int argc, char **argv)
 
     error = FALSE;
     init_runtime();
+    init_esp_opt_table();	/* Initialize option table with thread-local variable addresses */
 #ifdef RANDOM
     srandom(314973);
 #endif

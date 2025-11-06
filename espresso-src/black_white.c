@@ -20,14 +20,14 @@ static void alloc_stack(int size);
 static void free_stack(void);
 static void clear(void);
 
-static int white_head, white_tail;
-static int black_head, black_tail;
-static int forward_link, backward_link;
-static int *forward, *backward;
+static _Thread_local int white_head, white_tail;
+static _Thread_local int black_head, black_tail;
+static _Thread_local int forward_link, backward_link;
+static _Thread_local int *forward, *backward;
 
-static int *stack_head, *stack_tail, stack_p;
+static _Thread_local int *stack_head, *stack_tail, stack_p;
 
-static pcover BB;
+static _Thread_local pcover BB;
 
 static void alloc_list(int size)
 {
@@ -257,11 +257,11 @@ void split_list(pset_family R, int v)
 }
 
 /* Data Structures for ordering variables in ess_test_and_reduction */
-static int variable_count; /* Number of variables currently in the list */
-static int *variable_forward_chain; /* Next */
-static int *variable_backward_chain; /* Previous */
-static int variable_head; /* first element in the list */
-static int variable_tail; /* last element in the list */
+static _Thread_local int variable_count; /* Number of variables currently in the list */
+static _Thread_local int *variable_forward_chain; /* Next */
+static _Thread_local int *variable_backward_chain; /* Previous */
+static _Thread_local int variable_head; /* first element in the list */
+static _Thread_local int variable_tail; /* last element in the list */
 
 void variable_list_alloc(int size)
 {

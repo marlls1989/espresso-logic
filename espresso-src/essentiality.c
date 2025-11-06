@@ -20,35 +20,35 @@
 /* Yuk, Yuk, Yuk!! More Globals. It seems recursive routines have unholy
    alliance with globals */
 
-static int *c_free_list; /* List of raised variables  in cube c */
-static int c_free_count; /* active size of the above list */
+static _Thread_local int *c_free_list; /* List of raised variables  in cube c */
+static _Thread_local int c_free_count; /* active size of the above list */
 
-static int *r_free_list; /* List of subset of raised variables in cube c
+static _Thread_local int *r_free_list; /* List of subset of raised variables in cube c
 			which are raised in each cube of offset R */
-static int r_free_count; /* active size of the above list */
-static int r_head; /* current position in  the list above */
+static _Thread_local int r_free_count; /* active size of the above list */
+static _Thread_local int r_head; /* current position in  the list above */
 
-static int *reduced_c_free_list; /* c_free_list - r_free_list */
-static int reduced_c_free_count; /* active size of the above list */
+static _Thread_local int *reduced_c_free_list; /* c_free_list - r_free_list */
+static _Thread_local int reduced_c_free_count; /* active size of the above list */
 
-static VAR *unate_list; /* List of unate variables in the reduced_c_free_list */
-static int unate_count; /* active size of the above list */
+static _Thread_local VAR *unate_list; /* List of unate variables in the reduced_c_free_list */
+static _Thread_local int unate_count; /* active size of the above list */
 
-static VAR *binate_list; /* List of binate variables in the 
+static _Thread_local VAR *binate_list; /* List of binate variables in the 
 			 reduced_c_free_list */
-static int binate_count; /* active size of the above list */
+static _Thread_local int binate_count; /* active size of the above list */
 
-static int *variable_order; /* permutation of reduced c_free_count determining 
+static _Thread_local int *variable_order; /* permutation of reduced c_free_count determining 
 			    static ordering of variables */
-static int variable_count; /* active size of the above list */
-static int variable_head; /* current position in  the list above */
+static _Thread_local int variable_count; /* active size of the above list */
+static _Thread_local int variable_head; /* current position in  the list above */
 
 /* The passive size allocated on the first call to etr_order is equal
    to the number of binary variables */
 /* Clearly not the most optimized usage of memory. Not worth saving
    few pennies when the total memory budget is quite large */
 
-pcover COVER; /* A global bag to collect the signature cubes in the cover 
+_Thread_local pcover COVER; /* A global bag to collect the signature cubes in the cover 
 		 of inessential signature cube */
 
 /* etr_order:

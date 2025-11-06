@@ -5,7 +5,7 @@
 /* LINTLIBRARY */
 
 #include "espresso.h"
-static pset_family set_family_garbage = NULL;
+static _Thread_local pset_family set_family_garbage = NULL;
 
 static void intcpy(register unsigned int *d, register unsigned int *s, register long int n)
 {
@@ -457,7 +457,7 @@ pset_family sf_bm_read(FILE *fp)
 
 /* ps1 -- convert a set into a printable string */
 #define largest_string 120
-static char s1[largest_string];
+static _Thread_local char s1[largest_string];
 char *ps1(register pset a)
 {
     register int i, num, l, len = 0, n = NELEM(a);

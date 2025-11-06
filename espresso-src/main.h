@@ -94,21 +94,14 @@ struct {
 };
 
 
-struct {
+struct esp_opt_entry {
     char *name;
     int *variable;
     int value;
-} esp_opt_table[] = {
-    {"eat", &echo_comments, FALSE},
-    {"eatdots", &echo_unknown_commands, FALSE},
-    {"fast", &single_expand, TRUE},
-    {"kiss", &kiss, TRUE},
-    {"ness", &remove_essential, FALSE},
-    {"nirr", &force_irredundant, FALSE},
-    {"nunwrap", &unwrap_onset, FALSE},
-    {"onset", &recompute_onset, TRUE},
-    {"pos", &pos, TRUE},
-    {"random", &use_random_order, TRUE},
-    {"strong", &use_super_gasp, TRUE},
-    {0, 0, 0}
 };
+
+/* Forward declaration - initialized at runtime due to thread-local variables */
+extern struct esp_opt_entry esp_opt_table[12];
+
+/* Initialize the esp_opt_table at runtime */
+void init_esp_opt_table(void);

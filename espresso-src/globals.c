@@ -4,28 +4,28 @@
  *    Global Variable Declarations
  */
 
-unsigned int debug;              /* debug parameter */
-bool verbose_debug;              /* -v:  whether to print a lot */
-char *total_name[TIME_COUNT];    /* basic function names */
-long total_time[TIME_COUNT];     /* time spent in basic fcts */
-int total_calls[TIME_COUNT];     /* # calls to each fct */
+_Thread_local unsigned int debug;              /* debug parameter */
+_Thread_local bool verbose_debug;              /* -v:  whether to print a lot */
+_Thread_local char *total_name[TIME_COUNT];    /* basic function names */
+_Thread_local long total_time[TIME_COUNT];     /* time spent in basic fcts */
+_Thread_local int total_calls[TIME_COUNT];     /* # calls to each fct */
 
-bool echo_comments;		 /* turned off by -eat option */
-bool echo_unknown_commands;	 /* always true ?? */
-bool force_irredundant;          /* -nirr command line option */
-bool skip_make_sparse;
-bool kiss;                       /* -kiss command line option */
-bool pos;                        /* -pos command line option */
-bool print_solution;             /* -x command line option */
-bool recompute_onset;            /* -onset command line option */
-bool remove_essential;           /* -ness command line option */
-bool single_expand;              /* -fast command line option */
-bool summary;                    /* -s command line option */
-bool trace;                      /* -t command line option */
-bool unwrap_onset;               /* -nunwrap command line option */
-bool use_random_order;		 /* -random command line option */
-bool use_super_gasp;		 /* -strong command line option */
-char *filename;			 /* filename PLA was read from */
+_Thread_local bool echo_comments;		 /* turned off by -eat option */
+_Thread_local bool echo_unknown_commands;	 /* always true ?? */
+_Thread_local bool force_irredundant;          /* -nirr command line option */
+_Thread_local bool skip_make_sparse;
+_Thread_local bool kiss;                       /* -kiss command line option */
+_Thread_local bool pos;                        /* -pos command line option */
+_Thread_local bool print_solution;             /* -x command line option */
+_Thread_local bool recompute_onset;            /* -onset command line option */
+_Thread_local bool remove_essential;           /* -ness command line option */
+_Thread_local bool single_expand;              /* -fast command line option */
+_Thread_local bool summary;                    /* -s command line option */
+_Thread_local bool trace;                      /* -t command line option */
+_Thread_local bool unwrap_onset;               /* -nunwrap command line option */
+_Thread_local bool use_random_order;		 /* -random command line option */
+_Thread_local bool use_super_gasp;		 /* -strong command line option */
+_Thread_local char *filename;			 /* filename PLA was read from */
 
 struct pla_types_struct pla_types[] = {
     {"-f", F_type},
@@ -52,8 +52,8 @@ struct pla_types_struct pla_types[] = {
 };
 
 
-struct cube_struct cube, temp_cube_save;
-struct cdata_struct cdata, temp_cdata_save;
+_Thread_local struct cube_struct cube, temp_cube_save;
+_Thread_local struct cdata_struct cdata, temp_cdata_save;
 
 int bit_count[256] = {
   0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,

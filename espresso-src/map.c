@@ -1,7 +1,7 @@
 #include "espresso.h"
 
-static pcube Gcube;
-static pset Gminterm;
+static _Thread_local pcube Gcube;
+static _Thread_local pset Gminterm;
 
 pset minterms(pset_family T)
 {

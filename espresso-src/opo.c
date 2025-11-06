@@ -46,10 +46,10 @@
  *  IRREDUNDANT to enumerate all possible subsets and then proceed as
  *  before.
  */
-
-static int opo_no_make_sparse;
-static int opo_repeated;
-static int opo_exact;
+
+static _Thread_local int opo_no_make_sparse;
+static _Thread_local int opo_repeated;
+static _Thread_local int opo_exact;
 static void minimize(pPLA PLA);
 
 void phase_assignment(pPLA PLA, int opo_strategy)

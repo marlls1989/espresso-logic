@@ -9,9 +9,9 @@
  */
 
 #ifdef FAST_AND_LOOSE
-sm_element *sm_element_freelist;
-sm_row *sm_row_freelist;
-sm_col *sm_col_freelist;
+_Thread_local sm_element *sm_element_freelist;
+_Thread_local sm_row *sm_row_freelist;
+_Thread_local sm_col *sm_col_freelist;
 #endif
 
 

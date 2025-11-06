@@ -134,13 +134,13 @@
 //!
 //! ## Thread Safety and Concurrency
 //!
-//! **This library IS thread-safe!** The API uses **transparent process isolation** where
-//! the underlying C library runs in isolated forked processes. The parent process never
-//! touches global state, making concurrent use completely safe.
+//! **This library IS thread-safe!** The underlying C library uses **C11 thread-local storage**
+//! (`_Thread_local`) for all global state. Each thread gets its own independent copy of all
+//! global variables, making concurrent use completely safe without any synchronization.
 //!
 //! ### Multi-threaded Applications
 //!
-//! Just use `CoverBuilder` directly - each thread creates its own cover:
+//! Just use `CoverBuilder` directly - each thread executes Espresso independently:
 //!
 //! ```
 //! use espresso_logic::{Cover, CoverBuilder};
@@ -150,12 +150,11 @@
 //! // Spawn threads - no synchronization needed!
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
-//!         // Each thread creates its own cover
 //!         let mut cover = CoverBuilder::<2, 1>::new();
 //!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 //!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //!         
-//!         // Each operation runs in an isolated process
+//!         // Thread-safe - each thread executes with independent global state
 //!         cover.minimize()?;
 //!         Ok(cover.num_cubes())
 //!     })
@@ -170,10 +169,10 @@
 //! ```
 //!
 //! **How it works:**
-//! - **No global state** in parent process
-//! - **Process isolation**: Each operation runs in a forked worker process
-//! - **Automatic cleanup**: Workers terminate after each operation
-//! - **Efficient IPC**: Uses shared memory for fast communication
+//! - **Thread-local storage**: All C global variables use `_Thread_local`
+//! - **Independent state**: Each thread has its own copy of all globals
+//! - **Direct calls**: No process spawning or IPC overhead
+//! - **Native safety**: Uses standard C11 thread safety features
 
 // Public modules
 pub mod expression;
@@ -182,7 +181,6 @@ pub mod sys;
 // Private modules
 mod cover;
 mod pla;
-mod worker;
 
 // Internal unsafe bindings (not exposed)
 #[path = "unsafe.rs"]
@@ -240,16 +238,6 @@ impl EspressoConfig {
     /// Create a new configuration with defaults
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-/// Worker mode detection - steals execution before main() if running as worker
-#[ctor::ctor]
-fn check_worker_mode() {
-    if std::env::args().any(|arg| arg == "__ESPRESSO_WORKER__") {
-        // We're running as a worker process - handle requests and exit
-        worker::run_worker_loop();
-        std::process::exit(0);
     }
 }
 

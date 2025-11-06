@@ -367,9 +367,9 @@ void foreach_output_function(pPLA PLA, int (*func) (pPLA, int), int (*func1) (pP
 
     }
 }
-
-static pcover Fmin;
-static pcube phase;
+
+static _Thread_local pcover Fmin;
+static _Thread_local pcube phase;
 
 /*
  *  minimize each output function individually

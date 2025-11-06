@@ -411,29 +411,29 @@ typedef struct {
  *    Global Variable Declarations
  */
 
-extern unsigned int debug;              /* debug parameter */
-extern bool verbose_debug;              /* -v:  whether to print a lot */
-extern char *total_name[TIME_COUNT];    /* basic function names */
-extern long total_time[TIME_COUNT];     /* time spent in basic fcts */
-extern int total_calls[TIME_COUNT];     /* # calls to each fct */
+extern _Thread_local unsigned int debug;              /* debug parameter */
+extern _Thread_local bool verbose_debug;              /* -v:  whether to print a lot */
+extern _Thread_local char *total_name[TIME_COUNT];    /* basic function names */
+extern _Thread_local long total_time[TIME_COUNT];     /* time spent in basic fcts */
+extern _Thread_local int total_calls[TIME_COUNT];     /* # calls to each fct */
 
-extern bool echo_comments;		/* turned off by -eat option */
-extern bool echo_unknown_commands;	/* always true ?? */
-extern bool force_irredundant;          /* -nirr command line option */
-extern bool skip_make_sparse;
-extern bool kiss;                       /* -kiss command line option */
-extern bool pos;                        /* -pos command line option */
-extern bool print_solution;             /* -x command line option */
-extern bool recompute_onset;            /* -onset command line option */
-extern bool remove_essential;           /* -ness command line option */
-extern bool single_expand;              /* -fast command line option */
-extern bool summary;                    /* -s command line option */
-extern bool trace;                      /* -t command line option */
-extern bool unwrap_onset;               /* -nunwrap command line option */
-extern bool use_random_order;		/* -random command line option */
-extern bool use_super_gasp;		/* -strong command line option */
-extern char *filename;			/* filename PLA was read from */
-extern bool debug_exact_minimization;   /* dumps info for -do exact */
+extern _Thread_local bool echo_comments;		/* turned off by -eat option */
+extern _Thread_local bool echo_unknown_commands;	/* always true ?? */
+extern _Thread_local bool force_irredundant;          /* -nirr command line option */
+extern _Thread_local bool skip_make_sparse;
+extern _Thread_local bool kiss;                       /* -kiss command line option */
+extern _Thread_local bool pos;                        /* -pos command line option */
+extern _Thread_local bool print_solution;             /* -x command line option */
+extern _Thread_local bool recompute_onset;            /* -onset command line option */
+extern _Thread_local bool remove_essential;           /* -ness command line option */
+extern _Thread_local bool single_expand;              /* -fast command line option */
+extern _Thread_local bool summary;                    /* -s command line option */
+extern _Thread_local bool trace;                      /* -t command line option */
+extern _Thread_local bool unwrap_onset;               /* -nunwrap command line option */
+extern _Thread_local bool use_random_order;		/* -random command line option */
+extern _Thread_local bool use_super_gasp;		/* -strong command line option */
+extern _Thread_local char *filename;			/* filename PLA was read from */
+extern _Thread_local bool debug_exact_minimization;   /* dumps info for -do exact */
 
 
 /*
@@ -487,8 +487,8 @@ struct cdata_struct {
 
 
 extern struct pla_types_struct pla_types[];
-extern struct cube_struct cube, temp_cube_save;
-extern struct cdata_struct cdata, temp_cdata_save;
+extern _Thread_local struct cube_struct cube, temp_cube_save;
+extern _Thread_local struct cdata_struct cdata, temp_cdata_save;
 
 #if BPI == 32
 #define DISJOINT 0x55555555

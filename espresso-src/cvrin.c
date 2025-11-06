@@ -6,8 +6,8 @@
 #include "espresso.h"
 #include "strdup.h"
 
-static bool line_length_error;
-static int lineno;
+static _Thread_local bool line_length_error;
+static _Thread_local int lineno;
 
 void skip_line(register FILE *fpin, register FILE *fpout, register int echo)
 {

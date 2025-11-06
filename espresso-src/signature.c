@@ -14,7 +14,7 @@
 #include "espresso.h"
 #include "signature.h"
 
-static long start_time; /* yuk */
+static _Thread_local long start_time; /* yuk */
 
 pcover
 signature(pset_family F1, pset_family D1, pset_family R1)
