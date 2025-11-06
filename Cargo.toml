@@ -28,17 +28,6 @@ bindgen = "0.69"
 name = "espresso_logic"
 path = "src/lib.rs"
 
-# Exclude obsolete tests that test internal unsafe API
-[[test]]
-name = "test_unsafe_api"
-path = "tests/test_unsafe_api.rs"
-test = false
-
-[[test]]
-name = "test_pla_unsafe"
-path = "tests/test_pla_unsafe.rs"
-test = false
-
 [[example]]
 name = "minimize"
 path = "examples/minimize.rs"

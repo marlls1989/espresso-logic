@@ -19,9 +19,173 @@
 //! - Works with any binary that uses the library
 //! - Thread-safe by design
 
-use crate::ipc::SerializedCover;
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
+
+use crate::cover::Cube;
+use crate::cover::CubeType;
+
+// ============================================================================
+// IPC Types (formerly in ipc.rs)
+// ============================================================================
+
+/// Represents a serializable cube in a cover
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedCube {
+    /// Raw cube data (bit-packed)
+    pub data: Vec<u32>,
+}
+
+/// Represents a serializable cover
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedCover {
+    /// Number of cubes in the cover
+    pub count: usize,
+    /// Size of each cube in words (u32)
+    pub wsize: usize,
+    /// Cube size in bits
+    pub sf_size: usize,
+    /// Cube data (flattened)
+    pub cubes: Vec<SerializedCube>,
+}
+
+/// Configuration for Espresso execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcConfig {
+    pub debug: bool,
+    pub verbose_debug: bool,
+    pub trace: bool,
+    pub summary: bool,
+    pub remove_essential: bool,
+    pub force_irredundant: bool,
+    pub unwrap_onset: bool,
+    pub single_expand: bool,
+    pub use_super_gasp: bool,
+    pub use_random_order: bool,
+}
+
+impl Default for IpcConfig {
+    fn default() -> Self {
+        IpcConfig {
+            debug: false,
+            verbose_debug: false,
+            trace: false,
+            summary: false,
+            remove_essential: true,
+            force_irredundant: true,
+            unwrap_onset: true,
+            single_expand: false,
+            use_super_gasp: false,
+            use_random_order: false,
+        }
+    }
+}
+
+// ============================================================================
+// Serialization Trait and Implementations (formerly in conversion.rs)
+// ============================================================================
+
+/// Trait for types that can be serialized to/from worker IPC format
+pub(crate) trait WorkerSerializable {
+    /// Serialize to worker IPC format
+    fn serialize(&self) -> SerializedCover;
+}
+
+// Note: Implementation is in unsafe.rs module since it needs access to private fields
+
+// ============================================================================
+// Worker Result Decoding (formerly in lib.rs)
+// ============================================================================
+
+/// Unified function to decode all three covers from worker into typed Cubes
+/// Takes F, D, R serialized covers and produces a Vec<Cube> with correct types
+pub(crate) fn decode_worker_result(
+    f_serialized: &SerializedCover,
+    d_serialized: Option<&SerializedCover>,
+    r_serialized: Option<&SerializedCover>,
+    num_inputs: usize,
+    num_outputs: usize,
+) -> Vec<Cube> {
+    let mut result = Vec::new();
+
+    // Decode F cubes
+    for cube_data in &f_serialized.cubes {
+        if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+            result.push(Cube::new(inputs, outputs, CubeType::F));
+        }
+    }
+
+    // Decode D cubes if available
+    if let Some(d_ser) = d_serialized {
+        for cube_data in &d_ser.cubes {
+            if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+                result.push(Cube::new(inputs, outputs, CubeType::D));
+            }
+        }
+    }
+
+    // Decode R cubes if available
+    if let Some(r_ser) = r_serialized {
+        for cube_data in &r_ser.cubes {
+            if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+                result.push(Cube::new(inputs, outputs, CubeType::R));
+            }
+        }
+    }
+
+    result
+}
+
+/// Helper function to decode a single cube from serialized data
+/// Returns None if cube has no set bits (shouldn't happen)
+fn decode_cube(
+    cube_data: &SerializedCube,
+    num_inputs: usize,
+    num_outputs: usize,
+) -> Option<(Vec<Option<bool>>, Vec<bool>)> {
+    let mut inputs = Vec::with_capacity(num_inputs);
+    let mut outputs = Vec::with_capacity(num_outputs);
+
+    // Decode inputs (binary variables - 2 bits each)
+    for var in 0..num_inputs {
+        let bit0 = var * 2;
+        let bit1 = var * 2 + 1;
+
+        let word0 = (bit0 >> 5) + 1;
+        let b0 = bit0 & 31;
+        let word1 = (bit1 >> 5) + 1;
+        let b1 = bit1 & 31;
+
+        let has_bit0 = (cube_data.data.get(word0).copied().unwrap_or(0) & (1 << b0)) != 0;
+        let has_bit1 = (cube_data.data.get(word1).copied().unwrap_or(0) & (1 << b1)) != 0;
+
+        inputs.push(match (has_bit0, has_bit1) {
+            (false, false) => None,
+            (true, false) => Some(false),
+            (false, true) => Some(true),
+            (true, true) => None, // don't care
+        });
+    }
+
+    // Decode outputs (multi-valued variable - 1 bit per value)
+    // Simplified: bit set → true, bit not set → false
+    let output_start = num_inputs * 2;
+    for out in 0..num_outputs {
+        let bit = output_start + out;
+        let word = (bit >> 5) + 1;
+        let b = bit & 31;
+        let val = (cube_data.data.get(word).copied().unwrap_or(0) & (1 << b)) != 0;
+
+        outputs.push(val);
+    }
+
+    Some((inputs, outputs))
+}
+
+// ============================================================================
+// Worker Process Management
+// ============================================================================
 
 /// Request types for worker processes
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -29,7 +193,7 @@ enum WorkerRequest {
     Minimize {
         num_inputs: usize,
         num_outputs: usize,
-        config: crate::ipc::IpcConfig,
+        config: IpcConfig,
         f_cubes: Vec<(Vec<u8>, Vec<u8>)>,
         d_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
         r_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
@@ -56,7 +220,7 @@ impl Worker {
     pub fn execute_minimize(
         num_inputs: usize,
         num_outputs: usize,
-        config: crate::ipc::IpcConfig,
+        config: IpcConfig,
         f_cubes: Vec<(Vec<u8>, Vec<u8>)>,
         d_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
         r_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
@@ -190,7 +354,7 @@ fn worker_main() -> io::Result<()> {
             d_cubes,
             r_cubes,
         } => {
-            use crate::{unsafe_espresso::UnsafeEspresso, UnsafeCover};
+            use crate::r#unsafe::{UnsafeCover, UnsafeEspresso};
 
             // CRITICAL: Redirect C code's stdout to stderr to prevent corrupting IPC
             // The C code prints debug/trace/verbose output to stdout, but we use stdout for IPC.
