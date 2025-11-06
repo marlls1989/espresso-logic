@@ -424,31 +424,86 @@ mod tests {
 
     /// Test 3: Configuration isolation test
     /// Verifies that configuration settings don't leak between threads
+    /// Uses direct C global variable inspection to definitively detect leakage
     #[test]
     fn test_config_isolation() {
+        use std::sync::Barrier;
+
         const NUM_THREADS: usize = 4;
+        let barrier = Arc::new(Barrier::new(NUM_THREADS));
 
         let handles: Vec<_> = (0..NUM_THREADS)
             .map(|thread_id| {
+                let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
-                    // Each thread uses different configuration
+                    // Each thread uses DIFFERENT configuration flags that affect algorithm behavior
+                    // but WITHOUT verbose output flags (debug, trace, verbose_debug, summary)
                     let config = EspressoConfig {
-                        debug: thread_id % 2 == 0,
-                        trace: thread_id % 2 == 1,
+                        // Algorithm flags (different per thread)
+                        single_expand: thread_id % 2 == 0,      // Threads 0,2: fast mode
+                        use_super_gasp: thread_id % 2 == 1,     // Threads 1,3: super gasp
+                        use_random_order: thread_id >= 2,       // Threads 2,3: random order
+                        remove_essential: thread_id % 3 != 0,   // Threads 1,2,3: remove essential
+                        force_irredundant: thread_id != 1,      // All except thread 1
+                        unwrap_onset: thread_id % 2 == 0,       // Threads 0,2
+                        // Output flags ALL disabled to prevent verbose C library output
+                        debug: false,
                         verbose_debug: false,
-                        summary: thread_id == 0,
-                        remove_essential: true,
-                        force_irredundant: true,
-                        unwrap_onset: true,
-                        single_expand: thread_id % 2 == 0,
-                        use_super_gasp: thread_id % 2 == 1,
-                        use_random_order: false,
+                        trace: false,
+                        summary: false,
                     };
 
+                    // Create Espresso instance with config
                     let mut esp = UnsafeEspresso::new_with_config(3, 1, &config);
 
-                    // Perform operations
-                    for _ in 0..10 {
+                    // Synchronize all threads to maximize chance of detecting leakage
+                    barrier.wait();
+
+                    // VERIFY: Read back the actual C global variables and check they match
+                    unsafe {
+                        // C globals are i32 (0 or 1), convert to bool for comparison
+                        let actual_single_expand = *crate::sys::get_single_expand_ptr() != 0;
+                        let actual_super_gasp = *crate::sys::get_use_super_gasp_ptr() != 0;
+                        let actual_random_order = *crate::sys::get_use_random_order_ptr() != 0;
+                        let actual_remove_essential = *crate::sys::get_remove_essential_ptr() != 0;
+                        let actual_force_irredundant = *crate::sys::get_force_irredundant_ptr() != 0;
+                        let actual_unwrap_onset = *crate::sys::get_unwrap_onset_ptr() != 0;
+
+                        // Assert each global matches what this thread set
+                        assert_eq!(
+                            actual_single_expand, config.single_expand,
+                            "Thread {}: single_expand leaked! Expected {}, got {}",
+                            thread_id, config.single_expand, actual_single_expand
+                        );
+                        assert_eq!(
+                            actual_super_gasp, config.use_super_gasp,
+                            "Thread {}: use_super_gasp leaked! Expected {}, got {}",
+                            thread_id, config.use_super_gasp, actual_super_gasp
+                        );
+                        assert_eq!(
+                            actual_random_order, config.use_random_order,
+                            "Thread {}: use_random_order leaked! Expected {}, got {}",
+                            thread_id, config.use_random_order, actual_random_order
+                        );
+                        assert_eq!(
+                            actual_remove_essential, config.remove_essential,
+                            "Thread {}: remove_essential leaked! Expected {}, got {}",
+                            thread_id, config.remove_essential, actual_remove_essential
+                        );
+                        assert_eq!(
+                            actual_force_irredundant, config.force_irredundant,
+                            "Thread {}: force_irredundant leaked! Expected {}, got {}",
+                            thread_id, config.force_irredundant, actual_force_irredundant
+                        );
+                        assert_eq!(
+                            actual_unwrap_onset, config.unwrap_onset,
+                            "Thread {}: unwrap_onset leaked! Expected {}, got {}",
+                            thread_id, config.unwrap_onset, actual_unwrap_onset
+                        );
+                    }
+
+                    // Perform multiple operations to ensure config stays consistent
+                    for iteration in 0..10 {
                         let cubes = vec![
                             (vec![0, 1, 0], vec![1]),
                             (vec![1, 0, 1], vec![1]),
@@ -456,13 +511,30 @@ mod tests {
                         ];
                         let f = UnsafeCover::build_from_cubes(cubes, 3, 1);
                         let (_result, _, _) = esp.minimize(f, None, None);
+
+                        // Re-verify config after each operation
+                        unsafe {
+                            let actual_single_expand = *crate::sys::get_single_expand_ptr() != 0;
+                            let actual_super_gasp = *crate::sys::get_use_super_gasp_ptr() != 0;
+
+                            assert_eq!(
+                                actual_single_expand, config.single_expand,
+                                "Thread {} iteration {}: single_expand changed during execution!",
+                                thread_id, iteration
+                            );
+                            assert_eq!(
+                                actual_super_gasp, config.use_super_gasp,
+                                "Thread {} iteration {}: use_super_gasp changed during execution!",
+                                thread_id, iteration
+                            );
+                        }
                     }
                 })
             })
             .collect();
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Thread panicked - config isolation test failed!");
         }
     }
 
