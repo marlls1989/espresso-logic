@@ -388,7 +388,7 @@ pub(crate) fn parse_pla_content(content: &str) -> io::Result<(usize, usize, Vec<
 /// A cover with dynamic dimensions (from PLA files)
 ///
 /// Use this when loading PLA files where dimensions are not known at compile time.
-/// Outputs are Option<bool>: Some(true)=1, Some(false)=0, None=don't-care
+/// Outputs are `Option<bool>`: Some(true)=1, Some(false)=0, None=don't-care
 #[derive(Clone)]
 pub struct PLACover {
     num_inputs: usize,

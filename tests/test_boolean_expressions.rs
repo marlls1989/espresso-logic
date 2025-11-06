@@ -215,16 +215,16 @@ fn test_constant_propagation() {
 
     // a * true should still have variable a
     let expr1 = expr!(a * t);
-    assert!(expr1.collect_variables().len() >= 1);
+    assert!(!expr1.collect_variables().is_empty());
 
     // a * false should have variable a (even though it could simplify to false)
     let expr2 = expr!(a * f);
-    assert!(expr2.collect_variables().len() >= 1);
+    assert!(!expr2.collect_variables().is_empty());
 
     // a + true should have variable a
     let one = BoolExpr::constant(true);
     let expr3 = expr!(a + one);
-    assert!(expr3.collect_variables().len() >= 1);
+    assert!(!expr3.collect_variables().is_empty());
 }
 
 #[test]

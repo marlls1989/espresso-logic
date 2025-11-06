@@ -30,7 +30,7 @@ fn main() -> std::io::Result<()> {
 
     // Inspect the minimized cubes
     println!("\nMinimized cubes:");
-    for (i, (inputs, outputs)) in cover.iter_cubes().enumerate() {
+    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
         print!("  Cube {}: ", i + 1);
         for input in inputs {
             match input {

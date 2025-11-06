@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "2.6.0"
+version = "2.6.1"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"

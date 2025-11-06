@@ -5,7 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.0] - 2025-11-06
+## [2.6.1] - 2024-11-06
+
+### Removed
+
+- **`CoverBuilder::cubes()`** - Exposed internal `Cube` type which was not part of the public API
+- **`CoverBuilder::num_cubes()`** - Duplicated the trait method with incorrect behavior (didn't filter by cube type)
+- **`CoverBuilder::iter_cubes()`** - Duplicated functionality of `Cover::cubes_iter()` trait method
+
+### Changed
+
+- Updated crate-level documentation to include boolean expression API examples
+- Added "Three Ways to Use Espresso" section with clear examples
+- Added cover types documentation with usage examples
+- Improved documentation structure and completeness
+
+### Fixed
+
+- Fixed unclosed HTML tag warning in `pla.rs` documentation
+- Fixed clippy warnings about length comparisons in tests
+
+### Migration Guide
+
+If you were using the removed methods on `CoverBuilder`:
+
+- **Instead of `cover.cubes()`** - This method exposed internal types and has been removed. Use `cover.cubes_iter()` from the `Cover` trait to iterate over cubes in the public format.
+- **Instead of `cover.num_cubes()`** - Use the trait method (same name, automatically available via `Cover` trait). The trait method correctly filters cubes by type.
+- **Instead of `cover.iter_cubes()`** - Use `cover.cubes_iter()` from the `Cover` trait (same functionality, standard API).
+
+## [2.6.0] - 2024-11-06
 
 ### Added
 

@@ -14,7 +14,49 @@
 //! - Boolean function simplification
 //! - Logic optimization in CAD tools
 //!
-//! ## Example
+//! ## Three Ways to Use Espresso
+//!
+//! ### 1. Boolean Expressions (Recommended for most use cases)
+//!
+//! Build expressions programmatically and minimize them:
+//!
+//! ```
+//! use espresso_logic::{BoolExpr, expr};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! let a = BoolExpr::variable("a");
+//! let b = BoolExpr::variable("b");
+//! let c = BoolExpr::variable("c");
+//!
+//! // Build a redundant expression: a*b + a*b*c
+//! let redundant = expr!(a * b + a * b * c);
+//!
+//! // Minimize it (returns a new minimized expression)
+//! let minimized = redundant.minimize()?;
+//!
+//! println!("Minimized: {}", minimized);  // Output: a*b
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Parse expressions from strings:
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! # fn main() -> Result<(), String> {
+//! // Parse using standard operators: +, *, ~, !
+//! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
+//!
+//! // Minimize
+//! let minimized = expr.minimize().map_err(|e| e.to_string())?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### 2. Cover Builder (Static dimensions with compile-time checking)
+//!
+//! Build covers with fixed dimensions known at compile time:
 //!
 //! ```
 //! use espresso_logic::{Cover, CoverBuilder};
@@ -24,22 +66,23 @@
 //! let mut cover = CoverBuilder::<2, 1>::new();
 //!
 //! // Build the ON-set (truth table)
-//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (XOR)
-//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1 (XOR)
+//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
+//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
 //!
-//! // Minimize - runs in isolated process
+//! // Minimize in-place
 //! cover.minimize()?;
 //!
-//! // Use the result
-//! println!("Minimized to {} cubes", cover.num_cubes());
+//! // Iterate over minimized cubes
+//! for (inputs, outputs) in cover.cubes_iter() {
+//!     println!("Cube: {:?} -> {:?}", inputs, outputs);
+//! }
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! ## PLA File Format
+//! ### 3. PLA Files (Dynamic dimensions from files)
 //!
-//! Covers can also read and write PLA files, a standard format for representing
-//! Boolean functions:
+//! Load and minimize PLA files with dynamic dimensions:
 //!
 //! ```
 //! use espresso_logic::{Cover, PLACover, PLAType};
@@ -60,6 +103,31 @@
 //! # let output_path = output_file.path();
 //! // Write to PLA file
 //! cover.to_pla_file(output_path, PLAType::F)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Cover Types
+//!
+//! The library supports different cover types for representing Boolean functions:
+//!
+//! - **F Type** - ON-set only (specifies where output is 1)
+//! - **FD Type** - ON-set + Don't-cares (default, most flexible)
+//! - **FR Type** - ON-set + OFF-set (specifies both 1s and 0s)
+//! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
+//!
+//! ```
+//! use espresso_logic::{CoverBuilder, FType, FDType, Cover};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! // F type (ON-set only)
+//! let mut f_cover = CoverBuilder::<2, 1, FType>::new();
+//! f_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);
+//!
+//! // FD type (ON-set + Don't-cares) - default
+//! let mut fd_cover = CoverBuilder::<2, 1, FDType>::new();  // or just CoverBuilder::<2, 1>::new()
+//! fd_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);  // ON
+//! fd_cover.add_cube(&[Some(false), Some(false)], &[None]);      // Don't-care
 //! # Ok(())
 //! # }
 //! ```

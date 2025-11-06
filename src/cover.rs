@@ -418,28 +418,6 @@ impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker>
 
         self
     }
-
-    /// Get the number of cubes
-    pub fn num_cubes(&self) -> usize {
-        self.cubes.len()
-    }
-
-    /// Get a reference to the cubes
-    ///
-    /// Returns the cubes as references to internal Cube structures.
-    pub fn cubes(&self) -> &[Cube] {
-        &self.cubes
-    }
-
-    /// Iterate over cubes
-    ///
-    /// Returns an iterator over `(&[Option<bool>], Vec<Option<bool>>)` tuples.
-    pub fn iter_cubes(&self) -> impl Iterator<Item = (&[Option<bool>], Vec<Option<bool>>)> + '_ {
-        self.cubes.iter().map(|cube| {
-            let outputs: Vec<Option<bool>> = cube.outputs.iter().map(|&b| Some(b)).collect();
-            (cube.inputs.as_ref(), outputs)
-        })
-    }
 }
 
 // Implement Minimizable for CoverBuilder (Cover trait is auto-implemented via blanket impl)
