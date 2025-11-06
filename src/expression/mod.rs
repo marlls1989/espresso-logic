@@ -12,11 +12,17 @@ use std::sync::Arc;
 mod cover;
 pub use cover::ExprCover;
 
-// Lalrpop-generated parser module
+// Lalrpop-generated parser module (generated in OUT_DIR at build time)
 #[allow(clippy::all)]
 mod parser {
-    use lalrpop_util::lalrpop_mod;
-    lalrpop_mod!(pub bool_expr, "/expression/bool_expr.rs");
+    #![allow(clippy::all)]
+    #![allow(dead_code)]
+    #![allow(unused_variables)]
+    #![allow(unused_imports)]
+    #![allow(non_snake_case)]
+    #![allow(non_camel_case_types)]
+    #![allow(non_upper_case_globals)]
+    include!(concat!(env!("OUT_DIR"), "/expression/bool_expr.rs"));
 }
 
 /// Inner representation of a boolean expression
@@ -89,7 +95,7 @@ impl BoolExpr {
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
     pub fn parse(input: &str) -> Result<Self, String> {
-        parser::bool_expr::ExprParser::new()
+        parser::ExprParser::new()
             .parse(input)
             .map_err(|e| format!("Parse error: {}", e))
     }

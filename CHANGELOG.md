@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.2] - 2024-11-06
 
+### Fixed
+
+- **Build System:** Lalrpop parser generation now outputs to `OUT_DIR` instead of source tree, fixing `cargo publish` verification failures
+- **API:** Parser module is now properly private (was incorrectly exported as public)
+
 ### Removed
 
 **Process Isolation Architecture:**

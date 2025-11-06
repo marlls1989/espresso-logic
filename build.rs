@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    // Compile lalrpop grammar files
+    // Compile lalrpop grammar files to OUT_DIR for cargo publish compatibility
     lalrpop::process_root().unwrap();
 
     let espresso_src = PathBuf::from("espresso-src");
