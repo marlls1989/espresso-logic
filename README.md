@@ -19,10 +19,11 @@ Espresso takes a Boolean function represented as a sum-of-products and produces 
 ## Features
 
 - ✅ **Safe Rust API** - Memory-safe wrappers around the C library
-- ✅ **Process Isolation** - NEW! Thread-safe concurrent execution via isolated processes
+- ✅ **Boolean Expressions** - NEW! High-level API with parsing, operator overloading, and `expr!` macro
+- ✅ **Process Isolation** - Thread-safe concurrent execution via isolated processes
 - ✅ **Command Line Interface** - Compatible with original Espresso CLI
 - ✅ **PLA File Support** - Read and write Berkeley PLA format files
-- ✅ **Flexible Input** - Programmatic cover construction or file-based input
+- ✅ **Flexible Input** - Boolean expressions, programmatic covers, or PLA files
 - ✅ **Multiple Algorithms** - Both heuristic (fast) and exact (optimal) minimization
 - ✅ **Zero-cost Abstractions** - Minimal overhead compared to direct C usage
 - ✅ **Well Documented** - Comprehensive API documentation and examples
@@ -33,7 +34,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "2.3"
+espresso-logic = "2.6"
 ```
 
 ### Command Line Usage
@@ -52,7 +53,33 @@ cargo build --release --bin espresso
 ./target/release/espresso --do exact input.pla
 ```
 
-### Library API Example
+### Boolean Expressions (High-Level API)
+
+```rust
+use espresso_logic::{BoolExpr, expr};
+
+fn main() -> std::io::Result<()> {
+    // Create variables
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Build expression with expr! macro for clean syntax
+    let expr = expr!(a * b + a * b * c);  // Redundant term
+    
+    // Minimize directly
+    let minimized = expr.minimize()?;
+    println!("Minimized: {}", minimized);  // Output: (a * b)
+    
+    // Or parse from string
+    let parsed = BoolExpr::parse("(a + b) * (c + d)")?;
+    let result = parsed.minimize()?;
+    
+    Ok(())
+}
+```
+
+### Library API Example (Low-Level)
 
 ```rust
 use espresso_logic::Cover;
@@ -168,6 +195,9 @@ The build script automatically compiles the C source code and generates FFI bind
 The crate includes several examples demonstrating different use cases:
 
 ```bash
+# Boolean expressions (high-level API) - NEW!
+cargo run --example boolean_expressions
+
 # Basic minimization
 cargo run --example minimize
 
@@ -211,28 +241,38 @@ Espresso uses the Berkeley PLA format. Here's a simple example:
 
 ### Core Types
 
-- **`Espresso`** - Main minimizer interface
-- **`Cover`** - Represents a set of product terms (cubes)
-- **`CoverBuilder`** - Helper for building covers programmatically
-- **`PLA`** - Represents a Programmable Logic Array
+#### High-Level API (Boolean Expressions)
+- **`BoolExpr`** - Boolean expression with operator overloading
+- **`ExprCover`** - Cover representation for boolean expressions
+- **`expr!`** - Macro for clean expression syntax
+
+#### Low-Level API (Cubes and Covers)
+- **`Cover<I, O>`** - Generic cover with compile-time dimensions
+- **`CoverBuilder<I, O>`** - Builder for constructing covers programmatically
+- **`PLACover`** - Dynamic cover for PLA files
 - **`PLAType`** - Output format specifier
 
 ### Key Methods
 
 ```rust
-// Create minimizer
-let mut esp = Espresso::new(inputs, outputs);
+// Boolean expressions (high-level)
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let expr = expr!(a * b + !a * !b);
+let minimized = expr.minimize()?;
 
-// Heuristic minimization (fast)
-let min = esp.minimize(f, d, r);
+// Or parse from string
+let expr = BoolExpr::parse("(a + b) * c")?;
 
-// Exact minimization (optimal but slower)
-let min = esp.minimize_exact(f, d, r);
+// Low-level cover API
+let mut cover = CoverBuilder::<2, 1>::new();
+cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+cover.minimize()?;
 
-// PLA operations
-let pla = PLA::from_file("file.pla")?;
-let minimized = pla.minimize();
-minimized.to_file("out.pla", PLAType::F)?;
+// PLA file operations
+let mut pla = PLACover::from_pla_file("file.pla")?;
+pla.minimize()?;
+pla.to_pla_file("out.pla", PLAType::F)?;
 ```
 
 See [docs/API.md](docs/API.md) for complete API documentation.
@@ -294,8 +334,9 @@ cargo doc --open
 ```
 
 Additional documentation:
-- [Command Line Interface](docs/CLI.md)
-- [API Reference](docs/API.md)
+- [Boolean Expressions Guide](docs/BOOLEAN_EXPRESSIONS.md) - Comprehensive guide to the expression API
+- [API Reference](docs/API.md) - Complete API documentation
+- [Command Line Interface](docs/CLI.md) - CLI usage guide
 - [Process Isolation](docs/PROCESS_ISOLATION.md) - Thread-safe concurrent execution
 - [Contributing Guidelines](CONTRIBUTING.md)
 - [Original Espresso README](espresso-src/README)

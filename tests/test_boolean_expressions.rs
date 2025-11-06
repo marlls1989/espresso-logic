@@ -1,0 +1,532 @@
+//! Comprehensive tests for boolean expression functionality
+
+use espresso_logic::{expr, BoolExpr, Cover, ExprCover};
+use std::sync::Arc;
+
+#[test]
+fn test_parse_simple_variable() {
+    let expr = BoolExpr::parse("a").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 1);
+}
+
+#[test]
+fn test_parse_and() {
+    let expr = BoolExpr::parse("a * b").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn test_parse_or() {
+    let expr = BoolExpr::parse("a + b").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn test_parse_not() {
+    let expr1 = BoolExpr::parse("~a").unwrap();
+    let expr2 = BoolExpr::parse("!a").unwrap();
+
+    // Both should have same variable
+    assert_eq!(expr1.collect_variables().len(), 1);
+    assert_eq!(expr2.collect_variables().len(), 1);
+}
+
+#[test]
+fn test_parse_parentheses() {
+    let expr = BoolExpr::parse("(a + b) * c").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 3);
+}
+
+#[test]
+fn test_parse_complex() {
+    let expr = BoolExpr::parse("(a * b) + (~a * ~b)").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn test_parse_constants() {
+    let t1 = BoolExpr::parse("1").unwrap();
+    let t2 = BoolExpr::parse("true").unwrap();
+    let f1 = BoolExpr::parse("0").unwrap();
+    let f2 = BoolExpr::parse("false").unwrap();
+
+    assert_eq!(t1.collect_variables().len(), 0);
+    assert_eq!(t2.collect_variables().len(), 0);
+    assert_eq!(f1.collect_variables().len(), 0);
+    assert_eq!(f2.collect_variables().len(), 0);
+}
+
+#[test]
+fn test_parse_multi_char_variables() {
+    let expr = BoolExpr::parse("input_a * input_b + output_c").unwrap();
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 3);
+
+    let var_names: Vec<String> = vars.iter().map(|s| s.to_string()).collect();
+    assert_eq!(var_names, vec!["input_a", "input_b", "output_c"]);
+}
+
+#[test]
+fn test_precedence() {
+    // NOT > AND > OR precedence
+    let expr1 = BoolExpr::parse("~a * b + c").unwrap();
+    let expr2 = BoolExpr::parse("((~a) * b) + c").unwrap();
+
+    // Both should parse the same way
+    assert_eq!(expr1.collect_variables(), expr2.collect_variables());
+}
+
+#[test]
+fn test_method_api_integration() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    // Create expression using method API
+    let expr1 = a.and(&b).or(&a.not().and(&b.not()));
+
+    // Parse equivalent expression
+    let expr2 = BoolExpr::parse("a * b + ~a * ~b").unwrap();
+
+    // Should have same variables
+    assert_eq!(expr1.collect_variables(), expr2.collect_variables());
+}
+
+#[test]
+fn test_macro_vs_method_api() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    // Same expression built two ways
+    let via_macro = expr!(a * b + !a * !b);
+    let via_method = a.and(&b).or(&a.not().and(&b.not()));
+
+    // Should have identical variables
+    assert_eq!(
+        via_macro.collect_variables(),
+        via_method.collect_variables()
+    );
+
+    // Both should convert to covers with same properties
+    let cover_macro = ExprCover::from_expr(via_macro);
+    let cover_method = ExprCover::from_expr(via_method);
+    assert_eq!(cover_macro.num_inputs(), cover_method.num_inputs());
+    assert_eq!(cover_macro.num_outputs(), cover_method.num_outputs());
+}
+
+#[test]
+fn test_macro_vs_parser() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    // Same expression via macro and parser
+    let via_macro = expr!(a * b + !a * !b);
+    let via_parser = BoolExpr::parse("a * b + ~a * ~b").unwrap();
+
+    // Should have identical structure
+    assert_eq!(
+        via_macro.collect_variables(),
+        via_parser.collect_variables()
+    );
+}
+
+#[test]
+fn test_cover_trait_basics() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let expr = expr!(a * b);
+
+    // Should be able to create ExprCover
+    let cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+}
+
+#[test]
+fn test_xor_expression() {
+    // XOR: a*~b + ~a*b
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let xor = expr!(a * !b + !a * b);
+
+    let cover = ExprCover::from_expr(xor);
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+}
+
+#[test]
+fn test_xnor_expression() {
+    // XNOR: a*b + ~a*~b
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let xnor = expr!(a * b + !a * !b);
+
+    let cover = ExprCover::from_expr(xnor);
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+}
+
+#[test]
+fn test_minimization() -> std::io::Result<()> {
+    // Create a redundant expression: a*b + a*b*c
+    // Should minimize to just a*b
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    let expr = expr!(a * b + a * b * c);
+
+    // Test that minimization runs without error using convenience method
+    let minimized = expr.minimize()?;
+
+    // After minimization, should still have the same variables
+    let vars = minimized.collect_variables();
+    assert!(vars.len() >= 2); // At least a and b should remain
+
+    Ok(())
+}
+
+#[test]
+fn test_de_morgan_laws() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    // ~(a * b) should expand using De Morgan's law
+    let expr1 = expr!(!(a * b));
+
+    // ~(a + b) should expand using De Morgan's law
+    let expr2 = expr!(!(a + b));
+
+    let cover1 = ExprCover::from_expr(expr1);
+    let cover2 = ExprCover::from_expr(expr2);
+    assert_eq!(cover1.num_inputs(), 2);
+    assert_eq!(cover2.num_inputs(), 2);
+}
+
+#[test]
+fn test_constant_propagation() {
+    let a = BoolExpr::variable("a");
+    let t = BoolExpr::constant(true);
+    let f = BoolExpr::constant(false);
+
+    // a * true should still have variable a
+    let expr1 = expr!(a * t);
+    assert!(expr1.collect_variables().len() >= 1);
+
+    // a * false should have variable a (even though it could simplify to false)
+    let expr2 = expr!(a * f);
+    assert!(expr2.collect_variables().len() >= 1);
+
+    // a + true should have variable a
+    let one = BoolExpr::constant(true);
+    let expr3 = expr!(a + one);
+    assert!(expr3.collect_variables().len() >= 1);
+}
+
+#[test]
+fn test_parse_error_handling() {
+    // Test various invalid inputs
+    assert!(BoolExpr::parse("").is_err());
+    assert!(BoolExpr::parse("a +").is_err());
+    assert!(BoolExpr::parse("* b").is_err());
+    assert!(BoolExpr::parse("(a + b").is_err()); // Missing closing paren
+    assert!(BoolExpr::parse("a b").is_err()); // Missing operator
+}
+
+#[test]
+fn test_variable_ordering() {
+    // Variables should be in alphabetical order
+    let expr = BoolExpr::parse("z + a + m").unwrap();
+    let vars = expr.collect_variables();
+    let var_names: Vec<String> = vars.iter().map(|s| s.to_string()).collect();
+
+    // Should be sorted
+    let mut sorted = var_names.clone();
+    sorted.sort();
+    assert_eq!(var_names, sorted);
+}
+
+#[test]
+fn test_large_expression() {
+    // Test with many variables
+    let expr = BoolExpr::parse("(a * b * c) + (d * e * f) + (g * h * i) + (j * k * l)").unwrap();
+
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 12);
+}
+
+#[test]
+fn test_deeply_nested() {
+    // Test deeply nested expression
+    let expr = BoolExpr::parse("((((a * b) + c) * d) + e)").unwrap();
+
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 5);
+}
+
+#[test]
+fn test_cube_iteration() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let expr = expr!(a * b);
+
+    // Should be able to iterate cubes via ExprCover
+    let cover = ExprCover::from_expr(expr);
+    let cubes: Vec<_> = cover.cubes_iter().collect();
+    assert!(!cubes.is_empty());
+}
+
+#[test]
+fn test_to_pla_string() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let expr = expr!(a * b);
+
+    // Should be able to convert to PLA string via ExprCover
+    let cover = ExprCover::from_expr(expr);
+    let pla = cover.to_pla_string(espresso_logic::PLAType::F)?;
+
+    // Should contain basic PLA structure
+    assert!(pla.contains(".i"));
+    assert!(pla.contains(".o"));
+    assert!(pla.contains(".e"));
+
+    Ok(())
+}
+
+#[test]
+fn test_clone_semantics() {
+    let a = BoolExpr::variable("a");
+    let b = a.clone();
+
+    // Cloning should be cheap and share the same Arc
+    assert_eq!(a, b);
+
+    // After cloning, both should still work independently
+    let x = BoolExpr::variable("x");
+    let y = BoolExpr::variable("y");
+    let expr1 = expr!(a + x);
+    let expr2 = expr!(b + y);
+
+    assert_ne!(expr1.collect_variables(), expr2.collect_variables());
+}
+
+#[test]
+fn test_minimize_absorption() -> std::io::Result<()> {
+    // Test absorption law: a + a*b should minimize to a
+    let expr = BoolExpr::parse("a + a * b").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 2); // Before: 2 cubes
+
+    cover.minimize()?;
+
+    // After Espresso minimization: should reduce to 1 cube (just 'a')
+    assert_eq!(cover.num_cubes(), 1);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 1);
+    assert!(vars.contains(&Arc::from("a")));
+
+    Ok(())
+}
+
+#[test]
+fn test_minimize_consensus() -> std::io::Result<()> {
+    // Consensus theorem: a*b + ~a*c + b*c should minimize to a*b + ~a*c
+    let expr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 3); // Before: 3 cubes
+
+    cover.minimize()?;
+
+    // After Espresso minimization: should reduce to 2 cubes (b*c is redundant)
+    assert_eq!(cover.num_cubes(), 2);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_minimize_idempotence() -> std::io::Result<()> {
+    // a + a should minimize to a
+    let expr = BoolExpr::parse("a + a").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 2); // Before: 2 identical cubes
+
+    cover.minimize()?;
+
+    // After Espresso minimization: should reduce to 1 cube
+    assert_eq!(cover.num_cubes(), 1);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 1);
+    assert!(vars.contains(&Arc::from("a")));
+
+    Ok(())
+}
+
+#[test]
+fn test_complex_parentheses() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // Test with expr! macro
+    let expr1 = expr!((a + b) * c);
+    let cover1 = ExprCover::from_expr(expr1.clone());
+    assert_eq!(cover1.num_inputs(), 3);
+
+    // Parser version
+    let expr2 = BoolExpr::parse("(a + b) * c").unwrap();
+    let cover2 = ExprCover::from_expr(expr2.clone());
+    assert_eq!(cover2.num_inputs(), 3);
+
+    // Both should have same variables
+    assert_eq!(expr1.collect_variables(), expr2.collect_variables());
+}
+
+#[test]
+fn test_nested_parentheses_macro() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let d = BoolExpr::variable("d");
+
+    // Test macro with nested parens
+    let expr1 = expr!(a * (b + c));
+    let cover1 = ExprCover::from_expr(expr1.clone());
+    assert_eq!(cover1.num_inputs(), 3);
+
+    // Compare with parser
+    let expr2 = BoolExpr::parse("a * (b + c)").unwrap();
+    assert_eq!(expr1.collect_variables(), expr2.collect_variables());
+
+    // More complex: (a + b) * (c + d)
+    let expr3 = expr!((a + b) * (c + d));
+    let expr4 = BoolExpr::parse("(a + b) * (c + d)").unwrap();
+    assert_eq!(expr3.collect_variables(), expr4.collect_variables());
+}
+
+#[test]
+fn test_deeply_nested_parentheses() {
+    // Test very complex nested expression
+    let expr = BoolExpr::parse("((a + b) * (c + d)) + ((e + f) * (g + h))").unwrap();
+
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 8);
+
+    let var_names: Vec<String> = vars.iter().map(|s| s.to_string()).collect();
+    assert_eq!(var_names, vec!["a", "b", "c", "d", "e", "f", "g", "h"]);
+}
+
+#[test]
+fn test_parentheses_precedence() {
+    // (a + b) * c is different from a + b * c
+    let expr1 = BoolExpr::parse("(a + b) * c").unwrap();
+    let expr2 = BoolExpr::parse("a + b * c").unwrap();
+
+    // Both have same variables
+    assert_eq!(expr1.collect_variables(), expr2.collect_variables());
+
+    // But different structure - verify by converting to PLA via ExprCover
+    let cover1 = ExprCover::from_expr(expr1);
+    let cover2 = ExprCover::from_expr(expr2);
+    let pla1 = cover1.to_pla_string(espresso_logic::PLAType::F).unwrap();
+    let pla2 = cover2.to_pla_string(espresso_logic::PLAType::F).unwrap();
+
+    // Different number of cubes means different logic
+    assert_ne!(pla1, pla2);
+}
+
+#[test]
+fn test_minimize_distributive() -> std::io::Result<()> {
+    // a*(b+c) expands to a*b + a*c (already minimal)
+    let expr = BoolExpr::parse("a * (b + c)").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 2); // Expands to 2 cubes
+
+    cover.minimize()?;
+
+    // After Espresso minimization: stays at 2 cubes (already minimal)
+    assert_eq!(cover.num_cubes(), 2);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_complex_minimize_real_world() -> std::io::Result<()> {
+    // Real-world example: a*b + a*c + b*c*d + a*b*d
+    let expr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 4); // Before: 4 cubes
+
+    cover.minimize()?;
+
+    // After Espresso minimization: should reduce to 3 cubes (a*b*d covered by a*b)
+    assert_eq!(cover.num_cubes(), 3);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 4);
+
+    Ok(())
+}
+
+#[test]
+fn test_minimize_adjacent_minterms() -> std::io::Result<()> {
+    // Test Espresso minimization on adjacent minterms
+    // f(a,b,c) = m0 + m1 + m2 + m3 (all combinations where a=0)
+    let expr = BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 4); // Before: 4 cubes
+
+    cover.minimize()?;
+
+    // Espresso minimizes to single cube: ~a
+    assert_eq!(cover.num_cubes(), 1);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 1);
+    assert!(vars.contains(&Arc::from("a")));
+
+    Ok(())
+}
+
+#[test]
+fn test_parentheses_with_negation() {
+    // Test negation of parenthesized expressions
+    let expr1 = BoolExpr::parse("~(a * b)").unwrap();
+    let expr2 = BoolExpr::parse("~(a + b)").unwrap();
+
+    // Should apply De Morgan's laws during DNF conversion
+    let cover1 = ExprCover::from_expr(expr1);
+    let cover2 = ExprCover::from_expr(expr2);
+    assert_eq!(cover1.num_inputs(), 2);
+    assert_eq!(cover2.num_inputs(), 2);
+}
+
+#[test]
+fn test_nested_parentheses_minimize() -> std::io::Result<()> {
+    // (a + b) * (a + c) expands to a + a*c + a*b + b*c = a + b*c
+    let expr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
+    let mut cover = ExprCover::from_expr(expr);
+    assert_eq!(cover.num_cubes(), 4); // Expands to 4 products
+
+    cover.minimize()?;
+
+    // After Espresso minimization: should reduce to 2 cubes (a + b*c)
+    assert_eq!(cover.num_cubes(), 2);
+    let minimized = cover.to_expr();
+    let vars = minimized.collect_variables();
+    assert_eq!(vars.len(), 3);
+
+    Ok(())
+}

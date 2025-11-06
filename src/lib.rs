@@ -108,6 +108,7 @@
 //! - **Efficient IPC**: Uses shared memory for fast communication
 
 // Public modules
+pub mod expression;
 pub mod sys;
 
 // Private modules
@@ -121,6 +122,7 @@ mod r#unsafe;
 
 // Re-export high-level public API
 pub use cover::{Cover, CoverBuilder, CoverTypeMarker, FDRType, FDType, FRType, FType, PLAType};
+pub use expression::{BoolExpr, ExprCover};
 pub use pla::PLACover;
 
 /// Configuration for the Espresso algorithm

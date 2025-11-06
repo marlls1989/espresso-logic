@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "2.3.0"
+version = "2.6.0"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"
@@ -19,10 +19,12 @@ bincode = "1.3"
 memmap2 = "0.9"
 ctor = "0.2"
 indexmap = "2.0"
+lalrpop-util = { version = "0.20", features = ["lexer"] }
 
 [build-dependencies]
 cc = "1.0"
 bindgen = "0.69"
+lalrpop = "0.20"
 
 [lib]
 name = "espresso_logic"
@@ -51,4 +53,8 @@ path = "examples/transparent_api.rs"
 [[example]]
 name = "concurrent_transparent"
 path = "examples/concurrent_transparent.rs"
+
+[[example]]
+name = "boolean_expressions"
+path = "examples/boolean_expressions.rs"
 

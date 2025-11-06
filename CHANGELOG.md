@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2025-11-06
+
+### Added
+
+#### High-Level Boolean Expression API
+- **`BoolExpr`** - A new high-level type for representing boolean expressions
+  - Programmatic construction with `.and()`, `.or()`, `.not()` methods
+  - Operator overloading support (`*` for AND, `+` for OR, `!` for NOT)
+  - Direct minimization with `.minimize()` method
+  - Variable collection and inspection
+  - Debug and Display implementations for readable output
+- **`expr!` macro** - Clean syntax for building expressions without explicit references
+  - Supports `*`, `+`, `!`, and parentheses
+  - Example: `expr!(a * b + !a * !b)` for XNOR
+- **Expression parser** - Parse boolean expressions from strings using lalrpop
+  - Supports `+` (OR), `*` (AND), `~`/`!` (NOT)
+  - Parentheses for grouping
+  - Constants: `0`, `1`, `true`, `false`
+  - Multi-character variable names (alphanumeric with underscores)
+  - Proper operator precedence (NOT > AND > OR)
+- **`ExprCover`** - Cover implementation for boolean expressions
+  - Converts expressions to Disjunctive Normal Form (DNF)
+  - Integrates with Espresso minimization
+  - Converts minimized covers back to expressions
+  - Implements all `Minimizable` trait methods
+  - Supports PLA file export
+
+#### New Examples and Tests
+- `examples/boolean_expressions.rs` - Comprehensive examples (11 scenarios)
+- `tests/test_boolean_expressions.rs` - 37 test cases covering:
+  - Parsing (variables, operators, constants, precedence)
+  - Expression construction (method API, macro, operators)
+  - Minimization (various boolean functions)
+  - PLA conversion
+  - Edge cases and complex expressions
+
+#### Build Infrastructure
+- **lalrpop** integration for grammar-based parsing
+  - Grammar file: `src/expression/bool_expr.lalrpop`
+  - Build-time parser generation
+- New dependencies: `lalrpop`, `lalrpop-util`
+
+### Changed
+- **API organization** - Added `expression` module to public exports
+  - `pub use expression::{BoolExpr, ExprCover};`
+- **Documentation** - Extensively updated for new features:
+  - README.md now features boolean expressions prominently
+  - docs/API.md has dedicated "High-Level API" section
+  - All examples updated to show expression API first
+- **Cargo.toml** - Added `boolean_expressions` example binary
+
+### Technical Details
+- Boolean expressions use `Arc<str>` for efficient variable name sharing
+- Expressions are converted to DNF using De Morgan's laws
+- Variables are stored in alphabetical order (BTreeSet) for consistency
+- DNF cubes are directly compatible with Espresso's cover format
+- Expression parsing is type-safe and returns helpful error messages
+- All expression operations preserve structural sharing via Arc
+
+### Performance
+- Expression parsing: microseconds for typical expressions
+- DNF conversion: linear in expression size
+- No overhead vs. direct cover construction for minimization
+- Operator overloading is zero-cost (inlined)
+
 ## [2.5.1] - 2025-11-05
 
 ### Fixed

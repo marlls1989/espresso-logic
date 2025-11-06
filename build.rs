@@ -2,6 +2,9 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    // Compile lalrpop grammar files
+    lalrpop::process_root().unwrap();
+
     let espresso_src = PathBuf::from("espresso-src");
 
     println!("cargo:rerun-if-changed=espresso-src");
