@@ -1,55 +1,37 @@
-//! Test that CoverBuilder actually works
+//! Test that Cover works with the transparent API
 
-use espresso_logic::{CoverBuilder, Espresso};
+use espresso_logic::{Cover, CoverBuilder};
 
 #[test]
-fn test_cover_builder_populates_cubes() {
-    // CoverBuilder requires Espresso to be initialized first
-    let _esp = Espresso::new(2, 1);
-
-    let mut builder = CoverBuilder::new(2, 1);
+fn test_cover_populates_cubes() {
+    // Create cover and add cubes
+    let mut cover = CoverBuilder::<2, 1>::new();
 
     // Add two cubes (XOR function)
-    builder.add_cube(&[0, 1], &[1]); // 01 -> 1
-    builder.add_cube(&[1, 0], &[1]); // 10 -> 1
+    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
-    let cover = builder.build();
+    // Minimize
+    cover.minimize().unwrap();
 
-    // Verify the cover actually contains the cubes we added
-    assert_eq!(
-        cover.count(),
-        2,
-        "Cover should contain 2 cubes, but has {}",
-        cover.count()
-    );
+    // XOR cannot be minimized - should still have 2 cubes
+    assert_eq!(cover.num_cubes(), 2, "XOR should have exactly 2 cubes after minimization");
 }
 
 #[test]
-fn test_cover_builder_empty() {
-    // CoverBuilder requires Espresso to be initialized first
-    let _esp = Espresso::new(2, 1);
+fn test_cover_many_cubes() {
+    // Create cover
+    let mut cover = CoverBuilder::<3, 1>::new();
 
-    let builder = CoverBuilder::new(2, 1);
-    let cover = builder.build();
+    // Add 4 cubes: all have input[2]=1, so this should minimize to just --1 -> 1
+    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);  // 001 -> 1
+    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]);   // 011 -> 1
+    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);   // 101 -> 1
+    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);    // 111 -> 1
 
-    // Empty builder should produce empty cover
-    assert_eq!(cover.count(), 0);
-}
+    // Minimize
+    cover.minimize().unwrap();
 
-#[test]
-fn test_cover_builder_many_cubes() {
-    // CoverBuilder requires Espresso to be initialized first
-    let _esp = Espresso::new(3, 1);
-
-    let mut builder = CoverBuilder::new(3, 1);
-
-    // Add 4 cubes
-    builder.add_cube(&[0, 0, 1], &[1]);
-    builder.add_cube(&[0, 1, 1], &[1]);
-    builder.add_cube(&[1, 0, 1], &[1]);
-    builder.add_cube(&[1, 1, 1], &[1]);
-
-    let cover = builder.build();
-
-    assert_eq!(cover.count(), 4, "Cover should contain 4 cubes");
+    // Should minimize to 1 cube: --1 (whenever input[2]=1, output=1)
+    assert_eq!(cover.num_cubes(), 1, "Should minimize to 1 cube: --1 -> 1");
 }

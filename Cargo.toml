@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "2.5.1"
+version = "2.3.0"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"
@@ -13,6 +13,12 @@ categories = ["algorithms", "science"]
 libc = "0.2"
 tempfile = "3.8"
 clap = { version = "4.4", features = ["derive"] }
+nix = { version = "0.29", features = ["process", "signal", "mman", "fs"] }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+memmap2 = "0.9"
+ctor = "0.2"
+indexmap = "2.0"
 
 [build-dependencies]
 cc = "1.0"
@@ -21,6 +27,17 @@ bindgen = "0.69"
 [lib]
 name = "espresso_logic"
 path = "src/lib.rs"
+
+# Exclude obsolete tests that test internal unsafe API
+[[test]]
+name = "test_unsafe_api"
+path = "tests/test_unsafe_api.rs"
+test = false
+
+[[test]]
+name = "test_pla_unsafe"
+path = "tests/test_pla_unsafe.rs"
+test = false
 
 [[example]]
 name = "minimize"
@@ -37,4 +54,12 @@ path = "src/bin/espresso.rs"
 [[example]]
 name = "xor_function"
 path = "examples/xor_function.rs"
+
+[[example]]
+name = "transparent_api"
+path = "examples/transparent_api.rs"
+
+[[example]]
+name = "concurrent_transparent"
+path = "examples/concurrent_transparent.rs"
 

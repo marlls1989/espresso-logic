@@ -19,6 +19,7 @@ Espresso takes a Boolean function represented as a sum-of-products and produces 
 ## Features
 
 - ✅ **Safe Rust API** - Memory-safe wrappers around the C library
+- ✅ **Process Isolation** - NEW! Thread-safe concurrent execution via isolated processes
 - ✅ **Command Line Interface** - Compatible with original Espresso CLI
 - ✅ **PLA File Support** - Read and write Berkeley PLA format files
 - ✅ **Flexible Input** - Programmatic cover construction or file-based input
@@ -54,22 +55,21 @@ cargo build --release --bin espresso
 ### Library API Example
 
 ```rust
-use espresso_logic::{Espresso, CoverBuilder};
+use espresso_logic::Cover;
 
-fn main() {
-    // Create an Espresso instance for a 2-input, 1-output function
-    let mut esp = Espresso::new(2, 1);
+fn main() -> std::io::Result<()> {
+    // Create a cover for a 2-input, 1-output function
+    let mut cover = Cover::<2, 1>::new();
     
     // Build a truth table (XOR function)
-    let mut builder = CoverBuilder::new(2, 1);
-    builder.add_cube(&[0, 1], &[1]); // 01 -> 1
-    builder.add_cube(&[1, 0], &[1]); // 10 -> 1
-    let cover = builder.build();
+    cover.add_cube(&[Some(false), Some(true)], &[true]); // 01 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[true]); // 10 -> 1
     
-    // Minimize the function
-    let minimized = esp.minimize(cover, None, None);
+    // Minimize - runs in isolated process
+    cover.minimize()?;
     
-    println!("Minimized! Cubes: {}", minimized.count());
+    println!("Minimized! Cubes: {}", cover.num_cubes());
+    Ok(())
 }
 ```
 
@@ -92,6 +92,46 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+### Concurrent Execution (Process Isolation)
+
+**NEW!** Thread-safe by default - the API uses **transparent process isolation** where all C code runs in isolated forked processes:
+
+```rust
+use espresso_logic::Cover;
+use std::thread;
+
+fn main() -> std::io::Result<()> {
+    // Spawn multiple threads - each creates its own cover
+    let handles: Vec<_> = (0..4).map(|_| {
+        thread::spawn(move || {
+            // Create cover (pure Rust, no C code)
+            let mut cover = Cover::<2, 1>::new();
+            cover.add_cube(&[Some(false), Some(true)], &[true]);
+            cover.add_cube(&[Some(true), Some(false)], &[true]);
+            
+            // Minimize - C code runs in isolated worker process
+            cover.minimize()?;
+            Ok(cover.num_cubes())
+        })
+    }).collect();
+    
+    for handle in handles {
+        let num_cubes = handle.join().unwrap()?;
+        println!("Result: {} cubes", num_cubes);
+    }
+    Ok(())
+}
+```
+
+**Key benefits:**
+- ✅ Thread-safe by default - no synchronization needed
+- ✅ Zero global state in parent process
+- ✅ True parallelism - operations run concurrently
+- ✅ Simple API with const generics for compile-time safety
+- ✅ Efficient - uses shared memory IPC
+
+See [docs/PROCESS_ISOLATION.md](docs/PROCESS_ISOLATION.md) for details.
 
 ## Installation
 
@@ -139,6 +179,12 @@ cargo run --example pla_file
 
 # PLA file with output
 cargo run --example pla_file output.pla
+
+# Process-isolated transparent API
+cargo run --example transparent_api
+
+# Concurrent execution with full isolation
+cargo run --example concurrent_transparent
 ```
 
 ## PLA File Format
@@ -250,6 +296,7 @@ cargo doc --open
 Additional documentation:
 - [Command Line Interface](docs/CLI.md)
 - [API Reference](docs/API.md)
+- [Process Isolation](docs/PROCESS_ISOLATION.md) - Thread-safe concurrent execution
 - [Contributing Guidelines](CONTRIBUTING.md)
 - [Original Espresso README](espresso-src/README)
 
@@ -262,9 +309,10 @@ Additional documentation:
 
 ## Limitations
 
-- The Espresso library uses global state and is not thread-safe
+- **Global State (Solved!)**: The C library uses global state, but our **process isolation** feature provides thread-safe concurrent execution
 - Very large Boolean functions may exhaust memory
 - PLA file format has some limitations compared to modern formats
+- Process isolation currently requires Unix-like systems (Linux, macOS, BSD) - Windows support planned
 
 ## Contributing
 

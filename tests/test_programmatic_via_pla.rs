@@ -1,63 +1,39 @@
-//! Test if we can work around the bug by creating PLA from data programmatically
+//! Test Cover API with PLA format support
 
-use espresso_logic::PLA;
+use espresso_logic::{Cover, CoverBuilder, PLACover, PLAType};
 
 #[test]
-fn test_create_pla_from_cubes() {
+fn test_create_cover_from_pla() {
     // Create PLA content programmatically for XOR function
     let pla_str = ".i 2\n.o 1\n.p 2\n01 1\n10 1\n.e\n";
 
-    let pla = PLA::from_string(pla_str).expect("Failed to parse PLA");
-    let before = pla.stats();
-    assert_eq!(before.num_cubes_f, 2);
+    let mut cover = PLACover::from_pla_content(pla_str).expect("Failed to parse PLA");
+    assert_eq!(cover.num_cubes(), 2);
 
-    let minimized = pla.minimize();
-    let after = minimized.stats();
+    cover.minimize().unwrap();
 
     // XOR cannot be minimized
-    assert_eq!(after.num_cubes_f, 2);
+    assert_eq!(cover.num_cubes(), 2);
 }
 
 #[test]
-fn test_helper_to_create_pla_string() {
-    // Test helper function that could replace CoverBuilder
-    fn cubes_to_pla_string(
-        num_inputs: usize,
-        num_outputs: usize,
-        cubes: &[(Vec<u8>, Vec<u8>)],
-    ) -> String {
-        let mut pla = format!(
-            ".i {}\n.o {}\n.p {}\n",
-            num_inputs,
-            num_outputs,
-            cubes.len()
-        );
+fn test_pla_roundtrip() {
+    // Create a cover programmatically
+    let mut cover = CoverBuilder::<2, 1>::new();
+    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
-        for (inputs, outputs) in cubes {
-            for &val in inputs {
-                match val {
-                    0 => pla.push('0'),
-                    1 => pla.push('1'),
-                    2 => pla.push('-'), // don't care
-                    _ => panic!("Invalid input value"),
-                }
-            }
-            pla.push(' ');
-            for &val in outputs {
-                pla.push(if val == 1 { '1' } else { '0' });
-            }
-            pla.push('\n');
-        }
-        pla.push_str(".e\n");
-        pla
-    }
+    // Convert to PLA format using the trait
+    let pla_str = <CoverBuilder<2, 1> as Cover>::to_pla_string(&cover, PLAType::F)
+        .expect("Failed to serialize");
 
-    // Test the helper
-    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+    println!("Generated PLA:\n{}", pla_str);
 
-    let pla_str = cubes_to_pla_string(2, 1, &cubes);
-    let pla = PLA::from_string(&pla_str).expect("Failed to parse");
+    // Parse it back using PLACover
+    let mut parsed_cover = PLACover::from_pla_content(&pla_str).expect("Failed to parse");
+    assert_eq!(parsed_cover.num_cubes(), 2);
 
-    let minimized = pla.minimize();
-    assert_eq!(minimized.stats().num_cubes_f, 2);
+    // Minimize and verify XOR cannot be reduced
+    parsed_cover.minimize().unwrap();
+    assert_eq!(parsed_cover.num_cubes(), 2);
 }

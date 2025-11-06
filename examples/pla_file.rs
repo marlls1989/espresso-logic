@@ -1,9 +1,9 @@
 //! Example: Reading and minimizing a PLA file
 //!
-//! This example demonstrates how to read a PLA file, minimize it,
+//! This example demonstrates how to read a PLA file, minimize it using the Cover trait,
 //! and write the result back to a file.
 
-use espresso_logic::{PLAType, PLA};
+use espresso_logic::{Cover, PLACover, PLAType};
 use std::env;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -40,33 +40,45 @@ fn main() {
 
     // Read the PLA file
     println!("\nReading PLA file...");
-    let pla = match PLA::from_file(temp_in.path()) {
-        Ok(pla) => pla,
+    let mut cover = match PLACover::from_pla_file(temp_in.path()) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA: {}", e);
-            eprintln!(
-                "\nNote: This example requires the Espresso library to be properly compiled."
-            );
-            eprintln!("Make sure you have run 'cargo build' successfully.");
             return;
         }
     };
 
     println!("PLA loaded successfully!");
-    println!("\nPLA Summary:");
-    pla.print_summary();
+    println!("\nOriginal cover:");
+    println!("  Inputs:  {}", cover.num_inputs());
+    println!("  Outputs: {}", cover.num_outputs());
+    println!("  Cubes:   {}", cover.num_cubes());
 
-    // Minimize the PLA
-    println!("\nMinimizing PLA using Espresso...");
-    let minimized = pla.minimize();
+    // Minimize using the Cover trait
+    println!("\nMinimizing using Espresso...");
+    if let Err(e) = cover.minimize() {
+        eprintln!("Error minimizing: {}", e);
+        return;
+    }
 
-    println!("\nMinimized PLA Summary:");
-    minimized.print_summary();
+    println!("\nMinimized cover:");
+    println!("  Inputs:  {}", cover.num_inputs());
+    println!("  Outputs: {}", cover.num_outputs());
+    println!("  Cubes:   {}", cover.num_cubes());
+
+    // Show the minimized PLA
+    match cover.to_pla_string(PLAType::F) {
+        Ok(pla_str) => {
+            println!("\nMinimized PLA:");
+            println!("{}", pla_str);
+        }
+        Err(e) => eprintln!("Error generating PLA: {}", e),
+    }
 
     // Write to output file if requested
     if let Some(output_path) = env::args().nth(1) {
-        println!("\nWriting minimized PLA to: {}", output_path);
-        match minimized.to_file(&output_path, PLAType::F) {
+        println!("Writing minimized PLA to: {}", output_path);
+        match cover.to_pla_file(&output_path, PLAType::F) {
             Ok(_) => println!("Successfully wrote output file!"),
             Err(e) => eprintln!("Error writing output: {}", e),
         }

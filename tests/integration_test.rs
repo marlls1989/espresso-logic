@@ -5,24 +5,10 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 #[test]
-fn test_espresso_new() {
-    let esp = Espresso::new(2, 1);
-    // Just verify it doesn't panic
-    drop(esp);
-}
-
-#[test]
 fn test_cover_new() {
-    let cover = Cover::new(10, 5);
-    // Just verify the cover was created successfully
-    let _ = cover.count();
-}
-
-#[test]
-fn test_cover_clone() {
-    let cover = Cover::new(10, 5);
-    let cloned = cover.clone();
-    assert_eq!(cover.count(), cloned.count());
+    let cover = CoverBuilder::<2, 1>::new();
+    // Just verify it doesn't panic
+    drop(cover);
 }
 
 #[test]
@@ -43,29 +29,26 @@ fn test_pla_from_file() {
         .expect("Failed to write temp file");
     temp.flush().expect("Failed to flush temp file");
 
-    // This might fail if the C library isn't properly initialized
-    // but the test should at least compile
-    let result = PLA::from_file(temp.path());
+    // Test with new Cover API
+    let result = espresso_logic::PLACover::from_pla_file(temp.path());
 
-    // Don't assert success, as this depends on C library initialization
-    // which can be tricky in test contexts
-    if let Ok(pla) = result {
-        // If we got a PLA, try to use it
-        drop(pla);
+    // Should successfully parse the PLA file
+    assert!(result.is_ok());
+    if let Ok(cover) = result {
+        assert_eq!(cover.num_cubes(), 2); // 2 cubes in the PLA
     }
 }
 
 #[test]
 fn test_cover_builder() {
-    // CoverBuilder requires Espresso::new() to be called first to initialize cube structure
-    let _esp = Espresso::new(2, 1);
-
-    let mut builder = CoverBuilder::new(2, 1);
-    builder.add_cube(&[0, 1], &[1]);
-    builder.add_cube(&[1, 0], &[1]);
-    let cover = builder.build();
-    // Verify it builds without panicking
-    drop(cover);
+    // Create cover
+    let mut cover = CoverBuilder::<2, 1>::new();
+    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    
+    // Minimize
+    cover.minimize().unwrap();
+    assert!(cover.num_cubes() > 0);
 }
 
 #[test]
