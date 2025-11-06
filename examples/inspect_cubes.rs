@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
     println!("  101 -> 1");
     cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);
     println!("  111 -> 1");
-    
+
     println!("\nBefore minimization:");
     println!("  Number of cubes: {}", cover.num_cubes());
 
@@ -27,7 +27,7 @@ fn main() -> std::io::Result<()> {
 
     println!("\nAfter minimization:");
     println!("  Number of cubes: {}", cover.num_cubes());
-    
+
     // Inspect the minimized cubes
     println!("\nMinimized cubes:");
     for (i, (inputs, outputs)) in cover.iter_cubes().enumerate() {
@@ -41,11 +41,14 @@ fn main() -> std::io::Result<()> {
         }
         print!(" -> ");
         for output in outputs {
-            print!("{}", match output {
-                Some(true) => "1",
-                Some(false) => "0",
-                None => "-",
-            });
+            print!(
+                "{}",
+                match output {
+                    Some(true) => "1",
+                    Some(false) => "0",
+                    None => "-",
+                }
+            );
         }
         println!();
     }
@@ -53,4 +56,3 @@ fn main() -> std::io::Result<()> {
     println!("\n✓ Cube inspection complete!");
     Ok(())
 }
-

@@ -45,7 +45,7 @@ fn test_cover_builder() {
     let mut cover = CoverBuilder::<2, 1>::new();
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    
+
     // Minimize
     cover.minimize().unwrap();
     assert!(cover.num_cubes() > 0);

@@ -1,7 +1,6 @@
 //! Example: Concurrent execution with transparent process isolation
 
 use espresso_logic::{Cover, CoverBuilder};
-use std::sync::Arc;
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -28,10 +27,7 @@ fn main() -> std::io::Result<()> {
         .collect();
 
     // Wait for all threads
-    let results: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().unwrap())
-        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
     println!("\n✓ All {} threads completed successfully!", results.len());
     println!("Results: {:?}", results);

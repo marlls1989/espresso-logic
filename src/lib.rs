@@ -113,7 +113,6 @@ pub mod sys;
 mod conversion;
 mod ipc;
 mod unsafe_espresso;
-mod unsafe_pla;
 mod worker;
 
 // Re-export commonly used constants for CLI
@@ -134,6 +133,9 @@ use std::io;
 use std::os::raw::c_int;
 use std::path::Path;
 use std::sync::Arc;
+
+/// Type alias for complex cube iterator return type
+type CubeIterator<'a> = Box<dyn Iterator<Item = (Vec<Option<bool>>, Vec<Option<bool>>)> + 'a>;
 
 /// Represents the type of PLA output format (also used as cover type)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,113 +217,111 @@ impl EspressoConfig {
     }
 }
 
-/// Decode serialized D cover back to cubes (don't-care set)
-/// Simplified: bit set → true, bit not set → false
-fn decode_serialized_cover_as_dc(
-    serialized: &ipc::SerializedCover,
+/// Unified function to decode all three covers from worker into typed Cubes
+/// Takes F, D, R serialized covers and produces a Vec<Cube> with correct types
+fn decode_worker_result(
+    f_serialized: &ipc::SerializedCover,
+    d_serialized: Option<&ipc::SerializedCover>,
+    r_serialized: Option<&ipc::SerializedCover>,
     num_inputs: usize,
     num_outputs: usize,
-) -> Vec<(Vec<Option<bool>>, Vec<bool>)> {
-    let mut result = Vec::with_capacity(serialized.count);
+) -> Vec<Cube> {
+    let mut result = Vec::new();
 
-    for cube in &serialized.cubes {
-        let mut inputs = Vec::with_capacity(num_inputs);
-        let mut outputs = Vec::with_capacity(num_outputs);
-
-        // Decode inputs (binary variables - 2 bits each)
-        for var in 0..num_inputs {
-            let bit0 = var * 2;
-            let bit1 = var * 2 + 1;
-
-            let word0 = (bit0 >> 5) + 1;
-            let b0 = bit0 & 31;
-            let word1 = (bit1 >> 5) + 1;
-            let b1 = bit1 & 31;
-
-            let has_bit0 = (cube.data.get(word0).copied().unwrap_or(0) & (1 << b0)) != 0;
-            let has_bit1 = (cube.data.get(word1).copied().unwrap_or(0) & (1 << b1)) != 0;
-
-            inputs.push(match (has_bit0, has_bit1) {
-                (false, false) => None,
-                (true, false) => Some(false),
-                (false, true) => Some(true),
-                (true, true) => None, // don't care
-            });
+    // Decode F cubes
+    for cube_data in &f_serialized.cubes {
+        if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+            result.push(Cube::new(inputs, outputs, CubeType::F));
         }
+    }
 
-        // Decode outputs (multi-valued variable - 1 bit per value)
-        // Simplified: bit set → true, bit not set → false
-        let output_start = num_inputs * 2;
-        for out in 0..num_outputs {
-            let bit = output_start + out;
-            let word = (bit >> 5) + 1;
-            let b = bit & 31;
-            let val = (cube.data.get(word).copied().unwrap_or(0) & (1 << b)) != 0;
-
-            outputs.push(val);
+    // Decode D cubes if available
+    if let Some(d_ser) = d_serialized {
+        for cube_data in &d_ser.cubes {
+            if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+                result.push(Cube::new(inputs, outputs, CubeType::D));
+            }
         }
+    }
 
-        result.push((inputs, outputs));
+    // Decode R cubes if available
+    if let Some(r_ser) = r_serialized {
+        for cube_data in &r_ser.cubes {
+            if let Some((inputs, outputs)) = decode_cube(cube_data, num_inputs, num_outputs) {
+                result.push(Cube::new(inputs, outputs, CubeType::R));
+            }
+        }
     }
 
     result
 }
 
-/// Decode serialized cover back to cubes (private helper function)
-/// Simplified representation: outputs are bool (true=bit set, false=not set)
-/// The is_r_cover parameter is no longer needed but kept for consistency
-fn decode_serialized_cover(
-    serialized: &ipc::SerializedCover,
+/// Helper function to decode a single cube from serialized data
+/// Returns None if cube has no set bits (shouldn't happen)
+fn decode_cube(
+    cube_data: &ipc::SerializedCube,
     num_inputs: usize,
     num_outputs: usize,
-    _is_r_cover: bool,
-) -> Vec<(Vec<Option<bool>>, Vec<bool>)> {
-    let mut result = Vec::with_capacity(serialized.count);
+) -> Option<(Vec<Option<bool>>, Vec<bool>)> {
+    let mut inputs = Vec::with_capacity(num_inputs);
+    let mut outputs = Vec::with_capacity(num_outputs);
 
-    for cube in &serialized.cubes {
-        let mut inputs = Vec::with_capacity(num_inputs);
-        let mut outputs = Vec::with_capacity(num_outputs);
+    // Decode inputs (binary variables - 2 bits each)
+    for var in 0..num_inputs {
+        let bit0 = var * 2;
+        let bit1 = var * 2 + 1;
 
-        // Decode inputs (binary variables - 2 bits each)
-        for var in 0..num_inputs {
-            let bit0 = var * 2;
-            let bit1 = var * 2 + 1;
+        let word0 = (bit0 >> 5) + 1;
+        let b0 = bit0 & 31;
+        let word1 = (bit1 >> 5) + 1;
+        let b1 = bit1 & 31;
 
-            let word0 = (bit0 >> 5) + 1;
-            let b0 = bit0 & 31;
-            let word1 = (bit1 >> 5) + 1;
-            let b1 = bit1 & 31;
+        let has_bit0 = (cube_data.data.get(word0).copied().unwrap_or(0) & (1 << b0)) != 0;
+        let has_bit1 = (cube_data.data.get(word1).copied().unwrap_or(0) & (1 << b1)) != 0;
 
-            let has_bit0 = (cube.data.get(word0).copied().unwrap_or(0) & (1 << b0)) != 0;
-            let has_bit1 = (cube.data.get(word1).copied().unwrap_or(0) & (1 << b1)) != 0;
-
-            inputs.push(match (has_bit0, has_bit1) {
-                (false, false) => None,
-                (true, false) => Some(false),
-                (false, true) => Some(true),
-                (true, true) => None, // don't care
-            });
-        }
-
-        // Decode outputs (multi-valued variable - 1 bit per value)
-        // Simplified: bit set → true, bit not set → false
-        let output_start = num_inputs * 2;
-        for out in 0..num_outputs {
-            let bit = output_start + out;
-            let word = (bit >> 5) + 1;
-            let b = bit & 31;
-            let val = (cube.data.get(word).copied().unwrap_or(0) & (1 << b)) != 0;
-
-            outputs.push(val);
-        }
-
-        result.push((inputs, outputs));
+        inputs.push(match (has_bit0, has_bit1) {
+            (false, false) => None,
+            (true, false) => Some(false),
+            (false, true) => Some(true),
+            (true, true) => None, // don't care
+        });
     }
 
-    result
+    // Decode outputs (multi-valued variable - 1 bit per value)
+    // Simplified: bit set → true, bit not set → false
+    let output_start = num_inputs * 2;
+    for out in 0..num_outputs {
+        let bit = output_start + out;
+        let word = (bit >> 5) + 1;
+        let b = bit & 31;
+        let val = (cube_data.data.get(word).copied().unwrap_or(0) & (1 << b)) != 0;
+
+        outputs.push(val);
+    }
+
+    Some((inputs, outputs))
 }
 
-/// Common trait for all cover types (static and dynamic dimensions)
+/// Internal trait for types that can be minimized
+/// Contains implementation details needed by the minimization algorithm
+trait Minimizable: Send + Sync {
+    /// Get the number of inputs (required for minimization)
+    fn num_inputs(&self) -> usize;
+
+    /// Get the number of outputs (required for minimization)
+    fn num_outputs(&self) -> usize;
+
+    /// Get the cover type (required for minimization)
+    fn cover_type(&self) -> PLAType;
+
+    /// Iterate over typed cubes (internal use only)
+    fn internal_cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a>;
+
+    /// Set cubes after minimization (internal use)
+    fn set_cubes(&mut self, cubes: Vec<Cube>);
+}
+
+/// Public trait for all cover types (static and dynamic dimensions)
 pub trait Cover: Send + Sync {
     /// Get the number of inputs
     fn num_inputs(&self) -> usize;
@@ -330,40 +330,81 @@ pub trait Cover: Send + Sync {
     fn num_outputs(&self) -> usize;
 
     /// Get the number of cubes (for F/FD types, only counts F cubes; for FR/FDR, counts all)
+    fn num_cubes(&self) -> usize;
+
+    /// Get the cover type (F, FD, FR, or FDR)
+    fn cover_type(&self) -> PLAType;
+
+    /// Iterate over cubes (inputs, outputs)
+    /// Returns cubes in same format as add_cube takes (owned vecs for easy use)
+    fn cubes_iter<'a>(&'a self) -> CubeIterator<'a>;
+
+    /// Minimize this cover in-place using default configuration
+    fn minimize(&mut self) -> io::Result<()>;
+
+    /// Minimize this cover in-place with custom configuration
+    fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()>;
+
+    /// Write this cover to PLA format string
+    fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String>;
+
+    /// Write this cover to a PLA file
+    fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: PLAType) -> io::Result<()>;
+}
+
+/// Blanket implementation: Cover for all Minimizable types
+impl<T: Minimizable> Cover for T {
+    fn num_inputs(&self) -> usize {
+        Minimizable::num_inputs(self)
+    }
+
+    fn num_outputs(&self) -> usize {
+        Minimizable::num_outputs(self)
+    }
+
     fn num_cubes(&self) -> usize {
         let cover_type = self.cover_type();
         if cover_type.has_r() {
-            // FR/FDR: count all cubes
-            self.cubes_iter().count()
+            self.internal_cubes_iter().count()
         } else {
             // F/FD: only count F cubes
-            self.cubes_iter()
+            self.internal_cubes_iter()
                 .filter(|cube| cube.cube_type == CubeType::F)
                 .count()
         }
     }
 
-    /// Get the cover type (F, FD, FR, or FDR)
-    fn cover_type(&self) -> PLAType;
+    fn cover_type(&self) -> PLAType {
+        Minimizable::cover_type(self)
+    }
 
-    /// Iterate over cubes
-    fn cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a>;
+    fn cubes_iter<'a>(&'a self) -> CubeIterator<'a> {
+        // Convert internal Cube structs to public API format
+        // Only return F cubes for F-type covers, all cubes for FD/FR/FDR
+        let cover_type = self.cover_type();
+        Box::new(
+            self.internal_cubes_iter()
+                .filter(move |cube| {
+                    // For F-type, only return F cubes; for FD/FR/FDR, return all
+                    cover_type != PLAType::F || cube.cube_type == CubeType::F
+                })
+                .map(|cube| {
+                    // Convert bool outputs back to Option<bool> for public API
+                    let inputs = cube.inputs.to_vec();
+                    let outputs: Vec<Option<bool>> =
+                        cube.outputs.iter().map(|&b| Some(b)).collect();
+                    (inputs, outputs)
+                }),
+        )
+    }
 
-    /// Set cubes directly (used by minimize_with_config)
-    fn set_cubes(&mut self, cubes: Vec<Cube>);
-
-    /// Minimize this cover in-place using default configuration (generic implementation)
     fn minimize(&mut self) -> io::Result<()> {
         let config = EspressoConfig::default();
         self.minimize_with_config(&config)
     }
 
-    /// Minimize this cover in-place with custom configuration (generic implementation)
     fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()> {
         use worker::Worker;
-
-        // Get cover type to determine how to split cubes
-        let cover_type = self.cover_type();
 
         // Convert config
         let ipc_config = ipc::IpcConfig {
@@ -385,7 +426,7 @@ pub trait Cover: Send + Sync {
         let mut d_cubes = Vec::new();
         let mut r_cubes = Vec::new();
 
-        for cube in self.cubes_iter() {
+        for cube in self.internal_cubes_iter() {
             let input_vec: Vec<u8> = cube
                 .inputs
                 .iter()
@@ -429,44 +470,20 @@ pub trait Cover: Send + Sync {
             },
         )?;
 
-        // Build cubes - include F, D, and R based on what's available
-        // This allows outputting as any type (F, FD, FR, FDR) regardless of input type
-        let mut all_cubes = Vec::new();
-
-        // Include F cubes if cover type has F (all current types do)
-        if cover_type.has_f() {
-            for (inputs, outputs) in
-                decode_serialized_cover(&f_serialized, self.num_inputs(), self.num_outputs(), false)
-            {
-                all_cubes.push(Cube::new(inputs, outputs, CubeType::F));
-            }
-        }
-
-        // Include D cubes if available (for FD/FDR types)
-        if let Some(d_ser) = d_serialized {
-            for (inputs, outputs) in
-                decode_serialized_cover_as_dc(&d_ser, self.num_inputs(), self.num_outputs())
-            {
-                all_cubes.push(Cube::new(inputs, outputs, CubeType::D));
-            }
-        }
-
-        // Include R cubes if available (worker computes complement even for F-type inputs)
-        // This allows outputting as FR/FDR even when input was F/FD
-        if let Some(r_ser) = r_serialized {
-            for (inputs, outputs) in
-                decode_serialized_cover(&r_ser, self.num_inputs(), self.num_outputs(), true)
-            {
-                all_cubes.push(Cube::new(inputs, outputs, CubeType::R));
-            }
-        }
+        // Decode worker results into typed Cubes
+        let all_cubes = decode_worker_result(
+            &f_serialized,
+            d_serialized.as_ref(),
+            r_serialized.as_ref(),
+            self.num_inputs(),
+            self.num_outputs(),
+        );
 
         // Update cubes with type information preserved
         self.set_cubes(all_cubes);
         Ok(())
     }
 
-    /// Write this cover to PLA format string (generic implementation)
     fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String> {
         let mut output = String::new();
 
@@ -484,7 +501,7 @@ pub trait Cover: Send + Sync {
 
         // Filter cubes based on output type using cube_type field
         let filtered_cubes: Vec<_> = self
-            .cubes_iter()
+            .internal_cubes_iter()
             .filter(|cube| {
                 match pla_type {
                     PLAType::F => cube.cube_type == CubeType::F,
@@ -545,12 +562,6 @@ pub trait Cover: Send + Sync {
         Ok(output)
     }
 
-    /// Write this cover to PLA format bytes
-    fn to_pla_bytes(&self, pla_type: PLAType) -> io::Result<Vec<u8>> {
-        Ok(self.to_pla_string(pla_type)?.into_bytes())
-    }
-
-    /// Write this cover to a PLA file
     fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: PLAType) -> io::Result<()> {
         let content = self.to_pla_string(pla_type)?;
         std::fs::write(path, content)
@@ -562,18 +573,24 @@ pub trait Cover: Send + Sync {
 /// Uses const generics for ergonomic hand-construction of covers.
 /// For loading from PLA files with dynamic dimensions, use `PLACover::from_pla_*`.
 ///
+/// The `T` type parameter specifies the cover type and defaults to `FDType` (ON-set + Don't-care).
+///
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::{CoverBuilder, Cover};
+/// use espresso_logic::{CoverBuilder, Cover, FType, FDType};
 ///
 /// # fn main() -> std::io::Result<()> {
-/// // Create a cover for a 2-input, 1-output function  
+/// // Create a cover for a 2-input, 1-output function (FD type by default)
 /// let mut cover = CoverBuilder::<2, 1>::new();
 ///
 /// // Build the function (XOR)
 /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
 /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
+///
+/// // Or create an F-type cover explicitly
+/// let mut f_cover = CoverBuilder::<2, 1, FType>::new();
+/// f_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 ///
 /// // Minimize it
 /// cover.minimize()?;
@@ -584,10 +601,43 @@ pub trait Cover: Send + Sync {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct CoverBuilder<const INPUTS: usize, const OUTPUTS: usize> {
-    /// Cube data as Arc slices for efficient cloning
-    /// Outputs are Option<bool>: Some(true)=1, Some(false)=0, None=don't-care
-    cubes: Vec<(Arc<[Option<bool>]>, Arc<[Option<bool>]>)>,
+pub struct CoverBuilder<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker = FDType> {
+    /// Cube data stored internally as typed cubes
+    cubes: Vec<Cube>,
+    _marker: std::marker::PhantomData<T>,
+}
+
+/// Marker trait for cover type specification
+pub trait CoverTypeMarker: Send + Sync + Clone {
+    const PLA_TYPE: PLAType;
+}
+
+/// Marker type for F (ON-set only) covers
+#[derive(Clone, Copy, Debug)]
+pub struct FType;
+impl CoverTypeMarker for FType {
+    const PLA_TYPE: PLAType = PLAType::F;
+}
+
+/// Marker type for FD (ON-set + Don't-care) covers (default)
+#[derive(Clone, Copy, Debug)]
+pub struct FDType;
+impl CoverTypeMarker for FDType {
+    const PLA_TYPE: PLAType = PLAType::FD;
+}
+
+/// Marker type for FR (ON-set + OFF-set) covers
+#[derive(Clone, Copy, Debug)]
+pub struct FRType;
+impl CoverTypeMarker for FRType {
+    const PLA_TYPE: PLAType = PLAType::FR;
+}
+
+/// Marker type for FDR (ON-set + Don't-care + OFF-set) covers
+#[derive(Clone, Copy, Debug)]
+pub struct FDRType;
+impl CoverTypeMarker for FDRType {
+    const PLA_TYPE: PLAType = PLAType::FDR;
 }
 
 /// Type of a cube (ON-set, DC-set, or OFF-set)
@@ -600,10 +650,10 @@ enum CubeType {
 
 /// A cube in a PLA cover
 #[derive(Clone, Debug)]
-struct Cube {
-    inputs: Arc<[Option<bool>]>,
-    outputs: Arc<[bool]>, // Simplified: true = bit set, false = bit not set
-    cube_type: CubeType,
+pub struct Cube {
+    pub(crate) inputs: Arc<[Option<bool>]>,
+    pub(crate) outputs: Arc<[bool]>, // Simplified: true = bit set, false = bit not set
+    pub(crate) cube_type: CubeType,
 }
 
 impl Cube {
@@ -613,17 +663,6 @@ impl Cube {
             outputs: outputs.into(),
             cube_type,
         }
-    }
-
-    /// Create from old-style Option<bool> outputs (for backward compatibility)
-    /// Some(true) bits go to the appropriate cube type, others are ignored
-    fn from_option_outputs(
-        inputs: Vec<Option<bool>>,
-        outputs: Vec<Option<bool>>,
-        cube_type: CubeType,
-    ) -> Self {
-        let bool_outputs: Vec<bool> = outputs.iter().map(|&opt| opt == Some(true)).collect();
-        Cube::new(inputs, bool_outputs, cube_type)
     }
 }
 
@@ -652,105 +691,12 @@ impl PLACover {
         }
     }
 
-    /// Add a cube to this cover
-    /// Outputs are Option<bool>: Some(true)=1, Some(false)=0, None=don't-care
-    ///
-    /// For FD/FR/FDR covers, this automatically splits cubes:
-    /// - Some(true) bits go into F cube
-    /// - None bits go into D cube (if cover_type.has_d())
-    /// - Some(false) bits go into R cube (if cover_type.has_r())
-    pub fn add_cube(&mut self, inputs: Vec<Option<bool>>, outputs: Vec<Option<bool>>) -> &mut Self {
-        if inputs.len() != self.num_inputs {
-            panic!(
-                "Input length mismatch: expected {}, got {}",
-                self.num_inputs,
-                inputs.len()
-            );
-        }
-        if outputs.len() != self.num_outputs {
-            panic!(
-                "Output length mismatch: expected {}, got {}",
-                self.num_outputs,
-                outputs.len()
-            );
-        }
-
-        // Apply cube separation based on cover type
-        if self.cover_type == PLAType::F {
-            // F-type: single cube, convert Option<bool> outputs to bool
-            // Some(true) → true (bit set), Some(false) → false, None → false (can't represent don't-care in F-type with bool)
-            let bool_outputs: Vec<bool> = outputs.iter().map(|&o| o == Some(true)).collect();
-            self.cubes
-                .push(Cube::new(inputs, bool_outputs, CubeType::F));
-        } else {
-            // FD/FR/FDR: split into separate cubes
-            let mut f_outputs = Vec::with_capacity(self.num_outputs);
-            let mut d_outputs = Vec::with_capacity(self.num_outputs);
-            let mut r_outputs = Vec::with_capacity(self.num_outputs);
-            let mut has_f = false;
-            let mut has_d = false;
-            let mut has_r = false;
-
-            for &out in outputs.iter() {
-                match out {
-                    Some(true) if self.cover_type.has_f() => {
-                        f_outputs.push(true);
-                        d_outputs.push(false);
-                        r_outputs.push(false);
-                        has_f = true;
-                    }
-                    Some(false) if self.cover_type.has_r() => {
-                        f_outputs.push(false);
-                        d_outputs.push(false);
-                        r_outputs.push(true);
-                        has_r = true;
-                    }
-                    None if self.cover_type.has_d() => {
-                        f_outputs.push(false);
-                        d_outputs.push(true);
-                        r_outputs.push(false);
-                        has_d = true;
-                    }
-                    _ => {
-                        // Bit doesn't match cover type, skip
-                        f_outputs.push(false);
-                        d_outputs.push(false);
-                        r_outputs.push(false);
-                    }
-                }
-            }
-
-            // Add cubes only if they have meaningful outputs
-            if has_f {
-                self.cubes
-                    .push(Cube::new(inputs.clone(), f_outputs, CubeType::F));
-            }
-            if has_d {
-                self.cubes
-                    .push(Cube::new(inputs.clone(), d_outputs, CubeType::D));
-            }
-            if has_r {
-                self.cubes.push(Cube::new(inputs, r_outputs, CubeType::R));
-            }
-        }
-
-        self
-    }
-
     /// Load a cover from a PLA format file
     ///
     /// The dimensions are determined from the PLA file.
     pub fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         Self::from_pla_content(&content)
-    }
-
-    /// Load a cover from PLA format bytes
-    pub fn from_pla_bytes(content: &[u8]) -> io::Result<Self> {
-        let content_str = std::str::from_utf8(content).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e))
-        })?;
-        Self::from_pla_content(content_str)
     }
 
     /// Load a cover from PLA format string
@@ -780,7 +726,7 @@ impl PLACover {
             if line.starts_with('.') {
                 let parts: Vec<&str> = line.split_whitespace().collect();
 
-                match parts.get(0).map(|s| *s) {
+                match parts.first().copied() {
                     Some(".i") => {
                         let val: usize =
                             parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
@@ -818,8 +764,8 @@ impl PLACover {
             let (input_part, output_part) = if line.contains('|') {
                 let parts: Vec<&str> = line.splitn(2, '|').collect();
                 (
-                    parts.get(0).map(|s| *s).unwrap_or(""),
-                    parts.get(1).map(|s| *s).unwrap_or(""),
+                    parts.first().copied().unwrap_or(""),
+                    parts.get(1).copied().unwrap_or(""),
                 )
             } else {
                 (line, "")
@@ -1047,8 +993,8 @@ impl PLACover {
     }
 }
 
-// Implement Cover trait for PLACover
-impl crate::Cover for PLACover {
+// Implement Minimizable for PLACover (Cover trait is auto-implemented via blanket impl)
+impl Minimizable for PLACover {
     fn num_inputs(&self) -> usize {
         self.num_inputs
     }
@@ -1057,15 +1003,11 @@ impl crate::Cover for PLACover {
         self.num_outputs
     }
 
-    fn num_cubes(&self) -> usize {
-        self.cubes.len()
-    }
-
     fn cover_type(&self) -> PLAType {
         self.cover_type
     }
 
-    fn cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
+    fn internal_cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
         Box::new(self.cubes.iter())
     }
 
@@ -1078,10 +1020,6 @@ impl crate::Cover for PLACover {
 struct UnsafeCover {
     ptr: sys::pset_family,
 }
-
-// SAFETY: UnsafeCover is safe to Send/Sync because it's only used for IPC
-unsafe impl Send for UnsafeCover {}
-unsafe impl Sync for UnsafeCover {}
 
 impl UnsafeCover {
     /// Create a new empty cover
@@ -1191,45 +1129,91 @@ impl UnsafeCover {
     }
 }
 
-impl<const INPUTS: usize, const OUTPUTS: usize> CoverBuilder<INPUTS, OUTPUTS> {
+impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker>
+    CoverBuilder<INPUTS, OUTPUTS, T>
+{
     /// Create a new empty cover
     pub fn new() -> Self {
-        CoverBuilder { cubes: Vec::new() }
+        CoverBuilder {
+            cubes: Vec::new(),
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Add a cube to the cover
     ///
+    /// Outputs can use PLA-style notation:
+    /// - `Some(true)` or `'1'` → bit set in F cube (ON-set)
+    /// - `Some(false)` or `'0'` → bit set in R cube (OFF-set, only if cover type includes R)
+    /// - `None` or `'-'` → bit set in D cube (Don't-care, only if cover type includes D)
+    ///
     /// # Arguments
     ///
     /// * `inputs` - Input values: `Some(false)` = 0, `Some(true)` = 1, `None` = don't care
-    /// * `outputs` - Output values: `Some(false)` = 0, `Some(true)` = 1, `None` = don't care
+    /// * `outputs` - Output values following PLA conventions based on cover type
     pub fn add_cube(
         &mut self,
         inputs: &[Option<bool>; INPUTS],
         outputs: &[Option<bool>; OUTPUTS],
     ) -> &mut Self {
-        // Convert to Arc slices for efficient storage and cloning
-        let input_arc: Arc<[Option<bool>]> = Arc::from(inputs.as_slice());
-        let output_arc: Arc<[Option<bool>]> = Arc::from(outputs.as_slice());
+        // Parse outputs following Espresso C convention (cvrin.c lines 176-199)
+        // Create separate F, D, R cubes from a single line based on output values
+        let mut f_outputs = Vec::with_capacity(OUTPUTS);
+        let mut d_outputs = Vec::with_capacity(OUTPUTS);
+        let mut r_outputs = Vec::with_capacity(OUTPUTS);
+        let mut has_f = false;
+        let mut has_d = false;
+        let mut has_r = false;
 
-        self.cubes.push((input_arc, output_arc));
+        let pla_type = T::PLA_TYPE;
+        for &out in outputs.iter() {
+            match out {
+                Some(true) if pla_type.has_f() => {
+                    // '1' → bit set in F cube
+                    f_outputs.push(true);
+                    d_outputs.push(false);
+                    r_outputs.push(false);
+                    has_f = true;
+                }
+                Some(false) if pla_type.has_r() => {
+                    // '0' → bit set in R cube
+                    f_outputs.push(false);
+                    d_outputs.push(false);
+                    r_outputs.push(true);
+                    has_r = true;
+                }
+                None if pla_type.has_d() => {
+                    // None/'-' → bit set in D cube
+                    f_outputs.push(false);
+                    d_outputs.push(true);
+                    r_outputs.push(false);
+                    has_d = true;
+                }
+                _ => {
+                    // Type not supported or unset bit
+                    f_outputs.push(false);
+                    d_outputs.push(false);
+                    r_outputs.push(false);
+                }
+            }
+        }
+
+        // Add cubes only if they have meaningful outputs
+        let inputs_vec = inputs.to_vec();
+        if has_f {
+            self.cubes
+                .push(Cube::new(inputs_vec.clone(), f_outputs, CubeType::F));
+        }
+        if has_d {
+            self.cubes
+                .push(Cube::new(inputs_vec.clone(), d_outputs, CubeType::D));
+        }
+        if has_r {
+            self.cubes
+                .push(Cube::new(inputs_vec, r_outputs, CubeType::R));
+        }
+
         self
-    }
-
-    /// Minimize this cover using default configuration (builder pattern)
-    ///
-    /// Returns `&mut Self` for method chaining.
-    pub fn minimize_mut(&mut self) -> io::Result<&mut Self> {
-        <Self as crate::Cover>::minimize(self)?;
-        Ok(self)
-    }
-
-    /// Minimize with custom configuration (builder pattern)
-    ///
-    /// Returns `&mut Self` for method chaining.
-    pub fn minimize_with_config_mut(&mut self, config: &EspressoConfig) -> io::Result<&mut Self> {
-        <Self as crate::Cover>::minimize_with_config(self, config)?;
-        Ok(self)
     }
 
     /// Get the number of cubes
@@ -1239,23 +1223,26 @@ impl<const INPUTS: usize, const OUTPUTS: usize> CoverBuilder<INPUTS, OUTPUTS> {
 
     /// Get a reference to the cubes
     ///
-    /// Returns the cubes as `(Arc<[Option<bool>]>, Arc<[Option<bool>]>)`.
-    pub fn cubes(&self) -> &[(Arc<[Option<bool>]>, Arc<[Option<bool>]>)] {
+    /// Returns the cubes as references to internal Cube structures.
+    pub fn cubes(&self) -> &[Cube] {
         &self.cubes
     }
 
     /// Iterate over cubes
     ///
-    /// Returns an iterator over `(&[Option<bool>], &[Option<bool>])` tuples.
-    pub fn iter_cubes(&self) -> impl Iterator<Item = (&[Option<bool>], &[Option<bool>])> + '_ {
-        self.cubes
-            .iter()
-            .map(|(inputs, outputs)| (inputs.as_ref(), outputs.as_ref()))
+    /// Returns an iterator over `(&[Option<bool>], Vec<Option<bool>>)` tuples.
+    pub fn iter_cubes(&self) -> impl Iterator<Item = (&[Option<bool>], Vec<Option<bool>>)> + '_ {
+        self.cubes.iter().map(|cube| {
+            let outputs: Vec<Option<bool>> = cube.outputs.iter().map(|&b| Some(b)).collect();
+            (cube.inputs.as_ref(), outputs)
+        })
     }
 }
 
-// Implement Cover trait for CoverBuilder
-impl<const INPUTS: usize, const OUTPUTS: usize> crate::Cover for CoverBuilder<INPUTS, OUTPUTS> {
+// Implement Minimizable for CoverBuilder (Cover trait is auto-implemented via blanket impl)
+impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker> Minimizable
+    for CoverBuilder<INPUTS, OUTPUTS, T>
+{
     fn num_inputs(&self) -> usize {
         INPUTS
     }
@@ -1264,50 +1251,44 @@ impl<const INPUTS: usize, const OUTPUTS: usize> crate::Cover for CoverBuilder<IN
         OUTPUTS
     }
 
-    fn num_cubes(&self) -> usize {
-        self.cubes.len()
-    }
-
     fn cover_type(&self) -> PLAType {
-        PLAType::F // TODO: make this a const generic parameter
+        T::PLA_TYPE
     }
 
-    fn cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
-        // CoverBuilder stores as Arc tuples, need to convert on-the-fly
-        // This is inefficient but CoverBuilder is mainly for F-type covers
-        // For now, return an empty iterator since CoverBuilder mainly uses default PLA output
-        Box::new(std::iter::empty())
+    fn internal_cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
+        Box::new(self.cubes.iter())
     }
 
     fn set_cubes(&mut self, cubes: Vec<Cube>) {
-        // Convert Cubes back to Arc tuples
-        // Convert bool outputs to Option<bool> for CoverBuilder's storage
+        // Filter cubes based on the cover type
+        let pla_type = T::PLA_TYPE;
         self.cubes = cubes
             .into_iter()
-            .map(|cube| {
-                let outputs_option: Arc<[Option<bool>]> = cube
-                    .outputs
-                    .iter()
-                    .map(|&b| Some(b))
-                    .collect::<Vec<_>>()
-                    .into();
-                (cube.inputs, outputs_option)
+            .filter(|cube| match cube.cube_type {
+                CubeType::F => pla_type.has_f(),
+                CubeType::D => pla_type.has_d(),
+                CubeType::R => pla_type.has_r(),
             })
             .collect();
     }
 }
 
-impl<const INPUTS: usize, const OUTPUTS: usize> Default for CoverBuilder<INPUTS, OUTPUTS> {
+impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker> Default
+    for CoverBuilder<INPUTS, OUTPUTS, T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const INPUTS: usize, const OUTPUTS: usize> fmt::Debug for CoverBuilder<INPUTS, OUTPUTS> {
+impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker> fmt::Debug
+    for CoverBuilder<INPUTS, OUTPUTS, T>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Cover")
+        f.debug_struct("CoverBuilder")
             .field("inputs", &INPUTS)
             .field("outputs", &OUTPUTS)
+            .field("cover_type", &T::PLA_TYPE)
             .field("num_cubes", &self.num_cubes())
             .finish()
     }

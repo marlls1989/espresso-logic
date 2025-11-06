@@ -15,7 +15,11 @@ fn test_cover_populates_cubes() {
     cover.minimize().unwrap();
 
     // XOR cannot be minimized - should still have 2 cubes
-    assert_eq!(cover.num_cubes(), 2, "XOR should have exactly 2 cubes after minimization");
+    assert_eq!(
+        cover.num_cubes(),
+        2,
+        "XOR should have exactly 2 cubes after minimization"
+    );
 }
 
 #[test]
@@ -24,10 +28,10 @@ fn test_cover_many_cubes() {
     let mut cover = CoverBuilder::<3, 1>::new();
 
     // Add 4 cubes: all have input[2]=1, so this should minimize to just --1 -> 1
-    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);  // 001 -> 1
-    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]);   // 011 -> 1
-    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);   // 101 -> 1
-    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);    // 111 -> 1
+    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]); // 001 -> 1
+    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]); // 011 -> 1
+    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]); // 101 -> 1
+    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]); // 111 -> 1
 
     // Minimize
     cover.minimize().unwrap();

@@ -30,6 +30,6 @@ fn main() -> std::io::Result<()> {
 
     println!("\nMinimized to {} cubes", cover.num_cubes());
     println!("\nThe minimized function should be equivalent but with fewer cubes.");
-    
+
     Ok(())
 }

@@ -199,12 +199,9 @@ fn main() {
             }
         } else {
             // Write to stdout
-            match cover.to_pla_bytes(output_type) {
-                Ok(bytes) => {
-                    if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), &bytes) {
-                        eprintln!("Error writing to stdout: {}", e);
-                        process::exit(1);
-                    }
+            match cover.to_pla_string(output_type) {
+                Ok(content) => {
+                    print!("{}", content);
                 }
                 Err(e) => {
                     eprintln!("Error generating PLA output: {}", e);

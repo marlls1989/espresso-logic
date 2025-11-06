@@ -9,8 +9,8 @@ fn main() -> std::io::Result<()> {
     let mut cover = CoverBuilder::<2, 1>::new();
 
     // Add XOR truth table
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
+    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
     println!("Input: 2 cubes");
     println!("  01 -> 1");

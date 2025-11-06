@@ -60,7 +60,11 @@ impl Worker {
         f_cubes: Vec<(Vec<u8>, Vec<u8>)>,
         d_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
         r_cubes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
-    ) -> io::Result<(SerializedCover, Option<SerializedCover>, Option<SerializedCover>)> {
+    ) -> io::Result<(
+        SerializedCover,
+        Option<SerializedCover>,
+        Option<SerializedCover>,
+    )> {
         let request = WorkerRequest::Minimize {
             num_inputs,
             num_outputs,
@@ -73,7 +77,11 @@ impl Worker {
         let response = Self::spawn_worker_and_execute(request)?;
 
         match response {
-            WorkerResponse::MinimizeResult { f_cover, d_cover, r_cover } => Ok((f_cover, d_cover, r_cover)),
+            WorkerResponse::MinimizeResult {
+                f_cover,
+                d_cover,
+                r_cover,
+            } => Ok((f_cover, d_cover, r_cover)),
             WorkerResponse::Error(e) => Err(io::Error::other(e)),
         }
     }
@@ -81,12 +89,8 @@ impl Worker {
     /// Spawn a worker process and execute a request
     fn spawn_worker_and_execute(request: WorkerRequest) -> io::Result<WorkerResponse> {
         // Get current executable path
-        let current_exe = std::env::current_exe().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Failed to get current exe: {}", e),
-            )
-        })?;
+        let current_exe = std::env::current_exe()
+            .map_err(|e| io::Error::other(format!("Failed to get current exe: {}", e)))?;
 
         // Spawn worker process with special argument
         let mut child = Command::new(current_exe)
@@ -130,10 +134,10 @@ impl Worker {
         // Wait for child to exit
         let status = child.wait()?;
         if !status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Worker exited with status: {}", status),
-            ));
+            return Err(io::Error::other(format!(
+                "Worker exited with status: {}",
+                status
+            )));
         }
 
         // Deserialize response

@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
     // Add cubes (XOR function)
     println!("2. Adding cubes to cover");
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
     println!("   ✓ Cubes added (pure Rust, no C code)\n");
 
     // Minimize - THIS is when the worker process runs
@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     println!("   - Worker runs minimization");
     println!("   - Worker returns result via shared memory");
     println!("   - Worker terminates");
-    
+
     cover.minimize()?;
     println!("   ✓ Success! Result has {} cubes\n", cover.num_cubes());
 

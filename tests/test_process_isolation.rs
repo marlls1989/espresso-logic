@@ -4,7 +4,6 @@
 //! with process isolation.
 
 use espresso_logic::{Cover, CoverBuilder};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 

@@ -1,8 +1,7 @@
 //! Conversion utilities between UnsafeCover and SerializedCover
 
 use crate::ipc::{SerializedCover, SerializedCube};
-use crate::{sys, UnsafeCover};
-use std::os::raw::c_int;
+use crate::UnsafeCover;
 
 impl UnsafeCover {
     /// Serialize this cover for IPC
@@ -31,49 +30,4 @@ impl UnsafeCover {
             }
         }
     }
-
-    /// Deserialize a cover from IPC data
-    pub(crate) fn deserialize(sc: &SerializedCover) -> Self {
-        unsafe {
-            // Create a new cover with the appropriate size
-            let ptr = sys::sf_new(sc.count as c_int, sc.sf_size as c_int);
-
-            // Copy cube data
-            let data = (*ptr).data;
-            for (i, cube) in sc.cubes.iter().enumerate() {
-                let cube_ptr = data.add(i * sc.wsize);
-                for (j, &word) in cube.data.iter().enumerate() {
-                    *cube_ptr.add(j) = word;
-                }
-            }
-
-            // Update count
-            (*ptr).count = sc.count as c_int;
-
-            UnsafeCover::from_raw(ptr)
-        }
-    }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::unsafe_espresso::UnsafeEspresso;
-
-    #[test]
-    fn test_cover_serialization_roundtrip() {
-        // Initialize UnsafeEspresso to set up cube structure
-        let _esp = UnsafeEspresso::new(2, 1);
-
-        // Create a simple unsafe cover
-        let cover = UnsafeCover::new(2, unsafe { sys::cube.size as usize });
-
-        // Serialize and deserialize
-        let serialized = cover.serialize();
-        let deserialized = UnsafeCover::deserialize(&serialized);
-
-        // Verify the serialization roundtrip worked
-        assert_eq!(serialized.count, deserialized.serialize().count);
-    }
-}
-

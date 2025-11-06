@@ -4,7 +4,7 @@
 //! It directly manipulates global state and is NOT thread-safe.
 
 use crate::sys;
-use crate::{UnsafeCover, EspressoConfig};
+use crate::UnsafeCover;
 use std::os::raw::c_int;
 use std::ptr;
 
@@ -13,8 +13,6 @@ use std::ptr;
 /// This is only used internally by worker processes. Do NOT expose this publicly!
 pub(crate) struct UnsafeEspresso {
     pub(crate) initialized: bool,
-    pub(crate) num_inputs: usize,
-    pub(crate) num_outputs: usize,
 }
 
 impl UnsafeEspresso {
@@ -69,21 +67,17 @@ impl UnsafeEspresso {
             sys::skip_make_sparse = 0;
         }
 
-        UnsafeEspresso {
-            initialized: true,
-            num_inputs,
-            num_outputs,
-        }
-    }
-
-    /// Create a new UnsafeEspresso instance with default configuration
-    pub(crate) fn new(num_inputs: usize, num_outputs: usize) -> Self {
-        Self::new_with_config(num_inputs, num_outputs, crate::ipc::IpcConfig::default())
+        UnsafeEspresso { initialized: true }
     }
 
     /// Minimize using direct C API (UNSAFE: uses global state)
     /// Returns (F cover, D cover, R cover)
-    pub(crate) fn minimize(&mut self, f: UnsafeCover, d: Option<UnsafeCover>, r: Option<UnsafeCover>) -> (UnsafeCover, UnsafeCover, UnsafeCover) {
+    pub(crate) fn minimize(
+        &mut self,
+        f: UnsafeCover,
+        d: Option<UnsafeCover>,
+        r: Option<UnsafeCover>,
+    ) -> (UnsafeCover, UnsafeCover, UnsafeCover) {
         let f_ptr = f.clone().into_raw();
 
         let d_ptr = d
@@ -106,28 +100,11 @@ impl UnsafeEspresso {
         let d_result = unsafe { UnsafeCover::from_raw(d_ptr) };
         let r_result = unsafe { UnsafeCover::from_raw(r_ptr) };
 
-        (unsafe { UnsafeCover::from_raw(f_result) }, d_result, r_result)
-    }
-
-    /// Exact minimization using direct C API (UNSAFE: uses global state)
-    pub(crate) fn minimize_exact(
-        &mut self,
-        f: UnsafeCover,
-        d: Option<UnsafeCover>,
-        r: Option<UnsafeCover>,
-    ) -> UnsafeCover {
-        let f_copy = unsafe { sys::sf_save(f.into_raw()) };
-
-        let d_copy = d
-            .map(|c| unsafe { sys::sf_save(c.into_raw()) })
-            .unwrap_or_else(|| unsafe { sys::sf_new(0, sys::cube.size as c_int) });
-        let r_copy = r
-            .map(|c| unsafe { sys::sf_save(c.into_raw()) })
-            .unwrap_or_else(|| unsafe { sys::sf_new(0, sys::cube.size as c_int) });
-
-        let result = unsafe { sys::minimize_exact(f_copy, d_copy, r_copy, 1) };
-
-        unsafe { UnsafeCover::from_raw(result) }
+        (
+            unsafe { UnsafeCover::from_raw(f_result) },
+            d_result,
+            r_result,
+        )
     }
 }
 
@@ -144,4 +121,3 @@ impl Drop for UnsafeEspresso {
         }
     }
 }
-
