@@ -16,6 +16,9 @@ clap = { version = "4.4", features = ["derive"] }
 indexmap = "2.0"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [build-dependencies]
 cc = "1.0"
 bindgen = "0.69"
@@ -52,4 +55,8 @@ path = "examples/concurrent_transparent.rs"
 [[example]]
 name = "boolean_expressions"
 path = "examples/boolean_expressions.rs"
+
+[[bench]]
+name = "pla_benchmarks"
+harness = false
 
