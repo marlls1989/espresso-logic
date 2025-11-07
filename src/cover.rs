@@ -4,7 +4,7 @@
 //! of Boolean functions). It includes compile-time checked builders and dynamic covers loaded from files.
 
 use std::fmt;
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -112,6 +112,25 @@ pub trait Cover: Send + Sync {
 
     /// Minimize this cover in-place with custom configuration
     fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()>;
+
+    /// Write this cover to PLA format using a writer
+    ///
+    /// This is the core serialization method that writes directly to any `Write` implementation.
+    /// Both `to_pla_string` and `to_pla_file` delegate to this method for efficient serialization.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, PLACover, PLAType};
+    /// use std::io::Write;
+    ///
+    /// let cover = PLACover::new(2, 1);
+    /// let mut buffer = Vec::new();
+    /// cover.write_pla(&mut buffer, PLAType::F).unwrap();
+    /// let output = String::from_utf8(buffer).unwrap();
+    /// println!("{}", output);
+    /// ```
+    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: PLAType) -> io::Result<()>;
 
     /// Write this cover to PLA format string
     fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String>;
@@ -242,6 +261,10 @@ impl<T: Minimizable + PLASerializable> Cover for T {
         // Update cubes with type information preserved
         self.set_cubes(all_cubes);
         Ok(())
+    }
+
+    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: PLAType) -> io::Result<()> {
+        PLASerializable::write_pla(self, writer, pla_type)
     }
 
     fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String> {

@@ -302,13 +302,26 @@ pub struct PLACover
 
 - `pub fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self>`
   
-  Reads a PLA cover from a file in Berkeley PLA format.
+  Reads a PLA cover from a file in Berkeley PLA format. Efficiently reads using
+  buffered I/O without loading the entire file into memory first.
   
   ```rust
   let cover = PLACover::from_pla_file("input.pla")?;
   ```
 
-- `pub fn from_pla_string(s: &str) -> io::Result<Self>`
+- `pub fn from_pla_reader<R: BufRead>(reader: R) -> io::Result<Self>`
+  
+  Reads a PLA cover from any `BufRead` implementation. This is the core parsing
+  method used by both `from_pla_file` and `from_pla_content`.
+  
+  ```rust
+  use std::io::BufReader;
+  let file = std::fs::File::open("input.pla")?;
+  let reader = BufReader::new(file);
+  let cover = PLACover::from_pla_reader(reader)?;
+  ```
+
+- `pub fn from_pla_content(s: &str) -> io::Result<Self>`
   
   Reads a PLA cover from a string.
 
@@ -321,9 +334,21 @@ pub struct PLACover
   cover.minimize()?;
   ```
 
+- `pub fn write_pla<W: Write>(&self, writer: &mut W, pla_type: PLAType) -> io::Result<()>`
+  
+  Writes this cover to PLA format using any `Write` implementation. This is the core
+  serialization method used by both `to_pla_string` and `to_pla_file`.
+  
+  ```rust
+  use std::io::Write;
+  let mut buffer = Vec::new();
+  cover.write_pla(&mut buffer, PLAType::F)?;
+  ```
+
 - `pub fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: PLAType) -> io::Result<()>`
   
-  Writes this cover to a PLA file.
+  Writes this cover to a PLA file. Efficiently writes directly to the file without
+  building the entire string in memory first.
   
   ```rust
   cover.to_pla_file("output.pla", PLAType::F)?;

@@ -101,8 +101,17 @@
 //!
 //! # let output_file = tempfile::NamedTempFile::new()?;
 //! # let output_path = output_file.path();
-//! // Write to PLA file
+//! // Write to PLA file (uses efficient writer-based implementation)
 //! cover.to_pla_file(output_path, PLAType::F)?;
+//!
+//! // Or write directly to any Write implementation
+//! use std::io::{Write, BufReader};
+//! let mut buffer = Vec::new();
+//! cover.write_pla(&mut buffer, PLAType::F)?;
+//!
+//! // Similarly, you can read from any BufRead implementation
+//! let reader = BufReader::new(buffer.as_slice());
+//! let cover2 = PLACover::from_pla_reader(reader)?;
 //! # Ok(())
 //! # }
 //! ```

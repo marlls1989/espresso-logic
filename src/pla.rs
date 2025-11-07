@@ -3,28 +3,30 @@
 //! This module handles PLA file I/O and provides `PLACover`, a dynamic cover type
 //! for working with PLA files where dimensions are not known at compile time.
 
-use std::io;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Write};
 use std::path::Path;
 
 use crate::cover::{Cube, CubeType, Minimizable, PLAType};
 
 /// Trait for types that support PLA serialization
 pub(crate) trait PLASerializable: Minimizable {
-    /// Write this cover to PLA format string
-    fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String> {
-        let mut output = String::new();
-
+    /// Write this cover to PLA format using a writer
+    ///
+    /// This is the core serialization method that writes directly to any `Write` implementation.
+    /// Both `to_pla_string` and `to_pla_file` delegate to this method.
+    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: PLAType) -> io::Result<()> {
         // Write .type directive first for FD, FR, FDR (matching C output order)
         match pla_type {
-            PLAType::FD => output.push_str(".type fd\n"),
-            PLAType::FR => output.push_str(".type fr\n"),
-            PLAType::FDR => output.push_str(".type fdr\n"),
+            PLAType::FD => writeln!(writer, ".type fd")?,
+            PLAType::FR => writeln!(writer, ".type fr")?,
+            PLAType::FDR => writeln!(writer, ".type fdr")?,
             PLAType::F => {} // F is default, no .type needed
         }
 
         // Write PLA header
-        output.push_str(&format!(".i {}\n", self.num_inputs()));
-        output.push_str(&format!(".o {}\n", self.num_outputs()));
+        writeln!(writer, ".i {}", self.num_inputs())?;
+        writeln!(writer, ".o {}", self.num_outputs())?;
 
         // Filter cubes based on output type using cube_type field
         let filtered_cubes: Vec<_> = self
@@ -40,20 +42,24 @@ pub(crate) trait PLASerializable: Minimizable {
             .collect();
 
         // Add .p directive with filtered cube count
-        output.push_str(&format!(".p {}\n", filtered_cubes.len()));
+        writeln!(writer, ".p {}", filtered_cubes.len())?;
 
         // Write filtered cubes
         for cube in filtered_cubes {
             // Write inputs
             for inp in cube.inputs.iter() {
-                output.push(match inp {
-                    Some(false) => '0',
-                    Some(true) => '1',
-                    None => '-',
-                });
+                write!(
+                    writer,
+                    "{}",
+                    match inp {
+                        Some(false) => '0',
+                        Some(true) => '1',
+                        None => '-',
+                    }
+                )?;
             }
 
-            output.push(' ');
+            write!(writer, " ")?;
 
             // Encode outputs based on cube type and output format
             // With bool outputs: true = bit set in this cube, false = bit not set
@@ -61,7 +67,7 @@ pub(crate) trait PLASerializable: Minimizable {
                 PLAType::F => {
                     // F-type: '1' for bit set, '0' for bit not set
                     for &out in cube.outputs.iter() {
-                        output.push(if out { '1' } else { '0' });
+                        write!(writer, "{}", if out { '1' } else { '0' })?;
                     }
                 }
                 PLAType::FD | PLAType::FDR | PLAType::FR => {
@@ -73,33 +79,55 @@ pub(crate) trait PLASerializable: Minimizable {
                     };
 
                     for &out in cube.outputs.iter() {
-                        output.push(if out { set_char } else { unset_char });
+                        write!(writer, "{}", if out { set_char } else { unset_char })?;
                     }
                 }
             }
 
-            output.push('\n');
+            writeln!(writer)?;
         }
 
         // C version uses ".e" for F-type, ".end" for FD/FR/FDR types
         match pla_type {
-            PLAType::F => output.push_str(".e\n"),
-            _ => output.push_str(".end\n"),
+            PLAType::F => writeln!(writer, ".e")?,
+            _ => writeln!(writer, ".end")?,
         }
-        Ok(output)
+
+        Ok(())
+    }
+
+    /// Write this cover to PLA format string
+    ///
+    /// This method delegates to `write_pla` for efficient string construction.
+    fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String> {
+        let mut buffer = Vec::new();
+        self.write_pla(&mut buffer, pla_type)?;
+        // Convert bytes to string - PLA format is ASCII so this is safe
+        String::from_utf8(buffer).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
     /// Write this cover to a PLA file
+    ///
+    /// This method delegates to `write_pla` for efficient file writing without
+    /// building the entire string in memory first.
     fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: PLAType) -> io::Result<()> {
-        let content = self.to_pla_string(pla_type)?;
-        std::fs::write(path, content)
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        self.write_pla(&mut writer, pla_type)?;
+        writer.flush()?;
+        Ok(())
     }
 }
 
-/// Parse a PLA format string into cube data
+/// Parse a PLA format from a reader into cube data
+///
+/// This is the core parsing method that reads from any `BufRead` implementation.
+/// Both `parse_pla_content` and file-based parsing delegate to this method.
 ///
 /// Returns (num_inputs, num_outputs, cubes, cover_type)
-pub(crate) fn parse_pla_content(content: &str) -> io::Result<(usize, usize, Vec<Cube>, PLAType)> {
+pub(crate) fn parse_pla_reader<R: BufRead>(
+    reader: R,
+) -> io::Result<(usize, usize, Vec<Cube>, PLAType)> {
     let mut num_inputs: Option<usize> = None;
     let mut num_outputs: Option<usize> = None;
     let mut cubes = Vec::new();
@@ -107,7 +135,8 @@ pub(crate) fn parse_pla_content(content: &str) -> io::Result<(usize, usize, Vec<
     // This causes '-' in outputs to be parsed as D cubes, not just don't-care bits
     let mut pla_type = PLAType::FD;
 
-    let lines: Vec<&str> = content.lines().collect();
+    // Read all lines into memory since we need lookahead for multi-line format
+    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
     let mut i = 0;
 
     while i < lines.len() {
@@ -381,6 +410,16 @@ pub(crate) fn parse_pla_content(content: &str) -> io::Result<(usize, usize, Vec<
     Ok((ni, no, cubes, pla_type))
 }
 
+/// Parse a PLA format string into cube data
+///
+/// This method delegates to `parse_pla_reader` for efficient parsing.
+///
+/// Returns (num_inputs, num_outputs, cubes, cover_type)
+pub(crate) fn parse_pla_content(content: &str) -> io::Result<(usize, usize, Vec<Cube>, PLAType)> {
+    let cursor = Cursor::new(content.as_bytes());
+    parse_pla_reader(cursor)
+}
+
 // ============================================================================
 // PLACover - Dynamic Cover for PLA Files
 // ============================================================================
@@ -413,9 +452,26 @@ impl PLACover {
     /// Load a cover from a PLA format file
     ///
     /// The dimensions are determined from the PLA file.
+    /// Uses efficient buffered reading without loading the entire file into memory first.
     pub fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        Self::from_pla_content(&content)
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        Self::from_pla_reader(reader)
+    }
+
+    /// Load a cover from a PLA format reader
+    ///
+    /// The dimensions are determined from the PLA content.
+    /// This is the core parsing method that accepts any `BufRead` implementation.
+    pub fn from_pla_reader<R: BufRead>(reader: R) -> io::Result<Self> {
+        let (num_inputs, num_outputs, cubes, cover_type) = parse_pla_reader(reader)?;
+
+        Ok(PLACover {
+            num_inputs,
+            num_outputs,
+            cubes,
+            cover_type,
+        })
     }
 
     /// Load a cover from PLA format string
