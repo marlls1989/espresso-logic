@@ -42,9 +42,6 @@ fn test_memory_usage_stability() {
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
 
-    // Force cleanup
-    Espresso::cleanup_if_unused();
-
     // Give OS time to reflect memory changes
     std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -59,9 +56,6 @@ fn test_memory_usage_stability() {
         let (result, _d, _r) = esp.minimize(f, None, None);
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
-
-    // Force cleanup
-    Espresso::cleanup_if_unused();
 
     // Give OS time to reflect memory changes
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -249,9 +243,6 @@ fn test_dimension_changes_no_leak() {
             }
             _ => unreachable!(),
         }
-
-        // Force cleanup between dimensions
-        Espresso::cleanup_if_unused();
     }
 
     if let (Some(base), Some(after)) = (baseline, get_memory_usage()) {
@@ -296,9 +287,6 @@ fn test_large_cover_allocations() {
 
         // Drop cover - should free all C memory
         drop(cover);
-
-        // Cleanup between iterations
-        Espresso::cleanup_if_unused();
     }
 
     std::thread::sleep(std::time::Duration::from_millis(50));

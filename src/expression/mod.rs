@@ -31,7 +31,7 @@
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! # fn main() -> Result<(), String> {
+//! # fn main() -> Result<(), espresso_logic::EspressoError> {
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //! let complex = BoolExpr::parse("(a + b) * (c + d)")?;
 //! # Ok(())
@@ -58,6 +58,7 @@
 //! # }
 //! ```
 
+use crate::error::EspressoError;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::{Add, Mul, Not};
@@ -148,10 +149,17 @@ impl BoolExpr {
     /// - `~` or `!` for NOT
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
-    pub fn parse(input: &str) -> Result<Self, String> {
-        parser::ExprParser::new()
-            .parse(input)
-            .map_err(|e| format!("Parse error: {}", e))
+    pub fn parse(input: &str) -> Result<Self, EspressoError> {
+        parser::ExprParser::new().parse(input).map_err(|e| {
+            let message = e.to_string();
+            // Try to extract position from lalrpop error message
+            let position = extract_position_from_error(&message);
+            EspressoError::ParseError {
+                message,
+                input: input.to_string(),
+                position,
+            }
+        })
     }
 
     /// Collect all variables used in this expression in alphabetical order
@@ -216,7 +224,7 @@ impl BoolExpr {
     /// ```
     /// use espresso_logic::{BoolExpr, expr};
     ///
-    /// # fn main() -> std::io::Result<()> {
+    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
     /// let a = BoolExpr::variable("a");
     /// let b = BoolExpr::variable("b");
     /// let c = BoolExpr::variable("c");
@@ -231,12 +239,46 @@ impl BoolExpr {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn minimize(self) -> std::io::Result<BoolExpr> {
+    pub fn minimize(self) -> Result<BoolExpr, EspressoError> {
         use crate::Cover;
         let mut cover = ExprCover::from_expr(self);
         cover.minimize()?;
         Ok(cover.to_expr())
     }
+}
+
+/// Helper function to extract position information from lalrpop error messages
+///
+/// Lalrpop errors often contain position information in the form "at line X column Y"
+/// or similar patterns. This function attempts to extract that information.
+fn extract_position_from_error(error_msg: &str) -> Option<usize> {
+    // Try to find patterns like "at 5" or "position 5" or similar
+    // Lalrpop errors typically have format like "Unrecognized token `+` at line 1 column 7"
+
+    // Look for "column N" pattern
+    if let Some(col_idx) = error_msg.find("column ") {
+        let after_col = &error_msg[col_idx + 7..];
+        if let Some(end_idx) = after_col.find(|c: char| !c.is_ascii_digit()) {
+            if let Ok(col) = after_col[..end_idx].parse::<usize>() {
+                return Some(col.saturating_sub(1)); // Convert to 0-indexed
+            }
+        }
+    }
+
+    // Look for position after "at " pattern (some formats use byte offset)
+    if let Some(at_idx) = error_msg.rfind(" at ") {
+        let after_at = &error_msg[at_idx + 4..];
+        // Skip if it looks like "at line" or "at column"
+        if !after_at.starts_with("line") && !after_at.starts_with("column") {
+            if let Some(end_idx) = after_at.find(|c: char| !c.is_ascii_digit()) {
+                if let Ok(pos) = after_at[..end_idx].parse::<usize>() {
+                    return Some(pos);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Macro for building boolean expressions with clean syntax

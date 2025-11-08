@@ -150,26 +150,7 @@ heaptrack cargo test --test test_memory_safety
 
 ## Potential Issues
 
-### Issue 1: Espresso::cleanup_if_unused()
-
-The `cleanup_if_unused()` function clears the weak reference but relies on all Rc refs being dropped:
-
-```rust
-pub fn cleanup_if_unused() {
-    ESPRESSO_INSTANCE.with(|instance| {
-        if instance.borrow().upgrade().is_none() {
-            *instance.borrow_mut() = std::rc::Weak::new();
-        }
-    });
-}
-```
-
-This is safe because:
-- Covers hold `Rc<Espresso>`
-- Cleanup only occurs when no covers exist
-- If any cover exists, the Rc keeps Espresso alive
-
-### Issue 2: Global C State
+### Issue 1: Global C State
 
 The C code uses thread-local global variables (`cube`, `cdata`, etc.). These are cleaned up in `Espresso::drop()`:
 

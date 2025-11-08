@@ -4,8 +4,9 @@
 //! to the Espresso algorithm with maximum control and performance.
 
 use espresso_logic::espresso::EspressoCover;
+use espresso_logic::EspressoError;
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), EspressoError> {
     println!("=== Direct Espresso API Example ===\n");
 
     // Build a cover for XOR function: 01->1, 10->1
@@ -52,7 +53,7 @@ fn main() -> Result<(), String> {
 
     let handles: Vec<_> = (0..4)
         .map(|thread_id| {
-            thread::spawn(move || -> Result<(usize, usize), String> {
+            thread::spawn(move || -> Result<(usize, usize), EspressoError> {
                 // No need to create Espresso instance - it's automatic!
                 let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
                 let f = EspressoCover::from_cubes(cubes, 2, 1)?;

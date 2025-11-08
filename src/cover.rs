@@ -255,21 +255,23 @@ impl<T: Minimizable + PLASerializable> Cover for T {
         let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
 
         // Build covers from cube data
-        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())
-            .map_err(io::Error::other)?;
+        // EspressoError automatically converts to io::Error via From trait
+        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
         let d_cover = if !d_cubes.is_empty() {
-            Some(
-                EspressoCover::from_cubes(d_cubes, self.num_inputs(), self.num_outputs())
-                    .map_err(io::Error::other)?,
-            )
+            Some(EspressoCover::from_cubes(
+                d_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
         } else {
             None
         };
         let r_cover = if !r_cubes.is_empty() {
-            Some(
-                EspressoCover::from_cubes(r_cubes, self.num_inputs(), self.num_outputs())
-                    .map_err(io::Error::other)?,
-            )
+            Some(EspressoCover::from_cubes(
+                r_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
         } else {
             None
         };
@@ -277,25 +279,11 @@ impl<T: Minimizable + PLASerializable> Cover for T {
         // Minimize
         let (f_result, d_result, r_result) = esp.minimize(f_cover, d_cover, r_cover);
 
-        // Extract cubes before dropping anything
-        let f_cubes = f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F);
-        let d_cubes = d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D);
-        let r_cubes = r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R);
-
-        // Explicitly drop covers and espresso handle to ensure cleanup
-        drop(f_result);
-        drop(d_result);
-        drop(r_result);
-        drop(esp);
-
-        // Force cleanup of thread-local weak reference if no strong refs remain
-        crate::espresso::Espresso::cleanup_if_unused();
-
-        // Combine cubes after cleanup
+        // Extract cubes and combine
         let mut all_cubes = Vec::new();
-        all_cubes.extend(f_cubes);
-        all_cubes.extend(d_cubes);
-        all_cubes.extend(r_cubes);
+        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
+        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
+        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
 
         // Update cubes with type information preserved
         self.set_cubes(all_cubes);

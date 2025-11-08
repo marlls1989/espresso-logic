@@ -3,9 +3,9 @@
 //! This example demonstrates how to use boolean expressions with the expr! macro,
 //! method-based API, and parsing to create and minimize boolean functions.
 
-use espresso_logic::{expr, BoolExpr, Cover, ExprCover};
+use espresso_logic::{expr, BoolExpr, Cover, EspressoError, ExprCover};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), EspressoError> {
     println!("=== Boolean Expression Examples ===\n");
 
     // Example 1: Programmatic construction with expr! macro
@@ -28,7 +28,7 @@ fn main() -> std::io::Result<()> {
 
     // Example 2: Parsing from string
     println!("2. Parsing from String:");
-    let parsed_expr = BoolExpr::parse("(a + b) * (c + d)").unwrap();
+    let parsed_expr = BoolExpr::parse("(a + b) * (c + d)")?;
     println!("   Expression: (a + b) * (c + d)");
     println!("   Variables: {:?}", parsed_expr.collect_variables());
     let parsed_cover = ExprCover::from_expr(parsed_expr);
@@ -41,7 +41,7 @@ fn main() -> std::io::Result<()> {
 
     // Example 3: Complex expression with negation
     println!("3. Complex Expression with Negation:");
-    let complex = BoolExpr::parse("~(a * b) + (c * ~d)").unwrap();
+    let complex = BoolExpr::parse("~(a * b) + (c * ~d)")?;
     println!("   Expression: ~(a * b) + (c * ~d)");
     println!("   Variables: {:?}", complex.collect_variables());
     println!();
@@ -118,7 +118,7 @@ fn main() -> std::io::Result<()> {
 
     // Example 8: Parsing with constants
     println!("8. Expressions with Constants:");
-    let expr_with_const = BoolExpr::parse("a * 1 + 0 * b").unwrap();
+    let expr_with_const = BoolExpr::parse("a * 1 + 0 * b")?;
     println!("   Expression: a * 1 + 0 * b");
     println!("   Variables: {:?}", expr_with_const.collect_variables());
     println!();
@@ -139,8 +139,8 @@ fn main() -> std::io::Result<()> {
 
     // Example 10: Comparison - same logical function, different expressions
     println!("10. Equivalent Expressions:");
-    let expr1 = BoolExpr::parse("a * b + a * c").unwrap();
-    let expr2 = BoolExpr::parse("a * (b + c)").unwrap();
+    let expr1 = BoolExpr::parse("a * b + a * c")?;
+    let expr2 = BoolExpr::parse("a * (b + c)")?;
 
     let mut cover1 = ExprCover::from_expr(expr1);
     let mut cover2 = ExprCover::from_expr(expr2);
@@ -155,9 +155,9 @@ fn main() -> std::io::Result<()> {
     println!("    After minimization, they should be equivalent");
     println!();
 
-    // Example 11: Iterating over cubes
+    // Example 11: Cube Iteration:");
     println!("11. Cube Iteration:");
-    let expr = BoolExpr::parse("a * b + ~a * c").unwrap();
+    let expr = BoolExpr::parse("a * b + ~a * c")?;
     let cover = ExprCover::from_expr(expr);
     println!("    Expression: a * b + ~a * c");
     println!("    Cubes:");

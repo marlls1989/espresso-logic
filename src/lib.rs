@@ -44,12 +44,12 @@
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! # fn main() -> Result<(), String> {
+//! # fn main() -> Result<(), espresso_logic::EspressoError> {
 //! // Parse using standard operators: +, *, ~, !
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //!
 //! // Minimize
-//! let minimized = expr.minimize().map_err(|e| e.to_string())?;
+//! let minimized = expr.minimize()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -214,6 +214,7 @@
 
 // Public modules
 pub mod cover;
+pub mod error;
 pub mod espresso;
 pub mod expression;
 pub mod pla;
@@ -223,6 +224,7 @@ pub mod sys;
 pub use cover::{
     Cover, CoverBuilder, CoverTypeMarker, Cube, CubeType, FDRType, FDType, FRType, FType, PLAType,
 };
+pub use error::{ConflictReason, EspressoError};
 pub use expression::{BoolExpr, ExprCover};
 pub use pla::PLACover;
 
