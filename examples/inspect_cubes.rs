@@ -1,12 +1,12 @@
 //! Example: Inspect cubes after minimization
 
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     println!("=== Cube Inspection Example ===\n");
 
     // Create a cover with a simple function
-    let mut cover = CoverBuilder::<3, 1>::new();
+    let mut cover = Cover::new(CoverType::F);
 
     // Add 4 cubes that can be minimized
     println!("Adding 4 input cubes:");

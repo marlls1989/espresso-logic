@@ -50,6 +50,16 @@ pub enum EspressoError {
         position: Option<usize>,
     },
 
+    /// Invalid input provided to a function
+    ///
+    /// This error is used for general input validation failures, such as
+    /// attempting to add an expression to an output name that already exists,
+    /// or accessing an output that doesn't exist.
+    InvalidInput {
+        /// Description of what was invalid
+        message: String,
+    },
+
     /// IO error wrapper
     ///
     /// Wraps standard IO errors that occur during file operations or writing.
@@ -112,6 +122,7 @@ impl fmt::Display for EspressoError {
                     )
                 }
             }
+            EspressoError::InvalidInput { message } => write!(f, "{}", message),
             EspressoError::Io(err) => write!(f, "{}", err),
         }
     }

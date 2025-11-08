@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Documentation:**
 - Updated README.md to reflect thread-local implementation
-- Marked `docs/PROCESS_ISOLATION.md` as historical (pre-2.6.2)
+- Removed `docs/PROCESS_ISOLATION.md` (historical pre-2.6.2 implementation)
 - Updated all examples and API documentation
 
 ### Technical Notes

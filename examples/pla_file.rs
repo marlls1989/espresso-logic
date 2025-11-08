@@ -1,9 +1,9 @@
 //! Example: Reading and minimizing a PLA file
 //!
-//! This example demonstrates how to read a PLA file, minimize it using the Cover trait,
+//! This example demonstrates how to read a PLA file, minimize it,
 //! and write the result back to a file.
 
-use espresso_logic::{Cover, PLACover, PLAType};
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 use std::env;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -40,7 +40,7 @@ fn main() {
 
     // Read the PLA file
     println!("\nReading PLA file...");
-    let mut cover = match PLACover::from_pla_file(temp_in.path()) {
+    let mut cover = match Cover::from_pla_file(temp_in.path()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA: {}", e);
@@ -67,7 +67,7 @@ fn main() {
     println!("  Cubes:   {}", cover.num_cubes());
 
     // Show the minimized PLA
-    match cover.to_pla_string(PLAType::F) {
+    match cover.to_pla_string(CoverType::F) {
         Ok(pla_str) => {
             println!("\nMinimized PLA:");
             println!("{}", pla_str);
@@ -78,7 +78,7 @@ fn main() {
     // Write to output file if requested
     if let Some(output_path) = env::args().nth(1) {
         println!("Writing minimized PLA to: {}", output_path);
-        match cover.to_pla_file(&output_path, PLAType::F) {
+        match cover.to_pla_file(&output_path, CoverType::F) {
             Ok(_) => println!("Successfully wrote output file!"),
             Err(e) => eprintln!("Error writing output: {}", e),
         }

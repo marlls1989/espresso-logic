@@ -238,7 +238,7 @@ The test suite verifies memory safety through:
 
 ### `tests/test_integration.rs`
 
-Integration tests for the high-level Rust API (CoverBuilder, PLACover, BoolExpr).
+Integration tests for the high-level Rust API (Cover, BoolExpr).
 
 ### `tests/test_thread_safety.rs`
 

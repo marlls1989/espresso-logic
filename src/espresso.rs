@@ -14,8 +14,8 @@
 //!
 //! For most use cases, prefer the higher-level APIs:
 //! - [`BoolExpr`](crate::BoolExpr) for boolean expressions
-//! - [`CoverBuilder`](crate::CoverBuilder) for typed covers
-//! - [`PLACover`](crate::PLACover) for PLA files
+//! - [`Cover`](crate::Cover) for covers with dynamic dimensions
+//! - [`Cover::from_pla_file`](crate::Cover::from_pla_file) for reading PLA files
 //!
 //! # Safety and Thread Safety
 //!
@@ -114,7 +114,7 @@ use std::os::raw::c_int;
 use std::ptr;
 use std::rc::Rc;
 
-// Re-export types used in public API
+// Re-export for convenience when using the espresso module directly
 pub use crate::cover::{Cube, CubeType};
 
 /// Cover with direct access to C library representation
@@ -123,18 +123,17 @@ pub use crate::cover::{Cube, CubeType};
 /// safe Rust methods for working with it. Memory is automatically managed
 /// through the `Drop` trait.
 ///
-/// **Note:** This type is neither `Send` nor `Sync` - it must remain on the thread
-/// where it was created, as it's tied to thread-local C state managed by `Espresso`.
+/// **Note:** This type is neither `Send` nor `Sync` (because `Rc` is `!Send + !Sync`) -
+/// it must remain on the thread where it was created, as it's tied to thread-local C state
+/// managed by `Espresso`.
 ///
-/// Each cover holds a reference to the Espresso instance, ensuring that the C state
+/// Each cover holds a reference to the internal Espresso instance, ensuring that the C state
 /// remains valid for as long as the cover exists.
 #[derive(Debug)]
 pub struct EspressoCover {
     ptr: sys::pset_family,
-    // Keep the Espresso instance alive
-    _espresso: Rc<Espresso>,
-    // Make this type !Send and !Sync since it's tied to thread-local state
-    _marker: PhantomData<*const ()>,
+    // Keep the internal Espresso instance alive
+    _espresso: Rc<InnerEspresso>,
 }
 
 impl EspressoCover {
@@ -151,17 +150,15 @@ impl EspressoCover {
         let ptr = unsafe { sys::sf_new(capacity as c_int, cube_size as c_int) };
         EspressoCover {
             ptr,
-            _espresso: espresso,
-            _marker: PhantomData,
+            _espresso: espresso.inner,
         }
     }
 
     /// Create from raw pointer with Espresso reference (internal use)
-    pub(crate) unsafe fn from_raw(ptr: sys::pset_family, espresso: &Rc<Espresso>) -> Self {
+    pub(crate) unsafe fn from_raw(ptr: sys::pset_family, espresso: &Espresso) -> Self {
         EspressoCover {
             ptr,
-            _espresso: Rc::clone(espresso),
-            _marker: PhantomData,
+            _espresso: Rc::clone(&espresso.inner),
         }
     }
 
@@ -216,8 +213,7 @@ impl EspressoCover {
         let ptr = unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) };
         let mut cover = EspressoCover {
             ptr,
-            _espresso: espresso,
-            _marker: PhantomData,
+            _espresso: espresso.inner,
         };
 
         // Add each cube to the cover
@@ -299,7 +295,6 @@ impl Clone for EspressoCover {
         EspressoCover {
             ptr,
             _espresso: Rc::clone(&self._espresso),
-            _marker: PhantomData,
         }
     }
 }
@@ -404,8 +399,10 @@ impl EspressoCover {
         d: Option<EspressoCover>,
         r: Option<EspressoCover>,
     ) -> (EspressoCover, EspressoCover, EspressoCover) {
-        // Clone the Espresso instance Rc before moving self
-        let espresso = Rc::clone(&self._espresso);
+        // Get the Espresso wrapper for this cover
+        let espresso = Espresso {
+            inner: Rc::clone(&self._espresso),
+        };
         espresso.minimize(self, d, r)
     }
 }
@@ -414,7 +411,26 @@ impl EspressoCover {
 // Uses Weak to allow clean destruction when all Espresso handles are dropped
 use std::cell::RefCell;
 thread_local! {
-    static ESPRESSO_INSTANCE: RefCell<std::rc::Weak<Espresso>> = const { RefCell::new(std::rc::Weak::new()) };
+    static ESPRESSO_INSTANCE: RefCell<std::rc::Weak<InnerEspresso>> = const { RefCell::new(std::rc::Weak::new()) };
+}
+
+/// Internal implementation of Espresso that manages thread-local global state
+///
+/// This type contains the actual implementation details and is held within
+/// the thread-local singleton. Users interact with the outer `Espresso` wrapper
+/// instead, which hides these implementation details.
+///
+/// **Note:** This type is neither `Send` nor `Sync` - it must remain on the thread
+/// where it was created, as it manages thread-local C state. The `PhantomData` marker
+/// ensures this type is `!Send + !Sync`.
+#[derive(Debug)]
+struct InnerEspresso {
+    num_inputs: usize,
+    num_outputs: usize,
+    config: EspressoConfig,
+    initialized: bool,
+    // Make this type !Send and !Sync since it manages thread-local state
+    _marker: PhantomData<*const ()>,
 }
 
 /// Direct wrapper around Espresso using thread-local global state
@@ -425,8 +441,8 @@ thread_local! {
 ///
 /// # Thread-Local Singleton Pattern
 ///
-/// Internally, this uses a thread-local singleton with `Rc` to ensure that only one
-/// `Espresso` instance exists per thread. Multiple handles can exist (via cloning),
+/// Internally, this uses a thread-local singleton to ensure that only one
+/// Espresso configuration exists per thread. Multiple `Espresso` handles can exist,
 /// but they all reference the same underlying state. This is safe because:
 /// - All C global variables use `_Thread_local` storage
 /// - Each thread has independent state (cube structure, configuration, etc.)
@@ -435,18 +451,30 @@ thread_local! {
 /// # Important
 ///
 /// Creating a new `Espresso` instance will replace any existing instance on the current
-/// thread. If you need multiple handles to the same instance, use `Clone`.
+/// thread. If you need multiple handles to the same instance, clone the `Espresso` handle.
 ///
-/// **Note:** This type is neither `Send` nor `Sync` - it must remain on the thread
-/// where it was created, as it manages thread-local C state.
-#[derive(Debug)]
+/// **Note:** This type is neither `Send` nor `Sync` (because `Rc` is `!Send + !Sync`) -
+/// it must remain on the thread where it was created, as it manages thread-local C state.
+#[derive(Debug, Clone)]
 pub struct Espresso {
-    num_inputs: usize,
-    num_outputs: usize,
-    config: EspressoConfig,
-    initialized: bool,
-    // Make this type !Send and !Sync since it manages thread-local state
-    _marker: PhantomData<*const ()>,
+    inner: Rc<InnerEspresso>,
+}
+
+// InnerEspresso has no methods except Drop - all logic is in Espresso wrapper
+
+impl Drop for InnerEspresso {
+    fn drop(&mut self) {
+        if self.initialized {
+            unsafe {
+                sys::setdown_cube();
+                let cube = sys::get_cube();
+                if !(*cube).part_size.is_null() {
+                    libc::free((*cube).part_size as *mut libc::c_void);
+                    (*cube).part_size = ptr::null_mut();
+                }
+            }
+        }
+    }
 }
 
 impl Espresso {
@@ -485,7 +513,7 @@ impl Espresso {
     ///
     /// // Now all EspressoCover operations will use this configured instance
     /// ```
-    pub fn new(num_inputs: usize, num_outputs: usize, config: &EspressoConfig) -> Rc<Self> {
+    pub fn new(num_inputs: usize, num_outputs: usize, config: &EspressoConfig) -> Self {
         Self::try_new(num_inputs, num_outputs, Some(config))
             .expect("Failed to create Espresso instance")
     }
@@ -511,9 +539,9 @@ impl Espresso {
         num_inputs: usize,
         num_outputs: usize,
         config: Option<&EspressoConfig>,
-    ) -> Result<Rc<Self>, EspressoError> {
+    ) -> Result<Self, EspressoError> {
         // Check if an instance already exists
-        ESPRESSO_INSTANCE.with(|instance| {
+        let inner = ESPRESSO_INSTANCE.with(|instance| {
             if let Some(existing) = instance.borrow().upgrade() {
                 // Check dimensions
                 if existing.num_inputs != num_inputs || existing.num_outputs != num_outputs {
@@ -592,7 +620,7 @@ impl Espresso {
                 sys::set_skip_make_sparse(0);
             }
 
-            let espresso = Rc::new(Espresso {
+            let inner = Rc::new(InnerEspresso {
                 num_inputs,
                 num_outputs,
                 config: actual_config,
@@ -601,30 +629,58 @@ impl Espresso {
             });
 
             // Store a Weak reference in thread-local singleton
-            *instance.borrow_mut() = Rc::downgrade(&espresso);
+            *instance.borrow_mut() = Rc::downgrade(&inner);
 
-            Ok(espresso)
-        })
+            Ok(inner)
+        })?;
+
+        Ok(Espresso { inner })
     }
 
-    /// Get the current thread-local Espresso instance (internal use)
-    pub fn current() -> Option<Rc<Self>> {
-        ESPRESSO_INSTANCE.with(|instance| instance.borrow().upgrade())
+    /// Get the current thread-local Espresso instance
+    ///
+    /// Returns the current Espresso instance for this thread if one exists.
+    /// This is useful for accessing the instance that was automatically created
+    /// by `EspressoCover::from_cubes()` or explicitly created with `Espresso::new()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
+    ///
+    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
+    /// // Initially there's no instance
+    /// assert!(Espresso::current().is_none());
+    ///
+    /// // Create a cover - this auto-creates an Espresso instance
+    /// let cubes = vec![(vec![0, 1], vec![1])];
+    /// let _cover = EspressoCover::from_cubes(cubes, 2, 1)?;
+    ///
+    /// // Now we can get the current instance
+    /// let esp = Espresso::current().expect("Should have an instance now");
+    /// assert_eq!(esp.num_inputs(), 2);
+    /// assert_eq!(esp.num_outputs(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn current() -> Option<Self> {
+        ESPRESSO_INSTANCE
+            .with(|instance| instance.borrow().upgrade().map(|inner| Espresso { inner }))
     }
 
     /// Get the number of inputs for this Espresso instance
     pub fn num_inputs(&self) -> usize {
-        self.num_inputs
+        self.inner.num_inputs
     }
 
     /// Get the number of outputs for this Espresso instance
     pub fn num_outputs(&self) -> usize {
-        self.num_outputs
+        self.inner.num_outputs
     }
 
     /// Get the configuration of this Espresso instance
     pub fn config(&self) -> &EspressoConfig {
-        &self.config
+        &self.inner.config
     }
 
     /// Minimize a boolean function using the Espresso algorithm
@@ -657,7 +713,7 @@ impl Espresso {
     /// # }
     /// ```
     pub fn minimize(
-        self: &Rc<Self>,
+        &self,
         f: EspressoCover,
         d: Option<EspressoCover>,
         r: Option<EspressoCover>,
@@ -709,21 +765,6 @@ impl Espresso {
             d_result,
             r_result,
         )
-    }
-}
-
-impl Drop for Espresso {
-    fn drop(&mut self) {
-        if self.initialized {
-            unsafe {
-                sys::setdown_cube();
-                let cube = sys::get_cube();
-                if !(*cube).part_size.is_null() {
-                    libc::free((*cube).part_size as *mut libc::c_void);
-                    (*cube).part_size = ptr::null_mut();
-                }
-            }
-        }
     }
 }
 
@@ -1231,24 +1272,24 @@ mod tests {
         }
     }
 
-    // Tests for dimension cleanup and CoverBuilder API
+    // Tests for dimension cleanup and Cover API
 
     #[test]
     fn test_sequential_different_dimensions_via_coverbuilder() {
-        use crate::{Cover, CoverBuilder};
+        use crate::{Cover, CoverType};
 
         // This test verifies that Espresso instances are properly cleaned up after minimize()
         // allowing different dimensions to work sequentially without conflicts
 
         // Create and minimize cover with 2 inputs, 1 output
-        let mut cover1 = CoverBuilder::<2, 1>::new();
+        let mut cover1 = Cover::new(CoverType::F);
         cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         cover1.minimize().unwrap();
         assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
 
         // At this point, the Espresso instance should be dropped
         // So we should be able to create and minimize a cover with different dimensions
-        let mut cover2 = CoverBuilder::<3, 1>::new();
+        let mut cover2 = Cover::new(CoverType::F);
         cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
         cover2.minimize().unwrap();
         assert_eq!(cover2.num_cubes(), 1, "Cover2 (3x1) should have 1 cube");
@@ -1260,18 +1301,18 @@ mod tests {
 
     #[test]
     fn test_explicit_drop_between_dimensions() {
-        use crate::{Cover, CoverBuilder};
+        use crate::{Cover, CoverType};
 
         // Test with explicit scope-based drop to ensure cleanup works correctly
         {
-            let mut cover1 = CoverBuilder::<2, 1>::new();
+            let mut cover1 = Cover::new(CoverType::F);
             cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
             cover1.minimize().unwrap();
             assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
         } // cover1 is dropped here, Espresso instance should be cleaned up
 
         // Now try with different dimensions - should work without conflicts
-        let mut cover2 = CoverBuilder::<4, 1>::new();
+        let mut cover2 = Cover::new(CoverType::F);
         cover2.add_cube(
             &[Some(false), Some(true), Some(false), Some(true)],
             &[Some(true)],
@@ -1332,13 +1373,13 @@ mod tests {
 
     #[test]
     fn test_coverbuilder_handles_different_dimensions() {
-        use crate::{Cover, CoverBuilder};
+        use crate::{Cover, CoverType};
 
-        // CoverBuilder (unlike EspressoCover) can handle DIFFERENT dimensions
+        // Cover (unlike EspressoCover) can handle DIFFERENT dimensions
         // because it properly manages Espresso instance lifecycle
 
         // Create and minimize first cover with 2 inputs, 1 output
-        let mut cover1 = CoverBuilder::<2, 1>::new();
+        let mut cover1 = Cover::new(CoverType::F);
         cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         assert_eq!(
             cover1.num_cubes(),
@@ -1353,8 +1394,8 @@ mod tests {
             "Single cube should remain as 1 after minimization"
         );
 
-        // CoverBuilder can handle different dimensions (3x2) without conflicts
-        let mut cover2 = CoverBuilder::<3, 2>::new();
+        // Cover can handle different dimensions (3x2) without conflicts
+        let mut cover2 = Cover::new(CoverType::F);
         cover2.add_cube(
             &[Some(false), Some(true), Some(false)],
             &[Some(true), Some(false)],

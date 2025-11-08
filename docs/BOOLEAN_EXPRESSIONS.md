@@ -107,7 +107,33 @@ let xnor = &a * &b + &(!&a) * &(!&b);
 
 ### `expr!` Macro (Recommended for Readability)
 
-The `expr!` macro provides the cleanest syntax:
+The `expr!` macro is a procedural macro that provides the cleanest syntax with three usage styles:
+
+#### Style 1: String Literals (Most Concise)
+
+No variable declarations needed - variables are created automatically:
+
+```rust
+use espresso_logic::expr;
+
+// Simple expressions
+let and_expr = expr!("a" * "b");
+let or_expr = expr!("a" + "b");
+let not_expr = expr!(!"a");
+
+// XOR - no variable declarations!
+let xor = expr!("a" * "b" + !"a" * !"b");
+
+// Complex nested
+let complex = expr!(("a" + "b") * ("c" + "d"));
+
+// Majority function
+let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
+```
+
+#### Style 2: Existing BoolExpr Variables
+
+Use pre-defined variables for more control:
 
 ```rust
 use espresso_logic::expr;
@@ -116,13 +142,9 @@ let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
 let c = BoolExpr::variable("c");
 
-// Simple AND
+// Simple operations
 let and_expr = expr!(a * b);
-
-// Simple OR
 let or_expr = expr!(a + b);
-
-// NOT
 let not_expr = expr!(!a);
 
 // XOR
@@ -131,17 +153,33 @@ let xor = expr!(a * !b + !a * b);
 // XNOR
 let xnor = expr!(a * b + !a * !b);
 
-// Majority function
-let majority = expr!(a * b + b * c + a * c);
-
 // With parentheses
-let complex = expr!((a + b) * (c + d));
+let complex = expr!((a + b) * c);
+```
+
+#### Style 3: Mixed (Best of Both)
+
+Combine existing variables with string literals:
+
+```rust
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+
+// Mix both styles
+let expr = expr!(a * "temp" + b * "enable");
+
+// Compose sub-expressions
+let sub1 = expr!(a * b);
+let sub2 = expr!("c" + "d");
+let combined = expr!(sub1 + sub2);
 ```
 
 **Advantages:**
 - No explicit `&` references
 - Clean, readable syntax
 - Matches mathematical notation
+- Three flexible usage styles
+- Automatic operator precedence
 - Perfect for expressing common patterns
 
 ## Parsing Syntax
@@ -235,20 +273,21 @@ let minimized = expr.minimize()?;
 println!("{}", minimized);  // Output: (a * b)
 ```
 
-### Using ExprCover for More Control
+### Using Cover for More Control
 
 For more control over the minimization process:
 
 ```rust
-use espresso_logic::{BoolExpr, ExprCover, Cover};
+use espresso_logic::{BoolExpr, Cover, CoverType};
 
 let expr = BoolExpr::parse("a * b + a * b * c")?;
 
-// Convert to cover
-let mut cover = ExprCover::from_expr(expr);
+// Create cover and add expression
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "output")?;
 
 // Inspect before minimization
-println!("Variables: {:?}", cover.variables());
+println!("Input variables: {:?}", cover.input_labels());
 println!("Inputs: {}", cover.num_inputs());
 println!("Outputs: {}", cover.num_outputs());
 println!("Cubes before: {}", cover.num_cubes());
@@ -259,7 +298,7 @@ cover.minimize()?;
 println!("Cubes after: {}", cover.num_cubes());
 
 // Convert back to expression
-let minimized = cover.to_expr();
+let minimized = cover.to_expr("output")?;
 println!("Result: {}", minimized);
 ```
 
@@ -324,7 +363,8 @@ let expr4 = expr!(!a * !b);
 
 ```rust
 let expr = BoolExpr::parse("a * b + ~a * c")?;
-let cover = ExprCover::from_expr(expr);
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "out")?;
 
 for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
     println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
@@ -334,17 +374,18 @@ for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
 ### Converting to PLA Format
 
 ```rust
-use espresso_logic::{BoolExpr, ExprCover, PLAType};
+use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
 
 let expr = BoolExpr::parse("a * b + c")?;
-let cover = ExprCover::from_expr(expr);
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "output")?;
 
 // Export to PLA string
-let pla_string = cover.to_pla_string(PLAType::F)?;
+let pla_string = cover.to_pla_string(CoverType::F)?;
 println!("{}", pla_string);
 
 // Or write to file
-cover.to_pla_file("output.pla", PLAType::F)?;
+cover.to_pla_file("output.pla", CoverType::F)?;
 ```
 
 ## Variable Ordering
@@ -357,9 +398,10 @@ let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
 
 let expr = expr!(c * a * b);
-let cover = ExprCover::from_expr(expr);
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "out")?;
 
-println!("{:?}", cover.variables());  // ["a", "b", "c"] (sorted)
+println!("{:?}", cover.input_labels());  // ["a", "b", "c"] (sorted)
 ```
 
 This ensures consistent ordering in truth tables and PLA files.
@@ -411,13 +453,121 @@ match expr.minimize() {
 
 - Dominated by Espresso algorithm time
 - Boolean expression overhead is negligible
-- Process isolation adds ~10-20ms overhead
+- Thread-local storage overhead is minimal
 
 ### Memory
 
 - Expressions use Arc for structural sharing
 - Very memory efficient for large expressions
 - Variables are deduplicated automatically
+
+## BoolExpr API Methods
+
+### Display and Formatting
+
+Boolean expressions are displayed with minimal parentheses based on operator precedence:
+
+```rust
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
+
+// Simple operations - no unnecessary parentheses
+println!("{}", expr!(a * b));        // Output: a * b
+println!("{}", expr!(a + b));        // Output: a + b
+println!("{}", expr!(a * b + c));    // Output: a * b + c
+
+// Parentheses only when needed for precedence
+println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
+println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
+
+// Clean formatting for complex expressions
+let xor = expr!(a * b + !a * !b);
+println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
+```
+
+**Formatting rules:**
+- Variables and constants: no parentheses
+- NOT chains: no parentheses (e.g., `~~a`)
+- AND chains: no parentheses (e.g., `a * b * c`)
+- OR chains: no parentheses (e.g., `a + b + c`)
+- OR inside AND: parentheses required (e.g., `(a + b) * c`)
+- Compound expressions in NOT: parentheses required (e.g., `~(a * b)`)
+
+### Semantic Equality
+
+Check if two expressions are logically equivalent (produce same outputs):
+
+```rust
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+
+// Different structures, same logic
+let expr1 = expr!(a * b);
+let expr2 = expr!(b * a);  // Commutative
+
+// Structural equality (tree comparison)
+assert_ne!(expr1, expr2);  // Different tree structure
+
+// Logical equivalence (truth table comparison)
+assert!(expr1.equivalent_to(&expr2));  // Same logic!
+
+// Test double negation
+let expr3 = a.clone();
+let expr4 = expr!(!!a);
+assert!(expr3.equivalent_to(&expr4));
+
+// Non-equivalent expressions
+let and_expr = expr!(a * b);
+let or_expr = expr!(a + b);
+assert!(!and_expr.equivalent_to(&or_expr));
+```
+
+### Evaluation
+
+Evaluate expressions with specific variable assignments:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let expr = expr!(a * b + !a);
+
+// Create variable assignments
+let mut assignment = HashMap::new();
+assignment.insert(Arc::from("a"), true);
+assignment.insert(Arc::from("b"), false);
+
+// Evaluate
+let result = expr.evaluate(&assignment);
+println!("Result: {}", result);  // true (because !a is true when a is true)
+
+// Try different assignments
+assignment.insert(Arc::from("a"), false);
+assignment.insert(Arc::from("b"), true);
+let result2 = expr.evaluate(&assignment);
+println!("Result: {}", result2);  // true (because !a is true when a is false)
+```
+
+### Variable Collection
+
+Get all variables used in an expression:
+
+```rust
+let expr = expr!("x" * "y" + "z");
+
+let vars = expr.collect_variables();
+// Returns BTreeSet<Arc<str>> in alphabetical order
+for var in vars {
+    println!("Variable: {}", var);
+}
+// Output:
+// Variable: x
+// Variable: y
+// Variable: z
+```
 
 ## Best Practices
 
@@ -463,7 +613,8 @@ let final_expr = large_expr.or(&other_term).minimize()?;
 ```rust
 // The type system prevents mistakes
 let expr: BoolExpr = expr!(a * b);  // Type-safe
-let cover: ExprCover = ExprCover::from_expr(expr);  // Clear conversion
+let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
+cover.add_expr(expr, "output")?;  // Explicit conversion
 ```
 
 ## Examples
@@ -516,21 +667,22 @@ let expr = expr!(a * b);      // expr! macro (cleaner)
 ```rust
 // Check the DNF conversion
 let expr = BoolExpr::parse("(a + b) * (c + d)")?;
-let cover = ExprCover::from_expr(expr);
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "out")?;
 
 println!("Cubes before: {}", cover.num_cubes());  // Check size
 cover.minimize()?;
 println!("Cubes after: {}", cover.num_cubes());
 
 // View the result
-let result = cover.to_expr();
+let result = cover.to_expr("out")?;
 println!("Result: {}", result);
 ```
 
 ## See Also
 
 - [API Documentation](API.md) - Complete API reference
-- [Process Isolation](PROCESS_ISOLATION.md) - Thread safety details
+- [Thread-Local Implementation](THREAD_LOCAL_IMPLEMENTATION.md) - Thread safety details
 - [PLA Format](../espresso-src/README) - PLA file format specification
 - [Examples](../examples/) - Working code examples
 

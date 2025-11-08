@@ -6,7 +6,7 @@ This directory contains the test suite for the espresso-logic library.
 
 | File | Description |
 |------|-------------|
-| `test_integration.rs` | Integration tests for high-level APIs (BoolExpr, CoverBuilder, PLACover) |
+| `test_integration.rs` | Integration tests for high-level APIs (BoolExpr, Cover) |
 | `test_thread_safety.rs` | Thread-local storage and concurrency tests |
 | `test_memory_safety.rs` | Memory management and leak detection tests |
 

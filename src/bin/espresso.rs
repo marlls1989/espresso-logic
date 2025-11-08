@@ -3,12 +3,12 @@
 //! A clean Rust implementation using the safe Cover API with process isolation
 
 use clap::{Parser, ValueEnum};
-use espresso_logic::{Cover, EspressoConfig, PLACover, PLAType};
+use espresso_logic::{Cover, CoverType, EspressoConfig, PLAReader, PLAWriter};
 use std::path::PathBuf;
 use std::process;
 
 const VERSION: &str =
-    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper 2.3.0)";
+    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper 3.0.0)";
 
 #[derive(Debug, Clone, PartialEq, ValueEnum)]
 enum Command {
@@ -34,13 +34,13 @@ enum OutputType {
     Fdr,
 }
 
-impl From<OutputType> for PLAType {
+impl From<OutputType> for CoverType {
     fn from(val: OutputType) -> Self {
         match val {
-            OutputType::F => PLAType::F,
-            OutputType::Fd => PLAType::FD,
-            OutputType::Fr => PLAType::FR,
-            OutputType::Fdr => PLAType::FDR,
+            OutputType::F => CoverType::F,
+            OutputType::Fd => CoverType::FD,
+            OutputType::Fr => CoverType::FR,
+            OutputType::Fdr => CoverType::FDR,
         }
     }
 }
@@ -104,7 +104,7 @@ fn main() {
     }
 
     // Read the input PLA using Cover API
-    let mut cover = match PLACover::from_pla_file(&args.input) {
+    let mut cover = match Cover::from_pla_file(&args.input) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA file '{}': {}", args.input.display(), e);
@@ -183,7 +183,7 @@ fn main() {
 
     // Write the output using Cover trait
     if !args.no_output {
-        let output_type = PLAType::from(args.output_format);
+        let output_type = CoverType::from(args.output_format);
 
         if let Some(ref output_path) = args.output_file {
             match cover.to_pla_file(output_path, output_type) {
@@ -199,14 +199,11 @@ fn main() {
             }
         } else {
             // Write to stdout
-            match cover.to_pla_string(output_type) {
-                Ok(content) => {
-                    print!("{}", content);
-                }
-                Err(e) => {
-                    eprintln!("Error generating PLA output: {}", e);
-                    process::exit(1);
-                }
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            if let Err(e) = cover.write_pla(&mut handle, output_type) {
+                eprintln!("Error writing PLA output: {}", e);
+                process::exit(1);
             }
         }
     }

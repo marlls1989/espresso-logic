@@ -1,8 +1,8 @@
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     // Test case from test_cover_many_cubes
-    let mut cover = CoverBuilder::<3, 1>::new();
+    let mut cover = Cover::new(CoverType::F);
 
     println!("Adding 4 cubes:");
     cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]); // 001 -> 1

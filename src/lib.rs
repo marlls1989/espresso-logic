@@ -18,23 +18,29 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! Build expressions programmatically and minimize them:
+//! The `expr!` macro provides three convenient styles:
 //!
 //! ```
 //! use espresso_logic::{BoolExpr, expr};
 //!
 //! # fn main() -> std::io::Result<()> {
+//! // Style 1: String literals (most concise - no declarations!)
+//! let xor = expr!("a" * "b" + !"a" * !"b");
+//! println!("{}", xor);  // Output: a * b + ~a * ~b (minimal parentheses!)
+//!
+//! // Style 2: Existing BoolExpr variables
 //! let a = BoolExpr::variable("a");
 //! let b = BoolExpr::variable("b");
 //! let c = BoolExpr::variable("c");
-//!
-//! // Build a redundant expression: a*b + a*b*c
 //! let redundant = expr!(a * b + a * b * c);
 //!
 //! // Minimize it (returns a new minimized expression)
 //! let minimized = redundant.minimize()?;
+//! println!("Minimized: {}", minimized);  // Output: a * b
 //!
-//! println!("Minimized: {}", minimized);  // Output: a*b
+//! // Check logical equivalence (create new instance for comparison)
+//! let redundant2 = expr!(a * b + a * b * c);
+//! assert!(redundant2.equivalent_to(&minimized));
 //! # Ok(())
 //! # }
 //! ```
@@ -54,46 +60,47 @@
 //! # }
 //! ```
 //!
-//! #### Using ExprCover for More Control
+//! #### Using Cover with Expressions
 //!
-//! For advanced use cases, [`ExprCover`] provides direct access to the cover
-//! representation and implements the [`Cover`] trait:
+//! For advanced use cases, the `Cover` type provides direct access to the cover
+//! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, ExprCover, Cover};
+//! use espresso_logic::{BoolExpr, Cover, CoverType};
 //!
-//! # fn main() -> std::io::Result<()> {
+//! # fn main() -> Result<(), espresso_logic::EspressoError> {
 //! let a = BoolExpr::variable("a");
 //! let b = BoolExpr::variable("b");
 //! let expr = a.and(&b).or(&a.and(&b.not()));
 //!
-//! // Convert to cover representation
-//! let mut cover = ExprCover::from_expr(expr);
+//! // Create cover and add expression
+//! let mut cover = Cover::new(CoverType::F);
+//! cover.add_expr(expr, "output")?;
 //!
 //! // Access cover properties
-//! println!("Variables: {:?}", cover.variables());
+//! println!("Input variables: {:?}", cover.input_labels());
 //! println!("Number of cubes: {}", cover.num_cubes());
 //!
 //! // Minimize the cover
 //! cover.minimize()?;
 //!
 //! // Convert back to expression
-//! let minimized = cover.to_expr();
+//! let minimized = cover.to_expr("output")?;
 //! println!("Minimized: {}", minimized);
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! ### 2. Cover Builder (Static dimensions with compile-time checking)
+//! ### 2. Manual Cube Construction
 //!
-//! Build covers with fixed dimensions known at compile time:
+//! Build covers by manually adding cubes (dimensions grow automatically):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverBuilder};
+//! use espresso_logic::{Cover, CoverType};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Create a cover for a 2-input, 1-output function
-//! let mut cover = CoverBuilder::<2, 1>::new();
+//! // Create a cover (dimensions grow automatically)
+//! let mut cover = Cover::new(CoverType::F);
 //!
 //! // Build the ON-set (truth table)
 //! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
@@ -112,10 +119,10 @@
 //!
 //! ### 3. PLA Files (Dynamic dimensions from files)
 //!
-//! Load and minimize PLA files with dynamic dimensions:
+//! Load and minimize PLA files:
 //!
 //! ```
-//! use espresso_logic::{Cover, PLACover, PLAType};
+//! use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 //! # use std::io::Write;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -123,25 +130,25 @@
 //! # temp.write_all(b".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
 //! # temp.flush()?;
 //! # let input_path = temp.path();
-//! // Read from PLA file
-//! let mut cover = PLACover::from_pla_file(input_path)?;
+//! // Read from PLA file (PLAReader trait)
+//! let mut cover = Cover::from_pla_file(input_path)?;
 //!
 //! // Minimize
 //! cover.minimize()?;
 //!
 //! # let output_file = tempfile::NamedTempFile::new()?;
 //! # let output_path = output_file.path();
-//! // Write to PLA file (uses efficient writer-based implementation)
-//! cover.to_pla_file(output_path, PLAType::F)?;
+//! // Write to PLA file (PLAWriter trait)
+//! cover.to_pla_file(output_path, CoverType::F)?;
 //!
 //! // Or write directly to any Write implementation
 //! use std::io::{Write, BufReader};
 //! let mut buffer = Vec::new();
-//! cover.write_pla(&mut buffer, PLAType::F)?;
+//! cover.write_pla(&mut buffer, CoverType::F)?;
 //!
 //! // Similarly, you can read from any BufRead implementation
 //! let reader = BufReader::new(buffer.as_slice());
-//! let cover2 = PLACover::from_pla_reader(reader)?;
+//! let cover2 = Cover::from_pla_reader(reader)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -151,20 +158,20 @@
 //! The library supports different cover types for representing Boolean functions:
 //!
 //! - **F Type** - ON-set only (specifies where output is 1)
-//! - **FD Type** - ON-set + Don't-cares (default, most flexible)
+//! - **FD Type** - ON-set + Don't-cares (most flexible)
 //! - **FR Type** - ON-set + OFF-set (specifies both 1s and 0s)
 //! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
 //!
 //! ```
-//! use espresso_logic::{CoverBuilder, FType, FDType, Cover};
+//! use espresso_logic::{Cover, CoverType};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // F type (ON-set only)
-//! let mut f_cover = CoverBuilder::<2, 1, FType>::new();
+//! let mut f_cover = Cover::new(CoverType::F);
 //! f_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);
 //!
-//! // FD type (ON-set + Don't-cares) - default
-//! let mut fd_cover = CoverBuilder::<2, 1, FDType>::new();  // or just CoverBuilder::<2, 1>::new()
+//! // FD type (ON-set + Don't-cares)
+//! let mut fd_cover = Cover::new(CoverType::FD);
 //! fd_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);  // ON
 //! fd_cover.add_cube(&[Some(false), Some(false)], &[None]);      // Don't-care
 //! # Ok(())
@@ -179,17 +186,17 @@
 //!
 //! ### Multi-threaded Applications
 //!
-//! Just use `CoverBuilder` directly - each thread executes Espresso independently:
+//! Just use `Cover` directly - each thread executes Espresso independently:
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverBuilder};
+//! use espresso_logic::{Cover, CoverType};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Spawn threads - no synchronization needed!
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
-//!         let mut cover = CoverBuilder::<2, 1>::new();
+//!         let mut cover = Cover::new(CoverType::F);
 //!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 //!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //!         
@@ -221,12 +228,13 @@ pub mod pla;
 pub mod sys;
 
 // Re-export high-level public API
-pub use cover::{
-    Cover, CoverBuilder, CoverTypeMarker, Cube, CubeType, FDRType, FDType, FRType, FType, PLAType,
-};
+pub use cover::{Cover, CoverType, Cube, CubeType};
 pub use error::{ConflictReason, EspressoError};
-pub use expression::{BoolExpr, ExprCover};
-pub use pla::PLACover;
+pub use expression::BoolExpr;
+pub use pla::{PLAReader, PLAWriter};
+
+// Re-export procedural macro
+pub use espresso_logic_macros::expr;
 
 /// Configuration for the Espresso algorithm
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,24 +283,5 @@ impl EspressoConfig {
     /// Create a new configuration with defaults
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cover_creation() {
-        let cover = CoverBuilder::<2, 1>::new();
-        // Just verify the cover was created successfully
-        assert_eq!(cover.num_cubes(), 0);
-    }
-
-    #[test]
-    fn test_cover_with_cubes() {
-        let mut cover = CoverBuilder::<3, 1>::new();
-        cover.add_cube(&[Some(true), Some(false), None], &[Some(true)]);
-        assert_eq!(cover.num_cubes(), 1);
     }
 }

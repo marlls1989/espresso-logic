@@ -1,6 +1,6 @@
 //! Basic minimization example
 
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     println!("Boolean Function Minimization Example\n");
@@ -10,7 +10,7 @@ fn main() -> std::io::Result<()> {
     println!("(output is 1 when an odd number of inputs are 1)\n");
 
     // Build the ON-set (truth table where output is 1)
-    let mut cover = CoverBuilder::<3, 1>::new();
+    let mut cover = Cover::new(CoverType::F);
 
     // A'B'C (001)
     cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);

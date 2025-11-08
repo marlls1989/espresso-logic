@@ -1,8 +1,7 @@
 # Thread-Local Global Variables Implementation
 
 > **✅ CURRENT IMPLEMENTATION** (since version 2.6.2)  
-> This is the active implementation used by the library.  
-> Previous implementation: See [PROCESS_ISOLATION.md](PROCESS_ISOLATION.md) (historical)
+> This is the active implementation used by the library.
 
 ## Overview
 

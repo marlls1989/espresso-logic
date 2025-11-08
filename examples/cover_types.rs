@@ -1,13 +1,13 @@
-//! Example: Using different cover types with CoverBuilder
+//! Example: Using different cover types with Cover
 
-use espresso_logic::{Cover, CoverBuilder, FDRType, FRType, FType};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     println!("=== Cover Type Examples ===\n");
 
     // FD type (default) - ON-set + Don't-care
-    println!("1. FD Type (ON-set + Don't-care) - default:");
-    let mut fd_cover = CoverBuilder::<2, 1>::new();
+    println!("1. FD Type (ON-set + Don't-care):");
+    let mut fd_cover = Cover::new(CoverType::FD);
     fd_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (F cube)
     fd_cover.add_cube(&[Some(true), Some(false)], &[None]); // 10 -> - (D cube)
     println!("   Before minimize: {} cubes", fd_cover.num_cubes());
@@ -16,7 +16,7 @@ fn main() -> std::io::Result<()> {
 
     // F type - ON-set only
     println!("2. F Type (ON-set only):");
-    let mut f_cover = CoverBuilder::<2, 1, FType>::new();
+    let mut f_cover = Cover::new(CoverType::F);
     f_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (F cube)
     f_cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1 (F cube)
     f_cover.add_cube(&[Some(true), Some(true)], &[None]); // 11 -> - (ignored, F-type doesn't support D)
@@ -26,7 +26,7 @@ fn main() -> std::io::Result<()> {
 
     // FR type - ON-set + OFF-set
     println!("3. FR Type (ON-set + OFF-set):");
-    let mut fr_cover = CoverBuilder::<2, 1, FRType>::new();
+    let mut fr_cover = Cover::new(CoverType::FR);
     fr_cover.add_cube(&[Some(false), Some(false)], &[Some(false)]); // 00 -> 0 (R cube)
     fr_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (F cube)
     fr_cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1 (F cube)
@@ -37,7 +37,7 @@ fn main() -> std::io::Result<()> {
 
     // FDR type - ON-set + Don't-care + OFF-set
     println!("4. FDR Type (ON-set + Don't-care + OFF-set):");
-    let mut fdr_cover = CoverBuilder::<2, 1, FDRType>::new();
+    let mut fdr_cover = Cover::new(CoverType::FDR);
     fdr_cover.add_cube(&[Some(false), Some(false)], &[Some(false)]); // 00 -> 0 (R cube)
     fdr_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (F cube)
     fdr_cover.add_cube(&[Some(true), Some(false)], &[None]); // 10 -> - (D cube)

@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the new `write_pla` method that writes
 //! directly to any `Write` implementation for efficient serialization.
 
-use espresso_logic::{Cover, PLACover};
+use espresso_logic::{Cover, PLAReader, PLAWriter};
 use std::io::{self, Write};
 
 fn main() -> io::Result<()> {
@@ -20,7 +20,7 @@ fn main() -> io::Result<()> {
 .e
 "#;
 
-    let cover = PLACover::from_pla_content(pla_content)?;
+    let cover = Cover::from_pla_string(pla_content)?;
 
     println!("Original cover:");
     println!("  Inputs:  {}", cover.num_inputs());
@@ -30,12 +30,12 @@ fn main() -> io::Result<()> {
     println!("\n--- Method 1: Write to stdout directly ---");
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    cover.write_pla(&mut handle, espresso_logic::PLAType::F)?;
+    cover.write_pla(&mut handle, espresso_logic::CoverType::F)?;
     drop(handle); // Release the lock
 
     println!("\n--- Method 2: Write to a Vec<u8> buffer ---");
     let mut buffer = Vec::new();
-    cover.write_pla(&mut buffer, espresso_logic::PLAType::F)?;
+    cover.write_pla(&mut buffer, espresso_logic::CoverType::F)?;
     println!("Buffer size: {} bytes", buffer.len());
     println!("Buffer content:\n{}", String::from_utf8_lossy(&buffer));
 
@@ -56,13 +56,13 @@ fn main() -> io::Result<()> {
     }
 
     let mut counter = CountingWriter { count: 0 };
-    cover.write_pla(&mut counter, espresso_logic::PLAType::F)?;
+    cover.write_pla(&mut counter, espresso_logic::CoverType::F)?;
     println!("Total bytes written: {}", counter.count);
 
-    println!("\n--- Comparison with to_pla_string() ---");
-    let string_result = cover.to_pla_string(espresso_logic::PLAType::F)?;
-    println!("String method length: {} bytes", string_result.len());
-    println!("Writer buffer length: {} bytes", buffer.len());
+    println!("\n--- Comparison: write_pla vs to_pla_string ---");
+    let string_result = cover.to_pla_string(espresso_logic::CoverType::F)?;
+    println!("to_pla_string() length: {} bytes", string_result.len());
+    println!("write_pla() to buffer: {} bytes", buffer.len());
     println!(
         "Results match: {}",
         string_result.as_bytes() == buffer.as_slice()

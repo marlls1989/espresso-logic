@@ -3,7 +3,7 @@
 //! This example demonstrates how to use boolean expressions with the expr! macro,
 //! method-based API, and parsing to create and minimize boolean functions.
 
-use espresso_logic::{expr, BoolExpr, Cover, EspressoError, ExprCover};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, EspressoError, PLAWriter};
 
 fn main() -> Result<(), EspressoError> {
     println!("=== Boolean Expression Examples ===\n");
@@ -18,7 +18,8 @@ fn main() -> Result<(), EspressoError> {
     let xor = expr!(a * !b + !a * b);
     println!("   XOR = a*~b + ~a*b");
     println!("   Variables: {:?}", xor.collect_variables());
-    let xor_cover = ExprCover::from_expr(xor);
+    let mut xor_cover = Cover::new(CoverType::F);
+    xor_cover.add_expr(xor, "xor")?;
     println!(
         "   Inputs: {}, Outputs: {}",
         xor_cover.num_inputs(),
@@ -31,7 +32,8 @@ fn main() -> Result<(), EspressoError> {
     let parsed_expr = BoolExpr::parse("(a + b) * (c + d)")?;
     println!("   Expression: (a + b) * (c + d)");
     println!("   Variables: {:?}", parsed_expr.collect_variables());
-    let parsed_cover = ExprCover::from_expr(parsed_expr);
+    let mut parsed_cover = Cover::new(CoverType::F);
+    parsed_cover.add_expr(parsed_expr, "parsed")?;
     println!(
         "   Inputs: {}, Outputs: {}",
         parsed_cover.num_inputs(),
@@ -58,9 +60,10 @@ fn main() -> Result<(), EspressoError> {
     println!("   Before minimization:");
     println!("      Variables: {:?}", redundant.collect_variables());
 
-    let mut redundant_cover = ExprCover::from_expr(redundant);
+    let mut redundant_cover = Cover::new(CoverType::F);
+    redundant_cover.add_expr(redundant, "out")?;
     redundant_cover.minimize()?;
-    let minimized = redundant_cover.to_expr();
+    let minimized = redundant_cover.to_expr("out")?;
 
     println!("   After minimization:");
     println!("      Expression: {}", minimized);
@@ -75,9 +78,10 @@ fn main() -> Result<(), EspressoError> {
     println!("   XNOR = a*b + ~a*~b");
     println!("   Before minimize: {}", xnor);
 
-    let mut xnor_cover = ExprCover::from_expr(xnor);
+    let mut xnor_cover = Cover::new(CoverType::F);
+    xnor_cover.add_expr(xnor, "out")?;
     xnor_cover.minimize()?;
-    let minimized_xnor = xnor_cover.to_expr();
+    let minimized_xnor = xnor_cover.to_expr("out")?;
 
     println!("   After minimize:  {}", minimized_xnor);
     println!();
@@ -91,7 +95,8 @@ fn main() -> Result<(), EspressoError> {
     // Majority function: true if at least 2 of 3 inputs are true
     // For more complex expressions, the method API is clearer
     let majority = a.and(&b).or(&b.and(&c)).or(&a.and(&c));
-    let mut majority_cover = ExprCover::from_expr(majority);
+    let mut majority_cover = Cover::new(CoverType::F);
+    majority_cover.add_expr(majority, "out")?;
 
     println!("   Majority = a*b + b*c + a*c");
     println!("   Before minimize: {} cubes", majority_cover.num_cubes());
@@ -106,9 +111,10 @@ fn main() -> Result<(), EspressoError> {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let simple = a.and(&b);
-    let simple_cover = ExprCover::from_expr(simple);
+    let mut simple_cover = Cover::new(CoverType::F);
+    simple_cover.add_expr(simple, "out")?;
 
-    let pla_string = simple_cover.to_pla_string(espresso_logic::PLAType::F)?;
+    let pla_string = simple_cover.to_pla_string(CoverType::F)?;
     println!("   Expression: a * b");
     println!("   PLA format:");
     for line in pla_string.lines() {
@@ -129,11 +135,13 @@ fn main() -> Result<(), EspressoError> {
     let b = BoolExpr::variable("b");
 
     let demorgan1 = expr!(!(a * b));
-    let cover1 = ExprCover::from_expr(demorgan1);
+    let mut cover1 = Cover::new(CoverType::F);
+    cover1.add_expr(demorgan1, "out")?;
     println!("   ~(a * b) has {} variables", cover1.num_inputs());
 
     let demorgan2 = expr!(!(a + b));
-    let cover2 = ExprCover::from_expr(demorgan2);
+    let mut cover2 = Cover::new(CoverType::F);
+    cover2.add_expr(demorgan2, "out")?;
     println!("   ~(a + b) has {} variables", cover2.num_inputs());
     println!();
 
@@ -142,8 +150,10 @@ fn main() -> Result<(), EspressoError> {
     let expr1 = BoolExpr::parse("a * b + a * c")?;
     let expr2 = BoolExpr::parse("a * (b + c)")?;
 
-    let mut cover1 = ExprCover::from_expr(expr1);
-    let mut cover2 = ExprCover::from_expr(expr2);
+    let mut cover1 = Cover::new(CoverType::F);
+    cover1.add_expr(expr1, "out")?;
+    let mut cover2 = Cover::new(CoverType::F);
+    cover2.add_expr(expr2, "out")?;
 
     println!("    Expression 1: a * b + a * c");
     println!("    Expression 2: a * (b + c)");
@@ -158,7 +168,8 @@ fn main() -> Result<(), EspressoError> {
     // Example 11: Cube Iteration:");
     println!("11. Cube Iteration:");
     let expr = BoolExpr::parse("a * b + ~a * c")?;
-    let cover = ExprCover::from_expr(expr);
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "out")?;
     println!("    Expression: a * b + ~a * c");
     println!("    Cubes:");
 

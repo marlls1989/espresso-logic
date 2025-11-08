@@ -1,6 +1,6 @@
 //! Example: Concurrent execution with transparent process isolation
 
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -12,7 +12,7 @@ fn main() -> std::io::Result<()> {
         .map(|i| {
             thread::spawn(move || {
                 // Each thread creates its own cover
-                let mut cover = CoverBuilder::<2, 1>::new();
+                let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
                 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 

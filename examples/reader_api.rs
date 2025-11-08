@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the new `from_pla_reader` method that reads
 //! directly from any `BufRead` implementation for efficient parsing.
 
-use espresso_logic::{Cover, PLACover};
+use espresso_logic::{Cover, PLAReader};
 use std::io::{self, BufReader, Cursor};
 
 fn main() -> io::Result<()> {
@@ -19,15 +19,15 @@ fn main() -> io::Result<()> {
 .e
 "#;
 
-    println!("--- Method 1: Parse from string (via from_pla_content) ---");
-    let cover1 = PLACover::from_pla_content(pla_content)?;
+    println!("--- Method 1: Parse from string (via from_pla_string) ---");
+    let cover1 = Cover::from_pla_string(pla_content)?;
     println!("Inputs:  {}", cover1.num_inputs());
     println!("Outputs: {}", cover1.num_outputs());
     println!("Cubes:   {}", cover1.num_cubes());
 
     println!("\n--- Method 2: Parse from Cursor (via from_pla_reader) ---");
     let cursor = Cursor::new(pla_content.as_bytes());
-    let cover2 = PLACover::from_pla_reader(cursor)?;
+    let cover2 = Cover::from_pla_reader(cursor)?;
     println!("Inputs:  {}", cover2.num_inputs());
     println!("Outputs: {}", cover2.num_outputs());
     println!("Cubes:   {}", cover2.num_cubes());
@@ -35,7 +35,7 @@ fn main() -> io::Result<()> {
     println!("\n--- Method 3: Parse from BufReader of bytes ---");
     let bytes = pla_content.as_bytes();
     let buf_reader = BufReader::new(bytes);
-    let cover3 = PLACover::from_pla_reader(buf_reader)?;
+    let cover3 = Cover::from_pla_reader(buf_reader)?;
     println!("Inputs:  {}", cover3.num_inputs());
     println!("Outputs: {}", cover3.num_outputs());
     println!("Cubes:   {}", cover3.num_cubes());
@@ -50,7 +50,7 @@ fn main() -> io::Result<()> {
     temp_file.flush()?;
 
     // from_pla_file now uses from_pla_reader internally with BufReader
-    let cover4 = PLACover::from_pla_file(temp_file.path())?;
+    let cover4 = Cover::from_pla_file(temp_file.path())?;
     println!("Inputs:  {}", cover4.num_inputs());
     println!("Outputs: {}", cover4.num_outputs());
     println!("Cubes:   {}", cover4.num_cubes());
@@ -76,7 +76,7 @@ fn main() -> io::Result<()> {
         bytes_read: 0,
     };
     let buf_reader = BufReader::new(&mut logging_reader);
-    let cover5 = PLACover::from_pla_reader(buf_reader)?;
+    let cover5 = Cover::from_pla_reader(buf_reader)?;
     println!(
         "Parsed cover with {} inputs, {} outputs, {} cubes",
         cover5.num_inputs(),

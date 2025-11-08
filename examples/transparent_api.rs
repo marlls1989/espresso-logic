@@ -3,7 +3,7 @@
 //! This demonstrates the modern API where ALL C code
 //! runs in isolated processes - nothing in the parent process.
 
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     println!("=== Transparent Process Isolation API ===\n");
@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
 
     // Create a cover for 2 inputs, 1 output - NO C code executed!
     println!("1. Creating Cover (no C code yet)");
-    let mut cover = CoverBuilder::<2, 1>::new();
+    let mut cover = Cover::new(CoverType::F);
     println!("   ✓ Cover created (pure Rust data structure)\n");
 
     // Add cubes (XOR function)

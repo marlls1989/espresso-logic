@@ -1,6 +1,6 @@
 //! Comprehensive tests for boolean expression functionality
 
-use espresso_logic::{expr, BoolExpr, Cover, ExprCover};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, PLAWriter};
 use std::sync::Arc;
 
 #[test]
@@ -112,8 +112,16 @@ fn test_macro_vs_method_api() {
     );
 
     // Both should convert to covers with same properties
-    let cover_macro = ExprCover::from_expr(via_macro);
-    let cover_method = ExprCover::from_expr(via_method);
+    let cover_macro = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(via_macro, "out").unwrap();
+        cover
+    };
+    let cover_method = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(via_method, "out").unwrap();
+        cover
+    };
     assert_eq!(cover_macro.num_inputs(), cover_method.num_inputs());
     assert_eq!(cover_macro.num_outputs(), cover_method.num_outputs());
 }
@@ -141,7 +149,11 @@ fn test_cover_trait_basics() {
     let expr = expr!(a * b);
 
     // Should be able to create ExprCover
-    let cover = ExprCover::from_expr(expr);
+    let cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
 }
@@ -153,7 +165,11 @@ fn test_xor_expression() {
     let b = BoolExpr::variable("b");
     let xor = expr!(a * !b + !a * b);
 
-    let cover = ExprCover::from_expr(xor);
+    let cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(xor, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
 }
@@ -165,7 +181,11 @@ fn test_xnor_expression() {
     let b = BoolExpr::variable("b");
     let xnor = expr!(a * b + !a * !b);
 
-    let cover = ExprCover::from_expr(xnor);
+    let cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(xnor, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
 }
@@ -201,8 +221,16 @@ fn test_de_morgan_laws() {
     // ~(a + b) should expand using De Morgan's law
     let expr2 = expr!(!(a + b));
 
-    let cover1 = ExprCover::from_expr(expr1);
-    let cover2 = ExprCover::from_expr(expr2);
+    let cover1 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr1, "out").unwrap();
+        cover
+    };
+    let cover2 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr2, "out").unwrap();
+        cover
+    };
     assert_eq!(cover1.num_inputs(), 2);
     assert_eq!(cover2.num_inputs(), 2);
 }
@@ -275,7 +303,11 @@ fn test_cube_iteration() {
     let expr = expr!(a * b);
 
     // Should be able to iterate cubes via ExprCover
-    let cover = ExprCover::from_expr(expr);
+    let cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     let cubes: Vec<_> = cover.cubes_iter().collect();
     assert!(!cubes.is_empty());
 }
@@ -287,8 +319,12 @@ fn test_to_pla_string() -> std::io::Result<()> {
     let expr = expr!(a * b);
 
     // Should be able to convert to PLA string via ExprCover
-    let cover = ExprCover::from_expr(expr);
-    let pla = cover.to_pla_string(espresso_logic::PLAType::F)?;
+    let cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
+    let pla = cover.to_pla_string(espresso_logic::CoverType::F)?;
 
     // Should contain basic PLA structure
     assert!(pla.contains(".i"));
@@ -319,14 +355,18 @@ fn test_clone_semantics() {
 fn test_minimize_absorption() -> std::io::Result<()> {
     // Test absorption law: a + a*b should minimize to a
     let expr = BoolExpr::parse("a + a * b").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 2); // Before: 2 cubes
 
     cover.minimize()?;
 
     // After Espresso minimization: should reduce to 1 cube (just 'a')
     assert_eq!(cover.num_cubes(), 1);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains(&Arc::from("a")));
@@ -338,14 +378,18 @@ fn test_minimize_absorption() -> std::io::Result<()> {
 fn test_minimize_consensus() -> std::io::Result<()> {
     // Consensus theorem: a*b + ~a*c + b*c should minimize to a*b + ~a*c
     let expr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 3); // Before: 3 cubes
 
     cover.minimize()?;
 
     // After Espresso minimization: should reduce to 2 cubes (b*c is redundant)
     assert_eq!(cover.num_cubes(), 2);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 3);
 
@@ -356,14 +400,18 @@ fn test_minimize_consensus() -> std::io::Result<()> {
 fn test_minimize_idempotence() -> std::io::Result<()> {
     // a + a should minimize to a
     let expr = BoolExpr::parse("a + a").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 2); // Before: 2 identical cubes
 
     cover.minimize()?;
 
     // After Espresso minimization: should reduce to 1 cube
     assert_eq!(cover.num_cubes(), 1);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains(&Arc::from("a")));
@@ -379,12 +427,17 @@ fn test_complex_parentheses() {
 
     // Test with expr! macro
     let expr1 = expr!((a + b) * c);
-    let cover1 = ExprCover::from_expr(expr1.clone());
+    let cover1 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr1.clone(), "out").unwrap();
+        cover
+    };
     assert_eq!(cover1.num_inputs(), 3);
 
     // Parser version
     let expr2 = BoolExpr::parse("(a + b) * c").unwrap();
-    let cover2 = ExprCover::from_expr(expr2.clone());
+    let mut cover2 = Cover::new(CoverType::F);
+    cover2.add_expr(expr2.clone(), "out").unwrap();
     assert_eq!(cover2.num_inputs(), 3);
 
     // Both should have same variables
@@ -400,7 +453,11 @@ fn test_nested_parentheses_macro() {
 
     // Test macro with nested parens
     let expr1 = expr!(a * (b + c));
-    let cover1 = ExprCover::from_expr(expr1.clone());
+    let cover1 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr1.clone(), "out").unwrap();
+        cover
+    };
     assert_eq!(cover1.num_inputs(), 3);
 
     // Compare with parser
@@ -435,10 +492,18 @@ fn test_parentheses_precedence() {
     assert_eq!(expr1.collect_variables(), expr2.collect_variables());
 
     // But different structure - verify by converting to PLA via ExprCover
-    let cover1 = ExprCover::from_expr(expr1);
-    let cover2 = ExprCover::from_expr(expr2);
-    let pla1 = cover1.to_pla_string(espresso_logic::PLAType::F).unwrap();
-    let pla2 = cover2.to_pla_string(espresso_logic::PLAType::F).unwrap();
+    let cover1 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr1, "out").unwrap();
+        cover
+    };
+    let cover2 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr2, "out").unwrap();
+        cover
+    };
+    let pla1 = cover1.to_pla_string(espresso_logic::CoverType::F).unwrap();
+    let pla2 = cover2.to_pla_string(espresso_logic::CoverType::F).unwrap();
 
     // Different number of cubes means different logic
     assert_ne!(pla1, pla2);
@@ -448,14 +513,18 @@ fn test_parentheses_precedence() {
 fn test_minimize_distributive() -> std::io::Result<()> {
     // a*(b+c) expands to a*b + a*c (already minimal)
     let expr = BoolExpr::parse("a * (b + c)").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 2); // Expands to 2 cubes
 
     cover.minimize()?;
 
     // After Espresso minimization: stays at 2 cubes (already minimal)
     assert_eq!(cover.num_cubes(), 2);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 3);
 
@@ -466,14 +535,18 @@ fn test_minimize_distributive() -> std::io::Result<()> {
 fn test_complex_minimize_real_world() -> std::io::Result<()> {
     // Real-world example: a*b + a*c + b*c*d + a*b*d
     let expr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 4); // Before: 4 cubes
 
     cover.minimize()?;
 
     // After Espresso minimization: should reduce to 3 cubes (a*b*d covered by a*b)
     assert_eq!(cover.num_cubes(), 3);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 4);
 
@@ -485,14 +558,18 @@ fn test_minimize_adjacent_minterms() -> std::io::Result<()> {
     // Test Espresso minimization on adjacent minterms
     // f(a,b,c) = m0 + m1 + m2 + m3 (all combinations where a=0)
     let expr = BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 4); // Before: 4 cubes
 
     cover.minimize()?;
 
     // Espresso minimizes to single cube: ~a
     assert_eq!(cover.num_cubes(), 1);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains(&Arc::from("a")));
@@ -507,8 +584,16 @@ fn test_parentheses_with_negation() {
     let expr2 = BoolExpr::parse("~(a + b)").unwrap();
 
     // Should apply De Morgan's laws during DNF conversion
-    let cover1 = ExprCover::from_expr(expr1);
-    let cover2 = ExprCover::from_expr(expr2);
+    let cover1 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr1, "out").unwrap();
+        cover
+    };
+    let cover2 = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr2, "out").unwrap();
+        cover
+    };
     assert_eq!(cover1.num_inputs(), 2);
     assert_eq!(cover2.num_inputs(), 2);
 }
@@ -517,14 +602,18 @@ fn test_parentheses_with_negation() {
 fn test_nested_parentheses_minimize() -> std::io::Result<()> {
     // (a + b) * (a + c) expands to a + a*c + a*b + b*c = a + b*c
     let expr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
-    let mut cover = ExprCover::from_expr(expr);
+    let mut cover = {
+        let mut cover = Cover::new(CoverType::F);
+        cover.add_expr(expr, "out").unwrap();
+        cover
+    };
     assert_eq!(cover.num_cubes(), 4); // Expands to 4 products
 
     cover.minimize()?;
 
     // After Espresso minimization: should reduce to 2 cubes (a + b*c)
     assert_eq!(cover.num_cubes(), 2);
-    let minimized = cover.to_expr();
+    let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 3);
 

@@ -193,13 +193,13 @@ fn test_repeated_operations_amplify_leaks() {
     println!("✓ {} iterations completed without memory leak", ITERATIONS);
 }
 
-/// Test that CoverBuilder properly manages memory across minimize calls
+/// Test that Cover properly manages memory across minimize calls
 #[test]
 fn test_coverbuilder_memory_management() {
-    use espresso_logic::{Cover, CoverBuilder};
+    use espresso_logic::{Cover, CoverType};
 
     for _ in 0..100 {
-        let mut cover = CoverBuilder::<2, 1>::new();
+        let mut cover = Cover::new(CoverType::F);
         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
@@ -216,7 +216,7 @@ fn test_coverbuilder_memory_management() {
 /// Test memory management with dimension changes
 #[test]
 fn test_dimension_changes_no_leak() {
-    use espresso_logic::{Cover, CoverBuilder};
+    use espresso_logic::{Cover, CoverType};
 
     let baseline = get_memory_usage();
 
@@ -224,17 +224,17 @@ fn test_dimension_changes_no_leak() {
     for i in 0..100 {
         match i % 3 {
             0 => {
-                let mut cover = CoverBuilder::<2, 1>::new();
+                let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
                 cover.minimize().unwrap();
             }
             1 => {
-                let mut cover = CoverBuilder::<3, 1>::new();
+                let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
                 cover.minimize().unwrap();
             }
             2 => {
-                let mut cover = CoverBuilder::<4, 1>::new();
+                let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(
                     &[Some(false), Some(true), Some(false), Some(true)],
                     &[Some(true)],
@@ -259,13 +259,13 @@ fn test_dimension_changes_no_leak() {
 /// Test with larger covers to stress allocation/deallocation
 #[test]
 fn test_large_cover_allocations() {
-    use espresso_logic::{Cover, CoverBuilder};
+    use espresso_logic::{Cover, CoverType};
 
     let baseline = get_memory_usage();
 
     // Create and minimize large covers repeatedly
     for _ in 0..50 {
-        let mut cover = CoverBuilder::<4, 2>::new();
+        let mut cover = Cover::new(CoverType::F);
 
         // Add many cubes
         for i in 0..64 {

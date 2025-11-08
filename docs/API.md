@@ -78,8 +78,8 @@ pub struct BoolExpr
   
   Minimizes this boolean expression using Espresso.
   
-  This is a convenience method that creates an `ExprCover`, minimizes it,
-  and returns the minimized expression.
+  This is a convenience method that creates a `Cover`, adds the expression to it,
+  minimizes it, and returns the minimized expression.
   
   ```rust
   let a = BoolExpr::variable("a");
@@ -135,247 +135,215 @@ let complex = expr!((a + b) * (!c + d));
 - `!` for NOT
 - Parentheses for grouping
 
-### `ExprCover`
+### `Cover` - Unified Dynamic Cover
 
-A cover representation of a boolean expression that implements the `Cover` trait.
-
-```rust
-pub struct ExprCover
-```
-
-#### Methods
-
-- `pub fn from_expr(expr: BoolExpr) -> Self`
-  
-  Creates a cover from a boolean expression by converting it to Disjunctive Normal Form (DNF).
-  
-  ```rust
-  let expr = BoolExpr::parse("a * b + c")?;
-  let cover = ExprCover::from_expr(expr);
-  ```
-
-- `pub fn to_expr(&self) -> BoolExpr`
-  
-  Converts the cover back to a boolean expression.
-  
-  ```rust
-  let mut cover = ExprCover::from_expr(original_expr);
-  cover.minimize()?;
-  let minimized_expr = cover.to_expr();
-  ```
-
-- `pub fn variables(&self) -> &[Arc<str>]`
-  
-  Gets the variables in this cover (in alphabetical order).
-
-- Implements `Minimizable` trait:
-  - `pub fn minimize(&mut self) -> std::io::Result<()>`
-  - `pub fn num_inputs(&self) -> usize`
-  - `pub fn num_outputs(&self) -> usize`
-  - `pub fn num_cubes(&self) -> usize`
-  - And more...
-
-#### Example: Full Workflow
+The unified cover type that supports dynamic sizing, boolean expressions, and PLA files.
+Dimensions grow automatically as cubes are added, and it provides the primary interface
+for working with Boolean functions in this library.
 
 ```rust
-use espresso_logic::{BoolExpr, ExprCover, expr};
-
-// Create expression
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-
-// Build with macro
-let expr = expr!(a * b + a * b * c);  // Redundant term
-
-// Convert to cover
-let mut cover = ExprCover::from_expr(expr);
-
-println!("Before: {} cubes", cover.num_cubes());  // 2 cubes
-println!("Variables: {:?}", cover.variables());   // ["a", "b", "c"]
-
-// Minimize
-cover.minimize()?;
-
-println!("After: {} cubes", cover.num_cubes());   // 1 cube
-
-// Convert back to expression
-let minimized = cover.to_expr();
-println!("Result: {}", minimized);  // (a * b)
+pub struct Cover
 ```
 
-## Low-Level API: Cubes and Covers
+#### Construction Methods
 
-### `Cover<I, O>` (Const Generic Cover)
-
-Represents a cover (set of cubes) with compile-time known dimensions.
-
-```rust
-pub struct Cover<const I: usize, const O: usize>
-```
-
-**Type Parameters:**
-- `I`: Number of inputs (compile-time constant)
-- `O`: Number of outputs (compile-time constant)
-
-#### Methods
-
-- `pub fn new() -> Self`
+- `pub fn new(cover_type: CoverType) -> Self`
   
-  Creates a new empty cover.
+  Creates a new empty cover with the specified type.
   
   ```rust
-  let cover = Cover::<2, 1>::new();  // 2 inputs, 1 output
+  let cover = Cover::new(CoverType::F);  // ON-set only
+  let cover = Cover::new(CoverType::FD); // ON-set + Don't-cares
   ```
 
-- `pub fn add_cube(&mut self, inputs: &[Option<bool>; I], outputs: &[bool; O])`
+- `pub fn with_labels<S: AsRef<str>>(cover_type: CoverType, input_labels: &[S], output_labels: &[S]) -> Self`
   
-  Adds a cube to the cover.
-  
-  **Parameters:**
-  - `inputs`: Array of input values where `Some(true)` = 1, `Some(false)` = 0, `None` = don't care
-  - `outputs`: Array of output values
+  Creates a cover with pre-defined variable labels.
   
   ```rust
-  let mut cover = Cover::<2, 1>::new();
-  cover.add_cube(&[Some(true), Some(false)], &[true]);  // 10 -> 1
-  cover.add_cube(&[None, Some(true)], &[true]);         // -1 -> 1
+  let cover = Cover::with_labels(CoverType::F, &["a", "b", "c"], &["out"]);
   ```
-
-- `pub fn minimize(&mut self) -> std::io::Result<()>`
-  
-  Minimizes this cover using the Espresso heuristic algorithm.
-  Runs in an isolated process for thread safety.
-
-- `pub fn num_cubes(&self) -> usize`
-  
-  Returns the number of cubes in this cover.
-
-- `pub fn cubes_iter(&self) -> impl Iterator<Item = (Vec<Option<bool>>, Vec<Option<bool>>)>`
-  
-  Iterates over the cubes in this cover, returning (inputs, outputs) tuples.
-
-### `CoverBuilder<I, O>`
-
-Helper for building covers programmatically with const generic dimensions.
-
-```rust
-pub struct CoverBuilder<const I: usize, const O: usize>
-```
-
-#### Methods
-
-- `pub fn new() -> Self`
-  
-  Creates a new cover builder.
-  
-  ```rust
-  let mut builder = CoverBuilder::<3, 2>::new();  // 3 inputs, 2 outputs
-  ```
-
-- `pub fn add_cube(&mut self, inputs: &[Option<bool>; I], outputs: &[Option<bool>; O]) -> &mut Self`
-  
-  Adds a cube to the cover.
-  
-  ```rust
-  let mut builder = CoverBuilder::<2, 1>::new();
-  builder.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-  ```
-
-- `pub fn minimize(&mut self) -> std::io::Result<()>`
-  
-  Minimizes the cover in place.
-
-- `pub fn num_cubes(&self) -> usize`
-  
-  Returns the number of cubes currently in the builder.
-
-### `PLACover`
-
-A dynamic cover that can load PLA files with runtime-determined dimensions.
-
-```rust
-pub struct PLACover
-```
-
-#### Methods
 
 - `pub fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self>`
   
-  Reads a PLA cover from a file in Berkeley PLA format. Efficiently reads using
-  buffered I/O without loading the entire file into memory first.
+  Loads a cover from a PLA file.
   
   ```rust
-  let cover = PLACover::from_pla_file("input.pla")?;
+  let cover = Cover::from_pla_file("input.pla")?;
   ```
 
 - `pub fn from_pla_reader<R: BufRead>(reader: R) -> io::Result<Self>`
   
-  Reads a PLA cover from any `BufRead` implementation. This is the core parsing
-  method used by both `from_pla_file` and `from_pla_content`.
+  Loads a cover from any `BufRead` implementation.
   
   ```rust
-  use std::io::BufReader;
-  let file = std::fs::File::open("input.pla")?;
-  let reader = BufReader::new(file);
-  let cover = PLACover::from_pla_reader(reader)?;
+  use std::io::Cursor;
+  let reader = Cursor::new(pla_content.as_bytes());
+  let cover = Cover::from_pla_reader(reader)?;
   ```
 
-- `pub fn from_pla_content(s: &str) -> io::Result<Self>`
+- `pub fn from_pla_string(s: &str) -> io::Result<Self>`
   
-  Reads a PLA cover from a string.
+  Loads a cover from a PLA format string.
+  
+  ```rust
+  let pla = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
+  let cover = Cover::from_pla_string(pla)?;
+  ```
+
+#### Adding Data
+
+- `pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>])`
+  
+  Adds a cube to the cover. Dimensions grow automatically if needed.
+  
+  ```rust
+  let mut cover = Cover::new(CoverType::F);
+  cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
+  // Dimensions automatically set to 2 inputs, 1 output
+  ```
+
+- `pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), EspressoError>`
+  
+  Adds a boolean expression to a named output. Variables are matched by name,
+  new variables are appended. Returns error if output name already exists.
+  
+  ```rust
+  let mut cover = Cover::new(CoverType::F);
+  let a = BoolExpr::variable("a");
+  let b = BoolExpr::variable("b");
+  
+  cover.add_expr(a.and(&b), "result")?;
+  // Input variables: a, b
+  // Output variables: result
+  ```
+
+#### Query Methods
+
+- `pub fn num_inputs(&self) -> usize` - Number of input variables
+- `pub fn num_outputs(&self) -> usize` - Number of output variables
+- `pub fn num_cubes(&self) -> usize` - Number of cubes
+- `pub fn cover_type(&self) -> CoverType` - Cover type (F, FD, FR, or FDR)
+- `pub fn input_labels(&self) -> &[Arc<str>]` - Input variable names
+- `pub fn output_labels(&self) -> &[Arc<str>]` - Output variable names
+
+#### Iteration
+
+- `pub fn cubes(&self) -> impl Iterator<Item = &Cube>`
+  
+  Iterates over cubes as `Cube` references.
+
+- `pub fn cubes_iter(&self) -> impl Iterator<Item = (Vec<Option<bool>>, Vec<Option<bool>>)>`
+  
+  Iterates over cubes as (inputs, outputs) tuples.
+
+#### Minimization
 
 - `pub fn minimize(&mut self) -> io::Result<()>`
   
-  Minimizes this cover using Espresso.
+  Minimizes this cover using Espresso with default configuration.
+
+- `pub fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()>`
+  
+  Minimizes with custom configuration.
+
+#### Expression Conversion
+
+- `pub fn to_exprs(&self) -> impl Iterator<Item = (Arc<str>, BoolExpr)> + '_`
+  
+  Converts all outputs to boolean expressions. Returns iterator of (name, expression) tuples.
   
   ```rust
-  let mut cover = PLACover::from_pla_file("input.pla")?;
-  cover.minimize()?;
+  for (name, expr) in cover.to_exprs() {
+      println!("{}: {}", name, expr);
+  }
   ```
 
-- `pub fn write_pla<W: Write>(&self, writer: &mut W, pla_type: PLAType) -> io::Result<()>`
+- `pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, EspressoError>`
   
-  Writes this cover to PLA format using any `Write` implementation. This is the core
-  serialization method used by both `to_pla_string` and `to_pla_file`.
+  Converts a specific named output to an expression.
+  
+  ```rust
+  let expr = cover.to_expr("result")?;
+  ```
+
+- `pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, EspressoError>`
+  
+  Converts a specific output by index.
+  
+  ```rust
+  let expr = cover.to_expr_by_index(0)?;
+  ```
+
+#### Example: Full Workflow
+
+```rust
+use espresso_logic::{BoolExpr, Cover, CoverType, expr};
+
+// Create cover
+let mut cover = Cover::new(CoverType::F);
+
+// Add expressions to different outputs
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
+
+cover.add_expr(expr!(a * b + a * b * c), "out1")?;  // Redundant
+cover.add_expr(expr!(b + c), "out2")?;
+
+println!("Before: {} cubes", cover.num_cubes());  // Multiple cubes
+println!("Variables: {:?}", cover.input_labels()); // ["a", "b", "c"]
+
+// Minimize
+cover.minimize()?;
+
+println!("After: {} cubes", cover.num_cubes());
+
+// Convert back to expressions
+for (name, expr) in cover.to_exprs() {
+    println!("{}: {}", name, expr);
+}
+// out1: (a * b)
+// out2: (c + b)
+```
+
+## PLA Serialization
+
+All Cover instances can be serialized to PLA format using the `PLAWriter` trait methods:
+
+- `pub fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> io::Result<()>`
+  
+  Writes cover to PLA format using any `Write` implementation.
   
   ```rust
   use std::io::Write;
   let mut buffer = Vec::new();
-  cover.write_pla(&mut buffer, PLAType::F)?;
+  cover.write_pla(&mut buffer, CoverType::F)?;
   ```
 
-- `pub fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: PLAType) -> io::Result<()>`
+- `pub fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: CoverType) -> io::Result<()>`
   
-  Writes this cover to a PLA file. Efficiently writes directly to the file without
-  building the entire string in memory first.
+  Writes cover to a PLA file.
   
   ```rust
-  cover.to_pla_file("output.pla", PLAType::F)?;
+  cover.to_pla_file("output.pla", CoverType::F)?;
   ```
 
-- `pub fn to_pla_string(&self, pla_type: PLAType) -> io::Result<String>`
+- `pub fn to_pla_string(&self, pla_type: CoverType) -> io::Result<String>`
   
-  Converts this cover to a PLA format string.
-
-- `pub fn num_inputs(&self) -> usize`
+  Converts cover to a PLA format string.
   
-  Returns the number of inputs.
+  ```rust
+  let pla = cover.to_pla_string(CoverType::F)?;
+  println!("{}", pla);
+  ```
 
-- `pub fn num_outputs(&self) -> usize`
-  
-  Returns the number of outputs.
-
-- `pub fn num_cubes(&self) -> usize`
-  
-  Returns the number of cubes.
-
-### `PLAType`
+### `CoverType`
 
 Output format for PLA files.
 
 ```rust
-pub enum PLAType {
+pub enum CoverType {
     F = 1,      // On-set only
     FD = 3,     // On-set and don't-care set
     FR = 5,     // On-set and off-set
@@ -395,7 +363,7 @@ The low-level API provides direct access to the Espresso C library with maximum 
 - Access to intermediate results (F, D, R covers)
 - Fine-grained configuration control
 
-**Use high-level APIs (`BoolExpr`, `Cover`, `CoverBuilder`) when:**
+**Use high-level APIs (`BoolExpr`, `Cover`) when:**
 - You want simple, safe, thread-safe APIs
 - You don't need low-level control
 - You're building multi-threaded applications without manual management
@@ -409,7 +377,7 @@ The low-level API provides direct access to the Espresso C library with maximum 
 - **Dimension consistency**: All operations on a thread must use the same input/output dimensions
 - **Independent threads**: Each thread has completely independent global state
 
-The high-level APIs (`BoolExpr`, `Cover<I, O>`, `CoverBuilder`) abstract these constraints away automatically.
+The high-level APIs (`BoolExpr`, `Cover`) abstract these constraints away automatically.
 
 ### `Espresso`
 
@@ -709,10 +677,10 @@ let xor = BoolExpr::parse("a * ~b + ~a * b")?;
 let result = xor.minimize()?;
 ```
 
-### Working with ExprCover
+### Working with Cover and Expressions
 
 ```rust
-use espresso_logic::{BoolExpr, ExprCover, expr};
+use espresso_logic::{BoolExpr, Cover, CoverType, expr};
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -721,9 +689,10 @@ let b = BoolExpr::variable("b");
 let expr = expr!(a * !b + !a * b);
 
 // Convert to cover for more control
-let mut cover = ExprCover::from_expr(expr);
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "xor_output")?;
 
-println!("Variables: {:?}", cover.variables());
+println!("Variables: {:?}", cover.input_labels());
 println!("Inputs: {}", cover.num_inputs());
 println!("Before: {} cubes", cover.num_cubes());
 
@@ -733,17 +702,17 @@ cover.minimize()?;
 println!("After: {} cubes", cover.num_cubes());
 
 // Convert back to expression
-let minimized = cover.to_expr();
+let minimized = cover.to_expr("xor_output")?;
 println!("Result: {}", minimized);
 ```
 
-### Low-Level Cover API
+### Manual Cube Construction
 
 ```rust
-use espresso_logic::CoverBuilder;
+use espresso_logic::{Cover, CoverType};
 
 // Create a cover for XOR function
-let mut cover = CoverBuilder::<2, 1>::new();
+let mut cover = Cover::new(CoverType::F);
 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 
@@ -756,27 +725,28 @@ println!("Result: {} cubes", cover.num_cubes());
 ### Reading and Minimizing a PLA File
 
 ```rust
-use espresso_logic::{PLACover, PLAType};
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
 // Read PLA file
-let mut cover = PLACover::from_pla_file("input.pla")?;
+let mut cover = Cover::from_pla_file("input.pla")?;
 
 // Minimize
 cover.minimize()?;
 
 // Write result
-cover.to_pla_file("output.pla", PLAType::F)?;
+cover.to_pla_file("output.pla", CoverType::F)?;
 ```
 
 ### Converting Between Formats
 
 ```rust
-use espresso_logic::{BoolExpr, ExprCover, PLAType};
+use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
 
 // Expression to PLA
 let expr = BoolExpr::parse("a * b + c")?;
-let cover = ExprCover::from_expr(expr);
-let pla_string = cover.to_pla_string(PLAType::F)?;
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(expr, "output")?;
+let pla_string = cover.to_pla_string(CoverType::F)?;
 
 println!("{}", pla_string);
 ```
@@ -793,21 +763,22 @@ The library handles the complexity of managing C memory while providing a safe R
 
 ## Thread Safety
 
-**This library IS thread-safe!** All public APIs use **transparent process isolation**:
+**This library IS thread-safe!** All public APIs use **C11 thread-local storage**:
 
-- `BoolExpr`, `ExprCover`, `Cover`, `CoverBuilder`, and `PLACover` are all safe to use concurrently
-- The underlying C library (with global state) runs in isolated forked processes
-- Parent process never touches global state
+- `BoolExpr`, `Cover`, and `EspressoCover` are all safe to use concurrently
+- The underlying C library uses `_Thread_local` for all global state
+- Each thread gets its own independent copy of all global variables
 - No manual synchronization needed
+- Native C11 thread safety (not process isolation)
 
 ```rust
-use espresso_logic::CoverBuilder;
+use espresso_logic::{Cover, CoverType};
 use std::thread;
 
 // Safe concurrent execution
 let handles: Vec<_> = (0..4).map(|_| {
     thread::spawn(|| {
-        let mut cover = CoverBuilder::<2, 1>::new();
+        let mut cover = Cover::new(CoverType::F);
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         cover.minimize()
     })
@@ -818,7 +789,7 @@ for handle in handles {
 }
 ```
 
-See [PROCESS_ISOLATION.md](PROCESS_ISOLATION.md) for details.
+See [THREAD_LOCAL_IMPLEMENTATION.md](THREAD_LOCAL_IMPLEMENTATION.md) for technical details.
 
 ## Performance Notes
 
@@ -826,12 +797,11 @@ See [PROCESS_ISOLATION.md](PROCESS_ISOLATION.md) for details.
 - **Boolean expression parsing**: Very fast (microseconds for typical expressions)
 - **DNF conversion**: Linear in expression size
 - **Minimization**: 
-  - Heuristic (`minimize`) is fast but may not be optimal
-  - Exact minimization guarantees optimality but is slower
+  - Heuristic algorithm is fast and produces good results for most cases
   - Large Boolean functions (>1000 cubes) may take significant time
-- **Process isolation overhead**: ~10-20ms per operation (fork + IPC)
-  - Worth it for safety and simplicity
-  - Amortized over typical minimization time
+- **Thread-local storage overhead**: Minimal (native C11 thread-local variables)
+  - Near-zero overhead for thread safety
+  - Each thread has independent state
 
 ## Error Handling
 

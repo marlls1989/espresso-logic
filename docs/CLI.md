@@ -4,34 +4,50 @@
 
 The Rust wrapper provides both a library API and a command-line interface compatible with the original Espresso CLI.
 
+**Note:** The CLI is an optional feature. Library users get minimal dependencies by default.
+
 ## Installation
 
-Build the CLI binary:
+### Install as System Command (Recommended)
 
 ```bash
-cargo build --release --bin espresso
+cargo install espresso-logic --features cli
+```
+
+This installs the `espresso` binary to your cargo bin directory (usually `~/.cargo/bin/`).
+
+### Build Locally
+
+The CLI requires the `cli` feature:
+
+```bash
+cargo build --release --bin espresso --features cli
 ```
 
 The binary will be at `target/release/espresso`.
 
 ## Basic Usage
 
+Assuming you've installed via `cargo install espresso-logic --features cli`:
+
 ```bash
 # Minimize a PLA file
-./target/release/espresso input.pla > output.pla
+espresso input.pla > output.pla
 
 # With summary
-./target/release/espresso -s input.pla
+espresso -s input.pla
 
 # With trace information
-./target/release/espresso -t input.pla
+espresso -t input.pla
 
 # Exact minimization
-./target/release/espresso --do exact input.pla
+espresso --do exact input.pla
 
 # Output to file
-./target/release/espresso input.pla --out-file output.pla
+espresso input.pla --out-file output.pla
 ```
+
+If building locally, use `./target/release/espresso` after running `cargo build --release --features cli`.
 
 ## Command Line Options
 
@@ -78,20 +94,20 @@ The binary will be at `target/release/espresso`.
 
 ```bash
 # Minimize a Boolean function
-./target/release/espresso examples/ex5 > output.pla
+espresso examples/ex5 > output.pla
 ```
 
 ### With Options
 
 ```bash
 # Fast mode with summary
-./target/release/espresso --fast -s examples/ex5
+espresso --fast -s examples/ex5
 
 # Exact minimization with trace
-./target/release/espresso --do exact -t examples/ex5
+espresso --do exact -t examples/ex5
 
 # Output both F and D sets
-./target/release/espresso -o fd examples/ex5
+espresso -o fd examples/ex5
 ```
 
 ### Using in Scripts
@@ -102,7 +118,7 @@ The binary will be at `target/release/espresso`.
 
 for file in *.pla; do
     echo "Processing $file..."
-    ./target/release/espresso "$file" > "min_$file"
+    espresso "$file" > "min_$file"
 done
 ```
 
@@ -133,21 +149,23 @@ The Rust CLI aims to be compatible with the original C version:
 For more control, use the Rust API directly:
 
 ```rust
-use espresso_logic::{PLA, PLAType};
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {
-    let pla = PLA::from_file("input.pla")?;
-    let minimized = pla.minimize();
-    minimized.to_file("output.pla", PLAType::F)?;
+    let mut cover = Cover::from_pla_file("input.pla")?;
+    cover.minimize()?;
+    cover.to_pla_file("output.pla", CoverType::F)?;
     Ok(())
 }
 ```
 
-## Installation as System Command
+## Development Installation
+
+To install from a local checkout:
 
 ```bash
-# Install to cargo bin directory
-cargo install --path .
+# Install from current directory with cli feature
+cargo install --path . --features cli
 
 # Now available as 'espresso' command
 espresso input.pla > output.pla

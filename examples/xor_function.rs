@@ -1,12 +1,12 @@
 //! XOR function minimization example
 
-use espresso_logic::{Cover, CoverBuilder};
+use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
     println!("XOR Function Minimization\n");
 
-    // Create a cover for 2 inputs, 1 output
-    let mut cover = CoverBuilder::<2, 1>::new();
+    // Create a cover (dimensions grow automatically)
+    let mut cover = Cover::new(CoverType::F);
 
     // Add XOR truth table
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
