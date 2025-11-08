@@ -46,10 +46,13 @@ impl PLAType {
 
 /// Type of a cube (ON-set, DC-set, or OFF-set)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CubeType {
-    F, // ON-set cube
-    D, // Don't-care set cube
-    R, // OFF-set cube
+pub enum CubeType {
+    /// ON-set cube (where the function is 1)
+    F,
+    /// Don't-care set cube (can be either 0 or 1)
+    D,
+    /// OFF-set cube (where the function is 0)
+    R,
 }
 
 /// A cube in a PLA cover
@@ -61,12 +64,36 @@ pub struct Cube {
 }
 
 impl Cube {
-    pub(crate) fn new(inputs: Vec<Option<bool>>, outputs: Vec<bool>, cube_type: CubeType) -> Self {
+    pub(crate) fn new(inputs: &[Option<bool>], outputs: &[bool], cube_type: CubeType) -> Self {
         Cube {
             inputs: inputs.into(),
             outputs: outputs.into(),
             cube_type,
         }
+    }
+
+    /// Get the inputs of this cube
+    ///
+    /// Returns a slice where each element represents an input variable:
+    /// - `Some(false)` - input must be 0
+    /// - `Some(true)` - input must be 1
+    /// - `None` - don't care (can be 0 or 1)
+    pub fn inputs(&self) -> &[Option<bool>] {
+        &self.inputs
+    }
+
+    /// Get the outputs of this cube
+    ///
+    /// Returns a slice where each element represents an output variable:
+    /// - `true` - output is 1
+    /// - `false` - output is 0
+    pub fn outputs(&self) -> &[bool] {
+        &self.outputs
+    }
+
+    /// Get the type of this cube (F, D, or R)
+    pub fn cube_type(&self) -> CubeType {
+        self.cube_type
     }
 }
 
@@ -191,7 +218,7 @@ impl<T: Minimizable + PLASerializable> Cover for T {
     }
 
     fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()> {
-        use crate::r#unsafe::{UnsafeCover, UnsafeEspresso};
+        use crate::espresso::{Espresso, EspressoCover};
 
         // Split cubes into F, D, R sets based on cube type
         let mut f_cubes = Vec::new();
@@ -225,26 +252,24 @@ impl<T: Minimizable + PLASerializable> Cover for T {
         }
 
         // Direct C calls - thread-safe via thread-local storage
-        let mut esp =
-            UnsafeEspresso::new_with_config(self.num_inputs(), self.num_outputs(), config);
+        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
 
         // Build covers from cube data
-        let f_cover = UnsafeCover::build_from_cubes(f_cubes, self.num_inputs(), self.num_outputs());
+        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())
+            .map_err(io::Error::other)?;
         let d_cover = if !d_cubes.is_empty() {
-            Some(UnsafeCover::build_from_cubes(
-                d_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            ))
+            Some(
+                EspressoCover::from_cubes(d_cubes, self.num_inputs(), self.num_outputs())
+                    .map_err(io::Error::other)?,
+            )
         } else {
             None
         };
         let r_cover = if !r_cubes.is_empty() {
-            Some(UnsafeCover::build_from_cubes(
-                r_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            ))
+            Some(
+                EspressoCover::from_cubes(r_cubes, self.num_inputs(), self.num_outputs())
+                    .map_err(io::Error::other)?,
+            )
         } else {
             None
         };
@@ -252,11 +277,25 @@ impl<T: Minimizable + PLASerializable> Cover for T {
         // Minimize
         let (f_result, d_result, r_result) = esp.minimize(f_cover, d_cover, r_cover);
 
-        // Direct conversion to typed Cubes - no serialization needed!
+        // Extract cubes before dropping anything
+        let f_cubes = f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F);
+        let d_cubes = d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D);
+        let r_cubes = r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R);
+
+        // Explicitly drop covers and espresso handle to ensure cleanup
+        drop(f_result);
+        drop(d_result);
+        drop(r_result);
+        drop(esp);
+
+        // Force cleanup of thread-local weak reference if no strong refs remain
+        crate::espresso::Espresso::cleanup_if_unused();
+
+        // Combine cubes after cleanup
         let mut all_cubes = Vec::new();
-        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
-        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
-        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
+        all_cubes.extend(f_cubes);
+        all_cubes.extend(d_cubes);
+        all_cubes.extend(r_cubes);
 
         // Update cubes with type information preserved
         self.set_cubes(all_cubes);
@@ -421,15 +460,15 @@ impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker>
         let inputs_vec = inputs.to_vec();
         if has_f {
             self.cubes
-                .push(Cube::new(inputs_vec.clone(), f_outputs, CubeType::F));
+                .push(Cube::new(&inputs_vec, &f_outputs, CubeType::F));
         }
         if has_d {
             self.cubes
-                .push(Cube::new(inputs_vec.clone(), d_outputs, CubeType::D));
+                .push(Cube::new(&inputs_vec, &d_outputs, CubeType::D));
         }
         if has_r {
             self.cubes
-                .push(Cube::new(inputs_vec, r_outputs, CubeType::R));
+                .push(Cube::new(&inputs_vec, &r_outputs, CubeType::R));
         }
 
         self
@@ -494,5 +533,209 @@ impl<const INPUTS: usize, const OUTPUTS: usize, T: CoverTypeMarker> fmt::Debug
             .field("cover_type", &T::PLA_TYPE)
             .field("num_cubes", &self.num_cubes())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for CoverBuilder and Cover trait functionality
+
+    #[test]
+    fn test_cover_populates_cubes() {
+        // Create cover and add cubes
+        let mut cover = CoverBuilder::<2, 1>::new();
+
+        // Add two cubes (XOR function)
+        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
+        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+
+        // Minimize
+        cover.minimize().unwrap();
+
+        // XOR cannot be minimized - should still have 2 cubes
+        assert_eq!(
+            cover.num_cubes(),
+            2,
+            "XOR should have exactly 2 cubes after minimization"
+        );
+    }
+
+    #[test]
+    fn test_cover_many_cubes() {
+        // Create cover
+        let mut cover = CoverBuilder::<3, 1>::new();
+
+        // Add 4 cubes: all have input[2]=1, so this should minimize to just --1 -> 1
+        cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]); // 001 -> 1
+        cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]); // 011 -> 1
+        cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]); // 101 -> 1
+        cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]); // 111 -> 1
+
+        // Minimize
+        cover.minimize().unwrap();
+
+        // Should minimize to 1 cube: --1 (whenever input[2]=1, output=1)
+        assert_eq!(cover.num_cubes(), 1, "Should minimize to 1 cube: --1 -> 1");
+    }
+
+    #[test]
+    fn test_multiple_instances() {
+        // Multiple covers with DIFFERENT dimensions should work sequentially
+        // This tests that the safe API properly isolates Espresso limitations
+        let mut cover1 = CoverBuilder::<2, 1>::new();
+        let mut cover2 = CoverBuilder::<3, 1>::new();
+        let mut cover3 = CoverBuilder::<4, 1>::new();
+
+        // Add cubes to each with appropriate dimensions
+        cover1.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+        cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
+        cover3.add_cube(
+            &[Some(false), Some(true), Some(false), Some(true)],
+            &[Some(true)],
+        );
+
+        // Verify each has its cube
+        assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
+        assert_eq!(cover2.num_cubes(), 1, "Cover2 (3x1) should have 1 cube");
+        assert_eq!(cover3.num_cubes(), 1, "Cover3 (4x1) should have 1 cube");
+
+        // Verify minimization works for all independently with different dimensions
+        cover1.minimize().unwrap();
+        assert_eq!(
+            cover1.num_cubes(),
+            1,
+            "Cover1 (2x1) should have 1 cube after minimization"
+        );
+
+        cover2.minimize().unwrap();
+        assert_eq!(
+            cover2.num_cubes(),
+            1,
+            "Cover2 (3x1) should have 1 cube after minimization"
+        );
+
+        cover3.minimize().unwrap();
+        assert_eq!(
+            cover3.num_cubes(),
+            1,
+            "Cover3 (4x1) should have 1 cube after minimization"
+        );
+
+        // All covers remain independent despite different dimensions
+        assert_eq!(cover1.num_cubes(), 1, "Cover1 should still have 1 cube");
+        assert_eq!(cover2.num_cubes(), 1, "Cover2 should still have 1 cube");
+        assert_eq!(cover3.num_cubes(), 1, "Cover3 should still have 1 cube");
+    }
+
+    #[test]
+    fn test_cover_basic() {
+        let mut cover = CoverBuilder::<2, 1>::new();
+        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+
+        cover.minimize().unwrap();
+        assert!(cover.num_cubes() > 0);
+    }
+
+    #[test]
+    fn test_clone() {
+        let mut cover1 = CoverBuilder::<2, 1>::new();
+        cover1.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+        cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+
+        // Clone before minimization
+        let mut cover2 = cover1.clone();
+
+        // Both should have the same number of cubes
+        assert_eq!(cover1.num_cubes(), 2, "Original should have 2 cubes");
+        assert_eq!(cover2.num_cubes(), 2, "Clone should have 2 cubes");
+
+        // Minimize only cover1
+        cover1.minimize().unwrap();
+
+        // cover1 should be minimized, cover2 should still have 2 cubes
+        assert_eq!(cover1.num_cubes(), 2, "Minimized XOR should have 2 cubes");
+        assert_eq!(
+            cover2.num_cubes(),
+            2,
+            "Clone should be independent and still have 2 cubes"
+        );
+
+        // Now minimize cover2
+        cover2.minimize().unwrap();
+        assert_eq!(
+            cover2.num_cubes(),
+            2,
+            "Clone should also minimize to 2 cubes"
+        );
+    }
+
+    #[test]
+    fn test_debug_output() {
+        let mut cover = CoverBuilder::<2, 1>::new();
+        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+
+        let debug_str = format!("{:?}", cover);
+
+        // Should contain useful information about the cover structure
+        assert!(
+            debug_str.contains("Cover"),
+            "Debug output should mention Cover type"
+        );
+
+        // Verify debug output changes after operations
+        let before_minimize = format!("{:?}", &cover);
+        cover.minimize().unwrap();
+        let after_minimize = format!("{:?}", &cover);
+
+        // Both should be valid debug strings
+        assert!(
+            !before_minimize.is_empty(),
+            "Debug output should not be empty before minimize"
+        );
+        assert!(
+            !after_minimize.is_empty(),
+            "Debug output should not be empty after minimize"
+        );
+    }
+
+    #[test]
+    fn test_add_cube_with_dont_care() {
+        let mut cover = CoverBuilder::<3, 1>::new();
+
+        // Use don't care (None) in inputs
+        cover.add_cube(&[Some(true), None, Some(false)], &[Some(true)]);
+        cover.add_cube(&[None, Some(true), Some(true)], &[Some(true)]);
+
+        cover.minimize().unwrap();
+        assert!(cover.num_cubes() > 0);
+    }
+
+    #[test]
+    fn test_num_cubes_before_minimize() {
+        let mut cover = CoverBuilder::<2, 1>::new();
+
+        assert_eq!(cover.num_cubes(), 0, "Empty cover should have 0 cubes");
+
+        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+        assert_eq!(cover.num_cubes(), 1, "Should have 1 cube before minimize");
+
+        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+        assert_eq!(cover.num_cubes(), 2, "Should have 2 cubes before minimize");
+    }
+
+    #[test]
+    fn test_num_cubes_after_minimize() {
+        let mut cover = CoverBuilder::<2, 1>::new();
+        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+
+        cover.minimize().unwrap();
+        let after = cover.num_cubes();
+
+        // After minimization, num_cubes should return the result count
+        assert!(after > 0, "Should have cubes after minimization");
     }
 }

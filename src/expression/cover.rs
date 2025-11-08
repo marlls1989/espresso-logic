@@ -183,7 +183,7 @@ fn dnf_to_cubes(dnf: Vec<BTreeMap<Arc<str>, bool>>, variables: &[Arc<str>]) -> V
         // Single output that's always true (ON-set)
         let outputs = vec![true];
 
-        cubes.push(Cube::new(inputs, outputs, CubeType::F));
+        cubes.push(Cube::new(&inputs, &outputs, CubeType::F));
     }
 
     cubes

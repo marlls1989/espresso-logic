@@ -37,23 +37,41 @@ Add this to your `Cargo.toml`:
 espresso-logic = "2.6"
 ```
 
-### Command Line Usage
+## Which API Should I Use?
 
-```bash
-# Build the CLI
-cargo build --release --bin espresso
+This library provides three API levels to suit different needs:
 
-# Minimize a PLA file
-./target/release/espresso input.pla > output.pla
+### High-Level: Boolean Expressions (`BoolExpr`)
+**✅ Recommended for most users**
+- ✅ Thread-safe by design - use freely in concurrent applications
+- ✅ Automatic lifetime management - thread-local Espresso instances handled transparently
+- ✅ Easy to use - parse from strings or build programmatically
+- ✅ Clean syntax with `expr!` macro
 
-# With summary
-./target/release/espresso -s input.pla
+**Use when:** You want the simplest, safest API for boolean minimization
 
-# Exact minimization
-./target/release/espresso --do exact input.pla
-```
+### Mid-Level: Typed Covers (`Cover`, `CoverBuilder`, `PLACover`)
+- ✅ Thread-safe by design - use freely in concurrent applications
+- ✅ Automatic lifetime management - thread-local Espresso instances handled transparently
+- ✅ Type-safe with compile-time dimensions (`Cover<I, O>`)
+- ✅ Good for programmatic cover construction
+- ✅ Direct PLA file support
 
-### Boolean Expressions (High-Level API)
+**Use when:** You need typed covers or work with PLA files
+
+### Low-Level: Direct Espresso API (`Espresso`, `EspressoCover`)
+- ⚡ Maximum performance - minimal overhead
+- 🎛️ Fine-grained control over minimization process
+- 🔧 Access to intermediate results (F, D, R covers)
+- ⚠️ **Thread-local state** - one Espresso instance per thread
+- ⚠️ **Not thread-safe** - covers are `!Send + !Sync`
+- ⚠️ **Manual management** - requires understanding of constraints
+
+**Use when:** You need maximum control and performance, and understand thread-local limitations
+
+## Usage Examples
+
+### Boolean Expressions (High-Level API) - Recommended
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
@@ -79,7 +97,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Library API Example (Low-Level)
+### Typed Cover API (Mid-Level)
 
 ```rust
 use espresso_logic::Cover;
@@ -99,6 +117,88 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+### Direct Espresso API (Low-Level)
+
+The low-level API provides direct access to the Espresso C library with maximum performance and control.
+
+**⚠️ Thread-Local State Constraints:**
+- Each thread has its own independent `Espresso` instance
+- `EspressoCover` objects are tied to their `Espresso` instance
+- Covers cannot be shared between threads (`!Send + !Sync`)
+- High-level APIs abstract these limitations away
+
+**Simple usage** (Espresso instance managed automatically):
+
+```rust
+use espresso_logic::espresso::{EspressoCover, CubeType};
+
+fn main() -> Result<(), String> {
+    // Build a cover (XOR function) - Espresso instance created automatically
+    let cubes = vec![
+        (vec![0, 1], vec![1]),  // 01 -> 1
+        (vec![1, 0], vec![1]),  // 10 -> 1
+    ];
+    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+    
+    // Minimize directly on the cover
+    let (minimized, _d, _r) = f.minimize(None, None);
+    
+    // Extract results
+    let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
+    println!("Minimized to {} cubes", result_cubes.len());
+    Ok(())
+}
+```
+
+**Advanced usage** with explicit configuration:
+
+```rust
+use espresso_logic::espresso::{Espresso, EspressoCover};
+use espresso_logic::EspressoConfig;
+
+fn main() -> Result<(), String> {
+    // Explicitly create an Espresso instance with custom config
+    let mut config = EspressoConfig::default();
+    config.single_expand = true;
+    let _esp = Espresso::new(2, 1, &config);
+    
+    // Now all covers on this thread will use this instance
+    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+    let (minimized, _, _) = f.minimize(None, None);
+    Ok(())
+}
+```
+
+**Multi-threaded usage** - each thread gets independent state:
+
+```rust
+use espresso_logic::espresso::{EspressoCover, CubeType};
+use std::thread;
+
+fn main() -> Result<(), String> {
+    let handles: Vec<_> = (0..4).map(|_| {
+        thread::spawn(|| -> Result<usize, String> {
+            // Each thread automatically gets its own Espresso instance
+            let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+            let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+            
+            // Thread-safe: independent global state per thread
+            let (result, _, _) = f.minimize(None, None);
+            Ok(result.to_cubes(2, 1, CubeType::F).len())
+        })
+    }).collect();
+    
+    for handle in handles {
+        let num_cubes = handle.join().unwrap()?;
+        println!("Result: {} cubes", num_cubes);
+    }
+    Ok(())
+}
+```
+
+See [docs/API.md](docs/API.md) for complete low-level API documentation and [docs/THREAD_LOCAL_IMPLEMENTATION.md](docs/THREAD_LOCAL_IMPLEMENTATION.md) for technical details.
 
 ### Working with PLA Files
 
@@ -120,44 +220,21 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Concurrent Execution (Thread-Safe)
+## Command Line Usage
 
-Thread-safe by default - the C library uses **C11 thread-local storage** for all global state:
+```bash
+# Build the CLI
+cargo build --release --bin espresso
 
-```rust
-use espresso_logic::Cover;
-use std::thread;
+# Minimize a PLA file
+./target/release/espresso input.pla > output.pla
 
-fn main() -> std::io::Result<()> {
-    // Spawn multiple threads - each executes Espresso independently
-    let handles: Vec<_> = (0..4).map(|_| {
-        thread::spawn(move || {
-            let mut cover = Cover::<2, 1>::new();
-            cover.add_cube(&[Some(false), Some(true)], &[true]);
-            cover.add_cube(&[Some(true), Some(false)], &[true]);
-            
-            // Thread-safe - each thread executes with independent global state
-            cover.minimize()?;
-            Ok(cover.num_cubes())
-        })
-    }).collect();
-    
-    for handle in handles {
-        let num_cubes = handle.join().unwrap()?;
-        println!("Result: {} cubes", num_cubes);
-    }
-    Ok(())
-}
+# With summary
+./target/release/espresso -s input.pla
+
+# Exact minimization
+./target/release/espresso --do exact input.pla
 ```
-
-**Key benefits:**
-- ✅ Thread-safe by default - no synchronization needed
-- ✅ Independent state per thread via thread-local storage
-- ✅ True parallelism - each thread executes Espresso concurrently
-- ✅ Simple API with const generics for compile-time safety
-- ✅ Direct C calls - no IPC overhead
-
-See [docs/THREAD_LOCAL_IMPLEMENTATION.md](docs/THREAD_LOCAL_IMPLEMENTATION.md) for technical details.
 
 ## Installation
 
@@ -194,7 +271,7 @@ The build script automatically compiles the C source code and generates FFI bind
 The crate includes several examples demonstrating different use cases:
 
 ```bash
-# Boolean expressions (high-level API) - NEW!
+# Boolean expressions (high-level API)
 cargo run --example boolean_expressions
 
 # Basic minimization
@@ -206,11 +283,8 @@ cargo run --example xor_function
 # PLA file processing
 cargo run --example pla_file
 
-# PLA file with output
-cargo run --example pla_file output.pla
-
-# Transparent thread-safe API
-cargo run --example transparent_api
+# Direct Espresso API
+cargo run --example espresso_direct_api
 
 # Concurrent execution
 cargo run --example concurrent_transparent
@@ -236,95 +310,15 @@ Espresso uses the Berkeley PLA format. Here's a simple example:
 - `1` - Variable must be 1
 - `-` - Don't care
 
-## API Overview
-
-### Core Types
-
-#### High-Level API (Boolean Expressions)
-- **`BoolExpr`** - Boolean expression with operator overloading
-- **`ExprCover`** - Cover representation for boolean expressions
-- **`expr!`** - Macro for clean expression syntax
-
-#### Low-Level API (Cubes and Covers)
-- **`Cover<I, O>`** - Generic cover with compile-time dimensions
-- **`CoverBuilder<I, O>`** - Builder for constructing covers programmatically
-- **`PLACover`** - Dynamic cover for PLA files
-- **`PLAType`** - Output format specifier
-
-### Key Methods
-
-```rust
-// Boolean expressions (high-level)
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let expr = expr!(a * b + !a * !b);
-let minimized = expr.minimize()?;
-
-// Or parse from string
-let expr = BoolExpr::parse("(a + b) * c")?;
-
-// Low-level cover API
-let mut cover = CoverBuilder::<2, 1>::new();
-cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-cover.minimize()?;
-
-// PLA file operations
-let mut pla = PLACover::from_pla_file("file.pla")?;
-pla.minimize()?;
-pla.to_pla_file("out.pla", PLAType::F)?;
-```
-
-See [docs/API.md](docs/API.md) for complete API documentation.
-
-## Performance
-
-The Rust wrapper has negligible overhead compared to the C library:
-
-- Heuristic minimization is fast and suitable for most use cases
-- Exact minimization guarantees optimality but is slower
-- Large functions (>1000 cubes) may require significant time
-
-## Architecture
-
-The crate is organized into three layers:
-
-1. **C Library** (`espresso-src/`) - Modified Espresso implementation with C11 thread-local storage
-2. **FFI Bindings** (`src/sys.rs`) - Auto-generated by bindgen
-3. **Safe API** (`src/lib.rs`) - Idiomatic Rust wrappers
-
-Memory management is handled automatically through RAII patterns.
-
-**C Code Modifications:** The original Espresso C code has been modified to use C11 `_Thread_local` for all global variables (~50+ variables across 16 files), enabling safe concurrent execution. Accessor functions provide Rust FFI compatibility.
-
 ## Testing
 
-### Unit and Integration Tests
-
-Run the Rust test suite:
+Run the test suite:
 
 ```bash
 cargo test
 ```
 
-Run with verbose output:
-
-```bash
-cargo test -- --nocapture
-```
-
-### Regression Tests (CLI)
-
-The project includes regression tests that validate the Rust CLI against the original C implementation:
-
-```bash
-# Quick regression test (4 cases, ~1 second)
-./tests/quick_regression.sh
-
-# Comprehensive regression test (38 cases, ~5 seconds)
-./tests/comprehensive_regression.sh
-```
-
-**Status**: ✅ 38/38 tests passing - Rust CLI produces identical output to C CLI
+For comprehensive testing including regression tests and memory safety validation, see [TESTING.md](TESTING.md).
 
 ## Documentation
 
@@ -335,9 +329,11 @@ cargo doc --open
 ```
 
 Additional documentation:
+- [API Reference](docs/API.md) - Complete API documentation including low-level Espresso API
 - [Boolean Expressions Guide](docs/BOOLEAN_EXPRESSIONS.md) - Comprehensive guide to the expression API
-- [API Reference](docs/API.md) - Complete API documentation
 - [Command Line Interface](docs/CLI.md) - CLI usage guide
+- [Testing Guide](TESTING.md) - Comprehensive testing documentation
+- [Memory Safety Analysis](docs/MEMORY_SAFETY.md) - C FFI memory management verification
 - [Thread-Local Implementation](docs/THREAD_LOCAL_IMPLEMENTATION.md) - Thread-safe concurrent execution
 - [Process Isolation (Historical)](docs/PROCESS_ISOLATION.md) - Previous implementation (pre-2.6.2)
 - [Contributing Guidelines](CONTRIBUTING.md)
@@ -354,6 +350,7 @@ Additional documentation:
 
 - Very large Boolean functions may exhaust memory
 - PLA file format has some limitations compared to modern formats
+- Low-level API requires understanding of thread-local state constraints
 
 ## Contributing
 

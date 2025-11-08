@@ -44,11 +44,11 @@ fn main() -> io::Result<()> {
     // Create a temporary file
     use std::io::Write;
     use tempfile::NamedTempFile;
-    
+
     let mut temp_file = NamedTempFile::new()?;
     temp_file.write_all(pla_content.as_bytes())?;
     temp_file.flush()?;
-    
+
     // from_pla_file now uses from_pla_reader internally with BufReader
     let cover4 = PLACover::from_pla_file(temp_file.path())?;
     println!("Inputs:  {}", cover4.num_inputs());
@@ -77,8 +77,12 @@ fn main() -> io::Result<()> {
     };
     let buf_reader = BufReader::new(&mut logging_reader);
     let cover5 = PLACover::from_pla_reader(buf_reader)?;
-    println!("Parsed cover with {} inputs, {} outputs, {} cubes", 
-             cover5.num_inputs(), cover5.num_outputs(), cover5.num_cubes());
+    println!(
+        "Parsed cover with {} inputs, {} outputs, {} cubes",
+        cover5.num_inputs(),
+        cover5.num_outputs(),
+        cover5.num_cubes()
+    );
     println!("Total bytes read: {}", logging_reader.bytes_read);
 
     println!("\n✓ All parsing methods work correctly!");
@@ -91,4 +95,3 @@ fn main() -> io::Result<()> {
 
     Ok(())
 }
-

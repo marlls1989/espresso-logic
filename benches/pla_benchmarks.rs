@@ -56,35 +56,25 @@ fn discover_pla_files() -> Vec<PLATestFile> {
                 // Check if it's a PLA file (has .pla extension or no extension)
                 let is_pla = path.extension().map(|ext| ext == "pla").unwrap_or(true)
                     && path.is_file()
-                    && !path
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .ends_with(".rs");
+                    && !path.file_name().unwrap().to_str().unwrap().ends_with(".rs");
 
                 if is_pla {
                     // Try to parse the file to get cube count
                     if let Ok(cover) = PLACover::from_pla_file(&path) {
                         let num_cubes = cover.num_cubes();
 
-                            // Categorize by size
-                            let category = if num_cubes < 10 {
-                                Category::Small
-                            } else if num_cubes < 100 {
-                                Category::Medium
-                            } else if num_cubes < 1000 {
-                                Category::Large
-                            } else {
-                                Category::VeryLarge
-                            };
+                        // Categorize by size
+                        let category = if num_cubes < 10 {
+                            Category::Small
+                        } else if num_cubes < 100 {
+                            Category::Medium
+                        } else if num_cubes < 1000 {
+                            Category::Large
+                        } else {
+                            Category::VeryLarge
+                        };
 
-                            let name = path
-                                .file_name()
-                                .unwrap()
-                                .to_str()
-                                .unwrap()
-                                .to_string();
+                        let name = path.file_name().unwrap().to_str().unwrap().to_string();
 
                         files.push(PLATestFile {
                             path: path.clone(),
@@ -100,9 +90,7 @@ fn discover_pla_files() -> Vec<PLATestFile> {
     }
 
     // Sort by category and then by number of cubes
-    files.sort_by(|a, b| {
-        (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes))
-    });
+    files.sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
 
     files
 }
@@ -111,18 +99,18 @@ fn discover_pla_files() -> Vec<PLATestFile> {
 fn select_balanced_files(files: Vec<PLATestFile>, per_category: usize) -> Vec<PLATestFile> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     // Group files by category
     let mut by_category: HashMap<u32, Vec<PLATestFile>> = HashMap::new();
     for file in files {
         by_category
             .entry(file.category as u32)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(file);
     }
-    
+
     let mut selected = Vec::new();
-    
+
     // For each category, select up to per_category files
     // Use a deterministic "shuffle" based on filename hash for reproducibility
     for (_, mut category_files) in by_category {
@@ -132,16 +120,15 @@ fn select_balanced_files(files: Vec<PLATestFile>, per_category: usize) -> Vec<PL
             f.path.hash(&mut hasher);
             hasher.finish()
         });
-        
+
         // Take up to per_category files
         selected.extend(category_files.into_iter().take(per_category));
     }
-    
+
     // Sort by category and size for consistent benchmark ordering
-    selected.sort_by(|a, b| {
-        (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes))
-    });
-    
+    selected
+        .sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
+
     selected
 }
 
@@ -156,21 +143,30 @@ fn bench_parse(c: &mut Criterion) {
 
     // Select 10 files from each category for balanced benchmarking
     let files = select_balanced_files(all_files, 10);
-    
+
     eprintln!("Benchmarking {} files for parsing", files.len());
 
     let mut group = c.benchmark_group("parse_pla");
 
     for file in files.iter() {
-        let param = format!("{}/{}/{}", file.category.as_str(), file.directory, file.name);
+        let param = format!(
+            "{}/{}/{}",
+            file.category.as_str(),
+            file.directory,
+            file.name
+        );
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
-        group.bench_with_input(BenchmarkId::new("from_file", &param), &file.path, |b, path| {
-            b.iter(|| {
-                let cover = PLACover::from_pla_file(black_box(path)).unwrap();
-                black_box(cover);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("from_file", &param),
+            &file.path,
+            |b, path| {
+                b.iter(|| {
+                    let cover = PLACover::from_pla_file(black_box(path)).unwrap();
+                    black_box(cover);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -187,22 +183,31 @@ fn bench_minimize(c: &mut Criterion) {
 
     // Select 10 files from each category for balanced benchmarking
     let files = select_balanced_files(all_files, 10);
-    
+
     eprintln!("Benchmarking {} files for minimization", files.len());
 
     let mut group = c.benchmark_group("minimize");
 
     for file in files.iter() {
-        let param = format!("{}/{}/{}", file.category.as_str(), file.directory, file.name);
+        let param = format!(
+            "{}/{}/{}",
+            file.category.as_str(),
+            file.directory,
+            file.name
+        );
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
-        group.bench_with_input(BenchmarkId::new("espresso", &param), &file.path, |b, path| {
-            b.iter(|| {
-                let mut cover = PLACover::from_pla_file(black_box(path)).unwrap();
-                cover.minimize().unwrap();
-                black_box(cover);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("espresso", &param),
+            &file.path,
+            |b, path| {
+                b.iter(|| {
+                    let mut cover = PLACover::from_pla_file(black_box(path)).unwrap();
+                    cover.minimize().unwrap();
+                    black_box(cover);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -219,13 +224,18 @@ fn bench_full_pipeline(c: &mut Criterion) {
 
     // Select 10 files from each category for balanced benchmarking
     let files = select_balanced_files(all_files, 10);
-    
+
     eprintln!("Benchmarking {} files for full pipeline", files.len());
 
     let mut group = c.benchmark_group("full_pipeline");
 
     for file in files.iter() {
-        let param = format!("{}/{}/{}", file.category.as_str(), file.directory, file.name);
+        let param = format!(
+            "{}/{}/{}",
+            file.category.as_str(),
+            file.directory,
+            file.name
+        );
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
         group.bench_with_input(
@@ -263,7 +273,10 @@ fn bench_by_category(c: &mut Criterion) {
         Category::Large,
         Category::VeryLarge,
     ] {
-        if let Some(file) = files.iter().find(|f| matches!(f.category, cat if cat as u32 == category as u32)) {
+        if let Some(file) = files
+            .iter()
+            .find(|f| matches!(f.category, cat if cat as u32 == category as u32))
+        {
             let param = format!("{}/{}", file.directory, file.name);
 
             group.throughput(Throughput::Elements(file.num_cubes as u64));
@@ -295,7 +308,10 @@ fn bench_cube_iteration(c: &mut Criterion) {
     let mut group = c.benchmark_group("cube_iteration");
 
     // Test with a medium-sized file
-    if let Some(file) = files.iter().find(|f| matches!(f.category, Category::Medium)) {
+    if let Some(file) = files
+        .iter()
+        .find(|f| matches!(f.category, Category::Medium))
+    {
         let cover = PLACover::from_pla_file(&file.path).unwrap();
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
@@ -323,4 +339,3 @@ criterion_group!(
     bench_cube_iteration
 );
 criterion_main!(benches);
-

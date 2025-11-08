@@ -383,13 +383,13 @@ pub(crate) fn parse_pla_reader<R: BufRead>(
 
         // Add cubes only if they have meaningful outputs
         if has_f {
-            cubes.push(Cube::new(inputs.clone(), f_outputs, CubeType::F));
+            cubes.push(Cube::new(&inputs, &f_outputs, CubeType::F));
         }
         if has_d {
-            cubes.push(Cube::new(inputs.clone(), d_outputs, CubeType::D));
+            cubes.push(Cube::new(&inputs, &d_outputs, CubeType::D));
         }
         if has_r {
-            cubes.push(Cube::new(inputs, r_outputs, CubeType::R));
+            cubes.push(Cube::new(&inputs, &r_outputs, CubeType::R));
         }
     }
 

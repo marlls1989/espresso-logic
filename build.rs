@@ -77,13 +77,25 @@ fn main() {
         .flag("-std=c11") // Ensure C11 standard for _Thread_local support
         .flag_if_supported("-w"); // Suppress warnings from C code
 
-    // Add sanitizer flags if requested via environment
-    if let Ok(cflags) = env::var("CFLAGS") {
-        if cflags.contains("-fsanitize=address") {
-            build
-                .flag("-fsanitize=address")
-                .flag("-fno-omit-frame-pointer");
-        }
+    // Detect and enable AddressSanitizer if requested
+    // IMPORTANT: Only enable if Rust is also being compiled with ASan
+    // Otherwise linking will fail
+    let enable_asan = env::var("RUSTFLAGS")
+        .map(|flags| flags.contains("-Z sanitizer=address"))
+        .unwrap_or(false)
+        || env::var("CARGO_ENCODED_RUSTFLAGS")
+            .map(|flags| flags.contains("-Z sanitizer=address"))
+            .unwrap_or(false);
+
+    if enable_asan {
+        println!("cargo:warning=Building C code with AddressSanitizer enabled for leak detection");
+        build
+            .flag("-fsanitize=address")
+            .flag("-fno-omit-frame-pointer")
+            .flag("-g"); // Debug symbols for better stack traces
+
+        // Tell cargo to link with ASan runtime
+        println!("cargo:rustc-link-arg=-fsanitize=address");
     } else {
         build.opt_level(2);
     }

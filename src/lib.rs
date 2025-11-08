@@ -54,6 +54,36 @@
 //! # }
 //! ```
 //!
+//! #### Using ExprCover for More Control
+//!
+//! For advanced use cases, [`ExprCover`] provides direct access to the cover
+//! representation and implements the [`Cover`] trait:
+//!
+//! ```
+//! use espresso_logic::{BoolExpr, ExprCover, Cover};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! let a = BoolExpr::variable("a");
+//! let b = BoolExpr::variable("b");
+//! let expr = a.and(&b).or(&a.and(&b.not()));
+//!
+//! // Convert to cover representation
+//! let mut cover = ExprCover::from_expr(expr);
+//!
+//! // Access cover properties
+//! println!("Variables: {:?}", cover.variables());
+//! println!("Number of cubes: {}", cover.num_cubes());
+//!
+//! // Minimize the cover
+//! cover.minimize()?;
+//!
+//! // Convert back to expression
+//! let minimized = cover.to_expr();
+//! println!("Minimized: {}", minimized);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ### 2. Cover Builder (Static dimensions with compile-time checking)
 //!
 //! Build covers with fixed dimensions known at compile time:
@@ -180,28 +210,24 @@
 //! **How it works:**
 //! - **Thread-local storage**: All C global variables use `_Thread_local`
 //! - **Independent state**: Each thread has its own copy of all globals
-//! - **Direct calls**: No process spawning or IPC overhead
 //! - **Native safety**: Uses standard C11 thread safety features
 
 // Public modules
+pub mod cover;
+pub mod espresso;
 pub mod expression;
+pub mod pla;
 pub mod sys;
 
-// Private modules
-mod cover;
-mod pla;
-
-// Internal unsafe bindings (not exposed)
-#[path = "unsafe.rs"]
-mod r#unsafe;
-
 // Re-export high-level public API
-pub use cover::{Cover, CoverBuilder, CoverTypeMarker, FDRType, FDType, FRType, FType, PLAType};
+pub use cover::{
+    Cover, CoverBuilder, CoverTypeMarker, Cube, CubeType, FDRType, FDType, FRType, FType, PLAType,
+};
 pub use expression::{BoolExpr, ExprCover};
 pub use pla::PLACover;
 
 /// Configuration for the Espresso algorithm
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EspressoConfig {
     /// Enable debugging output
     pub debug: bool,

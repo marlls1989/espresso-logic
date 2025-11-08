@@ -383,7 +383,291 @@ pub enum PLAType {
 }
 ```
 
-## Low-Level API
+## Low-Level Espresso API
+
+The low-level API provides direct access to the Espresso C library with maximum performance and fine-grained control. This API exposes thread-local state and requires understanding of its constraints.
+
+### When to Use the Low-Level API
+
+**Use the low-level API when you need:**
+- Maximum performance with minimal overhead
+- Direct control over the minimization process
+- Access to intermediate results (F, D, R covers)
+- Fine-grained configuration control
+
+**Use high-level APIs (`BoolExpr`, `Cover`, `CoverBuilder`) when:**
+- You want simple, safe, thread-safe APIs
+- You don't need low-level control
+- You're building multi-threaded applications without manual management
+
+### Thread-Local State Constraints
+
+⚠️ **Important:** The low-level API uses C11 thread-local storage for all global state. This has implications:
+
+- **One Espresso instance per thread**: Only one active `Espresso` configuration per thread
+- **Covers are thread-bound**: `EspressoCover` cannot be sent between threads (`!Send + !Sync`)
+- **Dimension consistency**: All operations on a thread must use the same input/output dimensions
+- **Independent threads**: Each thread has completely independent global state
+
+The high-level APIs (`BoolExpr`, `Cover<I, O>`, `CoverBuilder`) abstract these constraints away automatically.
+
+### `Espresso`
+
+The main Espresso instance that manages the C library state for a thread.
+
+```rust
+pub struct Espresso {
+    num_inputs: usize,
+    num_outputs: usize,
+    config: EspressoConfig,
+    initialized: bool,
+    _marker: PhantomData<*const ()>,  // !Send + !Sync
+}
+```
+
+#### Methods
+
+- `pub fn new(num_inputs: usize, num_outputs: usize, config: &EspressoConfig) -> Rc<Self>`
+  
+  Creates a new Espresso instance with custom configuration.
+  
+  Initializes the cube structure for the specified dimensions and applies configuration settings.
+  
+  **⚠️ Important:** Only one Espresso configuration can exist per thread. If an instance with different dimensions already exists, this will panic. If an instance with the same dimensions exists, this returns a new handle to that instance.
+  
+  **Note:** Most users don't need to call this directly - use `EspressoCover::from_cubes()` which automatically creates an instance if needed.
+  
+  ```rust
+  use espresso_logic::espresso::Espresso;
+  use espresso_logic::EspressoConfig;
+  
+  let mut config = EspressoConfig::default();
+  config.single_expand = true;
+  let esp = Espresso::new(2, 1, &config);
+  ```
+
+- `pub fn try_new(num_inputs: usize, num_outputs: usize, config: Option<&EspressoConfig>) -> Result<Rc<Self>, String>`
+  
+  Fallible version of `new()` that returns an error instead of panicking.
+  
+  Returns an error if an Espresso instance with different dimensions already exists on the thread.
+  
+  ```rust
+  match Espresso::try_new(2, 1, None) {
+      Ok(esp) => { /* use esp */ },
+      Err(e) => eprintln!("Cannot create Espresso: {}", e),
+  }
+  ```
+
+- `pub fn current() -> Option<Rc<Self>>`
+  
+  Gets the current thread's Espresso instance, if one exists.
+  
+  Returns `None` if no instance has been created on this thread.
+  
+  ```rust
+  if let Some(esp) = Espresso::current() {
+      println!("Espresso configured for {} inputs", esp.num_inputs);
+  }
+  ```
+
+- `pub fn minimize(self: &Rc<Self>, f: EspressoCover, d: Option<EspressoCover>, r: Option<EspressoCover>) -> (EspressoCover, EspressoCover, EspressoCover)`
+  
+  Minimizes a cover using the Espresso algorithm.
+  
+  **Parameters:**
+  - `f`: The on-set cover to minimize
+  - `d`: Optional don't-care set (computed if None)
+  - `r`: Optional off-set (computed if None)
+  
+  **Returns:** Tuple of (minimized F, D, R) covers
+  
+  **Memory management:**
+  - Input covers are cloned internally (original remains valid)
+  - Returned covers are independently owned
+  - All C memory is properly managed via RAII
+  
+  ```rust
+  let esp = Espresso::new(2, 1, &EspressoConfig::default());
+  let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+  let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+  
+  let (minimized, d, r) = esp.minimize(f, None, None);
+  println!("Minimized to {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
+  ```
+
+### `EspressoCover`
+
+A cover (set of cubes) backed by C memory, tied to an Espresso instance.
+
+```rust
+pub struct EspressoCover {
+    ptr: sys::pset_family,
+    _espresso: Rc<Espresso>,        // Keeps Espresso alive
+    _marker: PhantomData<*const ()>, // !Send + !Sync
+}
+```
+
+#### Construction Methods
+
+- `pub fn from_cubes(cubes: Vec<(Vec<u8>, Vec<u8>)>, num_inputs: usize, num_outputs: usize) -> Result<Self, String>`
+  
+  Creates a cover from a vector of cubes.
+  
+  **Cube format:** Each cube is `(inputs, outputs)` where values are:
+  - `0` = variable must be 0
+  - `1` = variable must be 1
+  - `2` = don't care
+  
+  Automatically creates an Espresso instance if none exists on the thread.
+  
+  ```rust
+  use espresso_logic::espresso::EspressoCover;
+  
+  let cubes = vec![
+      (vec![0, 1], vec![1]),  // 01 -> 1
+      (vec![1, 0], vec![1]),  // 10 -> 1
+  ];
+  let cover = EspressoCover::from_cubes(cubes, 2, 1)?;
+  ```
+
+#### Minimization
+
+- `pub fn minimize(self, d: Option<EspressoCover>, r: Option<EspressoCover>) -> (EspressoCover, EspressoCover, EspressoCover)`
+  
+  Convenience method that minimizes this cover directly.
+  
+  Internally uses the Espresso instance associated with this cover.
+  
+  ```rust
+  let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+  let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+  
+  let (minimized, _d, _r) = f.minimize(None, None);
+  ```
+
+#### Extraction Methods
+
+- `pub fn to_cubes(&self, num_inputs: usize, num_outputs: usize, cube_type: CubeType) -> Vec<(Vec<u8>, Vec<u8>)>`
+  
+  Extracts cubes from this cover as a vector.
+  
+  **Parameters:**
+  - `num_inputs`: Number of input variables
+  - `num_outputs`: Number of output variables
+  - `cube_type`: Which cubes to extract (F, D, R, or FDR)
+  
+  ```rust
+  let cubes = cover.to_cubes(2, 1, CubeType::F);
+  for (inputs, outputs) in cubes {
+      println!("Cube: {:?} -> {:?}", inputs, outputs);
+  }
+  ```
+
+#### Memory Management
+
+- `pub fn clone(&self) -> Self`
+  
+  Creates an independent clone of this cover.
+  
+  **Important:** Calls C `sf_save()` which allocates new C memory. The clone is completely independent - modifying one does not affect the other.
+  
+  ```rust
+  let cover1 = EspressoCover::from_cubes(cubes, 2, 1)?;
+  let cover2 = cover1.clone();  // Independent C memory
+  // Both covers must be dropped separately
+  ```
+
+- `pub(crate) fn into_raw(self) -> sys::pset_family`
+  
+  Transfers ownership of the C pointer out of Rust.
+  
+  **⚠️ Unsafe contract:** The pointer must be either:
+  - Passed to C code that takes ownership, OR
+  - Wrapped back into `EspressoCover` via `from_raw()`
+  
+  Used internally for C interop. Not part of public API.
+
+### `CubeType`
+
+Specifies which cubes to extract from a cover.
+
+```rust
+pub enum CubeType {
+    F = 1,      // On-set only
+    D = 2,      // Don't-care set only
+    R = 4,      // Off-set only
+    FDR = 7,    // All three sets (F | D | R)
+}
+```
+
+### `EspressoConfig`
+
+Configuration options for the Espresso algorithm.
+
+```rust
+pub struct EspressoConfig {
+    pub single_expand: bool,
+    pub pos: bool,
+    pub remove_essential: bool,
+    pub force_irredundant: bool,
+    // ... and more
+}
+```
+
+See the main API documentation for complete field list.
+
+### Thread Safety Example
+
+Each thread gets independent state:
+
+```rust
+use espresso_logic::espresso::{EspressoCover, CubeType};
+use std::thread;
+
+fn main() -> Result<(), String> {
+    let handles: Vec<_> = (0..4).map(|_| {
+        thread::spawn(|| -> Result<usize, String> {
+            // Each thread automatically gets its own Espresso instance
+            let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+            let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+            
+            // Thread-safe: independent global state per thread
+            let (result, _, _) = f.minimize(None, None);
+            Ok(result.to_cubes(2, 1, CubeType::F).len())
+        })
+    }).collect();
+    
+    for handle in handles {
+        let num_cubes = handle.join().unwrap()?;
+        println!("Result: {} cubes", num_cubes);
+    }
+    Ok(())
+}
+```
+
+### Memory Safety Guarantees
+
+The low-level API maintains memory safety through:
+
+- **RAII**: `EspressoCover` calls `sf_free()` on drop
+- **Clone independence**: `clone()` uses `sf_save()` for independent C memory
+- **Lifetime management**: Covers hold `Rc<Espresso>` to keep global state alive
+- **Ownership transfer**: `into_raw()` nulls the pointer to prevent double-free
+
+See [MEMORY_SAFETY.md](MEMORY_SAFETY.md) for detailed analysis.
+
+### Performance Notes
+
+The low-level API has minimal overhead:
+- Direct C function calls with no IPC
+- Zero-cost abstractions via RAII
+- Thread-local storage eliminates locking overhead
+- Slightly faster than high-level APIs due to less abstraction
+
+For most applications, the performance difference is negligible. Use high-level APIs unless profiling shows a bottleneck.
+
+## FFI Bindings
 
 The `sys` module contains raw FFI bindings to the C library. Most users should use the safe wrappers instead.
 

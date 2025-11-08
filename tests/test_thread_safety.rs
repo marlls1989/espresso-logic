@@ -83,20 +83,50 @@ fn test_consistent_results() {
 
 #[test]
 fn test_multiple_sizes() {
-    // Test that we can create instances with different sizes
+    // Test that CoverBuilder can handle DIFFERENT dimensions sequentially
+    // (unlike EspressoCover which has dimension restrictions)
+
+    // Create first cover with 2 inputs, 1 output
     let mut cover1 = CoverBuilder::<2, 1>::new();
     cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
     cover1.minimize().unwrap();
+    assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
 
-    let mut cover2 = CoverBuilder::<3, 2>::new();
-    cover2.add_cube(
-        &[Some(true), Some(false), Some(true)],
-        &[Some(true), Some(false)],
-    );
+    // CoverBuilder should handle different dimensions thanks to automatic cleanup
+    let mut cover2 = CoverBuilder::<3, 1>::new();
+    cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
     cover2.minimize().unwrap();
+    assert_eq!(cover2.num_cubes(), 1, "Cover2 (3x1) should have 1 cube");
 
-    assert!(cover1.num_cubes() > 0);
-    assert!(cover2.num_cubes() > 0);
+    // Even after minimization, both should maintain their independence
+    assert_eq!(cover1.num_cubes(), 1, "Cover1 should still have 1 cube");
+    assert_eq!(cover2.num_cubes(), 1, "Cover2 should still have 1 cube");
+}
+
+#[test]
+fn test_different_sizes_in_different_threads() {
+    // Each thread can have its own dimensions
+    use std::thread;
+
+    let handle1 = thread::spawn(|| {
+        let mut cover = CoverBuilder::<2, 1>::new();
+        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+        cover.minimize().unwrap();
+        cover.num_cubes()
+    });
+
+    let handle2 = thread::spawn(|| {
+        let mut cover = CoverBuilder::<3, 2>::new();
+        cover.add_cube(
+            &[Some(true), Some(false), Some(true)],
+            &[Some(true), Some(false)],
+        );
+        cover.minimize().unwrap();
+        cover.num_cubes()
+    });
+
+    assert!(handle1.join().unwrap() > 0);
+    assert!(handle2.join().unwrap() > 0);
 }
 
 #[test]

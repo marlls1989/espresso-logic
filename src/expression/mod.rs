@@ -3,6 +3,60 @@
 //! This module provides a boolean expression representation that can be constructed
 //! programmatically using operator overloading or parsed from strings. Expressions
 //! can be minimized using the Espresso algorithm by implementing the Cover trait.
+//!
+//! # Main Types
+//!
+//! - [`BoolExpr`] - A boolean expression that supports operator overloading and parsing
+//! - [`ExprCover`] - A cover representation of a boolean expression that can be minimized
+//!
+//! # Examples
+//!
+//! ## Building Expressions with the `expr!` Macro
+//!
+//! ```
+//! use espresso_logic::{BoolExpr, expr};
+//!
+//! let a = BoolExpr::variable("a");
+//! let b = BoolExpr::variable("b");
+//! let c = BoolExpr::variable("c");
+//!
+//! // Clean syntax using the expr! macro
+//! let xor = expr!(a * !b + !a * b);
+//! // For more complex expressions, use the method API
+//! let majority = a.and(&b).or(&b.and(&c)).or(&a.and(&c));
+//! ```
+//!
+//! ## Parsing from Strings
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! # fn main() -> Result<(), String> {
+//! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
+//! let complex = BoolExpr::parse("(a + b) * (c + d)")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Minimizing Expressions
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! # fn main() -> std::io::Result<()> {
+//! let a = BoolExpr::variable("a");
+//! let b = BoolExpr::variable("b");
+//! let c = BoolExpr::variable("c");
+//!
+//! // Redundant expression
+//! let redundant = a.and(&b).or(&a.and(&b).and(&c));
+//!
+//! // Minimize it
+//! let minimized = redundant.minimize()?;
+//! println!("Minimized: {}", minimized);
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -335,6 +389,26 @@ macro_rules! expr {
     };
 }
 
+/// Debug formatting for boolean expressions
+///
+/// Formats the expression in a readable form using standard boolean notation:
+/// - Variables: shown as-is (e.g., `a`)
+/// - AND: `*` operator (e.g., `a * b`)
+/// - OR: `+` operator (e.g., `a + b`)
+/// - NOT: `~` prefix (e.g., `~a`)
+/// - Constants: `1` for true, `0` for false
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let expr = a.and(&b).or(&a.not());
+///
+/// println!("{:?}", expr);  // Outputs: ((a * b) + ~a)
+/// ```
 impl fmt::Debug for BoolExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.inner.as_ref() {
@@ -347,6 +421,21 @@ impl fmt::Debug for BoolExpr {
     }
 }
 
+/// Display formatting for boolean expressions
+///
+/// Delegates to the `Debug` implementation. Use `{}` or `{:?}` interchangeably.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let expr = a.and(&b);
+///
+/// println!("{}", expr);  // Same as println!("{:?}", expr)
+/// ```
 impl fmt::Display for BoolExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
@@ -358,6 +447,19 @@ impl fmt::Display for BoolExpr {
 // The expr! macro wraps expressions to enable clean `a * b + !a * !b` syntax
 
 /// Logical AND operator for references: `&a * &b`
+///
+/// Implements the `*` operator for boolean expressions using references.
+/// This is the most efficient form as it avoids unnecessary cloning.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let result = &a * &b;  // Equivalent to a.and(&b)
+/// ```
 impl Mul for &BoolExpr {
     type Output = BoolExpr;
 
@@ -367,6 +469,21 @@ impl Mul for &BoolExpr {
 }
 
 /// Logical AND operator: `a * b` (delegates to reference version)
+///
+/// Implements the `*` operator for owned boolean expressions.
+/// Note: Using references (`&a * &b`) is preferred for efficiency.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// // Both work, but references are preferred
+/// let result1 = a.clone() * b.clone();
+/// let result2 = &a * &b;
+/// ```
 impl Mul for BoolExpr {
     type Output = BoolExpr;
 
@@ -376,6 +493,19 @@ impl Mul for BoolExpr {
 }
 
 /// Logical OR operator for references: `&a + &b`
+///
+/// Implements the `+` operator for boolean expressions using references.
+/// This is the most efficient form as it avoids unnecessary cloning.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let result = &a + &b;  // Equivalent to a.or(&b)
+/// ```
 impl Add for &BoolExpr {
     type Output = BoolExpr;
 
@@ -385,6 +515,21 @@ impl Add for &BoolExpr {
 }
 
 /// Logical OR operator: `a + b` (delegates to reference version)
+///
+/// Implements the `+` operator for owned boolean expressions.
+/// Note: Using references (`&a + &b`) is preferred for efficiency.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// // Both work, but references are preferred
+/// let result1 = a.clone() + b.clone();
+/// let result2 = &a + &b;
+/// ```
 impl Add for BoolExpr {
     type Output = BoolExpr;
 
@@ -394,6 +539,18 @@ impl Add for BoolExpr {
 }
 
 /// Logical NOT operator for references: `!&a`
+///
+/// Implements the `!` operator for boolean expressions using references.
+/// This is the most efficient form as it avoids unnecessary cloning.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let result = !&a;  // Equivalent to a.not()
+/// ```
 impl Not for &BoolExpr {
     type Output = BoolExpr;
 
@@ -403,6 +560,21 @@ impl Not for &BoolExpr {
 }
 
 /// Logical NOT operator: `!a` (delegates to reference version)
+///
+/// Implements the `!` operator for owned boolean expressions.
+/// Note: Using references (`!&a`) is preferred for efficiency when the
+/// original expression is still needed.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// // Both work, but references are preferred if you need 'a' later
+/// let result1 = !a.clone();
+/// let result2 = !&a;
+/// ```
 impl Not for BoolExpr {
     type Output = BoolExpr;
 
