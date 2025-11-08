@@ -6,7 +6,7 @@
 use espresso_logic::{Cover, PLAReader};
 use std::io::{self, BufReader, Cursor};
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Reader-Based PLA Parsing Example ===\n");
 
     let pla_content = r#".i 3

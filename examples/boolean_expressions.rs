@@ -3,9 +3,9 @@
 //! This example demonstrates how to use boolean expressions with the expr! macro,
 //! method-based API, and parsing to create and minimize boolean functions.
 
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, EspressoError, PLAWriter};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, PLAWriter};
 
-fn main() -> Result<(), EspressoError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Boolean Expression Examples ===\n");
 
     // Example 1: Programmatic construction with expr! macro

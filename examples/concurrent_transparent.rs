@@ -3,7 +3,7 @@
 use espresso_logic::{Cover, CoverType};
 use std::thread;
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Concurrent Transparent API Test ===\n");
 
     // Note: With Cover::new(), each thread creates its own cover

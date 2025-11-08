@@ -50,7 +50,7 @@
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse using standard operators: +, *, ~, !
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //!
@@ -68,7 +68,7 @@
 //! ```
 //! use espresso_logic::{BoolExpr, Cover, CoverType};
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let a = BoolExpr::variable("a");
 //! let b = BoolExpr::variable("b");
 //! let expr = a.and(&b).or(&a.and(&b.not()));
@@ -229,7 +229,10 @@ pub mod sys;
 
 // Re-export high-level public API
 pub use cover::{Cover, CoverType, Cube, CubeType};
-pub use error::{ConflictReason, EspressoError};
+pub use error::{
+    AddExprError, CoverError, CubeError, ExpressionParseError, InstanceError, MinimizationError,
+    PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
+};
 pub use expression::BoolExpr;
 pub use pla::{PLAReader, PLAWriter};
 

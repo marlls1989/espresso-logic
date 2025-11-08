@@ -2,7 +2,7 @@
 
 use espresso_logic::{BoolExpr, Cover, CoverType};
 
-fn main() -> Result<(), espresso_logic::EspressoError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Testing New Unified Cover API ===\n");
 
     // Create a cover

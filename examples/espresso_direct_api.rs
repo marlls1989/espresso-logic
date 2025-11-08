@@ -4,9 +4,8 @@
 //! to the Espresso algorithm with maximum control and performance.
 
 use espresso_logic::espresso::EspressoCover;
-use espresso_logic::EspressoError;
 
-fn main() -> Result<(), EspressoError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Direct Espresso API Example ===\n");
 
     // Build a cover for XOR function: 01->1, 10->1
@@ -53,19 +52,24 @@ fn main() -> Result<(), EspressoError> {
 
     let handles: Vec<_> = (0..4)
         .map(|thread_id| {
-            thread::spawn(move || -> Result<(usize, usize), EspressoError> {
-                // No need to create Espresso instance - it's automatic!
-                let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-                let f = EspressoCover::from_cubes(cubes, 2, 1)?;
-                let (result, _, _) = f.minimize(None, None);
-                let result_cubes = result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
-                Ok((thread_id, result_cubes.len()))
-            })
+            thread::spawn(
+                move || -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+                    // No need to create Espresso instance - it's automatic!
+                    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+                    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+                    let (result, _, _) = f.minimize(None, None);
+                    let result_cubes = result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+                    Ok((thread_id, result_cubes.len()))
+                },
+            )
         })
         .collect();
 
     for handle in handles {
-        let (thread_id, count) = handle.join().unwrap()?;
+        let (thread_id, count) = handle
+            .join()
+            .unwrap()
+            .map_err(|e| -> Box<dyn std::error::Error> { e })?;
         println!("Thread {} minimized to {} cubes", thread_id, count);
     }
 

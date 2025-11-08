@@ -1,6 +1,6 @@
 use espresso_logic::{expr, BoolExpr};
 
-fn main() -> Result<(), espresso_logic::EspressoError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== expr! Procedural Macro Demo ===\n");
 
     println!("--- Style 1: Using existing BoolExpr variables ---");

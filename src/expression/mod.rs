@@ -80,7 +80,7 @@
 //! # }
 //! ```
 
-use crate::error::EspressoError;
+use crate::error::{ExpressionParseError, MinimizationError, ParseBoolExprError};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::{Add, Mul, Not};
@@ -168,16 +168,17 @@ impl BoolExpr {
     /// - `~` or `!` for NOT
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
-    pub fn parse(input: &str) -> Result<Self, EspressoError> {
+    pub fn parse(input: &str) -> Result<Self, ParseBoolExprError> {
         parser::ExprParser::new().parse(input).map_err(|e| {
             let message = e.to_string();
             // Try to extract position from lalrpop error message
             let position = extract_position_from_error(&message);
-            EspressoError::ParseError {
+            ExpressionParseError::InvalidSyntax {
                 message,
                 input: input.to_string(),
                 position,
             }
+            .into()
         })
     }
 
@@ -258,12 +259,18 @@ impl BoolExpr {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn minimize(self) -> Result<BoolExpr, EspressoError> {
+    pub fn minimize(self) -> Result<BoolExpr, MinimizationError> {
         use crate::{Cover, CoverType};
         let mut cover = Cover::new(CoverType::F);
-        cover.add_expr(self, "out")?;
+        // This shouldn't fail because we're using a new cover with a unique output name
+        cover
+            .add_expr(self, "out")
+            .expect("Adding expression to new cover should not fail");
         cover.minimize()?;
-        cover.to_expr("out")
+        // This shouldn't fail because we just created the output "out"
+        Ok(cover
+            .to_expr("out")
+            .expect("Converting output to expression should not fail"))
     }
 
     /// Check if two boolean expressions are logically equivalent

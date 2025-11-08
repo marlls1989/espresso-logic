@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::cover::{CoverType, Cube, CubeType};
+use crate::error::{PLAError, PLAReadError, PLAWriteError};
 
 /// Internal trait for types that can be serialized to and deserialized from PLA format
 ///
@@ -60,13 +61,14 @@ pub trait PLAWriter {
     ///
     /// This is the core serialization method that writes directly to any `Write` implementation.
     /// Both `to_pla_string` and `to_pla_file` delegate to this method.
-    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> io::Result<()>;
+    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType)
+        -> Result<(), PLAWriteError>;
 
     /// Convert this cover to a PLA format string
     ///
     /// This is a convenience method that delegates to `write_pla`.
     /// For better performance when writing to files, use `to_pla_file` instead.
-    fn to_pla_string(&self, pla_type: CoverType) -> io::Result<String> {
+    fn to_pla_string(&self, pla_type: CoverType) -> Result<String, PLAWriteError> {
         let mut buffer = Vec::new();
         self.write_pla(&mut buffer, pla_type)?;
         // PLA format is ASCII, so this conversion is safe
@@ -77,7 +79,11 @@ pub trait PLAWriter {
     ///
     /// This method delegates to `write_pla` for efficient file writing without
     /// building the entire string in memory first.
-    fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: CoverType) -> io::Result<()> {
+    fn to_pla_file<P: AsRef<Path>>(
+        &self,
+        path: P,
+        pla_type: CoverType,
+    ) -> Result<(), PLAWriteError> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
         self.write_pla(&mut writer, pla_type)?;
@@ -88,7 +94,11 @@ pub trait PLAWriter {
 
 /// Blanket implementation of PLAWriter for all PLASerialisable types
 impl<T: PLASerialisable> PLAWriter for T {
-    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> io::Result<()> {
+    fn write_pla<W: Write>(
+        &self,
+        writer: &mut W,
+        pla_type: CoverType,
+    ) -> Result<(), PLAWriteError> {
         // Write .type directive first for FD, FR, FDR (matching C output order)
         match pla_type {
             CoverType::FD => writeln!(writer, ".type fd")?,
@@ -201,7 +211,7 @@ pub trait PLAReader: Sized {
     ///
     /// This is the core deserialization method that reads from any `BufRead` implementation.
     /// Both `from_pla_string` and `from_pla_file` delegate to this method.
-    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> io::Result<Self>;
+    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError>;
 
     /// Parse a cover from a PLA format string
     ///
@@ -217,7 +227,7 @@ pub trait PLAReader: Sized {
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
-    fn from_pla_string(s: &str) -> io::Result<Self> {
+    fn from_pla_string(s: &str) -> Result<Self, PLAReadError> {
         use std::io::Cursor;
         let cursor = Cursor::new(s.as_bytes());
         Self::from_pla_reader(cursor)
@@ -235,7 +245,7 @@ pub trait PLAReader: Sized {
     /// let cover = Cover::from_pla_file("input.pla").unwrap();
     /// println!("Loaded {} inputs, {} outputs", cover.num_inputs(), cover.num_outputs());
     /// ```
-    fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    fn from_pla_file<P: AsRef<Path>>(path: P) -> Result<Self, PLAReadError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Self::from_pla_reader(reader)
@@ -244,7 +254,7 @@ pub trait PLAReader: Sized {
 
 /// Blanket implementation of PLAReader for all PLASerialisable types
 impl<T: PLASerialisable> PLAReader for T {
-    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> io::Result<Self> {
+    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError> {
         let mut num_inputs: Option<usize> = None;
         let mut num_outputs: Option<usize> = None;
         let mut cubes = Vec::new();
@@ -275,14 +285,18 @@ impl<T: PLASerialisable> PLAReader for T {
                     Some(".i") => {
                         let val: usize =
                             parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
-                                io::Error::new(io::ErrorKind::InvalidData, "Invalid .i directive")
+                                PLAError::InvalidInputDirective {
+                                    value: parts.get(1).unwrap_or(&"").to_string(),
+                                }
                             })?;
                         num_inputs = Some(val);
                     }
                     Some(".o") => {
                         let val: usize =
                             parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
-                                io::Error::new(io::ErrorKind::InvalidData, "Invalid .o directive")
+                                PLAError::InvalidOutputDirective {
+                                    value: parts.get(1).unwrap_or(&"").to_string(),
+                                }
                             })?;
                         num_outputs = Some(val);
                     }
@@ -444,16 +458,17 @@ impl<T: PLASerialisable> PLAReader for T {
 
             // Parse inputs
             let mut inputs = Vec::with_capacity(ni);
-            for ch in input_str.chars() {
+            for (pos, ch) in input_str.chars().enumerate() {
                 inputs.push(match ch {
                     '0' => Some(false),
                     '1' => Some(true),
                     '-' | '~' | 'x' | 'X' => None,
                     _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Invalid input character: '{}'", ch),
-                        ))
+                        return Err(PLAError::InvalidInputCharacter {
+                            character: ch,
+                            position: pos,
+                        }
+                        .into())
                     }
                 });
             }
@@ -473,7 +488,7 @@ impl<T: PLASerialisable> PLAReader for T {
             let mut has_d = false;
             let mut has_r = false;
 
-            for ch in output_str.chars() {
+            for (pos, ch) in output_str.chars().enumerate() {
                 match ch {
                     '1' | '4' if cover_type.has_f() => {
                         f_outputs.push(true); // Bit set in F cube
@@ -508,10 +523,11 @@ impl<T: PLASerialisable> PLAReader for T {
                         r_outputs.push(false);
                     }
                     _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Invalid output character: '{}'", ch),
-                        ))
+                        return Err(PLAError::InvalidOutputCharacter {
+                            character: ch,
+                            position: pos,
+                        }
+                        .into())
                     }
                 }
             }
@@ -529,42 +545,28 @@ impl<T: PLASerialisable> PLAReader for T {
         }
 
         // Verify we got dimensions
-        let num_inputs = num_inputs.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "PLA file missing .i directive and no cubes to infer from",
-            )
-        })?;
-        let num_outputs = num_outputs.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "PLA file missing .o directive and no cubes to infer from",
-            )
-        })?;
+        let num_inputs = num_inputs.ok_or(PLAError::MissingInputDirective)?;
+        let num_outputs = num_outputs.ok_or(PLAError::MissingOutputDirective)?;
 
         // Validate label counts if present
         if let Some(ref labels) = input_labels {
             if labels.len() != num_inputs {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Input label count ({}) doesn't match num_inputs ({})",
-                        labels.len(),
-                        num_inputs
-                    ),
-                ));
+                return Err(PLAError::LabelCountMismatch {
+                    label_type: "input".to_string(),
+                    expected: num_inputs,
+                    actual: labels.len(),
+                }
+                .into());
             }
         }
         if let Some(ref labels) = output_labels {
             if labels.len() != num_outputs {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Output label count ({}) doesn't match num_outputs ({})",
-                        labels.len(),
-                        num_outputs
-                    ),
-                ));
+                return Err(PLAError::LabelCountMismatch {
+                    label_type: "output".to_string(),
+                    expected: num_outputs,
+                    actual: labels.len(),
+                }
+                .into());
             }
         }
 

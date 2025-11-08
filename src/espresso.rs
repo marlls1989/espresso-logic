@@ -37,7 +37,7 @@
 //! ```
 //! use espresso_logic::espresso::EspressoCover;
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Build a cover (XOR function) - Espresso instance created automatically
 //! let cubes = vec![
 //!     (vec![0, 1], vec![1]),  // 01 -> 1
@@ -63,7 +63,7 @@
 //! use espresso_logic::espresso::{Espresso, EspressoCover};
 //! use espresso_logic::EspressoConfig;
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Explicitly create an Espresso instance with custom config
 //! let mut config = EspressoConfig::default();
 //! config.single_expand = true;
@@ -85,9 +85,9 @@
 //! use espresso_logic::espresso::EspressoCover;
 //! use std::thread;
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let handles: Vec<_> = (0..4).map(|_| {
-//!     thread::spawn(|| -> Result<usize, espresso_logic::EspressoError> {
+//!     thread::spawn(|| -> Result<usize, Box<dyn std::error::Error>> {
 //!         // Each thread automatically gets its own Espresso instance
 //!         let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
 //!         let f = EspressoCover::from_cubes(cubes, 2, 1)?;
@@ -106,7 +106,7 @@
 //! # }
 //! ```
 
-use crate::error::{ConflictReason, EspressoError};
+use crate::error::{CubeError, InstanceError, MinimizationError};
 use crate::sys;
 use crate::EspressoConfig;
 use std::marker::PhantomData;
@@ -201,7 +201,7 @@ impl EspressoCover {
         cubes: Vec<(Vec<u8>, Vec<u8>)>,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Self, EspressoError> {
+    ) -> Result<Self, MinimizationError> {
         // Create a new Espresso instance with default config if no instance exists
         // Checks dimensions and returns an error if an instance with different dimensions already exists
         let espresso = Espresso::try_new(num_inputs, num_outputs, None)?;
@@ -250,10 +250,10 @@ impl EspressoCover {
                             *cf.add(word1) |= 1 << b1;
                         }
                         _ => {
-                            return Err(EspressoError::InvalidCubeValue {
+                            return Err(MinimizationError::Cube(CubeError::InvalidValue {
                                 value: val,
                                 position: var,
-                            })
+                            }))
                         }
                     }
                 }
@@ -384,7 +384,7 @@ impl EspressoCover {
     /// ```
     /// use espresso_logic::espresso::EspressoCover;
     ///
-    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Create a cover for XOR function
     /// let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
     /// let f = EspressoCover::from_cubes(cubes, 2, 1)?;
@@ -539,27 +539,27 @@ impl Espresso {
         num_inputs: usize,
         num_outputs: usize,
         config: Option<&EspressoConfig>,
-    ) -> Result<Self, EspressoError> {
+    ) -> Result<Self, MinimizationError> {
         // Check if an instance already exists
         let inner = ESPRESSO_INSTANCE.with(|instance| {
             if let Some(existing) = instance.borrow().upgrade() {
                 // Check dimensions
                 if existing.num_inputs != num_inputs || existing.num_outputs != num_outputs {
-                    return Err(EspressoError::InstanceConflict {
-                        requested: (num_inputs, num_outputs),
-                        existing: (existing.num_inputs, existing.num_outputs),
-                        reason: ConflictReason::DimensionMismatch,
-                    });
+                    return Err(MinimizationError::Instance(
+                        InstanceError::DimensionMismatch {
+                            requested: (num_inputs, num_outputs),
+                            existing: (existing.num_inputs, existing.num_outputs),
+                        },
+                    ));
                 }
 
                 // Dimensions match - check config if specified
                 if let Some(requested_config) = config {
                     if existing.config != *requested_config {
-                        return Err(EspressoError::InstanceConflict {
+                        return Err(MinimizationError::Instance(InstanceError::ConfigMismatch {
                             requested: (num_inputs, num_outputs),
                             existing: (existing.num_inputs, existing.num_outputs),
-                            reason: ConflictReason::ConfigMismatch,
-                        });
+                        }));
                     }
                 }
 
@@ -648,7 +648,7 @@ impl Espresso {
     /// ```
     /// use espresso_logic::espresso::{Espresso, EspressoCover};
     ///
-    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Initially there's no instance
     /// assert!(Espresso::current().is_none());
     ///
@@ -704,7 +704,7 @@ impl Espresso {
     /// use espresso_logic::espresso::{Espresso, EspressoCover};
     /// use espresso_logic::EspressoConfig;
     ///
-    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
     /// let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
     /// let f = EspressoCover::from_cubes(cubes, 2, 1)?;
@@ -1194,7 +1194,7 @@ mod tests {
 
     /// Test that creating conflicting Espresso instances panics
     #[test]
-    #[should_panic(expected = "InstanceConflict")]
+    #[should_panic(expected = "Instance(DimensionMismatch")]
     fn test_singleton_conflict_panics() {
         let _esp1 = Espresso::new(2, 1, &EspressoConfig::default());
         // This should panic because dimensions don't match
@@ -1215,10 +1215,15 @@ mod tests {
         assert!(result.is_err(), "Should error on dimension mismatch");
         let err = result.unwrap_err();
         match err {
-            crate::error::EspressoError::InstanceConflict { .. } => {
+            crate::error::MinimizationError::Instance(
+                crate::error::InstanceError::DimensionMismatch { .. },
+            ) => {
                 // Expected error type
             }
-            other => panic!("Expected InstanceConflict error, got: {}", other),
+            other => panic!(
+                "Expected InstanceError::DimensionMismatch error, got: {}",
+                other
+            ),
         }
     }
 

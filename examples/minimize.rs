@@ -2,7 +2,7 @@
 
 use espresso_logic::{Cover, CoverType};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Boolean Function Minimization Example\n");
 
     println!("Creating a 3-input, 1-output Boolean function");

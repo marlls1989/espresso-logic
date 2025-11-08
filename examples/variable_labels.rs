@@ -8,7 +8,7 @@
 
 use espresso_logic::{BoolExpr, Cover, CoverType, PLAReader, PLAWriter};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Variable Labels Example ===\n");
 
     // Example 1: PLA with labels

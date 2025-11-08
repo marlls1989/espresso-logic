@@ -2,7 +2,7 @@
 
 use espresso_logic::{Cover, CoverType};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("XOR Function Minimization\n");
 
     // Create a cover (dimensions grow automatically)

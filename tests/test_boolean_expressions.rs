@@ -191,7 +191,7 @@ fn test_xnor_expression() {
 }
 
 #[test]
-fn test_minimization() -> std::io::Result<()> {
+fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     // Create a redundant expression: a*b + a*b*c
     // Should minimize to just a*b
     let a = BoolExpr::variable("a");
@@ -313,7 +313,7 @@ fn test_cube_iteration() {
 }
 
 #[test]
-fn test_to_pla_string() -> std::io::Result<()> {
+fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let expr = expr!(a * b);
@@ -352,7 +352,7 @@ fn test_clone_semantics() {
 }
 
 #[test]
-fn test_minimize_absorption() -> std::io::Result<()> {
+fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
     // Test absorption law: a + a*b should minimize to a
     let expr = BoolExpr::parse("a + a * b").unwrap();
     let mut cover = {
@@ -375,7 +375,7 @@ fn test_minimize_absorption() -> std::io::Result<()> {
 }
 
 #[test]
-fn test_minimize_consensus() -> std::io::Result<()> {
+fn test_minimize_consensus() -> Result<(), Box<dyn std::error::Error>> {
     // Consensus theorem: a*b + ~a*c + b*c should minimize to a*b + ~a*c
     let expr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
     let mut cover = {
@@ -397,7 +397,7 @@ fn test_minimize_consensus() -> std::io::Result<()> {
 }
 
 #[test]
-fn test_minimize_idempotence() -> std::io::Result<()> {
+fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
     // a + a should minimize to a
     let expr = BoolExpr::parse("a + a").unwrap();
     let mut cover = {
@@ -510,7 +510,7 @@ fn test_parentheses_precedence() {
 }
 
 #[test]
-fn test_minimize_distributive() -> std::io::Result<()> {
+fn test_minimize_distributive() -> Result<(), Box<dyn std::error::Error>> {
     // a*(b+c) expands to a*b + a*c (already minimal)
     let expr = BoolExpr::parse("a * (b + c)").unwrap();
     let mut cover = {
@@ -532,7 +532,7 @@ fn test_minimize_distributive() -> std::io::Result<()> {
 }
 
 #[test]
-fn test_complex_minimize_real_world() -> std::io::Result<()> {
+fn test_complex_minimize_real_world() -> Result<(), Box<dyn std::error::Error>> {
     // Real-world example: a*b + a*c + b*c*d + a*b*d
     let expr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
     let mut cover = {
@@ -554,7 +554,7 @@ fn test_complex_minimize_real_world() -> std::io::Result<()> {
 }
 
 #[test]
-fn test_minimize_adjacent_minterms() -> std::io::Result<()> {
+fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
     // Test Espresso minimization on adjacent minterms
     // f(a,b,c) = m0 + m1 + m2 + m3 (all combinations where a=0)
     let expr = BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
@@ -599,7 +599,7 @@ fn test_parentheses_with_negation() {
 }
 
 #[test]
-fn test_nested_parentheses_minimize() -> std::io::Result<()> {
+fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> {
     // (a + b) * (a + c) expands to a + a*c + a*b + b*c = a + b*c
     let expr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
     let mut cover = {

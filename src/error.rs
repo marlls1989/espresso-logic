@@ -1,47 +1,104 @@
 //! Error types for the Espresso logic minimizer
 //!
-//! This module provides comprehensive error types that can be distinguished programmatically,
-//! replacing string-based errors throughout the codebase.
+//! This module provides comprehensive error types organized by source and operation.
+//! Each error source has its own enum with specific variants, and operations have
+//! wrapper enums that combine only the errors they can produce.
 
 use std::fmt;
 use std::io;
 
-/// The main error type for the Espresso logic minimizer
+// ============================================================================
+// Source-Level Error Enums
+// ============================================================================
+
+/// Errors related to Espresso instance management
 ///
-/// This enum covers all error cases that can occur when using the library,
-/// providing programmatically distinguishable variants with detailed context.
-#[derive(Debug)]
-pub enum EspressoError {
-    /// Conflict with existing thread-local Espresso instance
-    ///
-    /// This occurs when trying to create an Espresso instance with dimensions or
-    /// configuration that conflicts with an existing instance on the same thread.
-    /// Each thread can only have one Espresso instance at a time due to thread-local
-    /// state management in the underlying C library.
-    InstanceConflict {
+/// These errors occur when trying to create or use Espresso instances with
+/// conflicting dimensions or configurations on the same thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstanceError {
+    /// The requested dimensions don't match the existing thread-local instance
+    DimensionMismatch {
         /// The requested dimensions (num_inputs, num_outputs)
         requested: (usize, usize),
         /// The existing instance's dimensions (num_inputs, num_outputs)
         existing: (usize, usize),
-        /// The specific reason for the conflict
-        reason: ConflictReason,
     },
+    /// The requested configuration doesn't match the existing thread-local instance
+    ConfigMismatch {
+        /// The requested dimensions (num_inputs, num_outputs)
+        requested: (usize, usize),
+        /// The existing instance's dimensions (num_inputs, num_outputs)
+        existing: (usize, usize),
+    },
+}
 
-    /// Invalid cube value encountered during cover creation
+impl fmt::Display for InstanceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstanceError::DimensionMismatch {
+                requested,
+                existing,
+            } => write!(
+                f,
+                "Cannot create Espresso instance with dimensions {:?} because a \
+                 thread-local instance with dimensions {:?} already exists. \
+                 Drop all existing covers and handles first.",
+                requested, existing
+            ),
+            InstanceError::ConfigMismatch {
+                requested,
+                existing,
+            } => write!(
+                f,
+                "Cannot create Espresso instance with different configuration while a \
+                 thread-local instance with dimensions {:?} already exists (requested {:?}). \
+                 Drop all existing covers and handles first.",
+                existing, requested
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InstanceError {}
+
+/// Errors related to cube validation
+///
+/// These errors occur when invalid cube values are provided during cover creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CubeError {
+    /// Invalid cube value encountered
     ///
     /// Cube input values must be 0 (low), 1 (high), or 2 (don't care).
-    InvalidCubeValue {
+    InvalidValue {
         /// The invalid value that was encountered
         value: u8,
         /// The position in the input vector where the invalid value occurred
         position: usize,
     },
+}
 
-    /// Failed to parse a boolean expression
-    ///
-    /// This error occurs when parsing a boolean expression string fails,
-    /// providing the original input and position information when available.
-    ParseError {
+impl fmt::Display for CubeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CubeError::InvalidValue { value, position } => write!(
+                f,
+                "Invalid cube value {} at position {}. Expected 0 (low), 1 (high), or 2 (don't care).",
+                value, position
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CubeError {}
+
+/// Errors related to boolean expression parsing
+///
+/// These errors occur when parsing a boolean expression string fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpressionParseError {
+    /// Failed to parse a boolean expression due to invalid syntax
+    InvalidSyntax {
         /// The error message from the parser
         message: String,
         /// The original input string that failed to parse
@@ -49,61 +106,12 @@ pub enum EspressoError {
         /// Optional position in the input where the error occurred
         position: Option<usize>,
     },
-
-    /// Invalid input provided to a function
-    ///
-    /// This error is used for general input validation failures, such as
-    /// attempting to add an expression to an output name that already exists,
-    /// or accessing an output that doesn't exist.
-    InvalidInput {
-        /// Description of what was invalid
-        message: String,
-    },
-
-    /// IO error wrapper
-    ///
-    /// Wraps standard IO errors that occur during file operations or writing.
-    Io(io::Error),
 }
 
-/// The reason for an Espresso instance conflict
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConflictReason {
-    /// The requested dimensions don't match the existing instance
-    DimensionMismatch,
-    /// The requested configuration doesn't match the existing instance
-    ConfigMismatch,
-}
-
-impl fmt::Display for EspressoError {
+impl fmt::Display for ExpressionParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EspressoError::InstanceConflict {
-                requested,
-                existing,
-                reason,
-            } => match reason {
-                ConflictReason::DimensionMismatch => write!(
-                    f,
-                    "Cannot create Espresso instance with dimensions {:?} because a \
-                     thread-local instance with dimensions {:?} already exists. \
-                     Drop all existing covers and handles first.",
-                    requested, existing
-                ),
-                ConflictReason::ConfigMismatch => write!(
-                    f,
-                    "Cannot create Espresso instance with different configuration while a \
-                     thread-local instance with dimensions {:?} already exists. \
-                     Drop all existing covers and handles first.",
-                    existing
-                ),
-            },
-            EspressoError::InvalidCubeValue { value, position } => write!(
-                f,
-                "Invalid cube value {} at position {}. Expected 0 (low), 1 (high), or 2 (don't care).",
-                value, position
-            ),
-            EspressoError::ParseError {
+            ExpressionParseError::InvalidSyntax {
                 message,
                 input,
                 position,
@@ -122,35 +130,376 @@ impl fmt::Display for EspressoError {
                     )
                 }
             }
-            EspressoError::InvalidInput { message } => write!(f, "{}", message),
-            EspressoError::Io(err) => write!(f, "{}", err),
         }
     }
 }
 
-impl std::error::Error for EspressoError {
+impl std::error::Error for ExpressionParseError {}
+
+/// Errors related to cover operations
+///
+/// These errors occur during cover manipulation, such as adding expressions
+/// or accessing outputs by name or index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoverError {
+    /// Attempted to add an expression to an output name that already exists
+    OutputAlreadyExists {
+        /// The name of the output that already exists
+        name: String,
+    },
+    /// Attempted to access an output by name that doesn't exist
+    OutputNotFound {
+        /// The name of the output that was not found
+        name: String,
+    },
+    /// Attempted to access an output by an index that is out of bounds
+    OutputIndexOutOfBounds {
+        /// The index that was requested
+        index: usize,
+        /// The maximum valid index (number of outputs - 1)
+        max: usize,
+    },
+}
+
+impl fmt::Display for CoverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CoverError::OutputAlreadyExists { name } => {
+                write!(f, "Output '{}' already exists in cover", name)
+            }
+            CoverError::OutputNotFound { name } => {
+                write!(f, "Output '{}' not found in cover", name)
+            }
+            CoverError::OutputIndexOutOfBounds { index, max } => write!(
+                f,
+                "Output index {} out of bounds (valid range: 0..={})",
+                index, max
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CoverError {}
+
+/// Errors related to PLA format parsing and validation
+///
+/// These errors occur when reading or parsing PLA files with invalid format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PLAError {
+    /// PLA file is missing the .i (inputs) directive
+    MissingInputDirective,
+    /// PLA file is missing the .o (outputs) directive
+    MissingOutputDirective,
+    /// Invalid value in .i directive
+    InvalidInputDirective {
+        /// The invalid value string
+        value: String,
+    },
+    /// Invalid value in .o directive
+    InvalidOutputDirective {
+        /// The invalid value string
+        value: String,
+    },
+    /// Invalid character in input portion of a cube
+    InvalidInputCharacter {
+        /// The invalid character
+        character: char,
+        /// Position in the input string
+        position: usize,
+    },
+    /// Invalid character in output portion of a cube
+    InvalidOutputCharacter {
+        /// The invalid character
+        character: char,
+        /// Position in the output string
+        position: usize,
+    },
+    /// Cube dimensions don't match declared dimensions
+    CubeDimensionMismatch {
+        /// Expected number of inputs
+        expected_inputs: usize,
+        /// Actual number of inputs in the cube
+        actual_inputs: usize,
+        /// Expected number of outputs
+        expected_outputs: usize,
+        /// Actual number of outputs in the cube
+        actual_outputs: usize,
+    },
+    /// Label count doesn't match dimension count
+    LabelCountMismatch {
+        /// Type of label ("input" or "output")
+        label_type: String,
+        /// Expected number of labels
+        expected: usize,
+        /// Actual number of labels provided
+        actual: usize,
+    },
+    /// PLA file has no dimension information (no .i/.o and no cubes to infer from)
+    MissingDimensions,
+}
+
+impl fmt::Display for PLAError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PLAError::MissingInputDirective => {
+                write!(f, "PLA file missing .i directive and no cubes to infer from")
+            }
+            PLAError::MissingOutputDirective => {
+                write!(f, "PLA file missing .o directive and no cubes to infer from")
+            }
+            PLAError::InvalidInputDirective { value } => {
+                write!(f, "Invalid .i directive value: '{}'", value)
+            }
+            PLAError::InvalidOutputDirective { value } => {
+                write!(f, "Invalid .o directive value: '{}'", value)
+            }
+            PLAError::InvalidInputCharacter { character, position } => {
+                write!(f, "Invalid input character '{}' at position {}", character, position)
+            }
+            PLAError::InvalidOutputCharacter { character, position } => {
+                write!(f, "Invalid output character '{}' at position {}", character, position)
+            }
+            PLAError::CubeDimensionMismatch {
+                expected_inputs,
+                actual_inputs,
+                expected_outputs,
+                actual_outputs,
+            } => write!(
+                f,
+                "Cube dimensions (inputs: {}, outputs: {}) don't match declared dimensions (inputs: {}, outputs: {})",
+                actual_inputs, actual_outputs, expected_inputs, expected_outputs
+            ),
+            PLAError::LabelCountMismatch { label_type, expected, actual } => write!(
+                f,
+                "{} label count ({}) doesn't match {} count ({})",
+                label_type, actual, label_type, expected
+            ),
+            PLAError::MissingDimensions => {
+                write!(f, "PLA file has no dimension information")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PLAError {}
+
+// ============================================================================
+// Operation-Level Error Enums
+// ============================================================================
+
+/// Errors that can occur during minimization operations
+///
+/// This error type is returned by `Cover::minimize()` and `BoolExpr::minimize()`.
+#[derive(Debug)]
+pub enum MinimizationError {
+    /// Instance management error
+    Instance(InstanceError),
+    /// Cube validation error
+    Cube(CubeError),
+    /// IO error during minimization
+    Io(io::Error),
+}
+
+impl fmt::Display for MinimizationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MinimizationError::Instance(e) => write!(f, "Instance error: {}", e),
+            MinimizationError::Cube(e) => write!(f, "Cube error: {}", e),
+            MinimizationError::Io(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EspressoError::Io(err) => Some(err),
-            _ => None,
+            MinimizationError::Instance(e) => Some(e),
+            MinimizationError::Cube(e) => Some(e),
+            MinimizationError::Io(e) => Some(e),
         }
     }
 }
 
-// Conversion from io::Error to EspressoError
-impl From<io::Error> for EspressoError {
+impl From<InstanceError> for MinimizationError {
+    fn from(err: InstanceError) -> Self {
+        MinimizationError::Instance(err)
+    }
+}
+
+impl From<CubeError> for MinimizationError {
+    fn from(err: CubeError) -> Self {
+        MinimizationError::Cube(err)
+    }
+}
+
+impl From<io::Error> for MinimizationError {
     fn from(err: io::Error) -> Self {
-        EspressoError::Io(err)
+        MinimizationError::Io(err)
     }
 }
 
-// Conversion from EspressoError to io::Error for backwards compatibility
-impl From<EspressoError> for io::Error {
-    fn from(err: EspressoError) -> Self {
-        match err {
-            EspressoError::Io(io_err) => io_err,
-            other => io::Error::other(other),
+/// Errors that can occur when adding an expression to a cover
+///
+/// This error type is returned by `Cover::add_expr()`.
+#[derive(Debug)]
+pub enum AddExprError {
+    /// Cover operation error
+    Cover(CoverError),
+}
+
+impl fmt::Display for AddExprError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddExprError::Cover(e) => write!(f, "{}", e),
         }
+    }
+}
+
+impl std::error::Error for AddExprError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AddExprError::Cover(e) => Some(e),
+        }
+    }
+}
+
+impl From<CoverError> for AddExprError {
+    fn from(err: CoverError) -> Self {
+        AddExprError::Cover(err)
+    }
+}
+
+/// Errors that can occur when converting a cover to an expression
+///
+/// This error type is returned by `Cover::to_expr()` and `Cover::to_expr_by_index()`.
+#[derive(Debug)]
+pub enum ToExprError {
+    /// Cover operation error
+    Cover(CoverError),
+}
+
+impl fmt::Display for ToExprError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ToExprError::Cover(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for ToExprError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ToExprError::Cover(e) => Some(e),
+        }
+    }
+}
+
+impl From<CoverError> for ToExprError {
+    fn from(err: CoverError) -> Self {
+        ToExprError::Cover(err)
+    }
+}
+
+/// Errors that can occur when parsing a boolean expression
+///
+/// This error type is returned by `BoolExpr::parse()`.
+#[derive(Debug)]
+pub enum ParseBoolExprError {
+    /// Expression parsing error
+    Parse(ExpressionParseError),
+}
+
+impl fmt::Display for ParseBoolExprError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseBoolExprError::Parse(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for ParseBoolExprError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ParseBoolExprError::Parse(e) => Some(e),
+        }
+    }
+}
+
+impl From<ExpressionParseError> for ParseBoolExprError {
+    fn from(err: ExpressionParseError) -> Self {
+        ParseBoolExprError::Parse(err)
+    }
+}
+
+/// Errors that can occur when reading PLA format data
+///
+/// This error type is returned by `Cover::from_pla_*` methods.
+#[derive(Debug)]
+pub enum PLAReadError {
+    /// PLA format error
+    PLA(PLAError),
+    /// IO error during reading
+    Io(io::Error),
+}
+
+impl fmt::Display for PLAReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PLAReadError::PLA(e) => write!(f, "PLA format error: {}", e),
+            PLAReadError::Io(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PLAReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PLAReadError::PLA(e) => Some(e),
+            PLAReadError::Io(e) => Some(e),
+        }
+    }
+}
+
+impl From<PLAError> for PLAReadError {
+    fn from(err: PLAError) -> Self {
+        PLAReadError::PLA(err)
+    }
+}
+
+impl From<io::Error> for PLAReadError {
+    fn from(err: io::Error) -> Self {
+        PLAReadError::Io(err)
+    }
+}
+
+/// Errors that can occur when writing PLA format data
+///
+/// This error type is returned by `Cover::to_pla_*` methods.
+#[derive(Debug)]
+pub enum PLAWriteError {
+    /// IO error during writing
+    Io(io::Error),
+}
+
+impl fmt::Display for PLAWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PLAWriteError::Io(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PLAWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PLAWriteError::Io(e) => Some(e),
+        }
+    }
+}
+
+impl From<io::Error> for PLAWriteError {
+    fn from(err: io::Error) -> Self {
+        PLAWriteError::Io(err)
     }
 }
 
@@ -159,12 +508,15 @@ mod tests {
     use super::*;
     use std::error::Error;
 
+    // ========================================================================
+    // Source-Level Error Tests
+    // ========================================================================
+
     #[test]
-    fn test_dimension_mismatch_display() {
-        let err = EspressoError::InstanceConflict {
+    fn test_instance_error_dimension_mismatch() {
+        let err = InstanceError::DimensionMismatch {
             requested: (2, 1),
             existing: (3, 2),
-            reason: ConflictReason::DimensionMismatch,
         };
         let msg = err.to_string();
         assert!(msg.contains("Cannot create Espresso instance"));
@@ -173,11 +525,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_mismatch_display() {
-        let err = EspressoError::InstanceConflict {
+    fn test_instance_error_config_mismatch() {
+        let err = InstanceError::ConfigMismatch {
             requested: (2, 1),
             existing: (2, 1),
-            reason: ConflictReason::ConfigMismatch,
         };
         let msg = err.to_string();
         assert!(msg.contains("different configuration"));
@@ -185,8 +536,8 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_cube_value_display() {
-        let err = EspressoError::InvalidCubeValue {
+    fn test_cube_error_invalid_value() {
+        let err = CubeError::InvalidValue {
             value: 5,
             position: 2,
         };
@@ -196,8 +547,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_error_with_position() {
-        let err = EspressoError::ParseError {
+    fn test_expression_parse_error_with_position() {
+        let err = ExpressionParseError::InvalidSyntax {
             message: "unexpected token".to_string(),
             input: "a * b ++".to_string(),
             position: Some(6),
@@ -208,8 +559,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_error_without_position() {
-        let err = EspressoError::ParseError {
+    fn test_expression_parse_error_without_position() {
+        let err = ExpressionParseError::InvalidSyntax {
             message: "unexpected end".to_string(),
             input: "a * b +".to_string(),
             position: None,
@@ -220,24 +571,141 @@ mod tests {
     }
 
     #[test]
-    fn test_io_error_conversion() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let esp_err: EspressoError = io_err.into();
-        let msg = esp_err.to_string();
-        assert!(msg.contains("file not found"));
+    fn test_cover_error_output_already_exists() {
+        let err = CoverError::OutputAlreadyExists {
+            name: "result".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Output 'result' already exists"));
     }
 
     #[test]
-    fn test_error_trait_source() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "test");
-        let esp_err = EspressoError::Io(io_err);
-        assert!(esp_err.source().is_some());
-
-        let parse_err = EspressoError::ParseError {
-            message: "test".to_string(),
-            input: "test".to_string(),
-            position: None,
+    fn test_cover_error_output_not_found() {
+        let err = CoverError::OutputNotFound {
+            name: "missing".to_string(),
         };
-        assert!(parse_err.source().is_none());
+        let msg = err.to_string();
+        assert!(msg.contains("Output 'missing' not found"));
+    }
+
+    #[test]
+    fn test_cover_error_output_index_out_of_bounds() {
+        let err = CoverError::OutputIndexOutOfBounds { index: 5, max: 2 };
+        let msg = err.to_string();
+        assert!(msg.contains("index 5"));
+        assert!(msg.contains("0..=2"));
+    }
+
+    #[test]
+    fn test_pla_error_missing_input_directive() {
+        let err = PLAError::MissingInputDirective;
+        let msg = err.to_string();
+        assert!(msg.contains("missing .i directive"));
+    }
+
+    #[test]
+    fn test_pla_error_invalid_input_character() {
+        let err = PLAError::InvalidInputCharacter {
+            character: 'x',
+            position: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"));
+        assert!(msg.contains("position 3"));
+    }
+
+    #[test]
+    fn test_pla_error_cube_dimension_mismatch() {
+        let err = PLAError::CubeDimensionMismatch {
+            expected_inputs: 3,
+            actual_inputs: 2,
+            expected_outputs: 1,
+            actual_outputs: 1,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("inputs: 2"));
+        assert!(msg.contains("inputs: 3"));
+    }
+
+    // ========================================================================
+    // Operation-Level Error Tests
+    // ========================================================================
+
+    #[test]
+    fn test_minimization_error_from_instance_error() {
+        let inst_err = InstanceError::DimensionMismatch {
+            requested: (2, 1),
+            existing: (3, 2),
+        };
+        let min_err: MinimizationError = inst_err.into();
+        assert!(matches!(min_err, MinimizationError::Instance(_)));
+        assert!(min_err.source().is_some());
+    }
+
+    #[test]
+    fn test_minimization_error_from_cube_error() {
+        let cube_err = CubeError::InvalidValue {
+            value: 5,
+            position: 2,
+        };
+        let min_err: MinimizationError = cube_err.into();
+        assert!(matches!(min_err, MinimizationError::Cube(_)));
+    }
+
+    #[test]
+    fn test_minimization_error_from_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let min_err: MinimizationError = io_err.into();
+        assert!(matches!(min_err, MinimizationError::Io(_)));
+    }
+
+    #[test]
+    fn test_add_expr_error_from_cover_error() {
+        let cover_err = CoverError::OutputAlreadyExists {
+            name: "test".to_string(),
+        };
+        let add_err: AddExprError = cover_err.into();
+        assert!(matches!(add_err, AddExprError::Cover(_)));
+    }
+
+    #[test]
+    fn test_to_expr_error_from_cover_error() {
+        let cover_err = CoverError::OutputNotFound {
+            name: "test".to_string(),
+        };
+        let to_expr_err: ToExprError = cover_err.into();
+        assert!(matches!(to_expr_err, ToExprError::Cover(_)));
+    }
+
+    #[test]
+    fn test_parse_bool_expr_error() {
+        let parse_err = ExpressionParseError::InvalidSyntax {
+            message: "test".to_string(),
+            input: "bad input".to_string(),
+            position: Some(5),
+        };
+        let bool_err: ParseBoolExprError = parse_err.into();
+        assert!(matches!(bool_err, ParseBoolExprError::Parse(_)));
+    }
+
+    #[test]
+    fn test_pla_read_error_from_pla_error() {
+        let pla_err = PLAError::MissingInputDirective;
+        let read_err: PLAReadError = pla_err.into();
+        assert!(matches!(read_err, PLAReadError::PLA(_)));
+    }
+
+    #[test]
+    fn test_pla_read_error_from_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let read_err: PLAReadError = io_err.into();
+        assert!(matches!(read_err, PLAReadError::Io(_)));
+    }
+
+    #[test]
+    fn test_pla_write_error_from_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
+        let write_err: PLAWriteError = io_err.into();
+        assert!(matches!(write_err, PLAWriteError::Io(_)));
     }
 }

@@ -6,10 +6,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io;
 use std::sync::Arc;
 
-use crate::error::EspressoError;
+use crate::error::{AddExprError, CoverError, MinimizationError, ToExprError};
 use crate::expression::BoolExpr;
 use crate::EspressoConfig;
 
@@ -493,13 +492,16 @@ impl Cover {
     }
 
     /// Minimize this cover in-place using default configuration
-    pub fn minimize(&mut self) -> io::Result<()> {
+    pub fn minimize(&mut self) -> Result<(), MinimizationError> {
         let config = EspressoConfig::default();
         self.minimize_with_config(&config)
     }
 
     /// Minimize this cover in-place with custom configuration
-    pub fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()> {
+    pub fn minimize_with_config(
+        &mut self,
+        config: &EspressoConfig,
+    ) -> Result<(), MinimizationError> {
         use crate::espresso::{Espresso, EspressoCover};
 
         // Split cubes into F, D, R sets based on cube type
@@ -593,16 +595,17 @@ impl Cover {
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
-    pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), EspressoError> {
+    pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), AddExprError> {
         // Check if output already exists
         if self
             .output_labels
             .iter()
             .any(|label| label.as_ref() == output_name)
         {
-            return Err(EspressoError::InvalidInput {
-                message: format!("Output '{}' already exists in cover", output_name),
-            });
+            return Err(CoverError::OutputAlreadyExists {
+                name: output_name.to_string(),
+            }
+            .into());
         }
 
         // Collect variables from expression (in sorted order)
@@ -709,13 +712,13 @@ impl Cover {
     /// let expr = cover.to_expr("result").unwrap();
     /// println!("result: {}", expr);
     /// ```
-    pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, EspressoError> {
+    pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
         let output_idx = self
             .output_labels
             .iter()
             .position(|label| label.as_ref() == output_name)
-            .ok_or_else(|| EspressoError::InvalidInput {
-                message: format!("Output '{}' not found in cover", output_name),
+            .ok_or_else(|| CoverError::OutputNotFound {
+                name: output_name.to_string(),
             })?;
 
         self.to_expr_by_index(output_idx)
@@ -737,14 +740,17 @@ impl Cover {
     /// let expr = cover.to_expr_by_index(0).unwrap();
     /// println!("Output 0: {}", expr);
     /// ```
-    pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, EspressoError> {
+    pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, ToExprError> {
         if output_idx >= self.num_outputs {
-            return Err(EspressoError::InvalidInput {
-                message: format!(
-                    "Output index {} out of bounds (have {} outputs)",
-                    output_idx, self.num_outputs
-                ),
-            });
+            return Err(CoverError::OutputIndexOutOfBounds {
+                index: output_idx,
+                max: if self.num_outputs > 0 {
+                    self.num_outputs - 1
+                } else {
+                    0
+                },
+            }
+            .into());
         }
 
         // Filter cubes for this output (check if output bit is set)
@@ -759,7 +765,7 @@ impl Cover {
             })
             .collect();
 
-        cubes_to_expr(&relevant_cubes, &self.input_labels)
+        Ok(cubes_to_expr(&relevant_cubes, &self.input_labels))
     }
 }
 
@@ -871,9 +877,9 @@ fn merge_product_terms(
 }
 
 /// Convert cube references back to a boolean expression
-fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> Result<BoolExpr, EspressoError> {
+fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> BoolExpr {
     if cubes.is_empty() {
-        return Ok(BoolExpr::constant(false));
+        return BoolExpr::constant(false);
     }
 
     let mut terms = Vec::new();
@@ -910,9 +916,9 @@ fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> Result<BoolExpr, Es
 
     // OR all terms together
     if terms.is_empty() {
-        Ok(BoolExpr::constant(false))
+        BoolExpr::constant(false)
     } else {
-        Ok(terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap())
+        terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap()
     }
 }
 

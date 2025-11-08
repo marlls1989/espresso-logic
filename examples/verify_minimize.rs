@@ -1,6 +1,6 @@
 use espresso_logic::{Cover, CoverType};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test case from test_cover_many_cubes
     let mut cover = Cover::new(CoverType::F);
 

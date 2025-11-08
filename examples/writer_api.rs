@@ -6,7 +6,7 @@
 use espresso_logic::{Cover, PLAReader, PLAWriter};
 use std::io::{self, Write};
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Writer-Based PLA Serialization Example ===\n");
 
     // Parse from PLA content
