@@ -13,8 +13,8 @@ use crate::error::EspressoError;
 use crate::expression::BoolExpr;
 use crate::EspressoConfig;
 
-/// Type alias for complex cube iterator return type
-pub type CubeIterator<'a> = Box<dyn Iterator<Item = (Vec<Option<bool>>, Vec<Option<bool>>)> + 'a>;
+/// Type alias for cube data as owned vectors (inputs, outputs)
+pub type CubeData = (Vec<Option<bool>>, Vec<Option<bool>>);
 
 /// Represents the type of cover (F, FD, FR, or FDR)
 ///
@@ -108,11 +108,61 @@ impl Cube {
     }
 }
 
+/// Iterator over filtered cubes with generic yield type
+///
+/// This iterator wraps a filtered cube iterator and can yield different types
+/// depending on how the cubes are transformed (references, owned data, etc.).
+pub struct CubesIter<'a, T> {
+    iter: Box<dyn Iterator<Item = T> + 'a>,
+}
+
+impl<'a, T> Iterator for CubesIter<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+/// Iterator over output expressions from a Cover
+///
+/// This iterator uses the visitor pattern to generate boolean expressions
+/// on-demand for each output in the cover. It maintains state (current index)
+/// and calls the cover's conversion method during iteration.
+pub struct ToExprs<'a> {
+    cover: &'a Cover,
+    current_idx: usize,
+}
+
+impl<'a> Iterator for ToExprs<'a> {
+    type Item = (Arc<str>, BoolExpr);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_idx >= self.cover.num_outputs {
+            return None;
+        }
+        let idx = self.current_idx;
+        self.current_idx += 1;
+
+        let name = Arc::clone(&self.cover.output_labels[idx]);
+        let expr = self
+            .cover
+            .to_expr_by_index(idx)
+            .unwrap_or_else(|_| BoolExpr::constant(false));
+        Some((name, expr))
+    }
+}
+
 /// Internal trait for types that can be minimized
 /// Contains implementation details needed by the minimization algorithm
 pub(crate) trait Minimizable: Send + Sync {
+    /// Associated type for iterating over cubes
+    type CubesIter<'a>: Iterator<Item = &'a Cube>
+    where
+        Self: 'a;
+
     /// Iterate over typed cubes (required for minimization)
-    fn internal_cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a>;
+    fn internal_cubes_iter(&self) -> Self::CubesIter<'_>;
 
     /// Set cubes after minimization (required for minimization)
     fn set_cubes(&mut self, cubes: Vec<Cube>);
@@ -278,32 +328,36 @@ impl Cover {
     ///     println!("Inputs: {:?}, Outputs: {:?}", cube.inputs(), cube.outputs());
     /// }
     /// ```
-    pub fn cubes<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
+    pub fn cubes(&self) -> CubesIter<'_, &Cube> {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
-        Box::new(
-            self.cubes
-                .iter()
-                .filter(move |cube| cover_type != CoverType::F || cube.cube_type == CubeType::F),
-        )
+        CubesIter {
+            iter: Box::new(
+                self.cubes.iter().filter(move |cube| {
+                    cover_type != CoverType::F || cube.cube_type == CubeType::F
+                }),
+            ),
+        }
     }
 
     /// Iterate over cubes (inputs, outputs)
     ///
     /// Returns cubes in a format compatible with add_cube (owned vecs for easy use)
-    pub fn cubes_iter<'a>(&'a self) -> CubeIterator<'a> {
+    pub fn cubes_iter(&self) -> CubesIter<'_, CubeData> {
         let cover_type = self.cover_type;
-        Box::new(
-            self.cubes
-                .iter()
-                .filter(move |cube| cover_type != CoverType::F || cube.cube_type == CubeType::F)
-                .map(|cube| {
-                    let inputs = cube.inputs.to_vec();
-                    let outputs: Vec<Option<bool>> =
-                        cube.outputs.iter().map(|&b| Some(b)).collect();
-                    (inputs, outputs)
-                }),
-        )
+        CubesIter {
+            iter: Box::new(
+                self.cubes
+                    .iter()
+                    .filter(move |cube| cover_type != CoverType::F || cube.cube_type == CubeType::F)
+                    .map(|cube| {
+                        let inputs = cube.inputs.to_vec();
+                        let outputs: Vec<Option<bool>> =
+                            cube.outputs.iter().map(|&b| Some(b)).collect();
+                        (inputs, outputs)
+                    }),
+            ),
+        }
     }
 
     /// Add a cube to the cover
@@ -632,14 +686,11 @@ impl Cover {
     ///     println!("{}: {}", name, expr);
     /// }
     /// ```
-    pub fn to_exprs(&self) -> impl Iterator<Item = (Arc<str>, BoolExpr)> + '_ {
-        (0..self.num_outputs).map(move |output_idx| {
-            let name = Arc::clone(&self.output_labels[output_idx]);
-            let expr = self
-                .to_expr_by_index(output_idx)
-                .unwrap_or_else(|_| BoolExpr::constant(false));
-            (name, expr)
-        })
+    pub fn to_exprs(&self) -> ToExprs<'_> {
+        ToExprs {
+            cover: self,
+            current_idx: 0,
+        }
     }
 
     /// Convert a specific named output to a boolean expression
@@ -867,8 +918,10 @@ fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> Result<BoolExpr, Es
 
 // Implement Minimizable for Cover (used by minimization algorithm)
 impl Minimizable for Cover {
-    fn internal_cubes_iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a Cube> + 'a> {
-        Box::new(self.cubes.iter())
+    type CubesIter<'a> = std::slice::Iter<'a, Cube>;
+
+    fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
+        self.cubes.iter()
     }
 
     fn set_cubes(&mut self, cubes: Vec<Cube>) {
@@ -886,6 +939,8 @@ impl Minimizable for Cover {
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
 impl crate::pla::PLASerialisable for Cover {
+    type CubesIter<'a> = std::slice::Iter<'a, Cube>;
+
     fn num_inputs(&self) -> usize {
         self.num_inputs
     }
@@ -894,8 +949,8 @@ impl crate::pla::PLASerialisable for Cover {
         self.num_outputs
     }
 
-    fn internal_cubes_iter(&self) -> Box<dyn Iterator<Item = &Cube> + '_> {
-        Box::new(self.cubes.iter())
+    fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
+        self.cubes.iter()
     }
 
     fn get_input_labels(&self) -> Option<&[Arc<str>]> {

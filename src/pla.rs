@@ -16,6 +16,11 @@ use crate::cover::{CoverType, Cube, CubeType};
 /// constructing (deserialization) types from PLA format. It is used as the basis
 /// for the public `PLAReader` and `PLAWriter` traits.
 pub(crate) trait PLASerialisable: Sized {
+    /// Associated type for iterating over cubes
+    type CubesIter<'a>: Iterator<Item = &'a Cube>
+    where
+        Self: 'a;
+
     // Read access (for serialization)
 
     /// Get the number of inputs
@@ -25,7 +30,7 @@ pub(crate) trait PLASerialisable: Sized {
     fn num_outputs(&self) -> usize;
 
     /// Iterate over all cubes (internal use)
-    fn internal_cubes_iter(&self) -> Box<dyn Iterator<Item = &Cube> + '_>;
+    fn internal_cubes_iter(&self) -> Self::CubesIter<'_>;
 
     /// Get input variable labels if available
     fn get_input_labels(&self) -> Option<&[Arc<str>]>;
