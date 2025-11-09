@@ -13,7 +13,7 @@ categories = ["algorithms", "science"]
 libc = "0.2"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 clap = { version = "4.4", features = ["derive"], optional = true }
-espresso-logic-macros = { path = "./espresso-logic-macros" }
+espresso-logic-macros = { version = "3.0.0", path = "./espresso-logic-macros" }
 
 [features]
 cli = ["dep:clap"]
