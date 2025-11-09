@@ -4,13 +4,121 @@
 //! of Boolean functions). The Cover type supports dynamic dimensions that grow as cubes are added,
 //! and can work with both manually constructed cubes and boolean expressions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{AddExprError, CoverError, MinimizationError, ToExprError};
 use crate::expression::BoolExpr;
 use crate::EspressoConfig;
+
+/// Generic label manager for input/output variables with configurable prefix
+///
+/// Maintains both ordered labels (Vec) and fast name->index lookup (HashMap).
+/// Handles conflict resolution by finding next available sequential label.
+#[derive(Clone, Debug)]
+struct LabelManager<const PREFIX: char> {
+    /// Ordered labels by position
+    labels: Vec<Arc<str>>,
+    /// Fast lookup: label name -> position index
+    label_map: HashMap<Arc<str>, usize>,
+}
+
+impl<const PREFIX: char> LabelManager<PREFIX> {
+    /// Create a new empty label manager
+    fn new() -> Self {
+        Self {
+            labels: Vec::new(),
+            label_map: HashMap::new(),
+        }
+    }
+
+    /// Create from existing labels
+    fn from_labels(labels: Vec<Arc<str>>) -> Self {
+        let label_map = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| (Arc::clone(label), i))
+            .collect();
+        Self { labels, label_map }
+    }
+
+    /// Get the number of labels
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.labels.len()
+    }
+
+    /// Check if empty
+    fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+
+    /// Get label at position
+    fn get(&self, index: usize) -> Option<&Arc<str>> {
+        self.labels.get(index)
+    }
+
+    /// Get labels slice
+    fn as_slice(&self) -> &[Arc<str>] {
+        &self.labels
+    }
+
+    /// Find position by label name (O(1) lookup)
+    fn find_position(&self, name: &str) -> Option<usize> {
+        let key: Arc<str> = Arc::from(name);
+        self.label_map.get(&key).copied()
+    }
+
+    /// Check if label exists
+    fn contains(&self, name: &str) -> bool {
+        let key: Arc<str> = Arc::from(name);
+        self.label_map.contains_key(&key)
+    }
+
+    /// Find the next available sequential label index starting from `start`
+    /// E.g., if x0, x1, x3 exist and start=2, returns 2 (first available from start)
+    fn next_available_index(&self, start: usize) -> usize {
+        let mut n = start;
+        loop {
+            let candidate = Arc::from(format!("{}{}", PREFIX, n).as_str());
+            if !self.label_map.contains_key(&candidate) {
+                return n;
+            }
+            n += 1;
+        }
+    }
+
+    /// Add a label at the given position, checking for conflicts
+    /// If conflict, finds next available sequential label starting from position
+    fn add_with_conflict_resolution(&mut self, position: usize) {
+        // Try natural label first (e.g., x2 for position 2)
+        let natural_label = Arc::from(format!("{}{}", PREFIX, position).as_str());
+        let label = if !self.label_map.contains_key(&natural_label) {
+            natural_label
+        } else {
+            // Conflict - find next available sequential label starting from position
+            let n = self.next_available_index(position);
+            Arc::from(format!("{}{}", PREFIX, n).as_str())
+        };
+        self.label_map.insert(Arc::clone(&label), position);
+        self.labels.push(label);
+    }
+
+    /// Add a specific label at the given position
+    fn add(&mut self, label: Arc<str>, position: usize) {
+        self.label_map.insert(Arc::clone(&label), position);
+        self.labels.push(label);
+    }
+
+    /// Backfill missing labels up to target size
+    fn backfill_to(&mut self, target_size: usize) {
+        while self.labels.len() < target_size {
+            let position = self.labels.len();
+            self.add_with_conflict_resolution(position);
+        }
+    }
+}
 
 /// Type alias for cube data as owned vectors (inputs, outputs)
 pub type CubeData = (Vec<Option<bool>>, Vec<Option<bool>>);
@@ -143,7 +251,13 @@ impl<'a> Iterator for ToExprs<'a> {
         let idx = self.current_idx;
         self.current_idx += 1;
 
-        let name = Arc::clone(&self.cover.output_labels[idx]);
+        // Use provided label or generate default
+        let name = if let Some(label) = self.cover.output_labels.get(idx) {
+            Arc::clone(label)
+        } else {
+            Arc::from(format!("y{}", idx).as_str())
+        };
+
         let expr = self
             .cover
             .to_expr_by_index(idx)
@@ -196,10 +310,10 @@ pub struct Cover {
     num_inputs: usize,
     /// Number of output variables
     num_outputs: usize,
-    /// Input variable labels (Arc for efficient cloning)
-    input_labels: Vec<Arc<str>>,
-    /// Output variable labels (Arc for efficient cloning)
-    output_labels: Vec<Arc<str>>,
+    /// Input label manager (prefix: 'x')
+    input_labels: LabelManager<'x'>,
+    /// Output label manager (prefix: 'y')
+    output_labels: LabelManager<'y'>,
     /// Cubes with their type (F/D/R) and data
     cubes: Vec<Cube>,
     /// Cover type (F, FD, FR, or FDR)
@@ -222,8 +336,8 @@ impl Cover {
         Cover {
             num_inputs: 0,
             num_outputs: 0,
-            input_labels: Vec::new(),
-            output_labels: Vec::new(),
+            input_labels: LabelManager::new(),
+            output_labels: LabelManager::new(),
             cubes: Vec::new(),
             cover_type,
         }
@@ -252,18 +366,18 @@ impl Cover {
         input_labels: &[S],
         output_labels: &[S],
     ) -> Self {
-        let input_labels: Vec<Arc<str>> =
+        let input_label_vec: Vec<Arc<str>> =
             input_labels.iter().map(|s| Arc::from(s.as_ref())).collect();
-        let output_labels: Vec<Arc<str>> = output_labels
+        let output_label_vec: Vec<Arc<str>> = output_labels
             .iter()
             .map(|s| Arc::from(s.as_ref()))
             .collect();
 
         Cover {
-            num_inputs: input_labels.len(),
-            num_outputs: output_labels.len(),
-            input_labels,
-            output_labels,
+            num_inputs: input_label_vec.len(),
+            num_outputs: output_label_vec.len(),
+            input_labels: LabelManager::from_labels(input_label_vec),
+            output_labels: LabelManager::from_labels(output_label_vec),
             cubes: Vec::new(),
             cover_type,
         }
@@ -301,14 +415,14 @@ impl Cover {
     ///
     /// Returns a slice of Arc<str> for efficient access to variable names.
     pub fn input_labels(&self) -> &[Arc<str>] {
-        &self.input_labels
+        self.input_labels.as_slice()
     }
 
     /// Get output variable labels
     ///
     /// Returns a slice of Arc<str> for efficient access to variable names.
     pub fn output_labels(&self) -> &[Arc<str>] {
-        &self.output_labels
+        self.output_labels.as_slice()
     }
 
     /// Iterate over cubes as `Cube` references
@@ -450,11 +564,12 @@ impl Cover {
 
     /// Grow the cover to fit at least the specified dimensions
     ///
-    /// This extends all existing cubes and adds generated labels as needed.
+    /// This extends all existing cubes. If the cover already has labels (from expressions
+    /// or from `with_labels`), new labels are auto-generated to maintain consistency.
+    /// If the cover has no labels, it remains unlabeled.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         // Grow inputs if needed
         if min_inputs > self.num_inputs {
-            let old_size = self.num_inputs;
             self.num_inputs = min_inputs;
 
             // Extend all existing cubes
@@ -464,16 +579,14 @@ impl Cover {
                 cube.inputs = new_inputs.into();
             }
 
-            // Add generated labels: x0, x1, x2, etc.
-            for i in old_size..self.num_inputs {
-                self.input_labels
-                    .push(Arc::from(format!("x{}", i).as_str()));
+            // If the cover already has labels, extend them to maintain consistency
+            if !self.input_labels.is_empty() {
+                self.input_labels.backfill_to(self.num_inputs);
             }
         }
 
         // Grow outputs if needed
         if min_outputs > self.num_outputs {
-            let old_size = self.num_outputs;
             self.num_outputs = min_outputs;
 
             // Extend all existing cubes
@@ -483,10 +596,9 @@ impl Cover {
                 cube.outputs = new_outputs.into();
             }
 
-            // Add generated labels: y0, y1, y2, etc.
-            for i in old_size..self.num_outputs {
-                self.output_labels
-                    .push(Arc::from(format!("y{}", i).as_str()));
+            // If the cover already has labels, extend them to maintain consistency
+            if !self.output_labels.is_empty() {
+                self.output_labels.backfill_to(self.num_outputs);
             }
         }
     }
@@ -596,16 +708,19 @@ impl Cover {
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
     pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), AddExprError> {
-        // Check if output already exists
-        if self
-            .output_labels
-            .iter()
-            .any(|label| label.as_ref() == output_name)
-        {
-            return Err(CoverError::OutputAlreadyExists {
-                name: output_name.to_string(),
-            }
-            .into());
+        // Backfill labels for dimensions that don't have them yet
+        // Input and output labels are independent - one can be labeled while the other isn't
+
+        // Backfill input labels if we're transitioning from unlabeled to labeled inputs
+        let input_was_unlabeled = self.input_labels.is_empty();
+        if input_was_unlabeled && self.num_inputs > 0 {
+            self.input_labels.backfill_to(self.num_inputs);
+        }
+
+        // Backfill output labels if we're transitioning from unlabeled to labeled outputs
+        let output_was_unlabeled = self.output_labels.is_empty();
+        if output_was_unlabeled && self.num_outputs > 0 {
+            self.output_labels.backfill_to(self.num_outputs);
         }
 
         // Collect variables from expression (in sorted order)
@@ -615,13 +730,14 @@ impl Cover {
         let mut var_to_index: BTreeMap<Arc<str>, usize> = BTreeMap::new();
 
         for expr_var in &expr_variables {
-            // Check if variable already exists in cover
-            if let Some(pos) = self.input_labels.iter().position(|label| label == expr_var) {
+            // Check if variable already exists in cover (using HashMap for O(1) lookup)
+            if let Some(pos) = self.input_labels.find_position(expr_var.as_ref()) {
                 var_to_index.insert(Arc::clone(expr_var), pos);
             } else {
                 // New variable - add to cover
                 let new_index = self.num_inputs;
-                self.input_labels.push(Arc::clone(expr_var));
+                let label = Arc::clone(expr_var);
+                self.input_labels.add(label, new_index);
                 var_to_index.insert(Arc::clone(expr_var), new_index);
                 self.num_inputs += 1;
 
@@ -637,9 +753,17 @@ impl Cover {
         // Convert expression to DNF
         let dnf = to_dnf(&expr);
 
-        // Add output variable
+        // Check if output already exists (using HashMap for O(1) lookup)
+        if self.output_labels.contains(output_name) {
+            return Err(CoverError::OutputAlreadyExists {
+                name: output_name.to_string(),
+            }
+            .into());
+        }
+
+        // Add new output
         let output_index = self.num_outputs;
-        self.output_labels.push(Arc::from(output_name));
+        self.output_labels.add(Arc::from(output_name), output_index);
         self.num_outputs += 1;
 
         // Extend all existing cubes with false for new output
@@ -713,10 +837,10 @@ impl Cover {
     /// println!("result: {}", expr);
     /// ```
     pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
+        // Use HashMap for O(1) lookup
         let output_idx = self
             .output_labels
-            .iter()
-            .position(|label| label.as_ref() == output_name)
+            .find_position(output_name)
             .ok_or_else(|| CoverError::OutputNotFound {
                 name: output_name.to_string(),
             })?;
@@ -765,7 +889,11 @@ impl Cover {
             })
             .collect();
 
-        Ok(cubes_to_expr(&relevant_cubes, &self.input_labels))
+        Ok(cubes_to_expr(
+            &relevant_cubes,
+            self.input_labels.as_slice(),
+            self.num_inputs,
+        ))
     }
 }
 
@@ -877,7 +1005,9 @@ fn merge_product_terms(
 }
 
 /// Convert cube references back to a boolean expression
-fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> BoolExpr {
+///
+/// If `variables` is empty or shorter than `num_inputs`, generates default variable names (x0, x1, ...).
+fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>], num_inputs: usize) -> BoolExpr {
     if cubes.is_empty() {
         return BoolExpr::constant(false);
     }
@@ -888,15 +1018,22 @@ fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>]) -> BoolExpr {
         // Build product term for this cube
         let mut factors = Vec::new();
 
-        for (i, var) in variables.iter().enumerate() {
+        for i in 0..num_inputs {
+            // Get variable name - use provided label or generate default
+            let var_name: Arc<str> = if i < variables.len() {
+                Arc::clone(&variables[i])
+            } else {
+                Arc::from(format!("x{}", i).as_str())
+            };
+
             match cube.inputs.get(i) {
                 Some(Some(true)) => {
                     // Positive literal
-                    factors.push(BoolExpr::variable(var));
+                    factors.push(BoolExpr::variable(&var_name));
                 }
                 Some(Some(false)) => {
                     // Negative literal
-                    factors.push(BoolExpr::variable(var).not());
+                    factors.push(BoolExpr::variable(&var_name).not());
                 }
                 Some(None) | None => {
                     // Don't care - skip this variable
@@ -963,7 +1100,7 @@ impl crate::pla::PLASerialisable for Cover {
         if self.input_labels.is_empty() {
             None
         } else {
-            Some(&self.input_labels)
+            Some(self.input_labels.as_slice())
         }
     }
 
@@ -971,7 +1108,7 @@ impl crate::pla::PLASerialisable for Cover {
         if self.output_labels.is_empty() {
             None
         } else {
-            Some(&self.output_labels)
+            Some(self.output_labels.as_slice())
         }
     }
 
@@ -986,8 +1123,8 @@ impl crate::pla::PLASerialisable for Cover {
         Cover {
             num_inputs,
             num_outputs,
-            input_labels,
-            output_labels,
+            input_labels: LabelManager::from_labels(input_labels),
+            output_labels: LabelManager::from_labels(output_labels),
             cubes,
             cover_type,
         }
@@ -1060,12 +1197,9 @@ mod tests {
         assert_eq!(cover.num_inputs(), 3);
         assert_eq!(cover.num_outputs(), 2);
 
-        // Check generated labels
-        assert_eq!(cover.input_labels()[0].as_ref(), "x0");
-        assert_eq!(cover.input_labels()[1].as_ref(), "x1");
-        assert_eq!(cover.input_labels()[2].as_ref(), "x2");
-        assert_eq!(cover.output_labels()[0].as_ref(), "y0");
-        assert_eq!(cover.output_labels()[1].as_ref(), "y1");
+        // Labels should NOT be auto-generated
+        assert_eq!(cover.input_labels().len(), 0);
+        assert_eq!(cover.output_labels().len(), 0);
     }
 
     #[test]
@@ -1186,13 +1320,20 @@ mod tests {
             &[Some(true)],
         );
 
-        // Check auto-generated labels
-        assert_eq!(cover.input_labels().len(), 5);
-        assert_eq!(cover.input_labels()[0].as_ref(), "x0");
-        assert_eq!(cover.input_labels()[1].as_ref(), "x1");
-        assert_eq!(cover.input_labels()[2].as_ref(), "x2");
-        assert_eq!(cover.input_labels()[3].as_ref(), "x3");
-        assert_eq!(cover.input_labels()[4].as_ref(), "x4");
+        // Labels should NOT be auto-generated when adding cubes
+        assert_eq!(cover.input_labels().len(), 0);
+
+        // But when converting to expressions, default labels should be used
+        let expr = cover.to_expr_by_index(0).unwrap();
+        let vars = expr.collect_variables();
+        assert_eq!(vars.len(), 4); // 4 non-don't-care inputs
+
+        // Variable names should be x0, x1, x3, x4 (x2 is don't care so not in expr)
+        let var_names: Vec<&str> = vars.iter().map(|v| v.as_ref()).collect();
+        assert!(var_names.contains(&"x0"));
+        assert!(var_names.contains(&"x1"));
+        assert!(var_names.contains(&"x3"));
+        assert!(var_names.contains(&"x4"));
     }
 
     #[test]
@@ -1205,12 +1346,16 @@ mod tests {
             &[Some(true), Some(false), Some(true), Some(false)],
         );
 
-        // Check auto-generated labels
-        assert_eq!(cover.output_labels().len(), 4);
-        assert_eq!(cover.output_labels()[0].as_ref(), "y0");
-        assert_eq!(cover.output_labels()[1].as_ref(), "y1");
-        assert_eq!(cover.output_labels()[2].as_ref(), "y2");
-        assert_eq!(cover.output_labels()[3].as_ref(), "y3");
+        // Labels should NOT be auto-generated when adding cubes
+        assert_eq!(cover.output_labels().len(), 0);
+
+        // But when using to_exprs iterator, default output names should be generated
+        let exprs: Vec<_> = cover.to_exprs().collect();
+        assert_eq!(exprs.len(), 4);
+        assert_eq!(exprs[0].0.as_ref(), "y0");
+        assert_eq!(exprs[1].0.as_ref(), "y1");
+        assert_eq!(exprs[2].0.as_ref(), "y2");
+        assert_eq!(exprs[3].0.as_ref(), "y3");
     }
 
     #[test]
@@ -1222,17 +1367,13 @@ mod tests {
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         cover.add_cube(&[Some(true), Some(false), None], &[Some(true)]);
 
-        let labels = cover.input_labels();
+        // Labels should NOT be auto-generated
+        assert_eq!(cover.input_labels().len(), 0);
 
-        // Check all labels are unique
-        use std::collections::HashSet;
-        let unique_labels: HashSet<_> = labels.iter().collect();
-        assert_eq!(unique_labels.len(), 3);
-
-        // Check sequential naming
-        assert_eq!(labels[0].as_ref(), "x0");
-        assert_eq!(labels[1].as_ref(), "x1");
-        assert_eq!(labels[2].as_ref(), "x2");
+        // When converting to expression, default labels should be used
+        let expr = cover.to_expr_by_index(0).unwrap();
+        let vars = expr.collect_variables();
+        assert_eq!(vars.len(), 2); // x0 and x1 (x2 is don't care in the 3rd cube)
     }
 
     #[test]
@@ -1242,23 +1383,33 @@ mod tests {
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.num_outputs(), 1);
 
-        // Grow inputs - should add x2, x3, etc
+        // Grow inputs - labels SHOULD be auto-added since cover is already labeled
         cover.add_cube(&[Some(true), Some(false), None, Some(true)], &[Some(true)]);
         assert_eq!(cover.num_inputs(), 4);
+        // All 4 input labels should exist: a, b, x2, x3
+        assert_eq!(cover.input_labels().len(), 4);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
-        assert_eq!(cover.input_labels()[2].as_ref(), "x2");
-        assert_eq!(cover.input_labels()[3].as_ref(), "x3");
+        assert_eq!(cover.input_labels()[2].as_ref(), "x2"); // Auto-generated
+        assert_eq!(cover.input_labels()[3].as_ref(), "x3"); // Auto-generated
 
-        // Grow outputs - should add y1, y2, etc
+        // Grow outputs - labels SHOULD be auto-added since cover is already labeled
         cover.add_cube(
             &[Some(true), Some(false)],
             &[Some(true), Some(false), Some(true)],
         );
         assert_eq!(cover.num_outputs(), 3);
+        // All 3 output labels should exist: out1, y1, y2
+        assert_eq!(cover.output_labels().len(), 3);
         assert_eq!(cover.output_labels()[0].as_ref(), "out1");
-        assert_eq!(cover.output_labels()[1].as_ref(), "y1");
-        assert_eq!(cover.output_labels()[2].as_ref(), "y2");
+        assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // Auto-generated
+        assert_eq!(cover.output_labels()[2].as_ref(), "y2"); // Auto-generated
+
+        // Verify labels are properly used in expressions
+        let expr = cover.to_expr_by_index(0).unwrap();
+        let vars = expr.collect_variables();
+        // Should have some variables from the cover
+        assert!(!vars.is_empty());
     }
 
     // ===== Expression Addition Tests =====
@@ -1395,23 +1546,28 @@ mod tests {
     fn test_add_expr_with_existing_cubes() {
         let mut cover = Cover::new(CoverType::F);
 
-        // Add a manual cube first
+        // Add a manual cube first - no labels are generated
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.num_outputs(), 1);
+        assert_eq!(cover.input_labels().len(), 0); // No labels yet
+        assert_eq!(cover.output_labels().len(), 0); // No labels yet
         let initial_cubes = cover.num_cubes();
 
-        // Add an expression (should match x0, x1 and add to y0)
+        // Add an expression with variables x0, x1 - this backfills labels
         let x0 = crate::BoolExpr::variable("x0");
         let x1 = crate::BoolExpr::variable("x1");
 
-        // This should fail because y0 already exists
+        // Try to add to output y0 - should FAIL because y0 was backfilled
         let result = cover.add_expr(x0.or(&x1), "y0");
-        assert!(result.is_err());
+        assert!(result.is_err()); // y0 already exists after backfilling
 
-        // Add to a different output
+        // Add to a different output name - should succeed
         cover.add_expr(x0.and(&x1), "y1").unwrap();
         assert_eq!(cover.num_outputs(), 2);
+        assert_eq!(cover.output_labels().len(), 2);
+        assert_eq!(cover.output_labels()[0].as_ref(), "y0"); // Backfilled
+        assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // New
         assert!(cover.num_cubes() > initial_cubes);
     }
 
@@ -1591,27 +1747,32 @@ mod tests {
     fn test_add_cubes_then_expressions() {
         let mut cover = Cover::new(CoverType::F);
 
-        // Add manual cubes first
+        // Add manual cubes first - no labels generated
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         assert_eq!(cover.num_inputs(), 2);
-        assert_eq!(cover.input_labels()[0].as_ref(), "x0");
-        assert_eq!(cover.input_labels()[1].as_ref(), "x1");
+        assert_eq!(cover.input_labels().len(), 0); // No labels yet
+        assert_eq!(cover.output_labels().len(), 0); // No labels yet
 
-        // Now add expression with named variables
+        // Now add expression with named variables - this backfills labels for existing dimensions
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
         cover.add_expr(a.and(&b), "y1").unwrap();
 
-        // Should have 4 inputs now: x0, x1, a, b
+        // Should have 4 inputs now: 2 from cube (x0, x1) + 2 from expression (a, b)
         assert_eq!(cover.num_inputs(), 4);
+        // All 4 should have labels: x0, x1 (backfilled), a, b (from expression)
+        assert_eq!(cover.input_labels().len(), 4);
         assert_eq!(cover.input_labels()[0].as_ref(), "x0");
         assert_eq!(cover.input_labels()[1].as_ref(), "x1");
         assert_eq!(cover.input_labels()[2].as_ref(), "a");
         assert_eq!(cover.input_labels()[3].as_ref(), "b");
 
-        // Should have 2 outputs
+        // Should have 2 outputs with labels
         assert_eq!(cover.num_outputs(), 2);
+        assert_eq!(cover.output_labels().len(), 2);
+        assert_eq!(cover.output_labels()[0].as_ref(), "y0"); // Backfilled
+        assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // From expression
     }
 
     #[test]
@@ -1621,13 +1782,13 @@ mod tests {
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
-        // Add expression first
+        // Add expression first - no backfilling needed since cover is empty
         cover.add_expr(a.and(&b), "result").unwrap();
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
 
-        // Add manual cube with more inputs
+        // Add manual cube with more inputs - should auto-extend labels since cover is in labeled mode
         cover.add_cube(
             &[Some(true), Some(false), Some(true)],
             &[Some(true), Some(false)],
@@ -1637,12 +1798,16 @@ mod tests {
         assert_eq!(cover.num_inputs(), 3);
         assert_eq!(cover.num_outputs(), 2);
 
-        // Original labels preserved, new ones added
+        // Original labels preserved, and new labels auto-generated
+        assert_eq!(cover.input_labels().len(), 3);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
-        assert_eq!(cover.input_labels()[2].as_ref(), "x2");
+        assert_eq!(cover.input_labels()[2].as_ref(), "x2"); // Auto-generated
+
+        // Output labels should also be extended
+        assert_eq!(cover.output_labels().len(), 2);
         assert_eq!(cover.output_labels()[0].as_ref(), "result");
-        assert_eq!(cover.output_labels()[1].as_ref(), "y1");
+        assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // Auto-generated
     }
 
     #[test]
@@ -1698,20 +1863,24 @@ mod tests {
     fn test_dynamic_naming_no_collision() {
         let mut cover = Cover::new(CoverType::F);
 
-        // Add cubes causing auto-generation of x0, x1, x2
+        // Add cubes - no labels are auto-generated
         cover.add_cube(&[Some(true), Some(false), None], &[Some(true)]);
+        assert_eq!(cover.num_inputs(), 3);
+        assert_eq!(cover.input_labels().len(), 0); // No labels yet
 
-        // Now add expression with variable "x1" - should not collide
+        // Now add expression with variables "x1" and "other"
+        // This backfills x0, x1, x2 for existing dimensions, then x1 matches existing x1
         let x1 = crate::BoolExpr::variable("x1");
         let other = crate::BoolExpr::variable("other");
 
         cover.add_expr(x1.and(&other), "y1").unwrap();
 
-        // Should have 4 inputs: x0, x1 (from cube), x1 (from expr - same), other
-        // Actually x1 should match, so only 4 total
+        // Should have 4 inputs: 3 from cube (x0, x1, x2) + 1 new (other)
+        // x1 from expression matches the backfilled x1
         assert_eq!(cover.num_inputs(), 4);
 
-        // x1 should match the existing position 1
+        // All 4 should have labels: x0, x1, x2 (backfilled), other (from expression)
+        assert_eq!(cover.input_labels().len(), 4);
         assert_eq!(cover.input_labels()[0].as_ref(), "x0");
         assert_eq!(cover.input_labels()[1].as_ref(), "x1");
         assert_eq!(cover.input_labels()[2].as_ref(), "x2");

@@ -619,3 +619,149 @@ fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> 
 
     Ok(())
 }
+
+#[test]
+fn test_cover_without_labels_to_expr() {
+    // Test the edge case: Create a cover without explicit labels,
+    // add cubes manually, and convert back to expressions.
+    // Labels should NOT be generated until needed, and expressions should use default names.
+
+    let mut cover = Cover::new(CoverType::F);
+
+    // Verify cover starts empty with no labels
+    assert_eq!(cover.num_inputs(), 0);
+    assert_eq!(cover.num_outputs(), 0);
+    assert_eq!(cover.input_labels().len(), 0);
+    assert_eq!(cover.output_labels().len(), 0);
+
+    // Add cubes manually (not via add_expr) - labels should NOT be auto-generated
+    // Represent: x0 * x1 + ~x0 * ~x1 (XOR pattern for output y0)
+    cover.add_cube(&[Some(true), Some(true)], &[Some(true)]); // x0 * x1 -> y0
+    cover.add_cube(&[Some(false), Some(false)], &[Some(true)]); // ~x0 * ~x1 -> y0
+
+    // Verify dimensions grew but labels were NOT auto-generated
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+    assert_eq!(cover.input_labels().len(), 0); // No labels yet!
+    assert_eq!(cover.output_labels().len(), 0); // No labels yet!
+
+    // Convert to expression using index (can't use name since there are no labels)
+    let expr = cover.to_expr_by_index(0).unwrap();
+    let expr_str = format!("{}", expr);
+
+    // The expression should use default generated variable names (x0, x1)
+    assert!(expr_str.contains("x0"));
+    assert!(expr_str.contains("x1"));
+
+    // Verify the variables in the expression
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 2);
+    let var_names: Vec<&str> = vars.iter().map(|v| v.as_ref()).collect();
+    assert!(var_names.contains(&"x0"));
+    assert!(var_names.contains(&"x1"));
+
+    // The labels in the cover should still be empty even after conversion
+    assert_eq!(cover.input_labels().len(), 0);
+    assert_eq!(cover.output_labels().len(), 0);
+
+    // Try to get out-of-bounds output by index - should fail
+    let result = cover.to_expr_by_index(1);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cover_without_labels_multiple_outputs() {
+    // Test with multiple outputs, labels should NOT be generated automatically
+    let mut cover = Cover::new(CoverType::F);
+
+    // Add cubes with 2 inputs and 2 outputs
+    // Output 0: x0 * x1
+    cover.add_cube(&[Some(true), Some(true)], &[Some(true), None]);
+    // Output 1: ~x0
+    cover.add_cube(&[Some(false), None], &[None, Some(true)]);
+
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 2);
+    assert_eq!(cover.num_cubes(), 2);
+
+    // Labels should NOT be auto-generated
+    assert_eq!(cover.output_labels().len(), 0);
+    assert_eq!(cover.input_labels().len(), 0);
+
+    // Get expression for first output by index
+    let expr0 = cover.to_expr_by_index(0).unwrap();
+    let expr0_str = format!("{}", expr0);
+    assert!(expr0_str.contains("x0"));
+    assert!(expr0_str.contains("x1"));
+
+    // Get expression for second output by index
+    let expr1 = cover.to_expr_by_index(1).unwrap();
+    let expr1_str = format!("{}", expr1);
+    assert!(expr1_str.contains("x0"));
+
+    // Test iterator over all expressions - should generate default names
+    let exprs: Vec<(Arc<str>, BoolExpr)> = cover.to_exprs().collect();
+    assert_eq!(exprs.len(), 2);
+    assert_eq!(exprs[0].0.as_ref(), "y0"); // Generated on-the-fly
+    assert_eq!(exprs[1].0.as_ref(), "y1"); // Generated on-the-fly
+
+    // Labels in the cover should still be empty
+    assert_eq!(cover.output_labels().len(), 0);
+}
+
+#[test]
+fn test_cover_without_labels_minimize_and_convert() -> Result<(), Box<dyn std::error::Error>> {
+    // Test minimization without labels, then convert to expressions
+    let mut cover = Cover::new(CoverType::F);
+
+    // Add redundant cubes: x0*x1 + x0*x1*x2 should minimize to x0*x1
+    cover.add_cube(&[Some(true), Some(true), None], &[Some(true)]);
+    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);
+
+    assert_eq!(cover.num_cubes(), 2);
+
+    // Labels should not exist yet
+    assert_eq!(cover.input_labels().len(), 0);
+    assert_eq!(cover.output_labels().len(), 0);
+
+    // Minimize
+    cover.minimize()?;
+
+    // Should reduce to 1 cube
+    assert_eq!(cover.num_cubes(), 1);
+
+    // Labels should still not exist after minimization
+    assert_eq!(cover.input_labels().len(), 0);
+    assert_eq!(cover.output_labels().len(), 0);
+
+    // Convert to expression by index - should use default generated names
+    let expr = cover.to_expr_by_index(0)?;
+    let vars = expr.collect_variables();
+
+    // Should only have x0 and x1 after minimization (x2 becomes don't care)
+    assert_eq!(vars.len(), 2);
+    let var_names: Vec<&str> = vars.iter().map(|v| v.as_ref()).collect();
+    assert!(var_names.contains(&"x0"));
+    assert!(var_names.contains(&"x1"));
+
+    // Labels in the cover should still be empty even after expression conversion
+    assert_eq!(cover.input_labels().len(), 0);
+    assert_eq!(cover.output_labels().len(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn test_cover_empty_to_expr() {
+    // Edge case: Cover with dimensions but no cubes
+    let cover = Cover::with_labels(CoverType::F, &["a", "b"], &["out"]);
+
+    // Try to get expression for output with no cubes - should return constant false
+    let expr = cover.to_expr("out").unwrap();
+    let expr_str = format!("{}", expr);
+    assert_eq!(expr_str, "0");
+
+    // Verify it's actually a constant false
+    let vars = expr.collect_variables();
+    assert_eq!(vars.len(), 0);
+}

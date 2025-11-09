@@ -570,17 +570,9 @@ impl<T: PLASerialisable> PLAReader for T {
             }
         }
 
-        // Generate default labels if not provided
-        let input_labels = input_labels.unwrap_or_else(|| {
-            (0..num_inputs)
-                .map(|i| Arc::from(format!("x{}", i).as_str()))
-                .collect()
-        });
-        let output_labels = output_labels.unwrap_or_else(|| {
-            (0..num_outputs)
-                .map(|i| Arc::from(format!("y{}", i).as_str()))
-                .collect()
-        });
+        // Don't generate default labels - let the cover remain unlabeled if no labels were in the file
+        let input_labels = input_labels.unwrap_or_default();
+        let output_labels = output_labels.unwrap_or_default();
 
         // Construct the type using the trait method
         Ok(T::create_from_pla_parts(
