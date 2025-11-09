@@ -13,6 +13,7 @@ Espresso takes Boolean functions in sum-of-products form and produces minimal or
 
 - **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
 - **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
+- **Both Algorithms** - Exposes both heuristic and exact minimization algorithms from Espresso
 - **PLA File Support** - Read and write Berkeley PLA format
 - **Two API Levels** - High-level for ease of use, low-level for maximum control
 - **Well Documented** - Comprehensive API docs and examples

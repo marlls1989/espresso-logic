@@ -7,47 +7,6 @@ use espresso_logic::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
-// Basic cover creation tests
-
-#[test]
-fn test_cover_new() {
-    // Test that new covers are empty and functional
-    let cover = Cover::new(CoverType::F);
-    assert_eq!(cover.num_cubes(), 0, "New cover should start with 0 cubes");
-
-    // Test with different dimensions
-    let cover3x1 = Cover::new(CoverType::F);
-    assert_eq!(
-        cover3x1.num_cubes(),
-        0,
-        "New 3x1 cover should start with 0 cubes"
-    );
-
-    let cover2x2 = Cover::new(CoverType::F);
-    assert_eq!(
-        cover2x2.num_cubes(),
-        0,
-        "New 2x2 cover should start with 0 cubes"
-    );
-
-    // Verify they can be dropped without issues
-    drop(cover);
-    drop(cover3x1);
-    drop(cover2x2);
-}
-
-#[test]
-fn test_cover_builder() {
-    // Create cover
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-
-    // Minimize
-    cover.minimize().unwrap();
-    assert!(cover.num_cubes() > 0);
-}
-
 // PLA file I/O tests
 
 #[test]

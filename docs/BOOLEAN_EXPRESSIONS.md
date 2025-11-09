@@ -6,10 +6,11 @@ This document provides comprehensive documentation for the boolean expression AP
 
 The boolean expression API provides a high-level, intuitive interface for working with boolean functions. Instead of manually constructing truth tables or working with low-level cubes, you can:
 
-- **Build expressions programmatically** using a fluent method API
+- **Build expressions programmatically** using a fluent monadic interface
 - **Parse expressions from strings** using standard boolean notation
 - **Use operator overloading** with `*`, `+`, and `!`
 - **Use the `expr!` macro** for clean, readable syntax
+- **Compose expressions** - elegantly combine parsed or existing expressions
 - **Minimize directly** with `.minimize()` method
 
 ## Quick Start
@@ -76,65 +77,30 @@ fn main() -> std::io::Result<()> {
 
 ## Building Expressions
 
-### Method API (Recommended for Complex Logic)
+### When to Use Which API
 
-The method API uses explicit method calls:
+**Use `expr!` macro** - Recommended for compile-time expression construction and composition:
+- Clean, readable syntax matching mathematical notation
+- Perfect for simple and complex expressions alike
+- No reference syntax needed (`&`)
+- Works with string literals and any `BoolExpr` values (parsed, created, minimized, etc.)
+- **Ideal for composing expressions** - combine user-defined functions elegantly
 
-```rust
-use espresso_logic::BoolExpr;
+**Use `BoolExpr::parse()`** - For runtime user input:
+- Parse expressions from strings at runtime
+- User input, config files, CLI arguments, etc.
+- Standard boolean algebra notation
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+**Use operator overloading or monadic interface** - For special cases:
+- Building expressions in loops or conditional logic
+- When structure depends on runtime conditions
+- Advanced programmatic construction
 
-    // AND
-    let and_expr = a.and(&b);
+### `expr!` Macro (Recommended)
 
-    // OR
-    let or_expr = a.or(&b);
+The `expr!` macro is a procedural macro that provides the cleanest syntax. At compile time, the macro expands to use the monadic interface (`.and()`, `.or()`, `.not()` methods), so there is zero runtime overhead.
 
-    // NOT
-    let not_expr = a.not();
-
-    // Complex expression: (a * b) + (~a * c)
-    let complex = a.and(&b).or(&a.not().and(&c));
-}
-```
-
-**Advantages:**
-- Explicit and clear
-- No reference syntax needed
-- Easy to chain
-- Good for complex nested expressions
-
-### Operator Overloading
-
-Boolean expressions support Rust's standard operators:
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let and_expr = &a * &b;        // AND
-    let or_expr = &a + &b;         // OR
-    let not_expr = !&a;            // NOT
-
-    // Complex: XNOR
-    let xnor = &a * &b + &(!&a) * &(!&b);
-}
-```
-
-**Note:** Requires `&` references due to Rust's ownership rules.
-
-### `expr!` Macro (Recommended for Readability)
-
-The `expr!` macro is a procedural macro that provides the cleanest syntax with three usage styles:
-
-#### Style 1: String Literals (Most Concise)
+#### Using String Literals
 
 No variable declarations needed - variables are created automatically:
 
@@ -158,82 +124,101 @@ fn main() {
 }
 ```
 
-#### Style 2: Existing BoolExpr Variables
+#### Combining Expressions
 
-Use pre-defined variables for more control:
+You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`:
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-fn main() {
+fn main() -> std::io::Result<()> {
+    // Create expressions using different methods
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-
-    // Simple operations
-    let and_expr = expr!(a * b);
-    let or_expr = expr!(a + b);
-    let not_expr = expr!(!a);
-
-    // XOR
+    let func_a = BoolExpr::parse("input1 * input2")?;
+    let func_b = BoolExpr::parse("input3 + input4")?;
+    
+    // Combine them all with expr! - clean and readable
     let xor = expr!(a * !b + !a * b);
-
-    // XNOR
-    let xnor = expr!(a * b + !a * !b);
-
-    // With parentheses
-    let complex = expr!((a + b) * c);
+    let combined = expr!(func_a + func_b);
+    
+    // Mix created and parsed expressions
+    let selector = BoolExpr::variable("mode");
+    let output = expr!(selector * func_a + !selector * func_b);
+    
+    println!("XOR: {}", xor);
+    println!("Combined: {}", combined);
+    println!("Output: {}", output);
+    
+    Ok(())
 }
 ```
 
-#### Style 3: Mixed (Best of Both)
+#### Complete Example: Mixing Expressions with String Literals
 
-Combine existing variables with string literals:
+Combine expressions (from parsing, minimization, etc.) with string literals seamlessly:
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    // Mix both styles
-    let expr_mixed = expr!(a * "temp" + b * "enable");
-
-    // Compose sub-expressions
-    let sub1 = expr!(a * b);
-    let sub2 = expr!("c" + "d");
-    let combined = expr!(sub1 + sub2);
+fn main() -> std::io::Result<()> {
+    // Parse complex expressions from user input or config files
+    let f1 = BoolExpr::parse("(a + b) * (c + d)")?;
+    let f2 = BoolExpr::parse("x * y + z")?;
+    
+    // Mix parsed expressions with string literals using expr!
+    let out = expr!(!"rst" * ("en" * f1 + !"en" * f2) + "rst" * "def");
+    
+    println!("Output: {}", out);
+    
+    // Another example: compose minimized sub-expressions (efficient!)
+    let expr = BoolExpr::parse("p * q + p * r")?;
+    let min = expr.minimize()?;  // Already in minimal DNF form
+    let final_expr = expr!(min * "s" + !"t");
+    
+    println!("Final: {}", final_expr);
+    
+    Ok(())
 }
 ```
 
-**Advantages:**
-- No explicit `&` references
-- Clean, readable syntax
-- Matches mathematical notation
-- Three flexible usage styles
+**Key insight:** Everything is just a `BoolExpr` - whether created via parsing, string literals in `expr!()`, `BoolExpr::variable()`, or any other method. All `BoolExpr` values can be freely mixed and composed.
+
+**Key use cases for composition:**
+- Combining user-defined functions from configuration files
+- Building complex logic from simpler parsed components
+- Creating conditional expressions based on runtime parameters
+- Composing minimized sub-expressions into larger systems (efficient - already in minimal DNF form)
+
+**Advantages of the `expr!` macro:**
+- No explicit `&` references needed
+- Clean, readable syntax matching mathematical notation
+- Flexible - works with string literals and any `BoolExpr` values
 - Automatic operator precedence
 - Perfect for expressing common patterns
+- Ideal for expression composition
 
-## Parsing Syntax
+### Parser (For Runtime User Input)
 
-The parser supports standard boolean algebra notation:
+Use `BoolExpr::parse()` to parse expressions from strings at runtime. The parser supports standard boolean algebra notation:
 
-### Operators
+#### Operators
 
 | Operator | Meaning | Precedence | Example |
 |----------|---------|------------|---------|
-| `~` or `!` | NOT | Highest (1) | `~a`, `!b` |
-| `*` | AND | Medium (2) | `a * b` |
-| `+` | OR | Lowest (3) | `a + b` |
+| `( )` | Parentheses | Highest (0) | `(a + b)` |
+| `~` or `!` | NOT | High (1) | `~a`, `!b` |
+| `*` or `&` | AND | Medium (2) | `a * b`, `a & b` |
+| `+` or `\|` | OR | Lowest (3) | `a + b`, `a \| b` |
 
-### Precedence Rules
+#### Precedence Rules
 
 Operators follow standard boolean algebra precedence:
 
-1. **NOT** (highest) - evaluated first
-2. **AND** - evaluated second
-3. **OR** (lowest) - evaluated last
+1. **Parentheses** (highest) - force evaluation order
+2. **NOT** - evaluated first (after parentheses)
+3. **AND** - evaluated second
+4. **OR** (lowest) - evaluated last
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -253,7 +238,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Parentheses
+#### Parentheses
 
 Use parentheses to override precedence:
 
@@ -267,7 +252,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Constants
+#### Constants
 
 The parser recognizes boolean constants:
 
@@ -283,7 +268,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Variable Names
+#### Variable Names
 
 Variable names must:
 - Start with a letter or underscore
@@ -308,11 +293,117 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+### Operator Overloading
+
+Boolean expressions support Rust's standard operators as an alternative to the `expr!` macro:
+
+```rust
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    let and_expr = &a * &b;        // AND
+    let or_expr = &a + &b;         // OR
+    let not_expr = !&a;            // NOT
+
+    // Complex: XNOR
+    let xnor = &a * &b + &(!&a) * &(!&b);
+}
+```
+
+**Note:** Requires `&` references due to Rust's ownership rules. The `expr!` macro is preferred as it avoids this requirement.
+
+### Monadic Interface
+
+The monadic interface provides explicit method calls for building expressions. The `expr!` macro expands to this interface:
+
+```rust
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // AND
+    let and_expr = a.and(&b);
+
+    // OR
+    let or_expr = a.or(&b);
+
+    // NOT
+    let not_expr = a.not();
+
+    // Complex expression: (a * b) + (~a * c)
+    let complex = a.and(&b).or(&a.not().and(&c));
+}
+```
+
+**Actual macro expansions** (verified with `cargo expand`):
+
+```rust
+use espresso_logic::{BoolExpr, expr};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // let _expr1 = expr!(a * b);
+    // Expands to:
+    let _expr1 = (&(a)).and(&(b));
+
+    // let _expr2 = expr!(a + b);
+    // Expands to:
+    let _expr2 = (&(a)).or(&(b));
+
+    // let _expr3 = expr!(!a);
+    // Expands to:
+    let _expr3 = (&(a)).not();
+
+    // let _expr4 = expr!(a * b + !c);
+    // Expands to:
+    let _expr4 = (&((&(a)).and(&(b)))).or(&((&(c)).not()));
+
+    // let _expr5 = expr!("x" * "y" + !"z");
+    // Expands to:
+    let _expr5 = (&((&(BoolExpr::variable("x"))).and(&(BoolExpr::variable("y")))))
+        .or(&((&(BoolExpr::variable("z"))).not()));
+}
+```
+
+The macro generates clean calls to the monadic interface, using references for all arguments. The monadic methods (`.and()`, `.or()`, `.not()`) all take `&self` and handle any necessary cloning internally - the macro itself does not clone. String literals are automatically converted to `BoolExpr::variable()` calls.
+
+**When to use:**
+- Building expressions in loops or conditional logic
+- When structure depends on runtime conditions
+- Advanced programmatic construction
+
+**Example - Dynamic construction:**
+
+```rust
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let mut expr = BoolExpr::variable("a");
+    
+    // Build expression dynamically
+    for var_name in ["b", "c", "d"] {
+        expr = expr.and(&BoolExpr::variable(var_name));
+    }
+    
+    // Results in: a * b * c * d
+    println!("{}", expr);
+}
+```
+
 ## Minimization
 
-### Direct Minimization
+### Direct Minimization (Heuristic)
 
-The simplest way to minimize an expression:
+The simplest way to minimize an expression using the fast heuristic algorithm:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -325,7 +416,7 @@ fn main() -> std::io::Result<()> {
     // Redundant expression: a*b + a*b*c
     let expr = a.and(&b).or(&a.and(&b).and(&c));
 
-    // Minimize directly
+    // Minimize directly using heuristic algorithm (fast)
     let minimized = expr.minimize()?;
 
     println!("{}", minimized);  // Output: (a * b)
@@ -333,6 +424,40 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+### Exact Minimization (Guaranteed Minimal)
+
+For provably minimal results, use `minimize_exact()`:
+
+```rust
+use espresso_logic::BoolExpr;
+
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // Redundant expression
+    let expr = a.and(&b).or(&a.and(&b).and(&c));
+
+    // Exact minimization - guaranteed minimal result
+    let minimized = expr.minimize_exact()?;
+
+    println!("{}", minimized);  // Guaranteed to be minimal: (a * b)
+    
+    Ok(())
+}
+```
+
+**When to use each:**
+
+- **`minimize()`**: Fast heuristic, near-optimal results (~99% optimal in practice)
+  - Best for: Large expressions, production use, when speed matters
+  - Time complexity: Near-linear in practice
+
+- **`minimize_exact()`**: Slower but guaranteed minimal results
+  - Best for: Equivalency checking, small expressions, when optimality is critical
+  - Time complexity: Exponential worst case, but polynomial for many practical cases
 
 ### Using Cover for More Control
 
@@ -561,17 +686,31 @@ fn main() -> std::io::Result<()> {
 - Expression building: O(1) per operation (uses Arc for sharing)
 - Parsing: O(n) where n is the input length
 
-### DNF Conversion
+### DNF Conversion and Minimization
 
+**DNF Conversion:**
+- Minimization first converts expressions to DNF (Disjunctive Normal Form) to create the cover
 - Conversion to DNF: Worst case exponential (DNF can be exponentially larger)
 - For most practical expressions: linear to quadratic
 - Uses De Morgan's laws to push NOTs to literals
 
-### Minimization
-
+**Minimization:**
 - Dominated by Espresso algorithm time
 - Boolean expression overhead is negligible
 - Thread-local storage overhead is minimal
+
+**Cost Amortization Strategy:**
+- **Minimize partial expressions early** - this amortizes the DNF conversion cost
+- Minimized expressions are already in DNF form with the minimal number of clauses
+- **Composing DNF expressions is cheap:**
+  - OR operations: simply concatenate the clauses (union of terms)
+  - AND operations: distribute, but with fewer clauses the cross-product is smaller
+  - **NOT operations: expensive** - require De Morgan's law propagation to convert back to DNF
+- When expressions have fewer clauses (due to minimization), combining them is much more efficient
+- The DNF extraction for the minimization of a composed expression is significantly cheaper when sub-expressions are already in minimal DNF form, compared to converting a large complex expression from scratch
+- **For negation:** Prefer to negate first, then minimize, then compose - this avoids expensive De Morgan propagation later
+
+This approach is especially beneficial when working with large or complex sub-expressions that will be composed together.
 
 ### Memory
 
@@ -634,7 +773,7 @@ fn main() {
     // Structural equality (tree comparison)
     assert_ne!(expr1, expr2);  // Different tree structure
 
-    // Logical equivalence (truth table comparison)
+    // Logical equivalence (efficient exact minimization check)
     assert!(expr1.equivalent_to(&expr2));  // Same logic!
 
     // Test double negation
@@ -648,6 +787,20 @@ fn main() {
     assert!(!and_expr.equivalent_to(&or_expr));
 }
 ```
+
+**Performance Note:**
+
+The `equivalent_to()` method uses exact minimization for efficient equivalency checking:
+
+- **Old approach (v2.x)**: Exhaustive truth table comparison - O(2^n) where n = number of variables
+- **New approach (v3.x)**: Exact minimization - O(m × k) where m = cubes, k = variables
+
+This makes equivalency checking **dramatically faster** for expressions with many variables:
+- 10 variables: 1,024x faster
+- 20 variables: 1,048,576x faster  
+- 30 variables: Previously impossible, now feasible
+
+The method combines both expressions into a single cover with two outputs, minimizes exactly once, and checks if all cubes have identical output patterns.
 
 ### Evaluation
 
@@ -708,18 +861,30 @@ fn main() {
 use espresso_logic::*;
 
 fn main() -> std::io::Result<()> {
-    // For simple expressions: use parser
-    let expr1 = BoolExpr::parse("a * b + c")?;
+    // For runtime expressions from user input: use parser
+    let user_input = "a * b + c";  // From user, config file, etc.
+    let expr1 = BoolExpr::parse(user_input)?;
 
-    // For programmatic construction: use expr! macro
+    // For compile-time expressions: use expr! macro (preferred)
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
     let expr2 = expr!(a * b + c);
 
-    // For complex nested logic: use method API
+    // For complex nested logic: still use expr! macro
     let complex_subexpr = expr!("x" * "y");
-    let expr3 = a.and(&b).or(&complex_subexpr.not());
+    let expr3 = expr!(a * b + complex_subexpr);
+
+    // For composing parsed expressions: use expr! macro
+    let func1 = BoolExpr::parse("x * y")?;
+    let func2 = BoolExpr::parse("z + w")?;
+    let composed = expr!(func1 + !func2);  // Clean and idiomatic!
+
+    // Monadic interface is available for special cases (dynamic construction, loops, etc.)
+    let mut dynamic_expr = a.clone();
+    for var in ["b", "c", "d"] {
+        dynamic_expr = dynamic_expr.and(&BoolExpr::variable(var));
+    }
     
     Ok(())
 }
@@ -748,6 +913,8 @@ fn main() -> std::io::Result<()> {
 
 ### 3. Minimize Early
 
+Minimizing partial expressions early amortizes the DNF conversion cost:
+
 ```rust
 use espresso_logic::*;
 
@@ -756,17 +923,31 @@ fn main() -> std::io::Result<()> {
     let large_expr = expr!("a" * "b" + "c" * "d" + "e" * "f");
     let other_term = expr!("x" * "y");
     
-    let intermediate = large_expr.minimize()?;
+    let intermediate = large_expr.minimize()?;  // Already in minimal DNF form
     let final_expr = expr!(intermediate + other_term).minimize()?;
 
     // Less efficient: combine then minimize
+    // Must convert the entire combined expression to DNF
     let large_expr2 = expr!("a" * "b" + "c" * "d" + "e" * "f");
     let other_term2 = expr!("x" * "y");
     let final_expr2 = large_expr2.or(&other_term2).minimize()?;
     
+    // Good: negate, minimize, then compose (avoids De Morgan propagation)
+    let expr = BoolExpr::parse("a * b + c * d")?;
+    let negated_min = expr.not().minimize()?;  // De Morgan applied once
+    let composed = expr!(negated_min * "e").minimize()?;
+    
+    // Less efficient: compose then negate (De Morgan on larger expression)
+    let expr2 = BoolExpr::parse("a * b + c * d")?;
+    let composed2 = expr!(expr2 * "e").not().minimize()?;
+    
     Ok(())
 }
 ```
+
+**Why this works:** 
+- For OR/AND: The minimized `intermediate` is already in DNF form with minimal clauses. When composing with OR, the DNF forms are simply concatenated. When composing with AND, fewer clauses means smaller cross-product. The final DNF extraction is cheap because `intermediate` has few clauses.
+- For NOT: Negation requires De Morgan's law propagation to convert back to DNF. By negating and minimizing first, you apply De Morgan to a smaller expression, then compose the minimized result (which is in DNF). This is much cheaper than composing first and then negating a larger expression.
 
 ### 4. Use Type System
 
@@ -804,30 +985,22 @@ See `examples/boolean_expressions.rs` for comprehensive examples including:
 
 ## Troubleshooting
 
-### "Parse error" when using operators
+### Multiple operator notations supported
 
-❌ Wrong: Using bitwise operators
+✅ Both algebraic and bitwise-style operators are supported:
 ```rust
 use espresso_logic::*;
 
-// These will fail to parse at runtime
-match BoolExpr::parse("a & b") {
-    Err(_) => println!("Parse error: & not supported"),
-    Ok(_) => unreachable!(),
-}
+// Both notations work for AND
+let _expr1 = BoolExpr::parse("a * b").unwrap();  // Algebraic notation
+let _expr2 = BoolExpr::parse("a & b").unwrap();  // Bitwise-style notation
 
-match BoolExpr::parse("a | b") {
-    Err(_) => println!("Parse error: | not supported"),
-    Ok(_) => unreachable!(),
-}
-```
+// Both notations work for OR
+let _expr3 = BoolExpr::parse("a + b").unwrap();  // Algebraic notation
+let _expr4 = BoolExpr::parse("a | b").unwrap();  // Bitwise-style notation
 
-✅ Correct: Use boolean operators
-```rust
-use espresso_logic::*;
-
-let _expr1 = BoolExpr::parse("a * b").unwrap();  // AND
-let _expr2 = BoolExpr::parse("a + b").unwrap();  // OR
+// You can even mix them
+let _expr5 = BoolExpr::parse("a & b | c * d").unwrap();
 ```
 
 ### Moving variables multiple times

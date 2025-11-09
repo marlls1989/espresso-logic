@@ -1,6 +1,6 @@
 // Boolean expression grammar for lalrpop
 // Supports standard boolean operators with proper precedence:
-// NOT (~, !) > AND (*) > OR (+)
+// Parentheses () > NOT (~, !) > AND (*, &) > OR (+, |)
 
 use crate::expression::BoolExpr;
 
@@ -11,15 +11,17 @@ pub Expr: BoolExpr = {
     OrExpr,
 };
 
-// OR has lowest precedence
+// OR has lowest precedence (supports both + and |)
 OrExpr: BoolExpr = {
     <l:OrExpr> "+" <r:AndExpr> => l.or(&r),
+    <l:OrExpr> "|" <r:AndExpr> => l.or(&r),
     AndExpr,
 };
 
-// AND has middle precedence
+// AND has middle precedence (supports both * and &)
 AndExpr: BoolExpr = {
     <l:AndExpr> "*" <r:NotExpr> => l.and(&r),
+    <l:AndExpr> "&" <r:NotExpr> => l.and(&r),
     NotExpr,
 };
 
@@ -50,9 +52,29 @@ Term: BoolExpr = {
 // Match identifiers (variable names)
 // Standard Rust identifier: starts with letter or underscore, 
 // followed by letters, digits, or underscores
+// Note: Operators must be listed explicitly before identifiers to avoid
+// being treated as special regex characters
 match {
+    // Operators (must come before identifiers)
+    "&",
+    "|",
+    "*",
+    "+",
+    "~",
+    "!",
+    "(",
+    ")",
+    
+    // Keywords/constants
+    "true",
+    "false",
+    "0",
+    "1",
+    
+    // Identifiers (matches variable names)
     r"[a-zA-Z_][a-zA-Z0-9_]*" => Ident,
-    r"\s+" => { }, // Skip whitespace
-    _
+    
+    // Skip whitespace
+    r"\s+" => { },
 }
 

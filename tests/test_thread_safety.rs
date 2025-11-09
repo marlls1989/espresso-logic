@@ -10,7 +10,7 @@ use std::time::Duration;
 
 #[test]
 fn test_basic_thread_safety() {
-    // Create a cover and add cubes
+    // Create a cover and add cubes (XOR pattern)
     let mut cover = Cover::new(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
@@ -18,8 +18,12 @@ fn test_basic_thread_safety() {
     // Minimize using thread-safe C library
     cover.minimize().expect("Minimization failed");
 
-    // Verify result
-    assert!(cover.num_cubes() > 0, "Result should have cubes");
+    // Verify XOR pattern cannot be minimized - should remain 2 cubes
+    assert_eq!(
+        cover.num_cubes(),
+        2,
+        "XOR pattern should have exactly 2 cubes"
+    );
 }
 
 #[test]
@@ -48,10 +52,10 @@ fn test_concurrent_execution() {
         .map(|h| h.join().expect("Thread panicked"))
         .collect();
 
-    // All should succeed
+    // All should succeed with XOR pattern (cannot be minimized)
     assert_eq!(results.len(), 4);
     for num_cubes in results {
-        assert!(num_cubes > 0);
+        assert_eq!(num_cubes, 2, "XOR pattern should have exactly 2 cubes");
     }
 }
 
@@ -143,7 +147,8 @@ fn test_stress_concurrent() {
 
                     match cover.minimize() {
                         Ok(_) => {
-                            assert!(cover.num_cubes() > 0);
+                            // XOR pattern should have exactly 2 cubes (cannot be minimized)
+                            assert_eq!(cover.num_cubes(), 2);
                         }
                         Err(e) => {
                             eprintln!("Thread {}-{} failed: {}", i, j, e);

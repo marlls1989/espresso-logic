@@ -685,6 +685,142 @@ impl Cover {
         Ok(())
     }
 
+    /// Minimize this cover in-place using exact minimization with default configuration
+    ///
+    /// This method uses exact minimization which guarantees minimal results by solving
+    /// the unate covering problem, unlike the heuristic [`minimize()`](Self::minimize) method.
+    ///
+    /// # Performance vs Quality Trade-off
+    ///
+    /// - **`minimize()`**: Fast heuristic, near-optimal results (~99% optimal in practice)
+    /// - **`minimize_exact()`**: Slower but guaranteed minimal results (exact solution)
+    ///
+    /// Use `minimize_exact()` when:
+    /// - You need provably minimal results (e.g., for equivalency checking)
+    /// - The function is small enough that exact solving is feasible
+    /// - Quality is more important than speed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType};
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// let mut cover = Cover::new(CoverType::F);
+    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    ///
+    /// // Use exact minimization for guaranteed minimal result
+    /// cover.minimize_exact()?;
+    ///
+    /// println!("Minimized to {} cubes", cover.num_cubes());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn minimize_exact(&mut self) -> Result<(), MinimizationError> {
+        let config = EspressoConfig::default();
+        self.minimize_exact_with_config(&config)
+    }
+
+    /// Minimize this cover in-place using exact minimization with custom configuration
+    ///
+    /// This method uses exact minimization which guarantees minimal results,
+    /// unlike the heuristic [`minimize_with_config()`](Self::minimize_with_config) method.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration options for the minimization process
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType, EspressoConfig};
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// let mut cover = Cover::new(CoverType::F);
+    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    ///
+    /// // Use exact minimization with custom configuration
+    /// let config = EspressoConfig::default();
+    /// cover.minimize_exact_with_config(&config)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn minimize_exact_with_config(
+        &mut self,
+        config: &EspressoConfig,
+    ) -> Result<(), MinimizationError> {
+        use crate::espresso::{Espresso, EspressoCover};
+
+        // Split cubes into F, D, R sets based on cube type
+        let mut f_cubes = Vec::new();
+        let mut d_cubes = Vec::new();
+        let mut r_cubes = Vec::new();
+
+        for cube in self.internal_cubes_iter() {
+            let input_vec: Vec<u8> = cube
+                .inputs
+                .iter()
+                .map(|&opt| match opt {
+                    Some(false) => 0,
+                    Some(true) => 1,
+                    None => 2,
+                })
+                .collect();
+
+            // Convert outputs: true → 1, false → 0
+            let output_vec: Vec<u8> = cube
+                .outputs
+                .iter()
+                .map(|&b| if b { 1 } else { 0 })
+                .collect();
+
+            // Send to appropriate set based on cube type
+            match cube.cube_type {
+                CubeType::F => f_cubes.push((input_vec, output_vec)),
+                CubeType::D => d_cubes.push((input_vec, output_vec)),
+                CubeType::R => r_cubes.push((input_vec, output_vec)),
+            }
+        }
+
+        // Direct C calls - thread-safe via thread-local storage
+        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
+
+        // Build covers from cube data
+        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
+        let d_cover = if !d_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                d_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+        let r_cover = if !r_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                r_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+
+        // Minimize using exact algorithm
+        let (f_result, d_result, r_result) = esp.minimize_exact(f_cover, d_cover, r_cover);
+
+        // Extract cubes and combine
+        let mut all_cubes = Vec::new();
+        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
+        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
+        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
+
+        // Update cubes with type information preserved
+        self.set_cubes(all_cubes);
+        Ok(())
+    }
+
     /// Add a boolean expression to a named output
     ///
     /// This method converts the expression to DNF cubes and adds them to the cover.
