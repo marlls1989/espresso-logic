@@ -148,7 +148,7 @@ The Rust CLI aims to be compatible with the original C version:
 
 For more control, use the Rust API directly:
 
-```rust
+```rust,no_run
 use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {

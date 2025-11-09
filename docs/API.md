@@ -31,7 +31,7 @@ pub struct BoolExpr
   let f = BoolExpr::constant(false);
   ```
 
-- `pub fn parse(input: &str) -> Result<Self, String>`
+- `pub fn parse(input: &str) -> Result<Self, ParseBoolExprError>`
   
   Parses a boolean expression from a string.
   
@@ -74,7 +74,7 @@ pub struct BoolExpr
   let result = a.not();
   ```
 
-- `pub fn minimize(self) -> std::io::Result<BoolExpr>`
+- `pub fn minimize(self) -> Result<BoolExpr, MinimizationError>`
   
   Minimizes this boolean expression using Espresso.
   
@@ -164,7 +164,7 @@ pub struct Cover
   let cover = Cover::with_labels(CoverType::F, &["a", "b", "c"], &["out"]);
   ```
 
-- `pub fn from_pla_file<P: AsRef<Path>>(path: P) -> io::Result<Self>`
+- `pub fn from_pla_file<P: AsRef<Path>>(path: P) -> Result<Self, PLAReadError>`
   
   Loads a cover from a PLA file.
   
@@ -172,7 +172,7 @@ pub struct Cover
   let cover = Cover::from_pla_file("input.pla")?;
   ```
 
-- `pub fn from_pla_reader<R: BufRead>(reader: R) -> io::Result<Self>`
+- `pub fn from_pla_reader<R: BufRead>(reader: R) -> Result<Self, PLAReadError>`
   
   Loads a cover from any `BufRead` implementation.
   
@@ -182,7 +182,7 @@ pub struct Cover
   let cover = Cover::from_pla_reader(reader)?;
   ```
 
-- `pub fn from_pla_string(s: &str) -> io::Result<Self>`
+- `pub fn from_pla_string(s: &str) -> Result<Self, PLAReadError>`
   
   Loads a cover from a PLA format string.
   
@@ -203,7 +203,7 @@ pub struct Cover
   // Dimensions automatically set to 2 inputs, 1 output
   ```
 
-- `pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), EspressoError>`
+- `pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), AddExprError>`
   
   Adds a boolean expression to a named output. Variables are matched by name,
   new variables are appended. Returns error if output name already exists.
@@ -239,11 +239,11 @@ pub struct Cover
 
 #### Minimization
 
-- `pub fn minimize(&mut self) -> io::Result<()>`
+- `pub fn minimize(&mut self) -> Result<(), MinimizationError>`
   
   Minimizes this cover using Espresso with default configuration.
 
-- `pub fn minimize_with_config(&mut self, config: &EspressoConfig) -> io::Result<()>`
+- `pub fn minimize_with_config(&mut self, config: &EspressoConfig) -> Result<(), MinimizationError>`
   
   Minimizes with custom configuration.
 
@@ -259,7 +259,7 @@ pub struct Cover
   }
   ```
 
-- `pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, EspressoError>`
+- `pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError>`
   
   Converts a specific named output to an expression.
   
@@ -267,7 +267,7 @@ pub struct Cover
   let expr = cover.to_expr("result")?;
   ```
 
-- `pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, EspressoError>`
+- `pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, ToExprError>`
   
   Converts a specific output by index.
   
@@ -309,9 +309,39 @@ for (name, expr) in cover.to_exprs() {
 
 ## PLA Serialization
 
+### PLAReader and PLAWriter Traits
+
+**Important:** `PLAReader` and `PLAWriter` are **traits**, not structs. They are implemented by the `Cover` type to provide PLA file I/O capabilities.
+
+#### PLAWriter Trait
+
+The `PLAWriter` trait provides methods for writing covers to PLA format. It is implemented by `Cover`:
+
+```rust
+pub trait PLAWriter {
+    fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> Result<(), PLAWriteError>;
+    fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: CoverType) -> Result<(), PLAWriteError>;
+    fn to_pla_string(&self, pla_type: CoverType) -> Result<String, PLAWriteError>;
+}
+```
+
+#### PLAReader Trait
+
+The `PLAReader` trait provides methods for reading covers from PLA format. It is also implemented by `Cover`:
+
+```rust
+pub trait PLAReader: Sized {
+    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError>;
+    fn from_pla_file<P: AsRef<Path>>(path: P) -> Result<Self, PLAReadError>;
+    fn from_pla_string(s: &str) -> Result<Self, PLAReadError>;
+}
+```
+
+### Using PLAWriter Methods
+
 All Cover instances can be serialized to PLA format using the `PLAWriter` trait methods:
 
-- `pub fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> io::Result<()>`
+- `pub fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType) -> Result<(), PLAWriteError>`
   
   Writes cover to PLA format using any `Write` implementation.
   
@@ -321,7 +351,7 @@ All Cover instances can be serialized to PLA format using the `PLAWriter` trait 
   cover.write_pla(&mut buffer, CoverType::F)?;
   ```
 
-- `pub fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: CoverType) -> io::Result<()>`
+- `pub fn to_pla_file<P: AsRef<Path>>(&self, path: P, pla_type: CoverType) -> Result<(), PLAWriteError>`
   
   Writes cover to a PLA file.
   
@@ -329,7 +359,7 @@ All Cover instances can be serialized to PLA format using the `PLAWriter` trait 
   cover.to_pla_file("output.pla", CoverType::F)?;
   ```
 
-- `pub fn to_pla_string(&self, pla_type: CoverType) -> io::Result<String>`
+- `pub fn to_pla_string(&self, pla_type: CoverType) -> Result<String, PLAWriteError>`
   
   Converts cover to a PLA format string.
   
@@ -414,7 +444,7 @@ pub struct Espresso {
   let esp = Espresso::new(2, 1, &config);
   ```
 
-- `pub fn try_new(num_inputs: usize, num_outputs: usize, config: Option<&EspressoConfig>) -> Result<Rc<Self>, String>`
+- `pub fn try_new(num_inputs: usize, num_outputs: usize, config: Option<&EspressoConfig>) -> Result<Self, MinimizationError>`
   
   Fallible version of `new()` that returns an error instead of panicking.
   
@@ -478,7 +508,7 @@ pub struct EspressoCover {
 
 #### Construction Methods
 
-- `pub fn from_cubes(cubes: Vec<(Vec<u8>, Vec<u8>)>, num_inputs: usize, num_outputs: usize) -> Result<Self, String>`
+- `pub fn from_cubes(cubes: Vec<(Vec<u8>, Vec<u8>)>, num_inputs: usize, num_outputs: usize) -> Result<Self, MinimizationError>`
   
   Creates a cover from a vector of cubes.
   
@@ -593,9 +623,9 @@ Each thread gets independent state:
 use espresso_logic::espresso::{EspressoCover, CubeType};
 use std::thread;
 
-fn main() -> Result<(), String> {
+fn main() -> std::io::Result<()> {
     let handles: Vec<_> = (0..4).map(|_| {
-        thread::spawn(|| -> Result<usize, String> {
+        thread::spawn(|| -> std::io::Result<usize> {
             // Each thread automatically gets its own Espresso instance
             let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
             let f = EspressoCover::from_cubes(cubes, 2, 1)?;

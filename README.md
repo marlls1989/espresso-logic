@@ -149,17 +149,69 @@ fn main() -> std::io::Result<()> {
 
 ## 🎯 API Overview
 
+This crate provides **two API levels** to suit different needs:
+
 ### High-Level API (Recommended)
+
 Use `BoolExpr` and `Cover` for most applications:
-- ✅ Thread-safe by design
-- ✅ Automatic memory management
-- ✅ Clean syntax with `expr!` macro
-- ✅ Dynamic sizing
 
-### Low-Level API
-Direct `Espresso` and `EspressoCover` access for maximum performance and fine-grained control.
+- ✅ **Thread-safe by design** - No manual synchronization needed
+- ✅ **Automatic memory management** - RAII handles cleanup
+- ✅ **Clean syntax** - `expr!` macro and operator overloading
+- ✅ **Dynamic dimensions** - Automatic dimension management
+- ✅ **Easy to use** - Idiomatic Rust API
 
-See [docs/API.md](docs/API.md) for complete API documentation.
+**Perfect for:**
+- Application development
+- Logic synthesis tools
+- Educational projects
+- Rapid prototyping
+
+### Low-Level API (Advanced)
+
+Direct `espresso::Espresso` and `espresso::EspressoCover` access for specialized needs:
+
+- 📊 **Access to intermediate covers** - Get ON-set (F), don't-care (D), OFF-set (R) separately
+- 🎯 **Custom don't-care/off-sets** - Provide your own D and R covers for optimization
+- ⚡ **Maximum performance** - ~5-10% faster than high-level API, minimal overhead
+- 🔧 **Explicit instance control** - Manually manage Espresso instance lifecycle
+
+**Use when you need:**
+- Access to all three covers (F, D, R) from minimization
+- To provide custom don't-care or off-set covers
+- Absolute maximum performance (5-10% speedup)
+- Explicit control over instance creation/destruction
+
+**Note:** Algorithm configuration via `EspressoConfig` works with **both** APIs - 
+if you only need to tune algorithm parameters, use the high-level 
+`Cover::minimize_with_config()` instead.
+
+**⚠️ Important Constraints:**
+- All covers on a thread must use the **same dimensions** until dropped
+- Requires manual dimension management
+- More complex error handling
+
+```rust
+use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+use espresso_logic::EspressoConfig;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Custom configuration
+    let mut config = EspressoConfig::default();
+    config.single_expand = true;
+    let _esp = Espresso::new(2, 1, &config);
+    
+    // Create and minimize
+    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
+    let cover = EspressoCover::from_cubes(cubes, 2, 1)?;
+    let (f, d, r) = cover.minimize(None, None);
+    
+    println!("Minimized to {} cubes", f.to_cubes(2, 1, CubeType::F).len());
+    Ok(())
+}
+```
+
+See [docs/API.md](docs/API.md) for complete API documentation and the `espresso` module documentation for detailed safety guidelines.
 
 ## 🛠️ Command Line Usage
 

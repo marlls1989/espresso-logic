@@ -17,16 +17,20 @@ The boolean expression API provides a high-level, intuitive interface for workin
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-// Create variables
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+fn main() -> std::io::Result<()> {
+    // Create variables
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-// Build expression with clean syntax
-let xor = expr!(a * !b + !a * b);
+    // Build expression with clean syntax
+    let xor = expr!(a * !b + !a * b);
 
-// Minimize
-let minimized = xor.minimize()?;
-println!("{}", minimized);
+    // Minimize
+    let minimized = xor.minimize()?;
+    println!("{}", minimized);
+    
+    Ok(())
+}
 ```
 
 ## Creating Boolean Expressions
@@ -34,9 +38,13 @@ println!("{}", minimized);
 ### Method 1: Variable Creation
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+}
 ```
 
 Variable names can be:
@@ -47,14 +55,23 @@ Variable names can be:
 ### Method 2: Constants
 
 ```rust
-let t = BoolExpr::constant(true);
-let f = BoolExpr::constant(false);
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let t = BoolExpr::constant(true);
+    let f = BoolExpr::constant(false);
+}
 ```
 
 ### Method 3: Parsing Strings
 
 ```rust
-let expr = BoolExpr::parse("(a + b) * (c + d)")?;
+use espresso_logic::BoolExpr;
+
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("(a + b) * (c + d)")?;
+    Ok(())
+}
 ```
 
 ## Building Expressions
@@ -64,21 +81,25 @@ let expr = BoolExpr::parse("(a + b) * (c + d)")?;
 The method API uses explicit method calls:
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+use espresso_logic::BoolExpr;
 
-// AND
-let and_expr = a.and(&b);
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
 
-// OR
-let or_expr = a.or(&b);
+    // AND
+    let and_expr = a.and(&b);
 
-// NOT
-let not_expr = a.not();
+    // OR
+    let or_expr = a.or(&b);
 
-// Complex expression: (a * b) + (~a * c)
-let complex = a.and(&b).or(&a.not().and(&c));
+    // NOT
+    let not_expr = a.not();
+
+    // Complex expression: (a * b) + (~a * c)
+    let complex = a.and(&b).or(&a.not().and(&c));
+}
 ```
 
 **Advantages:**
@@ -92,15 +113,19 @@ let complex = a.and(&b).or(&a.not().and(&c));
 Boolean expressions support Rust's standard operators:
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+use espresso_logic::BoolExpr;
 
-let and_expr = &a * &b;        // AND
-let or_expr = &a + &b;         // OR
-let not_expr = !&a;            // NOT
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-// Complex: XNOR
-let xnor = &a * &b + &(!&a) * &(!&b);
+    let and_expr = &a * &b;        // AND
+    let or_expr = &a + &b;         // OR
+    let not_expr = !&a;            // NOT
+
+    // Complex: XNOR
+    let xnor = &a * &b + &(!&a) * &(!&b);
+}
 ```
 
 **Note:** Requires `&` references due to Rust's ownership rules.
@@ -114,21 +139,23 @@ The `expr!` macro is a procedural macro that provides the cleanest syntax with t
 No variable declarations needed - variables are created automatically:
 
 ```rust
-use espresso_logic::expr;
+use espresso_logic::{BoolExpr, expr};
 
-// Simple expressions
-let and_expr = expr!("a" * "b");
-let or_expr = expr!("a" + "b");
-let not_expr = expr!(!"a");
+fn main() {
+    // Simple expressions
+    let and_expr = expr!("a" * "b");
+    let or_expr = expr!("a" + "b");
+    let not_expr = expr!(!"a");
 
-// XOR - no variable declarations!
-let xor = expr!("a" * "b" + !"a" * !"b");
+    // XOR - no variable declarations!
+    let xor = expr!("a" * "b" + !"a" * !"b");
 
-// Complex nested
-let complex = expr!(("a" + "b") * ("c" + "d"));
+    // Complex nested
+    let complex = expr!(("a" + "b") * ("c" + "d"));
 
-// Majority function
-let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
+    // Majority function
+    let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
+}
 ```
 
 #### Style 2: Existing BoolExpr Variables
@@ -136,25 +163,27 @@ let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
 Use pre-defined variables for more control:
 
 ```rust
-use espresso_logic::expr;
+use espresso_logic::{BoolExpr, expr};
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
 
-// Simple operations
-let and_expr = expr!(a * b);
-let or_expr = expr!(a + b);
-let not_expr = expr!(!a);
+    // Simple operations
+    let and_expr = expr!(a * b);
+    let or_expr = expr!(a + b);
+    let not_expr = expr!(!a);
 
-// XOR
-let xor = expr!(a * !b + !a * b);
+    // XOR
+    let xor = expr!(a * !b + !a * b);
 
-// XNOR
-let xnor = expr!(a * b + !a * !b);
+    // XNOR
+    let xnor = expr!(a * b + !a * !b);
 
-// With parentheses
-let complex = expr!((a + b) * c);
+    // With parentheses
+    let complex = expr!((a + b) * c);
+}
 ```
 
 #### Style 3: Mixed (Best of Both)
@@ -162,16 +191,20 @@ let complex = expr!((a + b) * c);
 Combine existing variables with string literals:
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+use espresso_logic::{BoolExpr, expr};
 
-// Mix both styles
-let expr = expr!(a * "temp" + b * "enable");
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-// Compose sub-expressions
-let sub1 = expr!(a * b);
-let sub2 = expr!("c" + "d");
-let combined = expr!(sub1 + sub2);
+    // Mix both styles
+    let expr_mixed = expr!(a * "temp" + b * "enable");
+
+    // Compose sub-expressions
+    let sub1 = expr!(a * b);
+    let sub2 = expr!("c" + "d");
+    let combined = expr!(sub1 + sub2);
+}
 ```
 
 **Advantages:**
@@ -203,15 +236,21 @@ Operators follow standard boolean algebra precedence:
 3. **OR** (lowest) - evaluated last
 
 ```rust
-// These are equivalent:
-let expr1 = BoolExpr::parse("~a * b + c")?;
-let expr2 = BoolExpr::parse("((~a) * b) + c")?;
+use espresso_logic::BoolExpr;
 
-// NOT binds tighter than AND
-let expr3 = BoolExpr::parse("a * ~b")?;  // a AND (NOT b)
+fn main() -> std::io::Result<()> {
+    // These are equivalent:
+    let expr1 = BoolExpr::parse("~a * b + c")?;
+    let expr2 = BoolExpr::parse("((~a) * b) + c")?;
 
-// AND binds tighter than OR
-let expr4 = BoolExpr::parse("a * b + c")?;  // (a AND b) OR c
+    // NOT binds tighter than AND
+    let expr3 = BoolExpr::parse("a * ~b")?;  // a AND (NOT b)
+
+    // AND binds tighter than OR
+    let expr4 = BoolExpr::parse("a * b + c")?;  // (a AND b) OR c
+    
+    Ok(())
+}
 ```
 
 ### Parentheses
@@ -219,8 +258,13 @@ let expr4 = BoolExpr::parse("a * b + c")?;  // (a AND b) OR c
 Use parentheses to override precedence:
 
 ```rust
-let expr = BoolExpr::parse("(a + b) * c")?;  // (a OR b) AND c
-let expr2 = BoolExpr::parse("~(a * b)")?;    // NOT (a AND b)
+use espresso_logic::BoolExpr;
+
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("(a + b) * c")?;  // (a OR b) AND c
+    let expr2 = BoolExpr::parse("~(a * b)")?;    // NOT (a AND b)
+    Ok(())
+}
 ```
 
 ### Constants
@@ -228,10 +272,15 @@ let expr2 = BoolExpr::parse("~(a * b)")?;    // NOT (a AND b)
 The parser recognizes boolean constants:
 
 ```rust
-let expr1 = BoolExpr::parse("a * 1")?;      // a AND true = a
-let expr2 = BoolExpr::parse("b + 0")?;      // b OR false = b
-let expr3 = BoolExpr::parse("true * a")?;   // true AND a = a
-let expr4 = BoolExpr::parse("false + b")?;  // false OR b = b
+use espresso_logic::BoolExpr;
+
+fn main() -> std::io::Result<()> {
+    let expr1 = BoolExpr::parse("a * 1")?;      // a AND true = a
+    let expr2 = BoolExpr::parse("b + 0")?;      // b OR false = b
+    let expr3 = BoolExpr::parse("true * a")?;   // true AND a = a
+    let expr4 = BoolExpr::parse("false + b")?;  // false OR b = b
+    Ok(())
+}
 ```
 
 ### Variable Names
@@ -242,15 +291,21 @@ Variable names must:
 - Be case-sensitive
 
 ```rust
-// Valid variable names:
-let expr = BoolExpr::parse("x * y")?;
-let expr = BoolExpr::parse("input_a * input_b")?;
-let expr = BoolExpr::parse("clk_enable + reset_n")?;
-let expr = BoolExpr::parse("A * B")?;  // Different from a * b
+use espresso_logic::BoolExpr;
 
-// Whitespace is ignored
-let expr = BoolExpr::parse("a*b+c")?;
-let expr = BoolExpr::parse("a * b + c")?;  // Same as above
+fn main() -> std::io::Result<()> {
+    // Valid variable names:
+    let expr1 = BoolExpr::parse("x * y")?;
+    let expr2 = BoolExpr::parse("input_a * input_b")?;
+    let expr3 = BoolExpr::parse("clk_enable + reset_n")?;
+    let expr4 = BoolExpr::parse("A * B")?;  // Different from a * b
+
+    // Whitespace is ignored
+    let expr5 = BoolExpr::parse("a*b+c")?;
+    let expr6 = BoolExpr::parse("a * b + c")?;  // Same as above
+    
+    Ok(())
+}
 ```
 
 ## Minimization
@@ -260,17 +315,23 @@ let expr = BoolExpr::parse("a * b + c")?;  // Same as above
 The simplest way to minimize an expression:
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+use espresso_logic::BoolExpr;
 
-// Redundant expression: a*b + a*b*c
-let expr = a.and(&b).or(&a.and(&b).and(&c));
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
 
-// Minimize directly
-let minimized = expr.minimize()?;
+    // Redundant expression: a*b + a*b*c
+    let expr = a.and(&b).or(&a.and(&b).and(&c));
 
-println!("{}", minimized);  // Output: (a * b)
+    // Minimize directly
+    let minimized = expr.minimize()?;
+
+    println!("{}", minimized);  // Output: (a * b)
+    
+    Ok(())
+}
 ```
 
 ### Using Cover for More Control
@@ -280,26 +341,30 @@ For more control over the minimization process:
 ```rust
 use espresso_logic::{BoolExpr, Cover, CoverType};
 
-let expr = BoolExpr::parse("a * b + a * b * c")?;
-
-// Create cover and add expression
-let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "output")?;
-
-// Inspect before minimization
-println!("Input variables: {:?}", cover.input_labels());
-println!("Inputs: {}", cover.num_inputs());
-println!("Outputs: {}", cover.num_outputs());
-println!("Cubes before: {}", cover.num_cubes());
-
-// Minimize
-cover.minimize()?;
-
-println!("Cubes after: {}", cover.num_cubes());
-
-// Convert back to expression
-let minimized = cover.to_expr("output")?;
-println!("Result: {}", minimized);
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("a * b + a * b * c")?;
+    
+    // Create cover and add expression
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "output")?;
+    
+    // Inspect before minimization
+    println!("Input variables: {:?}", cover.input_labels());
+    println!("Inputs: {}", cover.num_inputs());
+    println!("Outputs: {}", cover.num_outputs());
+    println!("Cubes before: {}", cover.num_cubes());
+    
+    // Minimize
+    cover.minimize()?;
+    
+    println!("Cubes after: {}", cover.num_cubes());
+    
+    // Convert back to expression
+    let minimized = cover.to_expr("output")?;
+    println!("Result: {}", minimized);
+    
+    Ok(())
+}
 ```
 
 ## Common Patterns
@@ -307,54 +372,83 @@ println!("Result: {}", minimized);
 ### XOR (Exclusive OR)
 
 ```rust
-// Method API
-let xor = a.and(&b.not()).or(&a.not().and(&b));
+use espresso_logic::{BoolExpr, expr};
 
-// expr! macro
-let xor = expr!(a * !b + !a * b);
+fn main() -> std::io::Result<()> {
+    // Method API
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let xor1 = a.and(&b.not()).or(&a.not().and(&b));
 
-// Parser
-let xor = BoolExpr::parse("a * ~b + ~a * b")?;
+    // expr! macro (using strings - cleanest)
+    let xor2 = expr!("a" * !"b" + !"a" * "b");
+
+    // Parser
+    let xor3 = BoolExpr::parse("a * ~b + ~a * b")?;
+    
+    Ok(())
+}
 ```
 
 ### XNOR (Equivalence)
 
 ```rust
-// Method API
-let xnor = a.and(&b).or(&a.not().and(&b.not()));
+use espresso_logic::{BoolExpr, expr};
 
-// expr! macro
-let xnor = expr!(a * b + !a * !b);
+fn main() -> std::io::Result<()> {
+    // Method API
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let xnor1 = a.and(&b).or(&a.not().and(&b.not()));
 
-// Parser
-let xnor = BoolExpr::parse("a * b + ~a * ~b")?;
+    // expr! macro (using strings - cleanest)
+    let xnor2 = expr!("a" * "b" + !"a" * !"b");
+
+    // Parser
+    let xnor3 = BoolExpr::parse("a * b + ~a * ~b")?;
+    
+    Ok(())
+}
 ```
 
 ### Majority Function (3 inputs)
 
 ```rust
-// expr! macro (clearest)
-let majority = expr!(a * b + b * c + a * c);
+use espresso_logic::{BoolExpr, expr};
 
-// Parser
-let majority = BoolExpr::parse("a * b + b * c + a * c")?;
+fn main() -> std::io::Result<()> {
+    // expr! macro (clearest - using strings)
+    let majority1 = expr!("a" * "b" + "b" * "c" + "a" * "c");
 
-// Method API
-let majority = a.and(&b)
-    .or(&b.and(&c))
-    .or(&a.and(&c));
+    // Parser
+    let majority2 = BoolExpr::parse("a * b + b * c + a * c")?;
+
+    // Method API
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let majority3 = a.and(&b)
+        .or(&b.and(&c))
+        .or(&a.and(&c));
+    
+    Ok(())
+}
 ```
 
 ### De Morgan's Laws
 
 ```rust
-// ~(a * b) = ~a + ~b
-let expr1 = expr!(!(a * b));
-let expr2 = expr!(!a + !b);
+use espresso_logic::{BoolExpr, expr};
 
-// ~(a + b) = ~a * ~b
-let expr3 = expr!(!(a + b));
-let expr4 = expr!(!a * !b);
+fn main() {
+    // ~(a * b) = ~a + ~b (using string notation)
+    let expr1 = expr!(!("a" * "b"));
+    let expr2 = expr!(!"a" + !"b");
+
+    // ~(a + b) = ~a * ~b
+    let expr3 = expr!(!("a" + "b"));
+    let expr4 = expr!(!"a" * !"b");
+}
 ```
 
 ## Working with Cubes
@@ -362,12 +456,18 @@ let expr4 = expr!(!a * !b);
 ### Iterating Over Cubes
 
 ```rust
-let expr = BoolExpr::parse("a * b + ~a * c")?;
-let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "out")?;
+use espresso_logic::{BoolExpr, Cover, CoverType};
 
-for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
-    println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("a * b + ~a * c")?;
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "out")?;
+    
+    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
+        println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
+    }
+    
+    Ok(())
 }
 ```
 
@@ -376,16 +476,20 @@ for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
 ```rust
 use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
 
-let expr = BoolExpr::parse("a * b + c")?;
-let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "output")?;
-
-// Export to PLA string
-let pla_string = cover.to_pla_string(CoverType::F)?;
-println!("{}", pla_string);
-
-// Or write to file
-cover.to_pla_file("output.pla", CoverType::F)?;
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("a * b + c")?;
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "output")?;
+    
+    // Export to PLA string
+    let pla_string = cover.to_pla_string(CoverType::F)?;
+    println!("{}", pla_string);
+    
+    // Or write to file
+    cover.to_pla_file("output.pla", CoverType::F)?;
+    
+    Ok(())
+}
 ```
 
 ## Variable Ordering
@@ -393,15 +497,21 @@ cover.to_pla_file("output.pla", CoverType::F)?;
 Variables are automatically sorted alphabetically:
 
 ```rust
-let c = BoolExpr::variable("c");
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+use espresso_logic::*;
 
-let expr = expr!(c * a * b);
-let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "out")?;
+fn main() -> std::io::Result<()> {
+    let c = BoolExpr::variable("c");
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-println!("{:?}", cover.input_labels());  // ["a", "b", "c"] (sorted)
+    let expr = expr!(c * a * b);
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "out")?;
+
+    println!("{:?}", cover.input_labels());  // ["a", "b", "c"] (sorted)
+    
+    Ok(())
+}
 ```
 
 This ensures consistent ordering in truth tables and PLA files.
@@ -411,9 +521,13 @@ This ensures consistent ordering in truth tables and PLA files.
 ### Parsing Errors
 
 ```rust
-match BoolExpr::parse("a * * b") {
-    Ok(expr) => println!("Parsed: {}", expr),
-    Err(e) => println!("Parse error: {}", e),
+use espresso_logic::BoolExpr;
+
+fn main() {
+    match BoolExpr::parse("a * * b") {
+        Ok(expr) => println!("Parsed: {}", expr),
+        Err(e) => println!("Parse error: {}", e),
+    }
 }
 ```
 
@@ -425,13 +539,17 @@ Common parse errors:
 ### Minimization Errors
 
 ```rust
-use std::io;
+use espresso_logic::BoolExpr;
 
-let expr = BoolExpr::parse("a * b")?;
-
-match expr.minimize() {
-    Ok(minimized) => println!("Success: {}", minimized),
-    Err(e) => eprintln!("Minimization failed: {}", e),
+fn main() -> std::io::Result<()> {
+    let expr = BoolExpr::parse("a * b")?;
+    
+    match expr.minimize() {
+        Ok(minimized) => println!("Success: {}", minimized),
+        Err(e) => eprintln!("Minimization failed: {}", e),
+    }
+    
+    Ok(())
 }
 ```
 
@@ -468,22 +586,26 @@ match expr.minimize() {
 Boolean expressions are displayed with minimal parentheses based on operator precedence:
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+use espresso_logic::*;
 
-// Simple operations - no unnecessary parentheses
-println!("{}", expr!(a * b));        // Output: a * b
-println!("{}", expr!(a + b));        // Output: a + b
-println!("{}", expr!(a * b + c));    // Output: a * b + c
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
 
-// Parentheses only when needed for precedence
-println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
-println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
+    // Simple operations - no unnecessary parentheses
+    println!("{}", expr!(a * b));        // Output: a * b
+    println!("{}", expr!(a + b));        // Output: a + b
+    println!("{}", expr!(a * b + c));    // Output: a * b + c
 
-// Clean formatting for complex expressions
-let xor = expr!(a * b + !a * !b);
-println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
+    // Parentheses only when needed for precedence
+    println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
+    println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
+
+    // Clean formatting for complex expressions
+    let xor = expr!(a * b + !a * !b);
+    println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
+}
 ```
 
 **Formatting rules:**
@@ -499,28 +621,32 @@ println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
 Check if two expressions are logically equivalent (produce same outputs):
 
 ```rust
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+use espresso_logic::*;
 
-// Different structures, same logic
-let expr1 = expr!(a * b);
-let expr2 = expr!(b * a);  // Commutative
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-// Structural equality (tree comparison)
-assert_ne!(expr1, expr2);  // Different tree structure
+    // Different structures, same logic
+    let expr1 = expr!(a * b);
+    let expr2 = expr!(b * a);  // Commutative
 
-// Logical equivalence (truth table comparison)
-assert!(expr1.equivalent_to(&expr2));  // Same logic!
+    // Structural equality (tree comparison)
+    assert_ne!(expr1, expr2);  // Different tree structure
 
-// Test double negation
-let expr3 = a.clone();
-let expr4 = expr!(!!a);
-assert!(expr3.equivalent_to(&expr4));
+    // Logical equivalence (truth table comparison)
+    assert!(expr1.equivalent_to(&expr2));  // Same logic!
 
-// Non-equivalent expressions
-let and_expr = expr!(a * b);
-let or_expr = expr!(a + b);
-assert!(!and_expr.equivalent_to(&or_expr));
+    // Test double negation
+    let expr3 = a.clone();
+    let expr4 = expr!(!!a);
+    assert!(expr3.equivalent_to(&expr4));
+
+    // Non-equivalent expressions
+    let and_expr = expr!(a * b);
+    let or_expr = expr!(a + b);
+    assert!(!and_expr.equivalent_to(&or_expr));
+}
 ```
 
 ### Evaluation
@@ -528,6 +654,7 @@ assert!(!and_expr.equivalent_to(&or_expr));
 Evaluate expressions with specific variable assignments:
 
 ```rust
+use espresso_logic::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -540,15 +667,15 @@ let mut assignment = HashMap::new();
 assignment.insert(Arc::from("a"), true);
 assignment.insert(Arc::from("b"), false);
 
-// Evaluate
+// Evaluate: a * b + !a = true * false + !true = false + false = false
 let result = expr.evaluate(&assignment);
-println!("Result: {}", result);  // true (because !a is true when a is true)
+println!("Result: {}", result);  // false
 
-// Try different assignments
+// Try different assignments: a * b + !a = false * true + !false = false + true = true
 assignment.insert(Arc::from("a"), false);
 assignment.insert(Arc::from("b"), true);
 let result2 = expr.evaluate(&assignment);
-println!("Result: {}", result2);  // true (because !a is true when a is false)
+println!("Result: {}", result2);  // true
 ```
 
 ### Variable Collection
@@ -556,17 +683,21 @@ println!("Result: {}", result2);  // true (because !a is true when a is false)
 Get all variables used in an expression:
 
 ```rust
-let expr = expr!("x" * "y" + "z");
+use espresso_logic::{BoolExpr, expr};
 
-let vars = expr.collect_variables();
-// Returns BTreeSet<Arc<str>> in alphabetical order
-for var in vars {
-    println!("Variable: {}", var);
+fn main() {
+    let expr = expr!("x" * "y" + "z");
+
+    let vars = expr.collect_variables();
+    // Returns BTreeSet<Arc<str>> in alphabetical order
+    for var in vars {
+        println!("Variable: {}", var);
+    }
+    // Output:
+    // Variable: x
+    // Variable: y
+    // Variable: z
 }
-// Output:
-// Variable: x
-// Variable: y
-// Variable: z
 ```
 
 ## Best Practices
@@ -574,47 +705,85 @@ for var in vars {
 ### 1. Choose the Right API
 
 ```rust
-// For simple expressions: use parser
-let expr = BoolExpr::parse("a * b + c")?;
+use espresso_logic::*;
 
-// For programmatic construction: use expr! macro
-let expr = expr!(a * b + c);
+fn main() -> std::io::Result<()> {
+    // For simple expressions: use parser
+    let expr1 = BoolExpr::parse("a * b + c")?;
 
-// For complex nested logic: use method API
-let expr = a.and(&b).or(&complex_subexpr.not());
+    // For programmatic construction: use expr! macro
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let expr2 = expr!(a * b + c);
+
+    // For complex nested logic: use method API
+    let complex_subexpr = expr!("x" * "y");
+    let expr3 = a.and(&b).or(&complex_subexpr.not());
+    
+    Ok(())
+}
 ```
 
 ### 2. Reuse Variables
 
 ```rust
-// Good: reuse variable objects
-let a = BoolExpr::variable("a");
-let expr1 = expr!(a * b);
-let expr2 = expr!(a + c);
+use espresso_logic::*;
 
-// Works but less efficient: create variables multiple times
-let expr1 = BoolExpr::parse("a * b")?;
-let expr2 = BoolExpr::parse("a + c")?;
+fn main() -> std::io::Result<()> {
+    // Good: reuse variable objects
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let expr1 = expr!(a * b);
+    let expr2 = expr!(a + c);
+
+    // Works but less efficient: create variables multiple times
+    let expr3 = BoolExpr::parse("a * b")?;
+    let expr4 = BoolExpr::parse("a + c")?;
+    
+    Ok(())
+}
 ```
 
 ### 3. Minimize Early
 
 ```rust
-// Good: minimize intermediate results
-let intermediate = large_expr.minimize()?;
-let final_expr = expr!(intermediate + other_term).minimize()?;
+use espresso_logic::*;
 
-// Less efficient: combine then minimize
-let final_expr = large_expr.or(&other_term).minimize()?;
+fn main() -> std::io::Result<()> {
+    // Good: minimize intermediate results
+    let large_expr = expr!("a" * "b" + "c" * "d" + "e" * "f");
+    let other_term = expr!("x" * "y");
+    
+    let intermediate = large_expr.minimize()?;
+    let final_expr = expr!(intermediate + other_term).minimize()?;
+
+    // Less efficient: combine then minimize
+    let large_expr2 = expr!("a" * "b" + "c" * "d" + "e" * "f");
+    let other_term2 = expr!("x" * "y");
+    let final_expr2 = large_expr2.or(&other_term2).minimize()?;
+    
+    Ok(())
+}
 ```
 
 ### 4. Use Type System
 
 ```rust
-// The type system prevents mistakes
-let expr: BoolExpr = expr!(a * b);  // Type-safe
-let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
-cover.add_expr(expr, "output")?;  // Explicit conversion
+use espresso_logic::*;
+
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    
+    // The type system prevents mistakes
+    let expr: BoolExpr = expr!(a * b);  // Type-safe
+    let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
+    cover.add_expr(expr, "output")?;  // Explicit conversion
+    
+    Ok(())
+}
 ```
 
 ## Examples
@@ -639,50 +808,86 @@ See `examples/boolean_expressions.rs` for comprehensive examples including:
 
 ❌ Wrong: Using bitwise operators
 ```rust
-let expr = BoolExpr::parse("a & b")?;  // Error: & not supported
-let expr = BoolExpr::parse("a | b")?;  // Error: | not supported
+use espresso_logic::*;
+
+// These will fail to parse at runtime
+match BoolExpr::parse("a & b") {
+    Err(_) => println!("Parse error: & not supported"),
+    Ok(_) => unreachable!(),
+}
+
+match BoolExpr::parse("a | b") {
+    Err(_) => println!("Parse error: | not supported"),
+    Ok(_) => unreachable!(),
+}
 ```
 
 ✅ Correct: Use boolean operators
 ```rust
-let expr = BoolExpr::parse("a * b")?;  // AND
-let expr = BoolExpr::parse("a + b")?;  // OR
+use espresso_logic::*;
+
+let _expr1 = BoolExpr::parse("a * b").unwrap();  // AND
+let _expr2 = BoolExpr::parse("a + b").unwrap();  // OR
 ```
 
-### "Expected &" in operator overloading
+### Moving variables multiple times
 
-❌ Wrong: Missing references
-```rust
-let expr = a * b;  // Error: can't move a and b
+❌ Wrong: Reusing moved variables
+```rust,compile_fail
+use espresso_logic::*;
+
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+// XOR: trying to reuse 'a' and 'b' after moving them
+let xor = a * b + !a * !b;  // Error: a and b moved in first term
 ```
 
 ✅ Correct: Use references or expr! macro
 ```rust
-let expr = &a * &b;           // Operator overloading
-let expr = expr!(a * b);      // expr! macro (cleaner)
+use espresso_logic::*;
+
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+
+// Option 1: With references - can reuse variables
+let xor1 = &a * &b + &(!&a) * &(!&b);
+
+// Option 2: Use expr! macro (cleanest, no references needed)
+let xor2 = expr!(a * b + !a * !b);
+
+// Option 3: Clone variables if you need to move them
+let a2 = BoolExpr::variable("a");
+let b2 = BoolExpr::variable("b");
+let xor3 = a2.clone() * b2.clone() + !a2 * !b2;
 ```
 
 ### Expression doesn't minimize as expected
 
 ```rust
-// Check the DNF conversion
-let expr = BoolExpr::parse("(a + b) * (c + d)")?;
-let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "out")?;
+use espresso_logic::*;
 
-println!("Cubes before: {}", cover.num_cubes());  // Check size
-cover.minimize()?;
-println!("Cubes after: {}", cover.num_cubes());
+fn main() -> std::io::Result<()> {
+    // Check the DNF conversion
+    let expr = BoolExpr::parse("(a + b) * (c + d)")?;
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(expr, "out")?;
 
-// View the result
-let result = cover.to_expr("out")?;
-println!("Result: {}", result);
+    println!("Cubes before: {}", cover.num_cubes());  // Check size
+    cover.minimize()?;
+    println!("Cubes after: {}", cover.num_cubes());
+
+    // View the result
+    let result = cover.to_expr("out")?;
+    println!("Result: {}", result);
+    
+    Ok(())
+}
 ```
 
 ## See Also
 
 - [API Documentation](API.md) - Complete API reference
 - [Thread-Local Implementation](THREAD_LOCAL_IMPLEMENTATION.md) - Thread safety details
-- [PLA Format](../espresso-src/README) - PLA file format specification
+- [PLA Format](PLA_FORMAT.md) - PLA file format specification
 - [Examples](../examples/) - Working code examples
 

@@ -38,7 +38,7 @@
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! # fn main() -> Result<(), espresso_logic::EspressoError> {
+//! # fn main() -> std::io::Result<()> {
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //! let complex = BoolExpr::parse("(a + b) * (c + d)")?;
 //! println!("{}", expr);  // Minimal parentheses: a * b + ~a * ~b
@@ -81,7 +81,7 @@
 //! ```
 
 use crate::error::{ExpressionParseError, MinimizationError, ParseBoolExprError};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Add, Mul, Not};
 use std::sync::Arc;
@@ -208,6 +208,27 @@ impl BoolExpr {
         }
     }
 
+    /// Convert this expression to Disjunctive Normal Form (DNF)
+    ///
+    /// Returns a vector of product terms, where each term is a map from variable to its literal value
+    /// (true for positive literal, false for negative literal).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::BoolExpr;
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// let expr = a.and(&b);
+    ///
+    /// let dnf = expr.to_dnf();
+    /// assert_eq!(dnf.len(), 1); // One product term: a * b
+    /// ```
+    pub fn to_dnf(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
+        to_dnf_impl(self)
+    }
+
     /// Logical AND: create a new expression that is the conjunction of this and another
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr {
@@ -244,7 +265,7 @@ impl BoolExpr {
     /// ```
     /// use espresso_logic::{BoolExpr, expr};
     ///
-    /// # fn main() -> Result<(), espresso_logic::EspressoError> {
+    /// # fn main() -> std::io::Result<()> {
     /// let a = BoolExpr::variable("a");
     /// let b = BoolExpr::variable("b");
     /// let c = BoolExpr::variable("c");
@@ -662,6 +683,113 @@ impl Not for BoolExpr {
     fn not(self) -> BoolExpr {
         BoolExpr::not(&self)
     }
+}
+
+// ============================================================================
+// DNF Conversion - Helper Functions
+// ============================================================================
+
+/// Convert a boolean expression to Disjunctive Normal Form (DNF)
+/// Returns a vector of product terms, where each term is a map from variable to its literal value
+/// (true for positive literal, false for negative literal)
+fn to_dnf_impl(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
+    match expr.inner() {
+        BoolExprInner::Constant(true) => {
+            // True constant = one product term with no literals (tautology)
+            vec![BTreeMap::new()]
+        }
+        BoolExprInner::Constant(false) => {
+            // False constant = no product terms (empty sum)
+            vec![]
+        }
+        BoolExprInner::Variable(name) => {
+            // Single variable = one product with positive literal
+            let mut term = BTreeMap::new();
+            term.insert(Arc::clone(name), true);
+            vec![term]
+        }
+        BoolExprInner::Not(inner) => {
+            // NOT is handled recursively with De Morgan's laws
+            to_dnf_not_impl(inner)
+        }
+        BoolExprInner::And(left, right) => {
+            // AND: cross product of terms from each side
+            let left_dnf = to_dnf_impl(left);
+            let right_dnf = to_dnf_impl(right);
+
+            let mut result = Vec::new();
+            for left_term in &left_dnf {
+                for right_term in &right_dnf {
+                    // Merge terms, checking for contradictions (x AND ~x)
+                    if let Some(merged) = merge_product_terms(left_term, right_term) {
+                        result.push(merged);
+                    }
+                }
+            }
+            result
+        }
+        BoolExprInner::Or(left, right) => {
+            // OR: union of terms from each side
+            let mut left_dnf = to_dnf_impl(left);
+            let right_dnf = to_dnf_impl(right);
+            left_dnf.extend(right_dnf);
+            left_dnf
+        }
+    }
+}
+
+/// Convert NOT expression to DNF using De Morgan's laws
+fn to_dnf_not_impl(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
+    match expr.inner() {
+        BoolExprInner::Constant(val) => {
+            // NOT of constant
+            to_dnf_impl(&BoolExpr::constant(!val))
+        }
+        BoolExprInner::Variable(name) => {
+            // NOT of variable = one product with negative literal
+            let mut term = BTreeMap::new();
+            term.insert(Arc::clone(name), false);
+            vec![term]
+        }
+        BoolExprInner::Not(inner) => {
+            // Double negation
+            to_dnf_impl(inner)
+        }
+        BoolExprInner::And(left, right) => {
+            // De Morgan: ~(A * B) = ~A + ~B
+            let not_left = left.not();
+            let not_right = right.not();
+            to_dnf_impl(&not_left.or(&not_right))
+        }
+        BoolExprInner::Or(left, right) => {
+            // De Morgan: ~(A + B) = ~A * ~B
+            let not_left = left.not();
+            let not_right = right.not();
+            to_dnf_impl(&not_left.and(&not_right))
+        }
+    }
+}
+
+/// Merge two product terms (AND them together)
+/// Returns None if they contradict (e.g., x AND ~x)
+fn merge_product_terms(
+    left: &BTreeMap<Arc<str>, bool>,
+    right: &BTreeMap<Arc<str>, bool>,
+) -> Option<BTreeMap<Arc<str>, bool>> {
+    let mut result = left.clone();
+
+    for (var, &polarity) in right {
+        if let Some(&existing) = result.get(var) {
+            if existing != polarity {
+                // Contradiction: x AND ~x = false
+                return None;
+            }
+        } else {
+            result.insert(Arc::clone(var), polarity);
+        }
+    }
+
+    Some(result)
 }
 
 #[cfg(test)]

@@ -268,7 +268,7 @@ impl<'a> Iterator for ToExprs<'a> {
 
 /// Internal trait for types that can be minimized
 /// Contains implementation details needed by the minimization algorithm
-pub(crate) trait Minimizable: Send + Sync {
+pub(crate) trait Minimizable {
     /// Associated type for iterating over cubes
     type CubesIter<'a>: Iterator<Item = &'a Cube>
     where
@@ -413,14 +413,14 @@ impl Cover {
 
     /// Get input variable labels
     ///
-    /// Returns a slice of Arc<str> for efficient access to variable names.
+    /// Returns a slice of `Arc<str>` for efficient access to variable names.
     pub fn input_labels(&self) -> &[Arc<str>] {
         self.input_labels.as_slice()
     }
 
     /// Get output variable labels
     ///
-    /// Returns a slice of Arc<str> for efficient access to variable names.
+    /// Returns a slice of `Arc<str>` for efficient access to variable names.
     pub fn output_labels(&self) -> &[Arc<str>] {
         self.output_labels.as_slice()
     }
@@ -708,8 +708,19 @@ impl Cover {
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
     pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), AddExprError> {
-        // Backfill labels for dimensions that don't have them yet
-        // Input and output labels are independent - one can be labeled while the other isn't
+        // Backfill output labels if needed to check for conflicts
+        let output_was_unlabeled = self.output_labels.is_empty();
+        if output_was_unlabeled && self.num_outputs > 0 {
+            self.output_labels.backfill_to(self.num_outputs);
+        }
+
+        // Check if output already exists (fail fast before doing any work)
+        if self.output_labels.contains(output_name) {
+            return Err(CoverError::OutputAlreadyExists {
+                name: output_name.to_string(),
+            }
+            .into());
+        }
 
         // Backfill input labels if we're transitioning from unlabeled to labeled inputs
         let input_was_unlabeled = self.input_labels.is_empty();
@@ -717,17 +728,12 @@ impl Cover {
             self.input_labels.backfill_to(self.num_inputs);
         }
 
-        // Backfill output labels if we're transitioning from unlabeled to labeled outputs
-        let output_was_unlabeled = self.output_labels.is_empty();
-        if output_was_unlabeled && self.num_outputs > 0 {
-            self.output_labels.backfill_to(self.num_outputs);
-        }
-
         // Collect variables from expression (in sorted order)
         let expr_variables: Vec<Arc<str>> = expr.collect_variables().into_iter().collect();
 
         // Build variable mapping: expr variable -> cover input index
         let mut var_to_index: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+        let mut num_new_variables = 0;
 
         for expr_var in &expr_variables {
             // Check if variable already exists in cover (using HashMap for O(1) lookup)
@@ -735,31 +741,26 @@ impl Cover {
                 var_to_index.insert(Arc::clone(expr_var), pos);
             } else {
                 // New variable - add to cover
-                let new_index = self.num_inputs;
+                let new_index = self.num_inputs + num_new_variables;
                 let label = Arc::clone(expr_var);
                 self.input_labels.add(label, new_index);
                 var_to_index.insert(Arc::clone(expr_var), new_index);
-                self.num_inputs += 1;
-
-                // Extend all existing cubes with None for new input
-                for cube in &mut self.cubes {
-                    let mut new_inputs = cube.inputs.to_vec();
-                    new_inputs.push(None);
-                    cube.inputs = new_inputs.into();
-                }
+                num_new_variables += 1;
             }
+        }
+
+        // Pad all existing cubes once with all new variables
+        if num_new_variables > 0 {
+            for cube in &mut self.cubes {
+                let mut new_inputs = cube.inputs.to_vec();
+                new_inputs.resize(new_inputs.len() + num_new_variables, None);
+                cube.inputs = new_inputs.into();
+            }
+            self.num_inputs += num_new_variables;
         }
 
         // Convert expression to DNF
-        let dnf = to_dnf(&expr);
-
-        // Check if output already exists (using HashMap for O(1) lookup)
-        if self.output_labels.contains(output_name) {
-            return Err(CoverError::OutputAlreadyExists {
-                name: output_name.to_string(),
-            }
-            .into());
-        }
+        let dnf = expr.to_dnf();
 
         // Add new output
         let output_index = self.num_outputs;
@@ -895,113 +896,6 @@ impl Cover {
             self.num_inputs,
         ))
     }
-}
-
-/// Convert a boolean expression to Disjunctive Normal Form (DNF)
-/// Returns a vector of product terms, where each term is a map from variable to its literal value
-/// (true for positive literal, false for negative literal)
-fn to_dnf(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    use crate::expression::BoolExprInner;
-
-    match expr.inner() {
-        BoolExprInner::Constant(true) => {
-            // True constant = one product term with no literals (tautology)
-            vec![BTreeMap::new()]
-        }
-        BoolExprInner::Constant(false) => {
-            // False constant = no product terms (empty sum)
-            vec![]
-        }
-        BoolExprInner::Variable(name) => {
-            // Single variable = one product with positive literal
-            let mut term = BTreeMap::new();
-            term.insert(Arc::clone(name), true);
-            vec![term]
-        }
-        BoolExprInner::Not(inner) => {
-            // NOT is handled recursively with De Morgan's laws
-            to_dnf_not(inner)
-        }
-        BoolExprInner::And(left, right) => {
-            // AND: cross product of terms from each side
-            let left_dnf = to_dnf(left);
-            let right_dnf = to_dnf(right);
-
-            let mut result = Vec::new();
-            for left_term in &left_dnf {
-                for right_term in &right_dnf {
-                    // Merge terms, checking for contradictions (x AND ~x)
-                    if let Some(merged) = merge_product_terms(left_term, right_term) {
-                        result.push(merged);
-                    }
-                }
-            }
-            result
-        }
-        BoolExprInner::Or(left, right) => {
-            // OR: union of terms from each side
-            let mut left_dnf = to_dnf(left);
-            let right_dnf = to_dnf(right);
-            left_dnf.extend(right_dnf);
-            left_dnf
-        }
-    }
-}
-
-/// Convert NOT expression to DNF using De Morgan's laws
-fn to_dnf_not(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    use crate::expression::BoolExprInner;
-
-    match expr.inner() {
-        BoolExprInner::Constant(val) => {
-            // NOT of constant
-            to_dnf(&BoolExpr::constant(!val))
-        }
-        BoolExprInner::Variable(name) => {
-            // NOT of variable = one product with negative literal
-            let mut term = BTreeMap::new();
-            term.insert(Arc::clone(name), false);
-            vec![term]
-        }
-        BoolExprInner::Not(inner) => {
-            // Double negation
-            to_dnf(inner)
-        }
-        BoolExprInner::And(left, right) => {
-            // De Morgan: ~(A * B) = ~A + ~B
-            let not_left = left.not();
-            let not_right = right.not();
-            to_dnf(&not_left.or(&not_right))
-        }
-        BoolExprInner::Or(left, right) => {
-            // De Morgan: ~(A + B) = ~A * ~B
-            let not_left = left.not();
-            let not_right = right.not();
-            to_dnf(&not_left.and(&not_right))
-        }
-    }
-}
-
-/// Merge two product terms (AND them together)
-/// Returns None if they contradict (e.g., x AND ~x)
-fn merge_product_terms(
-    left: &BTreeMap<Arc<str>, bool>,
-    right: &BTreeMap<Arc<str>, bool>,
-) -> Option<BTreeMap<Arc<str>, bool>> {
-    let mut result = left.clone();
-
-    for (var, &polarity) in right {
-        if let Some(&existing) = result.get(var) {
-            if existing != polarity {
-                // Contradiction: x AND ~x = false
-                return None;
-            }
-        } else {
-            result.insert(Arc::clone(var), polarity);
-        }
-    }
-
-    Some(result)
 }
 
 /// Convert cube references back to a boolean expression

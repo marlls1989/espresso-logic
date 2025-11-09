@@ -8,7 +8,7 @@ The PLA (Programmable Logic Array) format is a text-based format for representin
 
 A PLA file consists of several sections, each starting with a dot (`.`) directive:
 
-```
+```text
 .i <num_inputs>
 .o <num_outputs>
 .ilb <input_label_1> <input_label_2> ... <input_label_n>
@@ -27,7 +27,7 @@ A PLA file consists of several sections, each starting with a dot (`.`) directiv
 
 Specifies the number of input variables.
 
-```
+```text
 .i 3
 ```
 
@@ -37,7 +37,7 @@ This declares 3 input variables.
 
 Specifies the number of output variables.
 
-```
+```text
 .o 2
 ```
 
@@ -47,7 +47,7 @@ This declares 2 output variables.
 
 Assigns names to input variables. If omitted, inputs are numbered 0, 1, 2, ...
 
-```
+```text
 .ilb a b c
 ```
 
@@ -57,7 +57,7 @@ Names the three inputs as `a`, `b`, and `c`.
 
 Assigns names to output variables. If omitted, outputs are numbered 0, 1, 2, ...
 
-```
+```text
 .ob f g
 ```
 
@@ -67,7 +67,7 @@ Names the two outputs as `f` and `g`.
 
 Specifies how many product terms (cubes) follow.
 
-```
+```text
 .p 4
 ```
 
@@ -77,7 +77,7 @@ Indicates 4 product terms will be listed.
 
 Marks the end of the PLA description.
 
-```
+```text
 .e
 ```
 
@@ -85,7 +85,7 @@ Marks the end of the PLA description.
 
 Each product term is a single line describing when outputs should be active. The format is:
 
-```
+```text
 <input_pattern> <output_pattern>
 ```
 
@@ -115,7 +115,7 @@ Each output position can have:
 
 A simple 2-input XOR function:
 
-```
+```text
 .i 2        # 2 inputs
 .o 1        # 1 output
 .ilb a b    # input labels
@@ -132,7 +132,7 @@ This represents: `f = ~a*b + a*~b`
 
 A 2-bit half adder with sum and carry outputs:
 
-```
+```text
 .i 2
 .o 2
 .ilb a b
@@ -149,7 +149,7 @@ A 2-bit half adder with sum and carry outputs:
 
 A function with don't care conditions:
 
-```
+```text
 .i 3
 .o 1
 .ilb x y z
@@ -164,7 +164,7 @@ This represents: `f = x + y`
 
 ### Example 4: Multi-Output Function
 
-```
+```text
 .i 3
 .o 2
 .ilb a b c
@@ -188,7 +188,7 @@ The default type. Lists only the conditions where outputs are 1.
 
 Includes both ON conditions and don't-care conditions. Don't-care product terms have `~` in output positions.
 
-```
+```text
 .i 2
 .o 1
 .type fd
@@ -211,7 +211,7 @@ Includes ON-set, Don't-care set, and OFF-set.
 
 Lines starting with `#` are comments and are ignored:
 
-```
+```text
 # This is a comment
 .i 2        # Comments can also appear after directives
 .o 1
@@ -230,31 +230,41 @@ Lines starting with `#` are comments and are ignored:
 ```rust
 use espresso_logic::{Cover, PLAReader};
 
-// Read from file
-let cover = Cover::from_pla_file("input.pla")?;
-
-// Read from string
-let pla_text = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
-let cover = Cover::from_pla_string(pla_text)?;
+fn main() -> std::io::Result<()> {
+    // Read from string
+    let pla_text = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
+    let cover = Cover::from_pla_string(pla_text)?;
+    
+    println!("Loaded cover with {} inputs", cover.num_inputs());
+    
+    Ok(())
+}
 ```
 
 ### Writing PLA Files
 
 ```rust
-use espresso_logic::{Cover, CoverType, PLAWriter};
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
-// Write to file
-cover.to_pla_file("output.pla", CoverType::F)?;
+fn main() -> std::io::Result<()> {
+    // Create or load a cover
+    let cover = Cover::from_pla_string(".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
+    
+    // Write to file
+    cover.to_pla_file("output.pla", CoverType::F)?;
 
-// Convert to string
-let pla_string = cover.to_pla_string(CoverType::F)?;
-println!("{}", pla_string);
+    // Convert to string
+    let pla_string = cover.to_pla_string(CoverType::F)?;
+    println!("{}", pla_string);
+    
+    Ok(())
+}
 ```
 
 ### Minimizing PLA Files
 
-```rust
-use espresso_logic::{Cover, CoverType};
+```rust,no_run
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read PLA file
@@ -280,7 +290,7 @@ fn main() -> std::io::Result<()> {
 
 The minimal valid PLA file requires only `.i`, `.o`, `.p`, and `.e`:
 
-```
+```text
 .i 2
 .o 1
 .p 1

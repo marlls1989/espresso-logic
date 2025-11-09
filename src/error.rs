@@ -62,6 +62,12 @@ impl fmt::Display for InstanceError {
 
 impl std::error::Error for InstanceError {}
 
+impl From<InstanceError> for io::Error {
+    fn from(err: InstanceError) -> Self {
+        io::Error::new(io::ErrorKind::Other, err)
+    }
+}
+
 /// Errors related to cube validation
 ///
 /// These errors occur when invalid cube values are provided during cover creation.
@@ -91,6 +97,12 @@ impl fmt::Display for CubeError {
 }
 
 impl std::error::Error for CubeError {}
+
+impl From<CubeError> for io::Error {
+    fn from(err: CubeError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, err)
+    }
+}
 
 /// Errors related to boolean expression parsing
 ///
@@ -136,6 +148,12 @@ impl fmt::Display for ExpressionParseError {
 
 impl std::error::Error for ExpressionParseError {}
 
+impl From<ExpressionParseError> for io::Error {
+    fn from(err: ExpressionParseError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, err)
+    }
+}
+
 /// Errors related to cover operations
 ///
 /// These errors occur during cover manipulation, such as adding expressions
@@ -180,6 +198,12 @@ impl fmt::Display for CoverError {
 }
 
 impl std::error::Error for CoverError {}
+
+impl From<CoverError> for io::Error {
+    fn from(err: CoverError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
 
 /// Errors related to PLA format parsing and validation
 ///
@@ -283,6 +307,12 @@ impl fmt::Display for PLAError {
 
 impl std::error::Error for PLAError {}
 
+impl From<PLAError> for io::Error {
+    fn from(err: PLAError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, err)
+    }
+}
+
 // ============================================================================
 // Operation-Level Error Enums
 // ============================================================================
@@ -338,6 +368,18 @@ impl From<io::Error> for MinimizationError {
     }
 }
 
+impl From<MinimizationError> for io::Error {
+    fn from(err: MinimizationError) -> Self {
+        match err {
+            // If it's already an IO error, return it directly
+            MinimizationError::Io(e) => e,
+            // Otherwise, wrap it as Other
+            MinimizationError::Instance(e) => io::Error::new(io::ErrorKind::Other, e),
+            MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+        }
+    }
+}
+
 /// Errors that can occur when adding an expression to a cover
 ///
 /// This error type is returned by `Cover::add_expr()`.
@@ -366,6 +408,14 @@ impl std::error::Error for AddExprError {
 impl From<CoverError> for AddExprError {
     fn from(err: CoverError) -> Self {
         AddExprError::Cover(err)
+    }
+}
+
+impl From<AddExprError> for io::Error {
+    fn from(err: AddExprError) -> Self {
+        match err {
+            AddExprError::Cover(e) => io::Error::new(io::ErrorKind::InvalidInput, e),
+        }
     }
 }
 
@@ -400,6 +450,14 @@ impl From<CoverError> for ToExprError {
     }
 }
 
+impl From<ToExprError> for io::Error {
+    fn from(err: ToExprError) -> Self {
+        match err {
+            ToExprError::Cover(e) => io::Error::new(io::ErrorKind::InvalidInput, e),
+        }
+    }
+}
+
 /// Errors that can occur when parsing a boolean expression
 ///
 /// This error type is returned by `BoolExpr::parse()`.
@@ -428,6 +486,14 @@ impl std::error::Error for ParseBoolExprError {
 impl From<ExpressionParseError> for ParseBoolExprError {
     fn from(err: ExpressionParseError) -> Self {
         ParseBoolExprError::Parse(err)
+    }
+}
+
+impl From<ParseBoolExprError> for io::Error {
+    fn from(err: ParseBoolExprError) -> Self {
+        match err {
+            ParseBoolExprError::Parse(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+        }
     }
 }
 
@@ -472,6 +538,17 @@ impl From<io::Error> for PLAReadError {
     }
 }
 
+impl From<PLAReadError> for io::Error {
+    fn from(err: PLAReadError) -> Self {
+        match err {
+            // If it's already an IO error, return it directly
+            PLAReadError::Io(e) => e,
+            // Otherwise, wrap it as InvalidData
+            PLAReadError::PLA(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+        }
+    }
+}
+
 /// Errors that can occur when writing PLA format data
 ///
 /// This error type is returned by `Cover::to_pla_*` methods.
@@ -500,6 +577,15 @@ impl std::error::Error for PLAWriteError {
 impl From<io::Error> for PLAWriteError {
     fn from(err: io::Error) -> Self {
         PLAWriteError::Io(err)
+    }
+}
+
+impl From<PLAWriteError> for io::Error {
+    fn from(err: PLAWriteError) -> Self {
+        match err {
+            // PLAWriteError only contains IO errors, so return it directly
+            PLAWriteError::Io(e) => e,
+        }
     }
 }
 
@@ -707,5 +793,145 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
         let write_err: PLAWriteError = io_err.into();
         assert!(matches!(write_err, PLAWriteError::Io(_)));
+    }
+
+    // ========================================================================
+    // IO Error Conversion Tests
+    // ========================================================================
+
+    #[test]
+    fn test_instance_error_to_io_error() {
+        let err = InstanceError::DimensionMismatch {
+            requested: (2, 1),
+            existing: (3, 2),
+        };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_cube_error_to_io_error() {
+        let err = CubeError::InvalidValue {
+            value: 5,
+            position: 2,
+        };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_expression_parse_error_to_io_error() {
+        let err = ExpressionParseError::InvalidSyntax {
+            message: "test".to_string(),
+            input: "bad input".to_string(),
+            position: Some(5),
+        };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_cover_error_to_io_error() {
+        let err = CoverError::OutputNotFound {
+            name: "test".to_string(),
+        };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_pla_error_to_io_error() {
+        let err = PLAError::MissingInputDirective;
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_minimization_error_to_io_error_preserves_io_error() {
+        let original_io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let min_err = MinimizationError::Io(original_io_err);
+        let io_err: io::Error = min_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(io_err.to_string(), "file not found");
+    }
+
+    #[test]
+    fn test_minimization_error_instance_to_io_error() {
+        let inst_err = InstanceError::DimensionMismatch {
+            requested: (2, 1),
+            existing: (3, 2),
+        };
+        let min_err = MinimizationError::Instance(inst_err);
+        let io_err: io::Error = min_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_minimization_error_cube_to_io_error() {
+        let cube_err = CubeError::InvalidValue {
+            value: 5,
+            position: 2,
+        };
+        let min_err = MinimizationError::Cube(cube_err);
+        let io_err: io::Error = min_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_add_expr_error_to_io_error() {
+        let cover_err = CoverError::OutputAlreadyExists {
+            name: "test".to_string(),
+        };
+        let add_err = AddExprError::Cover(cover_err);
+        let io_err: io::Error = add_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_to_expr_error_to_io_error() {
+        let cover_err = CoverError::OutputNotFound {
+            name: "test".to_string(),
+        };
+        let to_expr_err = ToExprError::Cover(cover_err);
+        let io_err: io::Error = to_expr_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_parse_bool_expr_error_to_io_error() {
+        let parse_err = ExpressionParseError::InvalidSyntax {
+            message: "test".to_string(),
+            input: "bad input".to_string(),
+            position: Some(5),
+        };
+        let bool_err = ParseBoolExprError::Parse(parse_err);
+        let io_err: io::Error = bool_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_pla_read_error_to_io_error_preserves_io_error() {
+        let original_io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let read_err = PLAReadError::Io(original_io_err);
+        let io_err: io::Error = read_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(io_err.to_string(), "file not found");
+    }
+
+    #[test]
+    fn test_pla_read_error_pla_to_io_error() {
+        let pla_err = PLAError::MissingInputDirective;
+        let read_err = PLAReadError::PLA(pla_err);
+        let io_err: io::Error = read_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_pla_write_error_to_io_error() {
+        let original_io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
+        let write_err = PLAWriteError::Io(original_io_err);
+        let io_err: io::Error = write_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(io_err.to_string(), "permission denied");
     }
 }

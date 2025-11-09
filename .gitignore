@@ -10,3 +10,9 @@ Cargo.lock
 *.o
 /bin
 .code-review
+
+# Temporary files
+*_tmp.md
+
+# Generated output files
+output.pla

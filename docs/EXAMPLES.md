@@ -47,7 +47,7 @@ fn main() -> std::io::Result<()> {
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> Result<(), espresso_logic::EspressoError> {
+fn main() -> std::io::Result<()> {
     // Parse from string
     let expr = BoolExpr::parse("(a + b) * (c + d)")?;
     let minimized = expr.minimize()?;
@@ -66,24 +66,28 @@ fn main() -> Result<(), espresso_logic::EspressoError> {
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
 
-// AND: * operator
-let and = &a * &b;
+    // AND: * operator
+    let and = &a * &b;
 
-// OR: + operator
-let or = &a + &b;
+    // OR: + operator
+    let or = &a + &b;
 
-// NOT: ! operator
-let not = !&a;
+    // NOT: ! operator
+    let not = !&a;
 
-// Complex expressions
-let complex = (&a * &b) + (!&a * &c);
+    // Complex expressions
+    let complex = (&a * &b) + ((!&a) * c);
 
-// Minimize
-let minimized = complex.minimize()?;
+    // Minimize
+    let minimized = complex.minimize()?;
+    
+    Ok(())
+}
 ```
 
 ## Truth Tables
@@ -162,8 +166,8 @@ fn main() -> std::io::Result<()> {
 
 ### Reading and Writing
 
-```rust
-use espresso_logic::{Cover, CoverType};
+```rust,no_run
+use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read from file
@@ -189,7 +193,7 @@ fn main() -> std::io::Result<()> {
 
 Example PLA file:
 
-```
+```text
 .i 2        # 2 inputs
 .o 1        # 1 output
 .ilb a b    # input labels
@@ -209,18 +213,20 @@ See [PLA_FORMAT.md](PLA_FORMAT.md) for complete PLA file format specification.
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-// Check logical equivalence
-let expr1 = expr!(a * b);
-let expr2 = expr!(b * a);
-assert!(expr1.equivalent_to(&expr2));
+    // Check logical equivalence
+    let expr1 = expr!(a * b);
+    let expr2 = expr!(b * a);
+    assert!(expr1.equivalent_to(&expr2));
 
-// Different structure, same logic
-let expr3 = expr!(a * b + a * b * "c");
-let expr4 = expr!(a * b);
-assert!(expr3.equivalent_to(&expr4));
+    // Different structure, same logic
+    let expr3 = expr!(a * b + a * b * "c");
+    let expr4 = expr!(a * b);
+    assert!(expr3.equivalent_to(&expr4));
+}
 ```
 
 ### Evaluation
@@ -230,19 +236,21 @@ use espresso_logic::{BoolExpr, expr};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
 
-let expr = expr!(a * b + !a);
+    let expr = expr!(a * b + !a);
 
-// Create assignment
-let mut assignment = HashMap::new();
-assignment.insert(Arc::from("a"), true);
-assignment.insert(Arc::from("b"), false);
+    // Create assignment
+    let mut assignment = HashMap::new();
+    assignment.insert(Arc::from("a"), true);
+    assignment.insert(Arc::from("b"), false);
 
-// Evaluate
-let result = expr.evaluate(&assignment);
-println!("Result: {}", result);  // true
+    // Evaluate
+    let result = expr.evaluate(&assignment);
+    println!("Result: {}", result);  // true
+}
 ```
 
 ### Collecting Variables
@@ -250,11 +258,13 @@ println!("Result: {}", result);  // true
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-let expr = expr!("a" * "b" + "c" * "d");
+fn main() {
+    let expr = expr!("a" * "b" + "c" * "d");
 
-// Get all variables (sorted)
-let vars = expr.collect_variables();
-println!("Variables: {:?}", vars);  // {"a", "b", "c", "d"}
+    // Get all variables (sorted)
+    let vars = expr.collect_variables();
+    println!("Variables: {:?}", vars);  // {"a", "b", "c", "d"}
+}
 ```
 
 ## Low-Level API
@@ -264,13 +274,14 @@ println!("Variables: {:?}", vars);  // {"a", "b", "c", "d"}
 ```rust
 use espresso_logic::espresso::{EspressoCover, CubeType};
 
-fn main() -> Result<(), String> {
+fn main() -> std::io::Result<()> {
     // Build cover from cubes
     let cubes = vec![
         (vec![0, 1], vec![1]),  // 01 -> 1
         (vec![1, 0], vec![1]),  // 10 -> 1
     ];
-    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+    let f = EspressoCover::from_cubes(cubes, 2, 1)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     
     // Minimize
     let (minimized, _d, _r) = f.minimize(None, None);
@@ -289,7 +300,7 @@ fn main() -> Result<(), String> {
 use espresso_logic::espresso::Espresso;
 use espresso_logic::EspressoConfig;
 
-fn main() -> Result<(), String> {
+fn main() -> std::io::Result<()> {
     // Custom configuration
     let mut config = EspressoConfig::default();
     config.single_expand = true;
@@ -332,8 +343,8 @@ fn main() -> std::io::Result<()> {
 
 ### Parallel Cover Processing
 
-```rust
-use espresso_logic::{Cover, CoverType};
+```rust,no_run
+use espresso_logic::{Cover, PLAReader};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -359,25 +370,25 @@ fn main() -> std::io::Result<()> {
 
 ### Inspecting Cubes
 
-```rust
-use espresso_logic::Cover;
+```rust,no_run
+use espresso_logic::{Cover, PLAReader};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::from_pla_file("input.pla")?;
     
     // Get cubes before minimization
-    let before = cover.get_cubes();
-    println!("Before: {} cubes", before.len());
+    let before_count = cover.num_cubes();
+    println!("Before: {} cubes", before_count);
     
     cover.minimize()?;
     
     // Get cubes after minimization
-    let after = cover.get_cubes();
-    println!("After: {} cubes", after.len());
+    let after_count = cover.num_cubes();
+    println!("After: {} cubes", after_count);
     
     // Inspect individual cubes
-    for (inputs, outputs) in after {
-        println!("Inputs: {:?}, Outputs: {:?}", inputs, outputs);
+    for cube in cover.cubes() {
+        println!("Cube: {:?}", cube);
     }
     
     Ok(())
