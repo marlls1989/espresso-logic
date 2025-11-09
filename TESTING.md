@@ -44,7 +44,7 @@ Tests for the high-level Rust API including:
 - Cover construction and manipulation
 - PLA file reading and writing
 - Type-safe Cover API
-- CoverBuilder functionality
+- Unified Cover type functionality
 
 **Run:**
 ```bash

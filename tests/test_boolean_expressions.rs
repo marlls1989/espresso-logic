@@ -148,7 +148,7 @@ fn test_cover_trait_basics() {
     let b = BoolExpr::variable("b");
     let expr = expr!(a * b);
 
-    // Should be able to create ExprCover
+    // Should be able to use Cover with expressions
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(expr, "out").unwrap();
@@ -302,7 +302,7 @@ fn test_cube_iteration() {
     let b = BoolExpr::variable("b");
     let expr = expr!(a * b);
 
-    // Should be able to iterate cubes via ExprCover
+    // Should be able to iterate cubes via Cover
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(expr, "out").unwrap();
@@ -318,7 +318,7 @@ fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
     let b = BoolExpr::variable("b");
     let expr = expr!(a * b);
 
-    // Should be able to convert to PLA string via ExprCover
+    // Should be able to convert to PLA string via Cover
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(expr, "out").unwrap();
@@ -491,7 +491,7 @@ fn test_parentheses_precedence() {
     // Both have same variables
     assert_eq!(expr1.collect_variables(), expr2.collect_variables());
 
-    // But different structure - verify by converting to PLA via ExprCover
+    // But different structure - verify by converting to PLA via Cover
     let cover1 = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(expr1, "out").unwrap();

@@ -1,7 +1,7 @@
 //! PLA (Programmable Logic Array) format support
 //!
-//! This module handles PLA file I/O and provides `PLACover`, a dynamic cover type
-//! for working with PLA files where dimensions are not known at compile time.
+//! This module handles PLA file I/O for the unified `Cover` type, supporting
+//! dynamic dimensions when working with PLA files.
 
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};

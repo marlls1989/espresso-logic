@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CoverBuilder` removed** - Replaced with dynamic `Cover` type that automatically grows dimensions
 - **`PLAType` renamed to `CoverType`** - More intuitive naming for cover types (OnSet, OnSetDontCare, etc.)
 - **`ExprCover` removed** - Functionality merged into unified `Cover` type
+- **`PLACover` removed** - Dynamic PLA functionality merged into unified `Cover` type
 - **New expression methods:** `Cover::add_expr()` and `Cover::to_expr()` replace `ExprCover`
 - **Iterator return types changed** - Replaced `Box<dyn Iterator>` with concrete iterator types (`CubesIter`, `ToExprs`)
 - **Trait methods use GATs** - `Minimizable` and `PLASerialisable` traits now use Generic Associated Types
@@ -58,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Reader/Writer APIs:**
 - **`Cover::write_pla<W: Write>()`** - Efficient writer-based PLA serialization
-- **`PLACover::from_pla_reader<R: BufRead>()`** - Reader-based PLA parsing
+- **`Cover::from_pla_reader<R: BufRead>()`** - Reader-based PLA parsing
 - **Composable I/O** - Works with compression, network streams, etc.
 - **Zero-copy file operations** - Direct buffered I/O without intermediate strings
 
@@ -156,8 +157,8 @@ builder.add_cube(&[Ternary::One, Ternary::Zero], &[Ternary::One]);
 let cover = builder.build();
 
 // v3.0
-let mut cover = Cover::new(CoverType::OnSet);
-cover.add_cube(&[Ternary::One, Ternary::Zero], &[Ternary::One])?;
+let mut cover = Cover::new(CoverType::F);
+cover.add_cube(&[Some(true), Some(false)], &[Some(true)])?;
 // Dimensions grow automatically!
 ```
 
@@ -170,7 +171,7 @@ expr_cover.add_expr(&expr)?;
 let minimized = expr_cover.minimize()?;
 
 // v3.0
-let mut cover = Cover::new(CoverType::OnSet);
+let mut cover = Cover::new(CoverType::F);
 cover.add_expr(&expr)?;
 let minimized = cover.minimize()?;
 ```
