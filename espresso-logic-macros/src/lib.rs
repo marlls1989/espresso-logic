@@ -4,7 +4,6 @@ use syn::{parse_macro_input, Ident, Token};
 use syn::parse::{Parse, ParseStream, Result};
 
 /// AST for boolean expressions
-#[derive(Debug)]
 enum Expr {
     Variable(Ident),
     StringLiteral(syn::LitStr),
