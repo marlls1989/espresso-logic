@@ -107,8 +107,9 @@ impl<T: PLASerialisable> PLAWriter for T {
             CoverType::F => {} // F is default, no .type needed
         }
 
-        // Write PLA header
+        // Write PLA header (matching C output order: .i, .o, .ilb, .ob)
         writeln!(writer, ".i {}", self.num_inputs())?;
+        writeln!(writer, ".o {}", self.num_outputs())?;
 
         // Write input labels if available
         if let Some(labels) = self.get_input_labels() {
@@ -118,8 +119,6 @@ impl<T: PLASerialisable> PLAWriter for T {
             }
             writeln!(writer)?;
         }
-
-        writeln!(writer, ".o {}", self.num_outputs())?;
 
         // Write output labels if available
         if let Some(labels) = self.get_output_labels() {
@@ -371,19 +370,16 @@ impl<T: PLASerialisable> PLAReader for T {
             // Determine input and output strings based on declared dimensions
             let (input_str, output_str) = if let (Some(ni), Some(no)) = (num_inputs, num_outputs) {
                 // We know the dimensions, so split at the boundary
-                if line_no_spaces.len() < ni + no {
-                    // Line too short, might be continuation or malformed - try multi-line format
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.is_empty() {
-                        continue;
-                    }
+                if line_no_spaces.len() >= ni + no {
+                    // Line has enough characters - split at boundary
+                    let (inp, out) = line_no_spaces.split_at(ni);
+                    (inp.to_string(), out.to_string())
+                } else {
+                    // Line too short, might be multi-line format
+                    let mut accumulated = line_no_spaces.clone();
 
-                    // Multi-line format: accumulate input lines, then get output line
-                    let mut input_accumulator = parts[0].to_string();
-                    let mut output_line = String::new();
-
-                    // Look ahead to accumulate more input lines and find output
-                    while i < lines.len() {
+                    // Look ahead to accumulate more lines until we have enough characters
+                    while accumulated.len() < ni + no && i < lines.len() {
                         let next_line = lines[i].trim();
 
                         // Skip empty lines
@@ -397,38 +393,37 @@ impl<T: PLASerialisable> PLAReader for T {
                             break;
                         }
 
-                        let next_parts: Vec<&str> = next_line.split_whitespace().collect();
-                        if next_parts.is_empty() {
+                        // Remove whitespace from next line and append
+                        let next_no_spaces: String =
+                            next_line.chars().filter(|c| !c.is_whitespace()).collect();
+                        if next_no_spaces.is_empty() {
                             i += 1;
                             continue;
                         }
 
-                        let part = next_parts[0];
+                        accumulated.push_str(&next_no_spaces);
+                        i += 1; // Consume this line
 
-                        // Check if this looks like an output line
-                        // Output lines have exact length matching num_outputs and mostly 0/1/~
-                        let is_output = part.len() == no;
-
-                        if is_output {
-                            output_line = part.to_string();
-                            i += 1; // Consume this line
+                        if accumulated.len() >= ni + no {
                             break;
-                        } else {
-                            // Accumulate more input
-                            input_accumulator.push_str(part);
-                            i += 1; // Consume this line
                         }
                     }
 
-                    if output_line.is_empty() {
+                    // Check if we have the right amount of data
+                    if accumulated.len() < ni + no {
                         continue; // Skip malformed cubes
                     }
 
-                    (input_accumulator, output_line)
-                } else {
-                    // Line has enough characters - split at boundary
-                    let (inp, out) = line_no_spaces.split_at(ni);
-                    (inp.to_string(), out.to_string())
+                    // Split accumulated data at the input/output boundary
+                    let (inp, out) = accumulated.split_at(ni);
+                    let mut out_str = out.to_string();
+
+                    // Truncate output to exact size if we accumulated too much
+                    if out_str.len() > no {
+                        out_str.truncate(no);
+                    }
+
+                    (inp.to_string(), out_str)
                 }
             } else {
                 // Dimensions not yet known - use whitespace splitting as before

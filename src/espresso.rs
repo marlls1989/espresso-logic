@@ -18,7 +18,7 @@
 //! - [`PLAReader`](crate::PLAReader) trait for reading PLA files
 //!
 //! **Note:** Algorithm tuning via [`EspressoConfig`](crate::EspressoConfig) works with **both**
-//! the high-level [`Cover::minimize_with_config()`](crate::Cover::minimize_with_config) and 
+//! the high-level [`Cover::minimize_with_config()`](crate::Cover::minimize_with_config) and
 //! low-level [`Espresso::new()`] - configuration is not a reason to use this module.
 //!
 //! **Important:** The high-level [`Cover`](crate::Cover) API automatically handles the
@@ -50,10 +50,10 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // First cover with 2 inputs, 1 output
 //! let cover1 = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
-//! 
+//!
 //! // Second cover with same dimensions - OK!
 //! let cover2 = EspressoCover::from_cubes(vec![(vec![1, 0], vec![1])], 2, 1)?;
-//! 
+//!
 //! // Both can coexist and be used
 //! let (result1, _, _) = cover1.minimize(None, None);
 //! let (result2, _, _) = cover2.minimize(None, None);
@@ -64,11 +64,11 @@
 //! **❌ UNSAFE - Different dimensions without dropping:**
 //! ```rust
 //! use espresso_logic::espresso::EspressoCover;
-//! 
+//!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // First cover with 2 inputs, 1 output
 //! let cover1 = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
-//! 
+//!
 //! // Trying different dimensions while cover1 exists - ERROR!
 //! let cover2 = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1);
 //! assert!(cover2.is_err()); // Returns DimensionMismatch error
@@ -86,7 +86,7 @@
 //!     let (result1, _, _) = cover1.minimize(None, None);
 //!     // All covers dropped at end of scope
 //! }
-//! 
+//!
 //! // Now we can use different dimensions
 //! let cover2 = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1)?;
 //! let (result2, _, _) = cover2.minimize(None, None);
@@ -100,12 +100,12 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let cover1 = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
 //! let (result1, d1, r1) = cover1.minimize(None, None);
-//! 
+//!
 //! // Explicitly drop ALL covers from the first problem
 //! drop(result1);
 //! drop(d1);
 //! drop(r1);
-//! 
+//!
 //! // Now we can use different dimensions
 //! let cover2 = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1)?;
 //! # Ok(())
@@ -138,7 +138,7 @@
 //! let mut cover1 = Cover::new(CoverType::F);
 //! cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //! cover1.minimize()?;
-//! 
+//!
 //! // Different dimensions - no problem!
 //! let mut cover2 = Cover::new(CoverType::F);
 //! cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
@@ -154,7 +154,7 @@
 //! ```rust
 //! use espresso_logic::espresso::{EspressoCover, CubeType};
 //! use std::thread;
-//! 
+//!
 //! # fn main() {
 //! let handle1 = thread::spawn(|| {
 //!     // Thread 1: 2 inputs, 1 output
@@ -163,7 +163,7 @@
 //!     // Extract the data before returning (covers are !Send)
 //!     result.to_cubes(2, 1, CubeType::F).len()
 //! });
-//! 
+//!
 //! let handle2 = thread::spawn(|| {
 //!     // Thread 2: 3 inputs, 1 output - completely independent!
 //!     let cover = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1).unwrap();
@@ -171,7 +171,7 @@
 //!     // Extract the data before returning (covers are !Send)
 //!     result.to_cubes(3, 1, CubeType::F).len()
 //! });
-//! 
+//!
 //! let count1 = handle1.join().unwrap();
 //! let count2 = handle2.join().unwrap();
 //! println!("Thread 1: {} cubes, Thread 2: {} cubes", count1, count2);
@@ -191,13 +191,13 @@
 //!     let (result, d, r) = cover.minimize(None, None);
 //!     
 //!     // Process results...
-//!     println!("Result: {} cubes", result.to_cubes(num_inputs, num_outputs, 
+//!     println!("Result: {} cubes", result.to_cubes(num_inputs, num_outputs,
 //!         espresso_logic::espresso::CubeType::F).len());
 //!     
 //!     // All covers dropped at end of function
 //!     Ok(())
 //! }
-//! 
+//!
 //! // Each call has a clean slate
 //! solve_problem(2, 1)?;
 //! solve_problem(3, 2)?;
@@ -398,17 +398,17 @@ pub use crate::cover::{Cube, CubeType};
 /// ```rust
 /// use espresso_logic::espresso::EspressoCover;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// 
+///
 /// // Create cover with 2 inputs
 /// let cover1 = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
-/// 
+///
 /// // Cannot create cover with different dimensions - ERROR!
 /// let result = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1);
 /// assert!(result.is_err());
-/// 
+///
 /// // Must drop cover1 first
 /// drop(cover1);
-/// 
+///
 /// // Now 3 inputs works
 /// let cover2 = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1)?;
 /// # Ok(())
@@ -712,7 +712,7 @@ impl EspressoCover {
     ///
     /// // Extract cubes as Rust types
     /// let extracted = cover.to_cubes(2, 1, CubeType::F);
-    /// 
+    ///
     /// for cube in &extracted {
     ///     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
     /// }
@@ -825,7 +825,7 @@ impl EspressoCover {
     ///
     /// // Minimize it directly
     /// let (minimized, d, r) = f.minimize(None, None);
-    /// 
+    ///
     /// println!("Minimized: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
     /// println!("Don't-care: {} cubes", d.to_cubes(2, 1, CubeType::F).len());
     /// println!("OFF-set: {} cubes", r.to_cubes(2, 1, CubeType::F).len());
@@ -841,7 +841,7 @@ impl EspressoCover {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let f = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
     /// let d = EspressoCover::from_cubes(vec![(vec![0, 0], vec![1])], 2, 1)?;
-    /// 
+    ///
     /// // Provide don't-care set for better optimization
     /// let (minimized, _, _) = f.minimize(Some(d), None);
     /// # Ok(())
@@ -915,11 +915,11 @@ struct InnerEspresso {
 ///
 /// # Thread-Local Singleton Pattern
 ///
-/// Internally, this uses a thread-local singleton with reference counting to ensure that 
+/// Internally, this uses a thread-local singleton with reference counting to ensure that
 /// only one Espresso configuration exists per thread:
-/// 
+///
 /// - A `thread_local!` static holds a `Weak<InnerEspresso>` reference
-/// - Each `Espresso` handle holds an `Rc<InnerEspresso>` 
+/// - Each `Espresso` handle holds an `Rc<InnerEspresso>`
 /// - Each `EspressoCover` also holds an `Rc<InnerEspresso>` to keep it alive
 /// - The singleton can only be replaced when ALL covers and handles are dropped
 ///
@@ -938,16 +938,16 @@ struct InnerEspresso {
 /// use espresso_logic::espresso::{Espresso, EspressoCover};
 /// use espresso_logic::EspressoConfig;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// 
+///
 /// // Create instance with 2 inputs, 1 output
 /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
-/// 
+///
 /// // This will PANIC - different dimensions while esp exists
 /// // let esp2 = Espresso::new(3, 1, &EspressoConfig::default());
-/// 
+///
 /// // Must drop first
 /// drop(esp);
-/// 
+///
 /// // Now different dimensions are OK
 /// let esp2 = Espresso::new(3, 1, &EspressoConfig::default());
 /// # Ok(())
@@ -994,7 +994,7 @@ impl Espresso {
     /// # Dimension Constraints
     ///
     /// ⚠️ **Critical:** Only one Espresso configuration can exist per thread at a time.
-    /// 
+    ///
     /// - If an instance with the **same dimensions** exists, returns a new handle to it
     /// - If an instance with **different dimensions** exists, this **PANICS**
     /// - To use different dimensions, you must **drop ALL covers and handles first**
@@ -1041,7 +1041,7 @@ impl Espresso {
     /// use espresso_logic::EspressoConfig;
     ///
     /// let esp1 = Espresso::new(2, 1, &EspressoConfig::default());
-    /// 
+    ///
     /// // This PANICS - different dimensions!
     /// let esp2 = Espresso::new(3, 1, &EspressoConfig::default());
     /// ```
@@ -1072,9 +1072,9 @@ impl Espresso {
     /// # Errors
     ///
     /// Returns [`MinimizationError::Instance`] if:
-    /// - [`InstanceError::DimensionMismatch`] - 
+    /// - [`InstanceError::DimensionMismatch`] -
     ///   An Espresso instance with different dimensions already exists on this thread
-    /// - [`InstanceError::ConfigMismatch`] - 
+    /// - [`InstanceError::ConfigMismatch`] -
     ///   A config is specified and an instance with different config already exists
     ///
     /// # Examples
@@ -1309,7 +1309,7 @@ impl Espresso {
     /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
     /// let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
     /// let f = EspressoCover::from_cubes(cubes, 2, 1)?;
-    /// 
+    ///
     /// let (minimized, d, r) = esp.minimize(f, None, None);
     /// println!("Result: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
     /// # Ok(())
@@ -1324,21 +1324,21 @@ impl Espresso {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
-    /// 
+    ///
     /// // ON-set: 01 -> 1, 10 -> 1
     /// let f = EspressoCover::from_cubes(vec![
     ///     (vec![0, 1], vec![1]),
     ///     (vec![1, 0], vec![1])
     /// ], 2, 1)?;
-    /// 
+    ///
     /// // Don't-cares: 00 can be either 0 or 1
     /// let d = EspressoCover::from_cubes(vec![
     ///     (vec![0, 0], vec![1])
     /// ], 2, 1)?;
-    /// 
+    ///
     /// let (minimized, _, _) = esp.minimize(f, Some(d), None);
     /// // Don't-care allows better minimization
-    /// println!("With don't-cares: {} cubes", 
+    /// println!("With don't-cares: {} cubes",
     ///          minimized.to_cubes(2, 1, CubeType::F).len());
     /// # Ok(())
     /// # }

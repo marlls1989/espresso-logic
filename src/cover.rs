@@ -962,15 +962,9 @@ impl Minimizable for Cover {
     }
 
     fn set_cubes(&mut self, cubes: Vec<Cube>) {
-        // Filter cubes based on the cover type
-        self.cubes = cubes
-            .into_iter()
-            .filter(|cube| match cube.cube_type {
-                CubeType::F => self.cover_type.has_f(),
-                CubeType::D => self.cover_type.has_d(),
-                CubeType::R => self.cover_type.has_r(),
-            })
-            .collect();
+        // Keep all cubes returned by Espresso - the algorithm already returns
+        // the correct cubes based on the cover type (F, D, R sets as appropriate)
+        self.cubes = cubes;
     }
 }
 

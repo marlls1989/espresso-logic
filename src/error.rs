@@ -64,7 +64,7 @@ impl std::error::Error for InstanceError {}
 
 impl From<InstanceError> for io::Error {
     fn from(err: InstanceError) -> Self {
-        io::Error::new(io::ErrorKind::Other, err)
+        io::Error::other(err)
     }
 }
 
@@ -374,7 +374,7 @@ impl From<MinimizationError> for io::Error {
             // If it's already an IO error, return it directly
             MinimizationError::Io(e) => e,
             // Otherwise, wrap it as Other
-            MinimizationError::Instance(e) => io::Error::new(io::ErrorKind::Other, e),
+            MinimizationError::Instance(e) => io::Error::other(e),
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
         }
     }

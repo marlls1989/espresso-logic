@@ -45,7 +45,7 @@
 //! - **Maximum performance** - Minimal overhead, direct C calls (~5-10% faster than high-level)
 //! - **Explicit instance control** - Manually manage when Espresso instances are created/destroyed
 //!
-//! **Note:** Algorithm configuration via [`EspressoConfig`] works with **both** APIs - 
+//! **Note:** Algorithm configuration via [`EspressoConfig`] works with **both** APIs -
 //! it's not a reason to use the low-level API.
 //!
 //! **Important constraints:**
