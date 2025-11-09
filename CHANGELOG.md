@@ -5,6 +5,222 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2025-11-09
+
+### Breaking Changes
+
+**Unified Cover API:**
+- **`CoverBuilder` removed** - Replaced with dynamic `Cover` type that automatically grows dimensions
+- **`PLAType` renamed to `CoverType`** - More intuitive naming for cover types (OnSet, OnSetDontCare, etc.)
+- **`ExprCover` removed** - Functionality merged into unified `Cover` type
+- **New expression methods:** `Cover::add_expr()` and `Cover::to_expr()` replace `ExprCover`
+- **Iterator return types changed** - Replaced `Box<dyn Iterator>` with concrete iterator types (`CubesIter`, `ToExprs`)
+- **Trait methods use GATs** - `Minimizable` and `PLASerialisable` traits now use Generic Associated Types
+
+**Error Handling:**
+- **Structured error hierarchy** - Replaced generic `EspressoError` with operation-specific error types:
+  - `MinimizationError`, `AddExprError`, `ToExprError`, `ParseBoolExprError`, `PLAReadError`, `PLAWriteError`
+- **Source-level errors** - `InstanceError`, `CubeError`, `ExpressionParseError`, `CoverError`, `PLAError`
+- **Programmatic error handling** - All errors implement `Error` trait with proper error chains
+
+**Dependencies:**
+- **`clap` now optional** - Use `cli` feature flag to build the binary: `cargo install espresso-logic --features cli`
+- **`tempfile` moved to dev-dependencies** - Not part of public API
+
+### Added
+
+**Procedural Macro Support:**
+- **`expr!` macro** - Three convenient styles for boolean expressions:
+  - String literals: `expr!("a" * "b" + "c")`
+  - Variables: `expr!(a * b + c)`
+  - Mixed: `expr!(a * "temp" + b)`
+- **New workspace crate:** `espresso-logic-macros` for procedural macro implementation
+
+**Enhanced Boolean Expression API:**
+- **`BoolExpr::equivalent_to()`** - Test logical equivalence between expressions
+- **`BoolExpr::to_dnf()`** - Public API for Disjunctive Normal Form conversion
+- **Improved Display trait** - Minimal parentheses output for better readability
+
+**Dynamic Cover API:**
+- **`Cover::with_labels()`** - Pre-define variable names for inputs/outputs
+- **Automatic dimension growth** - Dimensions expand as cubes are added
+- **Label accessors:** `input_labels()`, `output_labels()`
+- **Lazy label generation** - Labels only created when needed
+- **Unlabeled cover support** - Covers can be minimized without ever creating labels
+
+**Thread-Safe Direct Espresso API (Previously Private):**
+- **Exposed low-level API** - Previously private `espresso` module now public for advanced users
+- **New `src/espresso.rs` module** - Direct API using thread-local storage
+- **`Espresso` singleton** - Automatic cleanup via `Rc<EspressoInner>`
+- **`EspressoCover` type** - Safe cover management with memory guarantees
+- **`EspressoConfig`** - Comprehensive configuration for minimization algorithms
+- **Fine-grained control** - Direct access for performance-critical applications
+
+**Reader/Writer APIs:**
+- **`Cover::write_pla<W: Write>()`** - Efficient writer-based PLA serialization
+- **`PLACover::from_pla_reader<R: BufRead>()`** - Reader-based PLA parsing
+- **Composable I/O** - Works with compression, network streams, etc.
+- **Zero-copy file operations** - Direct buffered I/O without intermediate strings
+
+**Comprehensive Testing:**
+- **~283 regression tests** - Full C implementation parity
+- **Memory safety tests** - Comprehensive leak detection and validation
+- **Thread safety tests** - Parallel execution validation
+- **Benchmark suite** - Criterion-based performance benchmarks with balanced sampling
+- **Leak detection examples:** `leak_check.rs`, `intentional_leak.rs`
+
+**New Examples:**
+- `examples/expr_macro_demo.rs` - Showcase `expr!` macro styles
+- `examples/test_new_api.rs` - Demonstrate unified API patterns
+- `examples/variable_labels.rs` - Working with labeled variables
+- `examples/espresso_direct_api.rs` - Direct Espresso API usage
+- `examples/writer_api.rs` - Writer-based PLA serialization
+- `examples/reader_api.rs` - Reader-based PLA parsing
+
+**Documentation (Comprehensive Revision):**
+- **`docs/EXAMPLES.md`** - Comprehensive usage examples (new)
+- **`docs/INSTALLATION.md`** - Detailed setup instructions (new)
+- **`docs/PLA_FORMAT.md`** - PLA file format specification (new)
+- **`docs/MEMORY_SAFETY.md`** - Memory safety guarantees (new)
+- **`docs/LEAK_TESTING.md`** - Leak testing procedures (new)
+- **`TESTING.md`** - Comprehensive testing documentation (new)
+- **`docs/API.md`** - Completely rewritten with high-level/low-level API guidance
+- **`docs/BOOLEAN_EXPRESSIONS.md`** - Expanded with expr! macro documentation
+- **`docs/CLI.md`** - Updated with feature flag information
+- **Enhanced API documentation** - All code examples now complete and runnable with proper error handling
+- **Doc module** - Comprehensive guides exposed on docs.rs
+- **README.md** - Streamlined and updated for v3.0 API
+
+**Build & Tooling:**
+- **C11 thread-local detection** - Enhanced build.rs validation
+- **Leak checking scripts** - macOS and Linux memory leak detection
+- **Balanced benchmark sampling** - 10 files per size category for efficient testing
+
+### Changed
+
+**Performance Improvements:**
+- **O(1) label lookups** - Replaced Vec-based linear search with HashMap (was O(n))
+- **Lazy label generation** - Labels only created when needed
+- **Smart conflict resolution** - Sequential label backfilling (e.g., x0, x1, x3 → uses x2)
+- **Batch dimension resizing** - `Cover::add_expr()` optimized for bulk operations
+- **Fail-fast validation** - Early output conflict detection
+
+**API Improvements:**
+- **Better error messages** - Context-rich error types throughout
+- **Intuitive method names** - `add_expr()`, `to_expr()`, clearer semantics
+- **Independent label management** - Input/output labels managed separately
+- **Mixed labeled/unlabeled support** - Proper backfilling when transitioning
+
+**Code Quality:**
+- **Removed `unsafe.rs`** - Replaced with memory-safe abstractions
+- **All clippy warnings fixed** - Modern Rust idioms throughout
+- **Proper error chains** - All errors implement `Error` trait with `source()`
+- **Automatic cleanup** - Removed manual `drop()` calls, rely on RAII
+
+**PLA Format:**
+- **Header ordering** - Matches C implementation (.i, .o, .ilb, .ob)
+- **Multi-line parsing** - Proper character accumulation and dimension truncation
+- **Unlabeled PLA support** - Files without .ilb/.ob create unlabeled covers
+- **Conditional label output** - Labels only written if they exist
+
+**Test Infrastructure:**
+- **Expanded regression suite** - ~283 tests covering all formats and examples
+- **Timeout protection** - 30s main suite, 10s quick tests
+- **Skip tracking** - Identifies tests that timeout in C implementation
+- **Merged test scripts** - Consolidated comprehensive_regression.sh into regression_test.sh
+
+### Fixed
+
+- **C implementation parity** - All tests that complete in C now produce identical output
+- **Cube filtering** - Removed manual filtering; Espresso algorithm returns correct cubes
+- **Boolean expression evaluation** - Fixed documentation examples to show correct logic
+- **Thread-local storage** - Proper C11 `_Thread_local` detection and usage
+- **Memory leaks** - Comprehensive leak prevention with automatic cleanup
+
+### Removed
+
+- **`docs/PROCESS_ISOLATION.md`** - Obsolete implementation documentation
+- **`src/unsafe.rs`** - Replaced with safe abstractions
+- **`.github/FUNDING.yml`** - Removed funding configuration
+- **`.github/README.md`** - Consolidated into main README
+- **Manual cleanup methods** - `Espresso::cleanup_if_unused()` removed (automatic via RAII)
+
+### Migration Guide
+
+**From v2.x CoverBuilder to v3.0 Cover:**
+
+```rust
+// v2.x
+let mut builder = CoverBuilder::new(2, 1, PLAType::F);
+builder.add_cube(&[Ternary::One, Ternary::Zero], &[Ternary::One]);
+let cover = builder.build();
+
+// v3.0
+let mut cover = Cover::new(CoverType::OnSet);
+cover.add_cube(&[Ternary::One, Ternary::Zero], &[Ternary::One])?;
+// Dimensions grow automatically!
+```
+
+**From v2.x ExprCover to v3.0 Cover:**
+
+```rust
+// v2.x
+let mut expr_cover = ExprCover::new();
+expr_cover.add_expr(&expr)?;
+let minimized = expr_cover.minimize()?;
+
+// v3.0
+let mut cover = Cover::new(CoverType::OnSet);
+cover.add_expr(&expr)?;
+let minimized = cover.minimize()?;
+```
+
+**Using the new expr! macro:**
+
+```rust
+// v3.0 - Three convenient styles
+use espresso_logic::expr;
+
+let e1 = expr!("a" * "b" + "c");           // String literals
+let e2 = expr!(a * b + c);                  // Variables
+let e3 = expr!(a * "temp" + b);            // Mixed
+```
+
+**Error handling:**
+
+```rust
+// v2.x
+match result {
+    Err(e) => eprintln!("Error: {}", e),  // String error
+    Ok(v) => v,
+}
+
+// v3.0
+match result {
+    Err(MinimizationError::Instance(e)) => { /* handle instance error */ }
+    Err(MinimizationError::Cube(e)) => { /* handle cube error */ }
+    Err(MinimizationError::Io(e)) => { /* handle I/O error */ }
+    Ok(v) => v,
+}
+```
+
+**Installing the CLI:**
+
+```bash
+# v2.x
+cargo install espresso-logic
+
+# v3.0
+cargo install espresso-logic --features cli
+```
+
+### Statistics
+
+- **42 files changed:** 5,340 insertions, 2,440 deletions
+- **Net addition:** ~2,900 lines
+- **Test coverage:** ~283 regression tests, 235+ unit tests
+- **Documentation:** 5 new comprehensive guides
+
 ## [2.6.2] - 2024-11-06
 
 ### Fixed
