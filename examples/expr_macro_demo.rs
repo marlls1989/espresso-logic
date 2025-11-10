@@ -1,4 +1,4 @@
-use espresso_logic::{expr, BoolExpr};
+use espresso_logic::{expr, BoolExpr, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== expr! Procedural Macro Demo ===\n");

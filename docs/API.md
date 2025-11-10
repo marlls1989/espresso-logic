@@ -93,6 +93,44 @@ pub struct BoolExpr
   
   Collects all variables used in this expression in alphabetical order.
 
+- `pub fn to_bdd(&self) -> Bdd`
+  
+  Convert this boolean expression to a Binary Decision Diagram ([`Bdd`]).
+  
+  BDDs provide canonical representation and are used internally for efficient cover generation
+  during minimization. The BDD is cached on first computation for O(1) subsequent access.
+  
+  ```rust
+  let a = BoolExpr::variable("a");
+  let b = BoolExpr::variable("b");
+  let expr = a.and(&b);
+  
+  let bdd = expr.to_bdd();
+  println!("BDD has {} nodes", bdd.node_count());
+  ```
+  
+  See the [`Bdd` API documentation](#bdd-binary-decision-diagram) for more details.
+
+- `pub fn equivalent_to(&self, other: &BoolExpr) -> bool`
+  
+  Check if two boolean expressions are logically equivalent.
+  
+  Uses a two-phase BDD-based approach (v3.1+):
+  1. Fast BDD equality check (canonical representation)
+  2. Exact minimization fallback for thorough verification
+  
+  Much more efficient than exhaustive truth table comparison for expressions with many variables.
+  
+  ```rust
+  let a = BoolExpr::variable("a");
+  let b = BoolExpr::variable("b");
+  
+  let expr1 = a.and(&b);
+  let expr2 = b.and(&a);  // Commutative
+  
+  assert!(expr1.equivalent_to(&expr2));
+  ```
+
 #### Operator Overloading
 
 `BoolExpr` supports Rust's standard operators:
@@ -134,6 +172,130 @@ let complex = expr!((a + b) * (!c + d));
 - `+` for OR
 - `!` for NOT
 - Parentheses for grouping
+
+### `Bdd` - Binary Decision Diagram
+
+Binary Decision Diagrams provide canonical representation of boolean functions with efficient operations.
+Introduced in version 3.1, BDDs are used internally for efficient cover generation from expressions.
+
+```rust
+pub struct Bdd
+```
+
+#### Construction Methods
+
+- `pub fn constant(value: bool) -> Self`
+  
+  Create a BDD representing a constant (true or false).
+  
+  ```rust
+  let t = Bdd::constant(true);
+  let f = Bdd::constant(false);
+  ```
+
+- `pub fn variable(name: Arc<str>) -> Self`
+  
+  Create a BDD representing a variable.
+  
+  ```rust
+  use std::sync::Arc;
+  let a = Bdd::variable("a");
+  ```
+
+- `pub fn from_expr(expr: &BoolExpr) -> Self`
+  
+  Create a BDD from a [`BoolExpr`]. Equivalent to calling `expr.to_bdd()`.
+  
+  ```rust
+  let a = BoolExpr::variable("a");
+  let b = BoolExpr::variable("b");
+  let expr = a.and(&b);
+  let bdd = Bdd::from_expr(&expr);
+  ```
+
+#### Operations
+
+- `pub fn and(&self, other: &Bdd) -> Bdd`
+  
+  Logical AND operation on BDDs.
+  
+  ```rust
+  let result = bdd1.and(&bdd2);
+  ```
+
+- `pub fn or(&self, other: &Bdd) -> Bdd`
+  
+  Logical OR operation on BDDs.
+  
+  ```rust
+  let result = bdd1.or(&bdd2);
+  ```
+
+- `pub fn not(&self) -> Bdd`
+  
+  Logical NOT operation on BDDs.
+  
+  ```rust
+  let result = bdd.not();
+  ```
+
+#### Query Methods
+
+- `pub fn is_terminal(&self) -> bool`
+  
+  Check if this BDD is a terminal (constant) node.
+
+- `pub fn is_true(&self) -> bool`
+  
+  Check if this BDD represents TRUE.
+
+- `pub fn is_false(&self) -> bool`
+  
+  Check if this BDD represents FALSE.
+
+- `pub fn node_count(&self) -> usize`
+  
+  Get the number of nodes in this BDD. Useful for analyzing BDD size.
+
+- `pub fn var_count(&self) -> usize`
+  
+  Get the number of distinct variables in this BDD.
+
+#### Conversion Methods
+
+- `pub fn to_expr(&self) -> BoolExpr`
+  
+  Convert this BDD back to a [`BoolExpr`] in DNF form.
+  
+  ```rust
+  let bdd = expr.to_bdd();
+  let expr2 = bdd.to_expr();
+  assert!(expr.equivalent_to(&expr2));
+  ```
+
+- `pub fn to_cubes(&self) -> Vec<BTreeMap<Arc<str>, bool>>`
+  
+  Extract cubes (product terms) from the BDD.
+  
+  Returns paths from root to TRUE terminal as variable assignments.
+
+#### Usage in Minimization
+
+When minimizing a [`BoolExpr`], the library:
+1. Converts the expression to a BDD (canonical representation)
+2. Extracts cubes from the BDD
+3. Creates a [`Cover`] from the cubes
+4. Minimizes the cover using Espresso
+
+The BDD step enables efficient cover generation with automatic optimizations.
+
+**Key Features:**
+- **Canonical representation**: Equivalent expressions produce identical BDDs
+- **Global sharing**: All BDDs share one manager (thread-safe)
+- **Hash consing**: Identical nodes are automatically shared
+- **Operation caching**: Results are memoized for efficiency
+
+For complete API documentation including implementation details, see the [rustdoc for the `bdd` module](https://docs.rs/espresso-logic/latest/espresso_logic/expression/bdd/).
 
 ### `Cover` - Unified Dynamic Cover
 
@@ -213,7 +375,7 @@ pub struct Cover
   let a = BoolExpr::variable("a");
   let b = BoolExpr::variable("b");
   
-  cover.add_expr(a.and(&b), "result")?;
+  cover.add_expr(&a.and(&b), "result")?;
   // Input variables: a, b
   // Output variables: result
   ```
@@ -278,7 +440,7 @@ pub struct Cover
 #### Example: Full Workflow
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, expr};
+use espresso_logic::{BoolExpr, Cover, CoverType, expr, Minimizable};
 
 // Create cover
 let mut cover = Cover::new(CoverType::F);
@@ -288,14 +450,14 @@ let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
 let c = BoolExpr::variable("c");
 
-cover.add_expr(expr!(a * b + a * b * c), "out1")?;  // Redundant
-cover.add_expr(expr!(b + c), "out2")?;
+cover.add_expr(&expr!(a * b + a * b * c), "out1")?;  // Redundant
+cover.add_expr(&expr!(b + c), "out2")?;
 
 println!("Before: {} cubes", cover.num_cubes());  // Multiple cubes
 println!("Variables: {:?}", cover.input_labels()); // ["a", "b", "c"]
 
 // Minimize
-cover.minimize()?;
+cover = cover.minimize()?;
 
 println!("After: {} cubes", cover.num_cubes());
 
@@ -678,7 +840,7 @@ pub mod sys
 ### Boolean Expression Minimization (Recommended)
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 // Using the expr! macro
 let a = BoolExpr::variable("a");
@@ -710,7 +872,7 @@ let result = xor.minimize()?;
 ### Working with Cover and Expressions
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, expr};
+use espresso_logic::{BoolExpr, Cover, CoverType, expr, Minimizable};
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -720,14 +882,14 @@ let expr = expr!(a * !b + !a * b);
 
 // Convert to cover for more control
 let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "xor_output")?;
+cover.add_expr(&expr, "xor_output")?;
 
 println!("Variables: {:?}", cover.input_labels());
 println!("Inputs: {}", cover.num_inputs());
 println!("Before: {} cubes", cover.num_cubes());
 
 // Minimize
-cover.minimize()?;
+cover = cover.minimize()?;
 
 println!("After: {} cubes", cover.num_cubes());
 
@@ -739,7 +901,7 @@ println!("Result: {}", minimized);
 ### Manual Cube Construction
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 // Create a cover for XOR function
 let mut cover = Cover::new(CoverType::F);
@@ -747,7 +909,7 @@ cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 
 // Minimize
-cover.minimize()?;
+cover = cover.minimize()?;
 
 println!("Result: {} cubes", cover.num_cubes());
 ```
@@ -755,13 +917,13 @@ println!("Result: {} cubes", cover.num_cubes());
 ### Reading and Minimizing a PLA File
 
 ```rust
-use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
 
 // Read PLA file
 let mut cover = Cover::from_pla_file("input.pla")?;
 
 // Minimize
-cover.minimize()?;
+cover = cover.minimize()?;
 
 // Write result
 cover.to_pla_file("output.pla", CoverType::F)?;
@@ -770,12 +932,12 @@ cover.to_pla_file("output.pla", CoverType::F)?;
 ### Converting Between Formats
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 
 // Expression to PLA
 let expr = BoolExpr::parse("a * b + c")?;
 let mut cover = Cover::new(CoverType::F);
-cover.add_expr(expr, "output")?;
+cover.add_expr(&expr, "output")?;
 let pla_string = cover.to_pla_string(CoverType::F)?;
 
 println!("{}", pla_string);
@@ -793,16 +955,17 @@ The library handles the complexity of managing C memory while providing a safe R
 
 ## Thread Safety
 
-**This library IS thread-safe!** All public APIs use **C11 thread-local storage**:
+**This library IS thread-safe!** All public APIs use **C11 thread-local storage** and Rust synchronization primitives:
 
-- `BoolExpr`, `Cover`, and `EspressoCover` are all safe to use concurrently
+- `BoolExpr`, `Bdd`, `Cover`, and `EspressoCover` are all safe to use concurrently
 - The underlying C library uses `_Thread_local` for all global state
 - Each thread gets its own independent copy of all global variables
-- No manual synchronization needed
+- **BDD manager**: Global singleton protected by Mutex, shared across all BDDs (thread-safe)
+- No manual synchronization needed for users
 - Native C11 thread safety (not process isolation)
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 use std::thread;
 
 // Safe concurrent execution
@@ -810,7 +973,8 @@ let handles: Vec<_> = (0..4).map(|_| {
     thread::spawn(|| {
         let mut cover = Cover::new(CoverType::F);
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-        cover.minimize()
+        cover = cover.minimize()?;
+        Ok(cover.num_cubes())
     })
 }).collect();
 
@@ -825,13 +989,23 @@ See [THREAD_LOCAL_IMPLEMENTATION.md](THREAD_LOCAL_IMPLEMENTATION.md) for technic
 
 - **Rust wrapper overhead**: Negligible compared to C
 - **Boolean expression parsing**: Very fast (microseconds for typical expressions)
-- **DNF conversion**: Linear in expression size
+- **BDD conversion (v3.1+)**: Polynomial time for most practical expressions
+  - Cached on first access (O(1) subsequent calls)
+  - Subexpressions share caches (dynamic programming)
+  - Global manager with hash consing (shared nodes)
+- **Cover generation from BDD**: Linear in BDD size
+  - More efficient than direct DNF conversion for complex expressions
+  - Automatic redundancy elimination during BDD construction
 - **Minimization**: 
+  - Dominated by Espresso algorithm time
   - Heuristic algorithm is fast and produces good results for most cases
   - Large Boolean functions (>1000 cubes) may take significant time
 - **Thread-local storage overhead**: Minimal (native C11 thread-local variables)
   - Near-zero overhead for thread safety
-  - Each thread has independent state
+  - Each thread has independent Espresso state
+- **BDD manager**: Global singleton with Mutex
+  - Shared across all BDDs in the program
+  - Lock contention minimal (caching reduces repeated work)
 
 ## Error Handling
 

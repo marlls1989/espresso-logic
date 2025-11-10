@@ -3,7 +3,7 @@
 //! This example demonstrates how to use boolean expressions with the expr! macro,
 //! method-based API, and parsing to create and minimize boolean functions.
 
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, PLAWriter};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Boolean Expression Examples ===\n");
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   XOR = a*~b + ~a*b");
     println!("   Variables: {:?}", xor.collect_variables());
     let mut xor_cover = Cover::new(CoverType::F);
-    xor_cover.add_expr(xor, "xor")?;
+    xor_cover.add_expr(&xor, "xor")?;
     println!(
         "   Inputs: {}, Outputs: {}",
         xor_cover.num_inputs(),
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Expression: (a + b) * (c + d)");
     println!("   Variables: {:?}", parsed_expr.collect_variables());
     let mut parsed_cover = Cover::new(CoverType::F);
-    parsed_cover.add_expr(parsed_expr, "parsed")?;
+    parsed_cover.add_expr(&parsed_expr, "parsed")?;
     println!(
         "   Inputs: {}, Outputs: {}",
         parsed_cover.num_inputs(),
@@ -61,8 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      Variables: {:?}", redundant.collect_variables());
 
     let mut redundant_cover = Cover::new(CoverType::F);
-    redundant_cover.add_expr(redundant, "out")?;
-    redundant_cover.minimize()?;
+    redundant_cover.add_expr(&redundant, "out")?;
+    redundant_cover = redundant_cover.minimize()?;
     let minimized = redundant_cover.to_expr("out")?;
 
     println!("   After minimization:");
@@ -79,8 +79,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Before minimize: {}", xnor);
 
     let mut xnor_cover = Cover::new(CoverType::F);
-    xnor_cover.add_expr(xnor, "out")?;
-    xnor_cover.minimize()?;
+    xnor_cover.add_expr(&xnor, "out")?;
+    xnor_cover = xnor_cover.minimize()?;
     let minimized_xnor = xnor_cover.to_expr("out")?;
 
     println!("   After minimize:  {}", minimized_xnor);
@@ -96,12 +96,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For more complex expressions, the method API is clearer
     let majority = a.and(&b).or(&b.and(&c)).or(&a.and(&c));
     let mut majority_cover = Cover::new(CoverType::F);
-    majority_cover.add_expr(majority, "out")?;
+    majority_cover.add_expr(&majority, "out")?;
 
     println!("   Majority = a*b + b*c + a*c");
     println!("   Before minimize: {} cubes", majority_cover.num_cubes());
 
-    majority_cover.minimize()?;
+    majority_cover = majority_cover.minimize()?;
 
     println!("   After minimize:  {} cubes", majority_cover.num_cubes());
     println!();
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let b = BoolExpr::variable("b");
     let simple = a.and(&b);
     let mut simple_cover = Cover::new(CoverType::F);
-    simple_cover.add_expr(simple, "out")?;
+    simple_cover.add_expr(&simple, "out")?;
 
     let pla_string = simple_cover.to_pla_string(CoverType::F)?;
     println!("   Expression: a * b");
@@ -136,12 +136,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let demorgan1 = expr!(!(a * b));
     let mut cover1 = Cover::new(CoverType::F);
-    cover1.add_expr(demorgan1, "out")?;
+    cover1.add_expr(&demorgan1, "out")?;
     println!("   ~(a * b) has {} variables", cover1.num_inputs());
 
     let demorgan2 = expr!(!(a + b));
     let mut cover2 = Cover::new(CoverType::F);
-    cover2.add_expr(demorgan2, "out")?;
+    cover2.add_expr(&demorgan2, "out")?;
     println!("   ~(a + b) has {} variables", cover2.num_inputs());
     println!();
 
@@ -151,16 +151,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let expr2 = BoolExpr::parse("a * (b + c)")?;
 
     let mut cover1 = Cover::new(CoverType::F);
-    cover1.add_expr(expr1, "out")?;
+    cover1.add_expr(&expr1, "out")?;
     let mut cover2 = Cover::new(CoverType::F);
-    cover2.add_expr(expr2, "out")?;
+    cover2.add_expr(&expr2, "out")?;
 
     println!("    Expression 1: a * b + a * c");
     println!("    Expression 2: a * (b + c)");
     println!("    Both have {} variables", cover1.num_inputs());
 
-    cover1.minimize()?;
-    cover2.minimize()?;
+    let _minimized1 = cover1.minimize()?;
+    let _minimized2 = cover2.minimize()?;
 
     println!("    After minimization, they should be equivalent");
     println!();
@@ -169,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("11. Cube Iteration:");
     let expr = BoolExpr::parse("a * b + ~a * c")?;
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "out")?;
+    cover.add_expr(&expr, "out")?;
     println!("    Expression: a * b + ~a * c");
     println!("    Cubes:");
 

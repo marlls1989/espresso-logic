@@ -4,7 +4,10 @@
 //! of Boolean functions). The Cover type supports dynamic dimensions that grow as cubes are added,
 //! and can work with both manually constructed cubes and boolean expressions.
 
-use std::collections::{BTreeMap, HashMap};
+pub mod dnf;
+pub use dnf::Dnf;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
@@ -266,19 +269,127 @@ impl<'a> Iterator for ToExprs<'a> {
     }
 }
 
-/// Internal trait for types that can be minimized
-/// Contains implementation details needed by the minimization algorithm
-pub(crate) trait Minimizable {
-    /// Associated type for iterating over cubes
-    type CubesIter<'a>: Iterator<Item = &'a Cube>
+/// Public trait for types that can be minimized using Espresso
+///
+/// This trait provides a **transparent, uniform interface** for minimizing boolean functions
+/// using the Espresso algorithm. All methods take `&self` and return a new minimized instance,
+/// following an immutable functional style.
+///
+/// # Transparent Minimization
+///
+/// The beauty of this trait is that minimization works the same way regardless of input type.
+/// Just call `.minimize()` on any supported type and get back a minimized version of the same type:
+///
+/// ```
+/// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+///
+/// # fn main() -> std::io::Result<()> {
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let c = BoolExpr::variable("c");
+/// let redundant = a.and(&b).or(&a.and(&b).and(&c));
+///
+/// // Works on BoolExpr - returns BoolExpr
+/// let min_expr = redundant.minimize()?;
+/// println!("Minimized expression: {}", min_expr);
+///
+/// // Works on Cover - returns Cover
+/// let mut cover = Cover::new(CoverType::F);
+/// cover.add_expr(&redundant, "out")?;
+/// let min_cover = cover.minimize()?;
+/// println!("Minimized cover has {} cubes", min_cover.num_cubes());
+///
+/// // Both produce equivalent minimized results!
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Implementations
+///
+/// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
+/// - **Blanket implementation** (v3.1+): For `T where &T: Into<Dnf>, T: From<Dnf>` (defined in `dnf` module)
+///   - Automatically covers [`BoolExpr`] and [`expression::bdd::Bdd`]
+///   - Workflow: Expression → Dnf (via BDD for canonical form) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
+///   - DNF serves as the intermediary representation, with BDD ensuring efficient conversion
+///
+/// [`expression::bdd::Bdd`]: crate::expression::bdd::Bdd
+///
+/// [`BoolExpr`]: crate::expression::BoolExpr
+/// [`Cover`]: crate::Cover
+///
+/// # Immutable Design
+///
+/// All minimization methods preserve the original and return a new minimized instance:
+///
+/// ```
+/// use espresso_logic::{BoolExpr, Minimizable};
+///
+/// # fn main() -> std::io::Result<()> {
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let c = BoolExpr::variable("c");
+///
+/// let original = a.and(&b).or(&a.and(&b).and(&c));
+/// let minimized = original.minimize()?;
+///
+/// // Original is unchanged
+/// println!("Original: {}", original);
+/// println!("Minimized: {}", minimized);
+///
+/// // Can continue using original
+/// let bdd = original.to_bdd();
+/// # Ok(())
+/// # }
+/// ```
+pub trait Minimizable {
+    /// Minimize using the heuristic Espresso algorithm
+    ///
+    /// Returns a new minimized instance without modifying the original.
+    /// This is fast and produces near-optimal results (~99% optimal in practice).
+    ///
+    /// Default implementation calls `minimize_with_config` with default config.
+    fn minimize(&self) -> Result<Self, MinimizationError>
     where
-        Self: 'a;
+        Self: Sized,
+    {
+        let config = EspressoConfig::default();
+        self.minimize_with_config(&config)
+    }
 
-    /// Iterate over typed cubes (required for minimization)
-    fn internal_cubes_iter(&self) -> Self::CubesIter<'_>;
+    /// Minimize using the heuristic algorithm with custom configuration
+    ///
+    /// Returns a new minimized instance without modifying the original.
+    ///
+    /// This is the primary method that implementations must provide.
+    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
+    where
+        Self: Sized;
 
-    /// Set cubes after minimization (required for minimization)
-    fn set_cubes(&mut self, cubes: Vec<Cube>);
+    /// Minimize using exact minimization
+    ///
+    /// Returns a new minimized instance without modifying the original.
+    /// This guarantees minimal results but may be slower for large expressions.
+    ///
+    /// Default implementation calls `minimize_exact_with_config` with default config.
+    fn minimize_exact(&self) -> Result<Self, MinimizationError>
+    where
+        Self: Sized,
+    {
+        let config = EspressoConfig::default();
+        self.minimize_exact_with_config(&config)
+    }
+
+    /// Minimize using exact minimization with custom configuration
+    ///
+    /// Returns a new minimized instance without modifying the original.
+    ///
+    /// This is the primary method that implementations must provide.
+    fn minimize_exact_with_config(
+        &self,
+        config: &EspressoConfig,
+    ) -> Result<Self, MinimizationError>
+    where
+        Self: Sized;
 }
 
 /// A unified cover type with dynamic dimensions
@@ -290,7 +401,7 @@ pub(crate) trait Minimizable {
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::{Cover, CoverType};
+/// use espresso_logic::{Cover, CoverType, Minimizable};
 ///
 /// // Create an empty cover
 /// let mut cover = Cover::new(CoverType::F);
@@ -299,8 +410,8 @@ pub(crate) trait Minimizable {
 /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 ///
-/// // Minimize it
-/// cover.minimize().unwrap();
+/// // Minimize it (returns new instance)
+/// cover = cover.minimize().unwrap();
 ///
 /// println!("Minimized to {} cubes", cover.num_cubes());
 /// ```
@@ -603,229 +714,15 @@ impl Cover {
         }
     }
 
-    /// Minimize this cover in-place using default configuration
-    pub fn minimize(&mut self) -> Result<(), MinimizationError> {
-        let config = EspressoConfig::default();
-        self.minimize_with_config(&config)
-    }
-
-    /// Minimize this cover in-place with custom configuration
-    pub fn minimize_with_config(
-        &mut self,
-        config: &EspressoConfig,
-    ) -> Result<(), MinimizationError> {
-        use crate::espresso::{Espresso, EspressoCover};
-
-        // Split cubes into F, D, R sets based on cube type
-        let mut f_cubes = Vec::new();
-        let mut d_cubes = Vec::new();
-        let mut r_cubes = Vec::new();
-
-        for cube in self.internal_cubes_iter() {
-            let input_vec: Vec<u8> = cube
-                .inputs
-                .iter()
-                .map(|&opt| match opt {
-                    Some(false) => 0,
-                    Some(true) => 1,
-                    None => 2,
-                })
-                .collect();
-
-            // Convert outputs: true → 1, false → 0
-            let output_vec: Vec<u8> = cube
-                .outputs
-                .iter()
-                .map(|&b| if b { 1 } else { 0 })
-                .collect();
-
-            // Send to appropriate set based on cube type
-            match cube.cube_type {
-                CubeType::F => f_cubes.push((input_vec, output_vec)),
-                CubeType::D => d_cubes.push((input_vec, output_vec)),
-                CubeType::R => r_cubes.push((input_vec, output_vec)),
-            }
-        }
-
-        // Direct C calls - thread-safe via thread-local storage
-        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
-
-        // Build covers from cube data
-        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
-        let d_cover = if !d_cubes.is_empty() {
-            Some(EspressoCover::from_cubes(
-                d_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            )?)
-        } else {
-            None
-        };
-        let r_cover = if !r_cubes.is_empty() {
-            Some(EspressoCover::from_cubes(
-                r_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            )?)
-        } else {
-            None
-        };
-
-        // Minimize
-        let (f_result, d_result, r_result) = esp.minimize(f_cover, d_cover, r_cover);
-
-        // Extract cubes and combine
-        let mut all_cubes = Vec::new();
-        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
-        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
-        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
-
-        // Update cubes with type information preserved
-        self.set_cubes(all_cubes);
-        Ok(())
-    }
-
-    /// Minimize this cover in-place using exact minimization with default configuration
+    /// Add a boolean function to a named output
     ///
-    /// This method uses exact minimization which guarantees minimal results by solving
-    /// the unate covering problem, unlike the heuristic [`minimize()`](Self::minimize) method.
+    /// This generic method accepts any type that can be converted to DNF:
+    /// - `&BoolExpr` - Boolean expressions
+    /// - `&Bdd` - Binary Decision Diagrams
+    /// - `&Dnf` - Direct DNF representation
     ///
-    /// # Performance vs Quality Trade-off
-    ///
-    /// - **`minimize()`**: Fast heuristic, near-optimal results (~99% optimal in practice)
-    /// - **`minimize_exact()`**: Slower but guaranteed minimal results (exact solution)
-    ///
-    /// Use `minimize_exact()` when:
-    /// - You need provably minimal results (e.g., for equivalency checking)
-    /// - The function is small enough that exact solving is feasible
-    /// - Quality is more important than speed
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, CoverType};
-    ///
-    /// # fn main() -> std::io::Result<()> {
-    /// let mut cover = Cover::new(CoverType::F);
-    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-    /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    ///
-    /// // Use exact minimization for guaranteed minimal result
-    /// cover.minimize_exact()?;
-    ///
-    /// println!("Minimized to {} cubes", cover.num_cubes());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn minimize_exact(&mut self) -> Result<(), MinimizationError> {
-        let config = EspressoConfig::default();
-        self.minimize_exact_with_config(&config)
-    }
-
-    /// Minimize this cover in-place using exact minimization with custom configuration
-    ///
-    /// This method uses exact minimization which guarantees minimal results,
-    /// unlike the heuristic [`minimize_with_config()`](Self::minimize_with_config) method.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Configuration options for the minimization process
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, CoverType, EspressoConfig};
-    ///
-    /// # fn main() -> std::io::Result<()> {
-    /// let mut cover = Cover::new(CoverType::F);
-    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-    ///
-    /// // Use exact minimization with custom configuration
-    /// let config = EspressoConfig::default();
-    /// cover.minimize_exact_with_config(&config)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn minimize_exact_with_config(
-        &mut self,
-        config: &EspressoConfig,
-    ) -> Result<(), MinimizationError> {
-        use crate::espresso::{Espresso, EspressoCover};
-
-        // Split cubes into F, D, R sets based on cube type
-        let mut f_cubes = Vec::new();
-        let mut d_cubes = Vec::new();
-        let mut r_cubes = Vec::new();
-
-        for cube in self.internal_cubes_iter() {
-            let input_vec: Vec<u8> = cube
-                .inputs
-                .iter()
-                .map(|&opt| match opt {
-                    Some(false) => 0,
-                    Some(true) => 1,
-                    None => 2,
-                })
-                .collect();
-
-            // Convert outputs: true → 1, false → 0
-            let output_vec: Vec<u8> = cube
-                .outputs
-                .iter()
-                .map(|&b| if b { 1 } else { 0 })
-                .collect();
-
-            // Send to appropriate set based on cube type
-            match cube.cube_type {
-                CubeType::F => f_cubes.push((input_vec, output_vec)),
-                CubeType::D => d_cubes.push((input_vec, output_vec)),
-                CubeType::R => r_cubes.push((input_vec, output_vec)),
-            }
-        }
-
-        // Direct C calls - thread-safe via thread-local storage
-        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
-
-        // Build covers from cube data
-        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
-        let d_cover = if !d_cubes.is_empty() {
-            Some(EspressoCover::from_cubes(
-                d_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            )?)
-        } else {
-            None
-        };
-        let r_cover = if !r_cubes.is_empty() {
-            Some(EspressoCover::from_cubes(
-                r_cubes,
-                self.num_inputs(),
-                self.num_outputs(),
-            )?)
-        } else {
-            None
-        };
-
-        // Minimize using exact algorithm
-        let (f_result, d_result, r_result) = esp.minimize_exact(f_cover, d_cover, r_cover);
-
-        // Extract cubes and combine
-        let mut all_cubes = Vec::new();
-        all_cubes.extend(f_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::F));
-        all_cubes.extend(d_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::D));
-        all_cubes.extend(r_result.to_cubes(self.num_inputs(), self.num_outputs(), CubeType::R));
-
-        // Update cubes with type information preserved
-        self.set_cubes(all_cubes);
-        Ok(())
-    }
-
-    /// Add a boolean expression to a named output
-    ///
-    /// This method converts the expression to DNF cubes and adds them to the cover.
-    /// Input variables from the expression are matched by name with existing variables,
-    /// and new variables are appended in order.
+    /// Input variables are matched by name with existing variables,
+    /// and new variables are appended in alphabetical order.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
     ///
@@ -839,11 +736,22 @@ impl Cover {
     /// let b = BoolExpr::variable("b");
     /// let expr = a.and(&b);
     ///
-    /// cover.add_expr(expr, "output1").unwrap();
+    /// // Works with BoolExpr
+    /// cover.add_expr(&expr, "output1").unwrap();
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
+    ///
+    /// // Also works with Bdd
+    /// let bdd = b.or(&a).to_bdd();
+    /// cover.add_expr(&bdd, "output2").unwrap();
     /// ```
-    pub fn add_expr(&mut self, expr: BoolExpr, output_name: &str) -> Result<(), AddExprError> {
+    pub fn add_expr<T>(&mut self, expr: &T, output_name: &str) -> Result<(), AddExprError>
+    where
+        for<'a> &'a T: Into<Dnf>,
+    {
+        // Convert to DNF (goes through BDD for canonical form and optimizations)
+        let dnf: Dnf = expr.into();
+
         // Backfill output labels if needed to check for conflicts
         let output_was_unlabeled = self.output_labels.is_empty();
         if output_was_unlabeled && self.num_outputs > 0 {
@@ -864,23 +772,31 @@ impl Cover {
             self.input_labels.backfill_to(self.num_inputs);
         }
 
-        // Collect variables from expression (in sorted order)
-        let expr_variables: Vec<Arc<str>> = expr.collect_variables().into_iter().collect();
+        // Extract cubes from DNF
+        let cubes = dnf.cubes();
 
-        // Build variable mapping: expr variable -> cover input index
+        // Collect all variables from cubes (in sorted order for consistency)
+        let mut dnf_variables = BTreeSet::new();
+        for product_term in cubes {
+            for var in product_term.keys() {
+                dnf_variables.insert(Arc::clone(var));
+            }
+        }
+
+        // Build variable mapping: dnf variable -> cover input index
         let mut var_to_index: BTreeMap<Arc<str>, usize> = BTreeMap::new();
         let mut num_new_variables = 0;
 
-        for expr_var in &expr_variables {
+        for dnf_var in &dnf_variables {
             // Check if variable already exists in cover (using HashMap for O(1) lookup)
-            if let Some(pos) = self.input_labels.find_position(expr_var.as_ref()) {
-                var_to_index.insert(Arc::clone(expr_var), pos);
+            if let Some(pos) = self.input_labels.find_position(dnf_var.as_ref()) {
+                var_to_index.insert(Arc::clone(dnf_var), pos);
             } else {
                 // New variable - add to cover
                 let new_index = self.num_inputs + num_new_variables;
-                let label = Arc::clone(expr_var);
+                let label = Arc::clone(dnf_var);
                 self.input_labels.add(label, new_index);
-                var_to_index.insert(Arc::clone(expr_var), new_index);
+                var_to_index.insert(Arc::clone(dnf_var), new_index);
                 num_new_variables += 1;
             }
         }
@@ -895,9 +811,6 @@ impl Cover {
             self.num_inputs += num_new_variables;
         }
 
-        // Convert expression to DNF
-        let dnf = expr.to_dnf();
-
         // Add new output
         let output_index = self.num_outputs;
         self.output_labels.add(Arc::from(output_name), output_index);
@@ -910,11 +823,11 @@ impl Cover {
             cube.outputs = new_outputs.into();
         }
 
-        // Convert DNF to cubes and add to cover
-        for product_term in dnf {
+        // Convert cubes to cover format and add to cover
+        for product_term in cubes {
             // Build input vector based on variable mapping
             let mut inputs = vec![None; self.num_inputs];
-            for (var, &polarity) in &product_term {
+            for (var, &polarity) in product_term {
                 if let Some(&idx) = var_to_index.get(var) {
                     inputs[idx] = Some(polarity);
                 }
@@ -943,8 +856,8 @@ impl Cover {
     /// let a = BoolExpr::variable("a");
     /// let b = BoolExpr::variable("b");
     ///
-    /// cover.add_expr(a.clone(), "out1").unwrap();
-    /// cover.add_expr(b.clone(), "out2").unwrap();
+    /// cover.add_expr(&a, "out1").unwrap();
+    /// cover.add_expr(&b, "out2").unwrap();
     ///
     /// for (name, expr) in cover.to_exprs() {
     ///     println!("{}: {}", name, expr);
@@ -969,7 +882,7 @@ impl Cover {
     /// let mut cover = Cover::new(CoverType::F);
     /// let a = BoolExpr::variable("a");
     ///
-    /// cover.add_expr(a, "result").unwrap();
+    /// cover.add_expr(&a, "result").unwrap();
     /// let expr = cover.to_expr("result").unwrap();
     /// println!("result: {}", expr);
     /// ```
@@ -997,7 +910,7 @@ impl Cover {
     /// let mut cover = Cover::new(CoverType::F);
     /// let a = BoolExpr::variable("a");
     ///
-    /// cover.add_expr(a, "out").unwrap();
+    /// cover.add_expr(&a, "out").unwrap();
     /// let expr = cover.to_expr_by_index(0).unwrap();
     /// println!("Output 0: {}", expr);
     /// ```
@@ -1089,20 +1002,196 @@ fn cubes_to_expr(cubes: &[&Cube], variables: &[Arc<str>], num_inputs: usize) -> 
     }
 }
 
-// Implement Minimizable for Cover (used by minimization algorithm)
+// Implement public Minimizable trait for Cover
 impl Minimizable for Cover {
-    type CubesIter<'a> = std::slice::Iter<'a, Cube>;
+    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
+        use crate::espresso::{Espresso, EspressoCover};
 
-    fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
-        self.cubes.iter()
+        // Split cubes into F, D, R sets based on cube type
+        let mut f_cubes = Vec::new();
+        let mut d_cubes = Vec::new();
+        let mut r_cubes = Vec::new();
+
+        for cube in self.cubes.iter() {
+            let input_vec: Vec<u8> = cube
+                .inputs
+                .iter()
+                .map(|&opt| match opt {
+                    Some(false) => 0,
+                    Some(true) => 1,
+                    None => 2,
+                })
+                .collect();
+
+            // Convert outputs: true → 1, false → 0
+            let output_vec: Vec<u8> = cube
+                .outputs
+                .iter()
+                .map(|&b| if b { 1 } else { 0 })
+                .collect();
+
+            // Send to appropriate set based on cube type
+            match cube.cube_type {
+                CubeType::F => f_cubes.push((input_vec, output_vec)),
+                CubeType::D => d_cubes.push((input_vec, output_vec)),
+                CubeType::R => r_cubes.push((input_vec, output_vec)),
+            }
+        }
+
+        // Direct C calls - thread-safe via thread-local storage
+        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
+
+        // Build covers from cube data
+        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
+        let d_cover = if !d_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                d_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+        let r_cover = if !r_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                r_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+
+        // Minimize
+        let (f_result, d_result, r_result) =
+            esp.minimize(&f_cover, d_cover.as_ref(), r_cover.as_ref());
+
+        // Extract minimized cubes
+        let mut minimized_cubes = Vec::new();
+        minimized_cubes.extend(f_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::F,
+        ));
+        minimized_cubes.extend(d_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::D,
+        ));
+        minimized_cubes.extend(r_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::R,
+        ));
+
+        // Build new cover with minimized cubes - only clone labels (Arc, cheap)
+        Ok(Cover {
+            num_inputs: self.num_inputs,
+            num_outputs: self.num_outputs,
+            input_labels: self.input_labels.clone(),
+            output_labels: self.output_labels.clone(),
+            cubes: minimized_cubes,
+            cover_type: self.cover_type,
+        })
     }
 
-    fn set_cubes(&mut self, cubes: Vec<Cube>) {
-        // Keep all cubes returned by Espresso - the algorithm already returns
-        // the correct cubes based on the cover type (F, D, R sets as appropriate)
-        self.cubes = cubes;
+    fn minimize_exact_with_config(
+        &self,
+        config: &EspressoConfig,
+    ) -> Result<Self, MinimizationError> {
+        use crate::espresso::{Espresso, EspressoCover};
+
+        // Split cubes into F, D, R sets based on cube type
+        let mut f_cubes = Vec::new();
+        let mut d_cubes = Vec::new();
+        let mut r_cubes = Vec::new();
+
+        for cube in self.cubes.iter() {
+            let input_vec: Vec<u8> = cube
+                .inputs
+                .iter()
+                .map(|&opt| match opt {
+                    Some(false) => 0,
+                    Some(true) => 1,
+                    None => 2,
+                })
+                .collect();
+
+            // Convert outputs: true → 1, false → 0
+            let output_vec: Vec<u8> = cube
+                .outputs
+                .iter()
+                .map(|&b| if b { 1 } else { 0 })
+                .collect();
+
+            // Send to appropriate set based on cube type
+            match cube.cube_type {
+                CubeType::F => f_cubes.push((input_vec, output_vec)),
+                CubeType::D => d_cubes.push((input_vec, output_vec)),
+                CubeType::R => r_cubes.push((input_vec, output_vec)),
+            }
+        }
+
+        // Direct C calls - thread-safe via thread-local storage
+        let esp = Espresso::new(self.num_inputs(), self.num_outputs(), config);
+
+        // Build covers from cube data
+        let f_cover = EspressoCover::from_cubes(f_cubes, self.num_inputs(), self.num_outputs())?;
+        let d_cover = if !d_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                d_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+        let r_cover = if !r_cubes.is_empty() {
+            Some(EspressoCover::from_cubes(
+                r_cubes,
+                self.num_inputs(),
+                self.num_outputs(),
+            )?)
+        } else {
+            None
+        };
+
+        // Minimize using exact algorithm
+        let (f_result, d_result, r_result) =
+            esp.minimize_exact(&f_cover, d_cover.as_ref(), r_cover.as_ref());
+
+        // Extract minimized cubes
+        let mut minimized_cubes = Vec::new();
+        minimized_cubes.extend(f_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::F,
+        ));
+        minimized_cubes.extend(d_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::D,
+        ));
+        minimized_cubes.extend(r_result.to_cubes(
+            self.num_inputs(),
+            self.num_outputs(),
+            CubeType::R,
+        ));
+
+        // Build new cover with minimized cubes - only clone labels (Arc, cheap)
+        Ok(Cover {
+            num_inputs: self.num_inputs,
+            num_outputs: self.num_outputs,
+            input_labels: self.input_labels.clone(),
+            output_labels: self.output_labels.clone(),
+            cubes: minimized_cubes,
+            cover_type: self.cover_type,
+        })
     }
 }
+
+// Note: Blanket implementation of Minimizable for types convertible to/from Bdd
+// is provided in the bdd module (src/expression/bdd.rs)
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
 impl crate::pla::PLASerialisable for Cover {
@@ -1158,6 +1247,86 @@ impl crate::pla::PLASerialisable for Cover {
 impl Default for Cover {
     fn default() -> Self {
         Self::new(CoverType::F)
+    }
+}
+
+/// Convert a `BoolExpr` into a `Cover` with a single output named "out"
+///
+/// This conversion uses the BDD representation for efficient DNF extraction.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::{BoolExpr, Cover};
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let expr = a.and(&b);
+///
+/// let cover: Cover = expr.into();
+/// assert_eq!(cover.num_outputs(), 1);
+/// ```
+impl From<crate::expression::BoolExpr> for Cover {
+    fn from(expr: crate::expression::BoolExpr) -> Self {
+        let mut cover = Cover::new(CoverType::F);
+        cover
+            .add_expr(&expr, "out")
+            .expect("Adding expression to new cover should not fail");
+        cover
+    }
+}
+
+/// Convert a `&Bdd` into a `Cover` with a single output named "out"
+///
+/// This conversion extracts the cubes from the BDD representation without
+/// requiring ownership of the BDD.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::{BoolExpr, Cover};
+///
+/// let a = BoolExpr::variable("a");
+/// let bdd = a.to_bdd();
+///
+/// let cover = Cover::from(&bdd);
+/// assert_eq!(cover.num_outputs(), 1);
+/// ```
+impl From<&crate::expression::bdd::Bdd> for Cover {
+    fn from(bdd: &crate::expression::bdd::Bdd) -> Self {
+        use std::collections::BTreeSet;
+
+        // Convert to DNF
+        let dnf = crate::cover::dnf::Dnf::from(bdd);
+        let cubes = dnf.cubes();
+
+        // Collect all variables from the DNF cubes
+        let mut all_vars = BTreeSet::new();
+        for product_term in cubes {
+            for var in product_term.keys() {
+                all_vars.insert(Arc::clone(var));
+            }
+        }
+
+        // Create cover with proper dimensions
+        let var_vec: Vec<Arc<str>> = all_vars.into_iter().collect();
+        let var_refs: Vec<&str> = var_vec.iter().map(|s| s.as_ref()).collect();
+        let mut cover = Cover::with_labels(CoverType::F, &var_refs, &["out"]);
+
+        // Add cubes to cover
+        for product_term in cubes {
+            let mut inputs = vec![None; cover.num_inputs()];
+            for (var, &polarity) in product_term {
+                if let Some(idx) = cover.input_labels.find_position(var) {
+                    inputs[idx] = Some(polarity);
+                }
+            }
+
+            let outputs = vec![true; cover.num_outputs()];
+            cover.cubes.push(Cube::new(&inputs, &outputs, CubeType::F));
+        }
+
+        cover
     }
 }
 
@@ -1231,7 +1400,7 @@ mod tests {
         let mut cover = Cover::new(CoverType::F);
         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         // XOR cannot be minimized
         assert_eq!(cover.num_cubes(), 2);
     }
@@ -1446,7 +1615,7 @@ mod tests {
         let b = crate::BoolExpr::variable("b");
         let expr = a.and(&b);
 
-        cover.add_expr(expr, "output").unwrap();
+        cover.add_expr(&expr, "output").unwrap();
 
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.num_outputs(), 1);
@@ -1465,13 +1634,13 @@ mod tests {
         let c = crate::BoolExpr::variable("c");
 
         // Add first expression with variables a and b
-        cover.add_expr(a.and(&b), "out1").unwrap();
+        cover.add_expr(&a.and(&b), "out1").unwrap();
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
 
         // Add second expression with variables b and c (b should match, c appended)
-        cover.add_expr(b.and(&c), "out2").unwrap();
+        cover.add_expr(&b.and(&c), "out2").unwrap();
         assert_eq!(cover.num_inputs(), 3);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
@@ -1488,10 +1657,10 @@ mod tests {
         let b = crate::BoolExpr::variable("b");
 
         // Add first expression
-        cover.add_expr(a.clone(), "result").unwrap();
+        cover.add_expr(&a, "result").unwrap();
 
         // Try to add another expression with same output name - should fail
-        let result = cover.add_expr(b.clone(), "result");
+        let result = cover.add_expr(&b, "result");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
     }
@@ -1503,22 +1672,22 @@ mod tests {
 
         // F type
         let mut f_cover = Cover::new(CoverType::F);
-        f_cover.add_expr(a.and(&b), "out").unwrap();
+        f_cover.add_expr(&a.and(&b), "out").unwrap();
         assert_eq!(f_cover.cover_type(), CoverType::F);
 
         // FD type
         let mut fd_cover = Cover::new(CoverType::FD);
-        fd_cover.add_expr(a.or(&b), "out").unwrap();
+        fd_cover.add_expr(&a.or(&b), "out").unwrap();
         assert_eq!(fd_cover.cover_type(), CoverType::FD);
 
         // FR type
         let mut fr_cover = Cover::new(CoverType::FR);
-        fr_cover.add_expr(a.clone(), "out").unwrap();
+        fr_cover.add_expr(&a, "out").unwrap();
         assert_eq!(fr_cover.cover_type(), CoverType::FR);
 
         // FDR type
         let mut fdr_cover = Cover::new(CoverType::FDR);
-        fdr_cover.add_expr(a.not(), "out").unwrap();
+        fdr_cover.add_expr(&a.not(), "out").unwrap();
         assert_eq!(fdr_cover.cover_type(), CoverType::FDR);
     }
 
@@ -1531,9 +1700,9 @@ mod tests {
         let c = crate::BoolExpr::variable("c");
 
         // Add three different expressions
-        cover.add_expr(a.and(&b), "and_result").unwrap();
-        cover.add_expr(a.or(&c), "or_result").unwrap();
-        cover.add_expr(b.not(), "not_result").unwrap();
+        cover.add_expr(&a.and(&b), "and_result").unwrap();
+        cover.add_expr(&a.or(&c), "or_result").unwrap();
+        cover.add_expr(&b.not(), "not_result").unwrap();
 
         assert_eq!(cover.num_outputs(), 3);
         assert_eq!(cover.output_labels()[0].as_ref(), "and_result");
@@ -1557,7 +1726,7 @@ mod tests {
 
         // Add expression with variables in non-alphabetical order
         // Variables in BoolExpr are sorted alphabetically internally
-        cover.add_expr(z.and(&a).and(&m), "out").unwrap();
+        cover.add_expr(&z.and(&a).and(&m), "out").unwrap();
 
         // Variables should be in alphabetical order (a, m, z)
         assert_eq!(cover.num_inputs(), 3);
@@ -1583,11 +1752,11 @@ mod tests {
         let x1 = crate::BoolExpr::variable("x1");
 
         // Try to add to output y0 - should FAIL because y0 was backfilled
-        let result = cover.add_expr(x0.or(&x1), "y0");
+        let result = cover.add_expr(&x0.or(&x1), "y0");
         assert!(result.is_err()); // y0 already exists after backfilling
 
         // Add to a different output name - should succeed
-        cover.add_expr(x0.and(&x1), "y1").unwrap();
+        cover.add_expr(&x0.and(&x1), "y1").unwrap();
         assert_eq!(cover.num_outputs(), 2);
         assert_eq!(cover.output_labels().len(), 2);
         assert_eq!(cover.output_labels()[0].as_ref(), "y0"); // Backfilled
@@ -1604,7 +1773,7 @@ mod tests {
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
-        cover.add_expr(a.and(&b), "result").unwrap();
+        cover.add_expr(&a.and(&b), "result").unwrap();
 
         let retrieved = cover.to_expr("result").unwrap();
 
@@ -1621,8 +1790,8 @@ mod tests {
 
         let a = crate::BoolExpr::variable("a");
 
-        cover.add_expr(a.clone(), "out0").unwrap();
-        cover.add_expr(a.not(), "out1").unwrap();
+        cover.add_expr(&a, "out0").unwrap();
+        cover.add_expr(&a.not(), "out1").unwrap();
 
         let expr0 = cover.to_expr_by_index(0).unwrap();
         let expr1 = cover.to_expr_by_index(1).unwrap();
@@ -1636,7 +1805,7 @@ mod tests {
         let mut cover = Cover::new(CoverType::F);
 
         let a = crate::BoolExpr::variable("a");
-        cover.add_expr(a, "exists").unwrap();
+        cover.add_expr(&a, "exists").unwrap();
 
         // Try to get non-existent output
         let result = cover.to_expr("doesnt_exist");
@@ -1649,7 +1818,7 @@ mod tests {
         let mut cover = Cover::new(CoverType::F);
 
         let a = crate::BoolExpr::variable("a");
-        cover.add_expr(a, "out").unwrap();
+        cover.add_expr(&a, "out").unwrap();
 
         // Try to get out of bounds index
         let result = cover.to_expr_by_index(1);
@@ -1665,9 +1834,9 @@ mod tests {
         let b = crate::BoolExpr::variable("b");
         let c = crate::BoolExpr::variable("c");
 
-        cover.add_expr(a.clone(), "out1").unwrap();
-        cover.add_expr(b.clone(), "out2").unwrap();
-        cover.add_expr(c.clone(), "out3").unwrap();
+        cover.add_expr(&a, "out1").unwrap();
+        cover.add_expr(&b, "out2").unwrap();
+        cover.add_expr(&c, "out3").unwrap();
 
         let exprs: Vec<_> = cover.to_exprs().collect();
         assert_eq!(exprs.len(), 3);
@@ -1692,10 +1861,10 @@ mod tests {
 
         // Add redundant expression: a*b + a*b*c
         let redundant = a.and(&b).or(&a.and(&b).and(&c));
-        cover.add_expr(redundant, "out").unwrap();
+        cover.add_expr(&redundant, "out").unwrap();
 
         let cubes_before = cover.num_cubes();
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         let cubes_after = cover.num_cubes();
 
         // Should minimize
@@ -1781,7 +1950,7 @@ mod tests {
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
-        cover.add_expr(a.and(&b), "y1").unwrap();
+        cover.add_expr(&a.and(&b), "y1").unwrap();
 
         // Should have 4 inputs now: 2 from cube (x0, x1) + 2 from expression (a, b)
         assert_eq!(cover.num_inputs(), 4);
@@ -1807,7 +1976,7 @@ mod tests {
         let b = crate::BoolExpr::variable("b");
 
         // Add expression first - no backfilling needed since cover is empty
-        cover.add_expr(a.and(&b), "result").unwrap();
+        cover.add_expr(&a.and(&b), "result").unwrap();
         assert_eq!(cover.num_inputs(), 2);
         assert_eq!(cover.input_labels()[0].as_ref(), "a");
         assert_eq!(cover.input_labels()[1].as_ref(), "b");
@@ -1844,13 +2013,15 @@ mod tests {
 
         // Consensus theorem: a*b + ~a*c + b*c (b*c is redundant)
         let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
-        cover.add_expr(expr, "consensus").unwrap();
+        cover.add_expr(&expr, "consensus").unwrap();
 
-        assert_eq!(cover.num_cubes(), 3);
+        // BDD automatically optimizes during conversion, so we get 2 cubes directly
+        // (b*c is recognized as redundant by the canonical BDD representation)
+        assert_eq!(cover.num_cubes(), 2);
 
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
 
-        // Should minimize to 2 cubes (b*c is redundant)
+        // Should still have 2 cubes after minimization
         assert_eq!(cover.num_cubes(), 2);
 
         // Should still be able to convert back
@@ -1876,7 +2047,7 @@ mod tests {
 
         // Expression with constant: a * true = a
         let expr = a.and(&t);
-        cover.add_expr(expr, "out").unwrap();
+        cover.add_expr(&expr, "out").unwrap();
 
         // Should have one variable
         assert_eq!(cover.num_inputs(), 1);
@@ -1897,7 +2068,7 @@ mod tests {
         let x1 = crate::BoolExpr::variable("x1");
         let other = crate::BoolExpr::variable("other");
 
-        cover.add_expr(x1.and(&other), "y1").unwrap();
+        cover.add_expr(&x1.and(&other), "y1").unwrap();
 
         // Should have 4 inputs: 3 from cube (x0, x1, x2) + 1 new (other)
         // x1 from expression matches the backfilled x1
@@ -1920,7 +2091,7 @@ mod tests {
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
-        cover.add_expr(a.and(&b), "output").unwrap();
+        cover.add_expr(&a.and(&b), "output").unwrap();
 
         // Convert to PLA string
         let pla_string = cover.to_pla_string(CoverType::F).unwrap();
@@ -1946,13 +2117,13 @@ mod tests {
         let a = crate::BoolExpr::variable("a");
         let b = crate::BoolExpr::variable("b");
 
-        cover.add_expr(a.and(&b), "out1").unwrap();
-        cover.add_expr(a.or(&b), "out2").unwrap();
+        cover.add_expr(&a.and(&b), "out1").unwrap();
+        cover.add_expr(&a.or(&b), "out2").unwrap();
 
         let inputs_before = cover.num_inputs();
         let outputs_before = cover.num_outputs();
 
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
 
         // Dimensions should be preserved
         assert_eq!(cover.num_inputs(), inputs_before);

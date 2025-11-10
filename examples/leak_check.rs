@@ -21,7 +21,7 @@ fn main() {
     for i in 0..10000 {
         let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
         let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
-        let (result, d, r) = esp.minimize(f, None, None);
+        let (result, d, r) = esp.minimize(&f, None, None);
 
         let _ = result.to_cubes(2, 1, CubeType::F);
         let _ = d.to_cubes(2, 1, CubeType::F);

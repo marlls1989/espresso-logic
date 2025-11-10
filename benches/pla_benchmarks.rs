@@ -6,7 +6,7 @@
 //! For efficiency, randomly selects 10 files from each size category.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use espresso_logic::{Cover, PLAReader};
+use espresso_logic::{Cover, Minimizable, PLAReader};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -202,8 +202,8 @@ fn bench_minimize(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let mut cover = Cover::from_pla_file(black_box(path)).unwrap();
-                    cover.minimize().unwrap();
+                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = cover.minimize().unwrap();
                     black_box(cover);
                 });
             },
@@ -243,8 +243,8 @@ fn bench_full_pipeline(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let mut cover = Cover::from_pla_file(black_box(path)).unwrap();
-                    cover.minimize().unwrap();
+                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = cover.minimize().unwrap();
                     let result = cover.num_cubes();
                     black_box(result);
                 });
@@ -285,8 +285,8 @@ fn bench_by_category(c: &mut Criterion) {
                 &file.path,
                 |b, path| {
                     b.iter(|| {
-                        let mut cover = Cover::from_pla_file(black_box(path)).unwrap();
-                        cover.minimize().unwrap();
+                        let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                        let cover = cover.minimize().unwrap();
                         black_box(cover);
                     });
                 },

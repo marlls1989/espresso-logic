@@ -1,6 +1,6 @@
 //! Basic minimization example
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Boolean Function Minimization Example\n");
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Minimize the function - all C code runs in isolated process
     println!("Minimizing using Espresso algorithm...");
-    cover.minimize()?;
+    cover = cover.minimize()?;
 
     println!("\nMinimized to {} cubes", cover.num_cubes());
     println!("\nThe minimized function should be equivalent but with fewer cubes.");

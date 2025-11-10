@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create expression: (x AND y) OR (y AND z)
     let expr = x.and(&y).or(&y.and(&z));
     let mut expr_cover = Cover::new(CoverType::F);
-    expr_cover.add_expr(expr, "output").unwrap();
+    expr_cover.add_expr(&expr, "output").unwrap();
 
     println!("Created Cover from boolean expression");
     println!("Number of inputs: {}", expr_cover.num_inputs());

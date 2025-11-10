@@ -149,11 +149,11 @@ The Rust CLI aims to be compatible with the original C version:
 For more control, use the Rust API directly:
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::from_pla_file("input.pla")?;
-    cover.minimize()?;
+    cover = cover.minimize()?;
     cover.to_pla_file("output.pla", CoverType::F)?;
     Ok(())
 }

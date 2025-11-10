@@ -13,6 +13,7 @@ Espresso takes Boolean functions in sum-of-products form and produces minimal or
 
 - **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
 - **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
+- **Binary Decision Diagrams** - Efficient cover generation with canonical representation
 - **Both Algorithms** - Exposes both heuristic and exact minimization algorithms from Espresso
 - **PLA File Support** - Read and write Berkeley PLA format
 - **Two API Levels** - High-level for ease of use, low-level for maximum control
@@ -24,7 +25,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "3.0"
+espresso-logic = "3.1"
 ```
 
 ### Boolean Expression Minimization
@@ -74,6 +75,31 @@ fn main() -> std::io::Result<()> {
     cover.minimize()?;
     cover.to_pla_file("output.pla", CoverType::F)?;
     Ok(())
+}
+```
+
+### Binary Decision Diagrams
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let expr = a.and(&b).or(&b.and(&c));
+    
+    // Convert to BDD for canonical representation
+    let bdd = expr.to_bdd();
+    println!("BDD has {} nodes", bdd.node_count());
+    
+    // BDDs support efficient operations
+    let bdd_c = c.to_bdd();
+    let combined = bdd.and(&bdd_c);
+    
+    // Convert back to expression
+    let result = combined.to_expr();
+    println!("Result: {}", result);
 }
 ```
 

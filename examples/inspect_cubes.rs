@@ -1,6 +1,6 @@
 //! Example: Inspect cubes after minimization
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Cube Inspection Example ===\n");
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Number of cubes: {}", cover.num_cubes());
 
     // Minimize
-    cover.minimize()?;
+    cover = cover.minimize()?;
 
     println!("\nAfter minimization:");
     println!("  Number of cubes: {}", cover.num_cubes());

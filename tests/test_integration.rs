@@ -3,7 +3,7 @@
 //! These tests verify end-to-end functionality including file I/O,
 //! PLA format handling, and complete minimization workflows.
 
-use espresso_logic::*;
+use espresso_logic::{Minimizable, *};
 use std::io::Write;
 use tempfile::NamedTempFile;
 
@@ -42,10 +42,10 @@ fn test_create_cover_from_pla() {
     // Create PLA content programmatically for XOR function
     let pla_str = ".i 2\n.o 1\n.p 2\n01 1\n10 1\n.e\n";
 
-    let mut cover = Cover::from_pla_string(pla_str).expect("Failed to parse PLA");
+    let cover = Cover::from_pla_string(pla_str).expect("Failed to parse PLA");
     assert_eq!(cover.num_cubes(), 2);
 
-    cover.minimize().unwrap();
+    let cover = cover.minimize().unwrap();
 
     // XOR cannot be minimized
     assert_eq!(cover.num_cubes(), 2);
@@ -63,11 +63,11 @@ fn test_pla_roundtrip() {
         <Cover as PLAWriter>::to_pla_string(&cover, CoverType::F).expect("Failed to serialize");
 
     // Parse it back using Cover
-    let mut parsed_cover = Cover::from_pla_string(&pla_str).expect("Failed to parse");
+    let parsed_cover = Cover::from_pla_string(&pla_str).expect("Failed to parse");
     assert_eq!(parsed_cover.num_cubes(), 2);
 
     // Minimize and verify XOR cannot be reduced
-    parsed_cover.minimize().unwrap();
+    let parsed_cover = parsed_cover.minimize().unwrap();
     assert_eq!(parsed_cover.num_cubes(), 2);
 }
 

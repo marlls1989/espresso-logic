@@ -7,7 +7,7 @@
 //! - Linux: Use valgrind or heaptrack (see docs/MEMORY_SAFETY.md)
 
 use espresso_logic::espresso::{CubeType, Espresso, EspressoCover};
-use espresso_logic::EspressoConfig;
+use espresso_logic::{EspressoConfig, Minimizable};
 
 /// Helper to get current memory usage on macOS
 #[cfg(target_os = "macos")]
@@ -38,7 +38,7 @@ fn test_memory_usage_stability() {
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
         let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
         let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
-        let (result, _d, _r) = esp.minimize(f, None, None);
+        let (result, _d, _r) = esp.minimize(&f, None, None);
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
 
@@ -53,7 +53,7 @@ fn test_memory_usage_stability() {
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
         let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
         let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
-        let (result, _d, _r) = esp.minimize(f, None, None);
+        let (result, _d, _r) = esp.minimize(&f, None, None);
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
 
@@ -142,7 +142,7 @@ fn test_minimize_with_explicit_covers() {
     let r = EspressoCover::from_cubes(vec![(vec![0, 0], vec![1])], 2, 1).unwrap();
 
     // This internally clones F, D, R before passing to C
-    let (result, d_out, r_out) = esp.minimize(f, Some(d), Some(r));
+    let (result, d_out, r_out) = esp.minimize(&f, Some(&d), Some(&r));
 
     // All returned covers should be valid and independently freeable (memory safety check)
     assert!(!result.to_cubes(2, 1, CubeType::F).is_empty());
@@ -164,7 +164,7 @@ fn test_repeated_operations_amplify_leaks() {
     for i in 0..ITERATIONS {
         let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
         let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
-        let (result, d, r) = esp.minimize(f, None, None);
+        let (result, d, r) = esp.minimize(&f, None, None);
 
         // Use the results to prevent optimizer from removing them
         let _ = result.to_cubes(2, 1, CubeType::F);
@@ -204,11 +204,11 @@ fn test_coverbuilder_memory_management() {
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
         // minimize() internally creates EspressoCover and frees it
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         assert_eq!(cover.num_cubes(), 2);
 
         // Cover's internal data should be properly freed on next minimize or drop
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         assert_eq!(cover.num_cubes(), 2);
     }
 }
@@ -226,12 +226,12 @@ fn test_dimension_changes_no_leak() {
             0 => {
                 let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-                cover.minimize().unwrap();
+                let _ = cover.minimize().unwrap();
             }
             1 => {
                 let mut cover = Cover::new(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
-                cover.minimize().unwrap();
+                let _ = cover.minimize().unwrap();
             }
             2 => {
                 let mut cover = Cover::new(CoverType::F);
@@ -239,7 +239,7 @@ fn test_dimension_changes_no_leak() {
                     &[Some(false), Some(true), Some(false), Some(true)],
                     &[Some(true)],
                 );
-                cover.minimize().unwrap();
+                let _ = cover.minimize().unwrap();
             }
             _ => unreachable!(),
         }
@@ -280,7 +280,7 @@ fn test_large_cover_allocations() {
         }
 
         // This allocates significant C memory
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
 
         // Cover should be minimized
         assert!(cover.num_cubes() <= 64);
@@ -318,7 +318,7 @@ fn test_multithreaded_memory_isolation() {
                 for _ in 0..OPS_PER_THREAD {
                     let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
                     let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
-                    let (result, d, r) = esp.minimize(f, None, None);
+                    let (result, d, r) = esp.minimize(&f, None, None);
 
                     // Use results
                     let _ = result.to_cubes(2, 1, CubeType::F);

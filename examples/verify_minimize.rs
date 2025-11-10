@@ -1,4 +1,4 @@
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test case from test_cover_many_cubes
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nBefore minimize: {} cubes", cover.num_cubes());
 
     // Minimize
-    cover.minimize()?;
+    cover = cover.minimize()?;
 
     println!("After minimize: {} cubes", cover.num_cubes());
 

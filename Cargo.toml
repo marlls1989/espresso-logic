@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"
@@ -13,7 +13,7 @@ categories = ["algorithms", "science"]
 libc = "0.2"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 clap = { version = "4.4", features = ["derive"], optional = true }
-espresso-logic-macros = { version = "3.0.0", path = "./espresso-logic-macros" }
+espresso-logic-macros = { version = "3.1.0", path = "./espresso-logic-macros" }
 
 [features]
 cli = ["dep:clap"]

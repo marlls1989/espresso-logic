@@ -62,7 +62,7 @@
 //! The `expr!` macro provides three convenient styles:
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, expr};
+//! use espresso_logic::{BoolExpr, expr, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Style 1: String literals (most concise - no declarations!)
@@ -89,7 +89,7 @@
 //! Parse expressions from strings:
 //!
 //! ```
-//! use espresso_logic::BoolExpr;
+//! use espresso_logic::{BoolExpr, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Parse using standard operators: +, *, ~, !
@@ -107,7 +107,7 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, Cover, CoverType};
+//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let a = BoolExpr::variable("a");
@@ -116,14 +116,14 @@
 //!
 //! // Create cover and add expression
 //! let mut cover = Cover::new(CoverType::F);
-//! cover.add_expr(expr, "output")?;
+//! cover.add_expr(&expr, "output")?;
 //!
 //! // Access cover properties
 //! println!("Input variables: {:?}", cover.input_labels());
 //! println!("Number of cubes: {}", cover.num_cubes());
 //!
 //! // Minimize the cover
-//! cover.minimize()?;
+//! cover = cover.minimize()?;
 //!
 //! // Convert back to expression
 //! let minimized = cover.to_expr("output")?;
@@ -137,7 +137,7 @@
 //! Build covers by manually adding cubes (dimensions grow automatically):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType};
+//! use espresso_logic::{Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Create a cover (dimensions grow automatically)
@@ -147,8 +147,8 @@
 //! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
 //! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
 //!
-//! // Minimize in-place
-//! cover.minimize()?;
+//! // Minimize (returns new instance)
+//! cover = cover.minimize()?;
 //!
 //! // Iterate over minimized cubes
 //! for (inputs, outputs) in cover.cubes_iter() {
@@ -163,7 +163,7 @@
 //! Load and minimize PLA files:
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
+//! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
 //! # use std::io::Write;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -175,7 +175,7 @@
 //! let mut cover = Cover::from_pla_file(input_path)?;
 //!
 //! // Minimize
-//! cover.minimize()?;
+//! cover = cover.minimize()?;
 //!
 //! # let output_file = tempfile::NamedTempFile::new()?;
 //! # let output_path = output_file.path();
@@ -230,7 +230,7 @@
 //! Just use `Cover` directly - each thread executes Espresso independently:
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType};
+//! use espresso_logic::{Cover, CoverType, Minimizable};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -242,7 +242,7 @@
 //!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //!         
 //!         // Thread-safe - each thread executes with independent global state
-//!         cover.minimize()?;
+//!         cover = cover.minimize()?;
 //!         Ok(cover.num_cubes())
 //!     })
 //! }).collect();
@@ -331,11 +331,12 @@ pub mod pla;
 pub mod sys;
 
 // Re-export high-level public API
-pub use cover::{Cover, CoverType, Cube, CubeType};
+pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable};
 pub use error::{
     AddExprError, CoverError, CubeError, ExpressionParseError, InstanceError, MinimizationError,
     PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
 };
+pub use expression::bdd::Bdd;
 pub use expression::BoolExpr;
 pub use pla::{PLAReader, PLAWriter};
 
@@ -391,10 +392,10 @@ pub mod doc {
 ///
 /// ## High-Level API (`Cover`)
 ///
-/// Use with [`Cover::minimize_with_config()`](crate::Cover::minimize_with_config):
+/// Use with [`Cover::minimize_with_config()`](crate::cover::Minimizable::minimize_with_config):
 ///
 /// ```
-/// use espresso_logic::{Cover, CoverType, EspressoConfig};
+/// use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut cover = Cover::new(CoverType::F);

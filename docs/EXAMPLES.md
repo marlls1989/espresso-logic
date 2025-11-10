@@ -9,6 +9,7 @@ This guide provides comprehensive examples for using espresso-logic.
 - [Multiple Outputs](#multiple-outputs)
 - [PLA Files](#pla-files)
 - [Expression Operations](#expression-operations)
+- [Binary Decision Diagrams (BDDs)](#binary-decision-diagrams-bdds)
 - [Low-Level API](#low-level-api)
 - [Concurrent Execution](#concurrent-execution)
 
@@ -17,7 +18,7 @@ This guide provides comprehensive examples for using espresso-logic.
 ### Basic Usage
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Three styles of building expressions
@@ -45,7 +46,7 @@ fn main() -> std::io::Result<()> {
 ### Parsing Expressions
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Parse from string
@@ -64,7 +65,7 @@ fn main() -> std::io::Result<()> {
 ### Operator Overloading
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let a = BoolExpr::variable("a");
@@ -95,7 +96,7 @@ fn main() -> std::io::Result<()> {
 ### Building from Truth Tables
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
@@ -107,7 +108,7 @@ fn main() -> std::io::Result<()> {
     cover.add_cube(&[Some(true),  Some(false)], &[Some(true)]);  // 10 -> 1
     cover.add_cube(&[Some(true),  Some(true)],  &[Some(false)]); // 11 -> 0
     
-    cover.minimize()?;
+    cover = cover.minimize()?;
     println!("Minimized to {} cubes", cover.num_cubes());
     
     Ok(())
@@ -117,7 +118,7 @@ fn main() -> std::io::Result<()> {
 ### Using Don't Cares
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
@@ -126,7 +127,7 @@ fn main() -> std::io::Result<()> {
     cover.add_cube(&[Some(true), None], &[Some(true)]);  // 1- -> 1
     cover.add_cube(&[None, Some(true)], &[Some(true)]);  // -1 -> 1
     
-    cover.minimize()?;
+    cover = cover.minimize()?;
     
     Ok(())
 }
@@ -137,7 +138,7 @@ fn main() -> std::io::Result<()> {
 ### Named Outputs
 
 ```rust
-use espresso_logic::{Cover, CoverType, BoolExpr, expr};
+use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
@@ -146,12 +147,12 @@ fn main() -> std::io::Result<()> {
     let c = BoolExpr::variable("c");
     
     // Add multiple outputs with names
-    cover.add_expr(expr!(a * b), "and_output")?;
-    cover.add_expr(expr!(a + c), "or_output")?;
-    cover.add_expr(expr!(a * b + b * c), "complex_output")?;
+    cover.add_expr(&expr!(a * b), "and_output")?;
+    cover.add_expr(&expr!(a + c), "or_output")?;
+    cover.add_expr(&expr!(a * b + b * c), "complex_output")?;
     
     // Minimize all together
-    cover.minimize()?;
+    cover = cover.minimize()?;
     
     // Retrieve minimized expressions
     for (name, expr) in cover.to_exprs() {
@@ -167,7 +168,7 @@ fn main() -> std::io::Result<()> {
 ### Reading and Writing
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read from file
@@ -178,7 +179,7 @@ fn main() -> std::io::Result<()> {
     println!("Cubes before: {}", cover.num_cubes());
     
     // Minimize
-    cover.minimize()?;
+    cover = cover.minimize()?;
     
     println!("Cubes after: {}", cover.num_cubes());
     
@@ -211,7 +212,7 @@ See [PLA_FORMAT.md](PLA_FORMAT.md) for complete PLA file format specification.
 ### Semantic Equality
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     let a = BoolExpr::variable("a");
@@ -232,7 +233,7 @@ fn main() {
 ### Evaluation
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -256,7 +257,7 @@ fn main() {
 ### Collecting Variables
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     let expr = expr!("a" * "b" + "c" * "d");
@@ -264,6 +265,196 @@ fn main() {
     // Get all variables (sorted)
     let vars = expr.collect_variables();
     println!("Variables: {:?}", vars);  // {"a", "b", "c", "d"}
+}
+```
+
+## Binary Decision Diagrams (BDDs)
+
+Binary Decision Diagrams provide canonical representation with efficient operations. 
+Introduced in v3.1, BDDs are used internally for cover generation and are also available 
+as a public API.
+
+### Basic BDD Construction
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+use std::sync::Arc;
+
+fn main() {
+    // Create BDDs from constants
+    let true_bdd = Bdd::constant(true);
+    let false_bdd = Bdd::constant(false);
+    
+    // Create BDD from variable
+    let a = Bdd::variable("a");
+    
+    // Convert expression to BDD
+    let expr = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
+    let bdd = expr.to_bdd();
+    
+    // Or use the from_expr method
+    let bdd2 = Bdd::from_expr(&expr);
+    
+    println!("BDD has {} nodes", bdd.node_count());
+}
+```
+
+### BDD Operations
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+use std::sync::Arc;
+
+fn main() {
+    let a = Bdd::variable("a");
+    let b = Bdd::variable("b");
+    let c = Bdd::variable("c");
+    
+    // Logical operations
+    let a_and_b = a.and(&b);
+    let a_or_b = a.or(&b);
+    let not_a = a.not();
+    
+    // Complex expression: (a AND b) OR (NOT a AND c)
+    let complex = a.and(&b).or(&a.not().and(&c));
+    
+    println!("Complex BDD has {} nodes", complex.node_count());
+    println!("Uses {} variables", complex.var_count());
+}
+```
+
+### Converting Between BDD and BoolExpr
+
+```rust
+use espresso_logic::{BoolExpr, Bdd, Minimizable};
+
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Create expression
+    let expr = a.and(&b).or(&b.and(&c));
+    
+    // Convert to BDD (efficient canonical representation)
+    let bdd = expr.to_bdd();
+    println!("Original expression as BDD: {} nodes", bdd.node_count());
+    
+    // Convert back to expression (DNF form)
+    let expr2 = bdd.to_expr();
+    println!("Converted back: {}", expr2);
+    
+    // Verify equivalence
+    assert!(expr.equivalent_to(&expr2));
+    
+    Ok(())
+}
+```
+
+### Equivalence Checking with BDDs
+
+```rust
+use espresso_logic::BoolExpr;
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    
+    // Two equivalent expressions (commutative)
+    let expr1 = a.and(&b);
+    let expr2 = b.and(&a);
+    
+    // Convert to BDDs
+    let bdd1 = expr1.to_bdd();
+    let bdd2 = expr2.to_bdd();
+    
+    // BDDs are identical for equivalent expressions (canonical representation)
+    assert_eq!(bdd1, bdd2);
+    assert_eq!(bdd1.node_count(), bdd2.node_count());
+    
+    println!("Expressions are equivalent!");
+}
+```
+
+### BDD Properties and Inspection
+
+```rust
+use espresso_logic::{BoolExpr, Bdd, Dnf};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let expr = a.and(&b).or(&a.not());
+    
+    let bdd = expr.to_bdd();
+    
+    // Check BDD properties
+    println!("Is terminal: {}", bdd.is_terminal());
+    println!("Is true: {}", bdd.is_true());
+    println!("Is false: {}", bdd.is_false());
+    println!("Node count: {}", bdd.node_count());
+    println!("Variable count: {}", bdd.var_count());
+    
+    // Extract cubes (paths to TRUE)
+    let dnf = Dnf::from(&bdd);
+    println!("Number of cubes: {}", dnf.len());
+    for cube in dnf.cubes() {
+        println!("  Cube: {:?}", cube);
+    }
+}
+```
+
+### BDD Automatic Optimization
+
+```rust
+use espresso_logic::{BoolExpr, Dnf};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Consensus theorem: a*b + ~a*c + b*c
+    // The b*c term is redundant
+    let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
+    
+    println!("Original expression: {}", expr);
+    
+    // BDD automatically recognizes redundancy
+    let bdd = expr.to_bdd();
+    let dnf = Dnf::from(&bdd);
+    
+    println!("BDD has {} cubes (redundancy eliminated)", dnf.len());
+    // Outputs: 2 cubes (b*c was redundant and eliminated)
+    
+    // Convert back to see simplified form
+    let simplified = bdd.to_expr();
+    println!("Simplified: {}", simplified);
+}
+```
+
+### Using BDDs for Efficient Minimization
+
+```rust
+use espresso_logic::{BoolExpr, Minimizable};
+
+fn main() -> std::io::Result<()> {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Redundant expression
+    let expr = a.and(&b).or(&a.and(&b).and(&c));
+    
+    // Minimization workflow (v3.1):
+    // 1. Expression → BDD (efficient canonical form)
+    // 2. BDD → Cover cubes (optimized extraction)
+    // 3. Cover → Minimized cover (Espresso algorithm)
+    
+    let minimized = expr.minimize()?;
+    println!("Minimized: {}", minimized);  // Output: a * b
+    
+    Ok(())
 }
 ```
 
@@ -321,7 +512,7 @@ fn main() -> std::io::Result<()> {
 ### Thread-Safe High-Level API
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -344,7 +535,7 @@ fn main() -> std::io::Result<()> {
 ### Parallel Cover Processing
 
 ```rust,no_run
-use espresso_logic::{Cover, PLAReader};
+use espresso_logic::{Cover, Minimizable, PLAReader};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -353,7 +544,7 @@ fn main() -> std::io::Result<()> {
     let handles: Vec<_> = files.into_iter().map(|file| {
         thread::spawn(move || -> std::io::Result<usize> {
             let mut cover = Cover::from_pla_file(file)?;
-            cover.minimize()?;
+            cover = cover.minimize()?;
             Ok(cover.num_cubes())
         })
     }).collect();
@@ -371,7 +562,7 @@ fn main() -> std::io::Result<()> {
 ### Inspecting Cubes
 
 ```rust,no_run
-use espresso_logic::{Cover, PLAReader};
+use espresso_logic::{Cover, Minimizable, PLAReader};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::from_pla_file("input.pla")?;
@@ -380,7 +571,7 @@ fn main() -> std::io::Result<()> {
     let before_count = cover.num_cubes();
     println!("Before: {} cubes", before_count);
     
-    cover.minimize()?;
+    cover = cover.minimize()?;
     
     // Get cubes after minimization
     let after_count = cover.num_cubes();

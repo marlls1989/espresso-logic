@@ -3,7 +3,7 @@
 //! This demonstrates the modern API where ALL C code
 //! runs in isolated processes - nothing in the parent process.
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Transparent Process Isolation API ===\n");
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   - Worker returns result via shared memory");
     println!("   - Worker terminates");
 
-    cover.minimize()?;
+    cover = cover.minimize()?;
     println!("   ✓ Success! Result has {} cubes\n", cover.num_cubes());
 
     println!("=== Key Benefits ===");

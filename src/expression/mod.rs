@@ -10,6 +10,8 @@
 //!   1. Method API: `a.and(&b).or(&c)`
 //!   2. Operator overloading: `&a * &b + &c`
 //!   3. **`expr!` macro**: `expr!(a * b + c)` - Recommended!
+//! - [`bdd::Bdd`] - Binary Decision Diagram for canonical representation and efficient
+//!   operations. Used internally for efficient cover generation during minimization.
 //!
 //! # Quick Start
 //!
@@ -49,7 +51,7 @@
 //! ## Minimizing and Evaluating
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, expr};
+//! use espresso_logic::{BoolExpr, expr, Minimizable};
 //! use std::collections::HashMap;
 //! use std::sync::Arc;
 //!
@@ -69,7 +71,7 @@
 //! let result = redundant.evaluate(&assignment);
 //! assert_eq!(result, true);
 //!
-//! // Minimize it (consumes redundant)
+//! // Minimize it (returns new minimized instance)
 //! let minimized = redundant.minimize()?;
 //! println!("Minimized: {}", minimized);  // Output: a * b
 //!
@@ -80,11 +82,13 @@
 //! # }
 //! ```
 
-use crate::error::{ExpressionParseError, MinimizationError, ParseBoolExprError};
-use std::collections::{BTreeMap, BTreeSet};
+pub mod bdd;
+
+use crate::error::{ExpressionParseError, ParseBoolExprError};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::{Add, Mul, Not};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 // Lalrpop-generated parser module (generated in OUT_DIR at build time)
 #[allow(clippy::all)]
@@ -140,9 +144,11 @@ pub(crate) enum BoolExprInner {
 /// let b = BoolExpr::variable("b");
 /// let expr = &a * &b + &(&a).not() * &(&b).not();
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct BoolExpr {
     inner: Arc<BoolExprInner>,
+    /// Cached BDD representation (computed lazily on first access)
+    bdd_cache: Arc<OnceLock<bdd::Bdd>>,
 }
 
 impl BoolExpr {
@@ -150,6 +156,7 @@ impl BoolExpr {
     pub fn variable(name: &str) -> Self {
         BoolExpr {
             inner: Arc::new(BoolExprInner::Variable(Arc::from(name))),
+            bdd_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -157,6 +164,7 @@ impl BoolExpr {
     pub fn constant(value: bool) -> Self {
         BoolExpr {
             inner: Arc::new(BoolExprInner::Constant(value)),
+            bdd_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -192,6 +200,67 @@ impl BoolExpr {
         vars
     }
 
+    /// Convert this boolean expression to a Binary Decision Diagram ([`Bdd`])
+    ///
+    /// BDDs provide a canonical representation of boolean functions and support
+    /// efficient operations. This conversion walks the expression tree and builds
+    /// the BDD bottom-up.
+    ///
+    /// # Caching
+    ///
+    /// The BDD is cached on first computation, so subsequent calls are O(1).
+    /// Subexpressions also use their caches, enabling dynamic programming.
+    ///
+    /// # Use in Minimization
+    ///
+    /// When a [`BoolExpr`] is minimized, it is first converted to a [`Bdd`],
+    /// then cubes are extracted from the BDD to create a [`Cover`], which is
+    /// then minimized by the Espresso algorithm. BDDs enable efficient cover
+    /// generation with automatic optimizations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::BoolExpr;
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// let expr = a.and(&b);
+    ///
+    /// let bdd = expr.to_bdd();
+    /// // BDD can now be used for efficient operations
+    /// ```
+    ///
+    /// [`Bdd`]: crate::expression::bdd::Bdd
+    /// [`Cover`]: crate::Cover
+    pub fn to_bdd(&self) -> bdd::Bdd {
+        self.bdd_cache
+            .get_or_init(|| {
+                match self.inner.as_ref() {
+                    BoolExprInner::Constant(val) => bdd::Bdd::constant(*val),
+                    BoolExprInner::Variable(name) => bdd::Bdd::variable(name),
+                    BoolExprInner::And(left, right) => {
+                        // Use to_bdd() on subexpressions to leverage their caches
+                        let left_bdd = left.to_bdd();
+                        let right_bdd = right.to_bdd();
+                        left_bdd.and(&right_bdd)
+                    }
+                    BoolExprInner::Or(left, right) => {
+                        // Use to_bdd() on subexpressions to leverage their caches
+                        let left_bdd = left.to_bdd();
+                        let right_bdd = right.to_bdd();
+                        left_bdd.or(&right_bdd)
+                    }
+                    BoolExprInner::Not(inner) => {
+                        // Use to_bdd() on subexpression to leverage its cache
+                        let inner_bdd = inner.to_bdd();
+                        inner_bdd.not()
+                    }
+                }
+            })
+            .clone()
+    }
+
     fn collect_variables_impl(&self, vars: &mut BTreeSet<Arc<str>>) {
         match self.inner.as_ref() {
             BoolExprInner::Variable(name) => {
@@ -208,31 +277,11 @@ impl BoolExpr {
         }
     }
 
-    /// Convert this expression to Disjunctive Normal Form (DNF)
-    ///
-    /// Returns a vector of product terms, where each term is a map from variable to its literal value
-    /// (true for positive literal, false for negative literal).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::BoolExpr;
-    ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let expr = a.and(&b);
-    ///
-    /// let dnf = expr.to_dnf();
-    /// assert_eq!(dnf.len(), 1); // One product term: a * b
-    /// ```
-    pub fn to_dnf(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
-        to_dnf_impl(self)
-    }
-
     /// Logical AND: create a new expression that is the conjunction of this and another
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr {
             inner: Arc::new(BoolExprInner::And(self.clone(), other.clone())),
+            bdd_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -240,6 +289,7 @@ impl BoolExpr {
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr {
             inner: Arc::new(BoolExprInner::Or(self.clone(), other.clone())),
+            bdd_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -247,115 +297,40 @@ impl BoolExpr {
     pub fn not(&self) -> BoolExpr {
         BoolExpr {
             inner: Arc::new(BoolExprInner::Not(self.clone())),
+            bdd_cache: Arc::new(OnceLock::new()),
         }
     }
+}
 
-    /// Get a reference to the inner expression (internal use)
-    pub(crate) fn inner(&self) -> &BoolExprInner {
-        &self.inner
+/// Manual PartialEq implementation that only compares the expression structure,
+/// not the cached BDD (cache is an optimization, not part of the logical value)
+impl PartialEq for BoolExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
     }
+}
 
-    /// Minimize this boolean expression using Espresso
-    ///
-    /// This is a convenience method that creates a `Cover`, adds the expression to it,
-    /// minimizes it, and returns the minimized expression.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{BoolExpr, expr};
-    ///
-    /// # fn main() -> std::io::Result<()> {
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let c = BoolExpr::variable("c");
-    ///
-    /// // Redundant expression
-    /// let expr = expr!(a * b + a * b * c);
-    ///
-    /// // Minimize it
-    /// let minimized = expr.minimize()?;
-    ///
-    /// // minimized should be simpler (just a * b)
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn minimize(self) -> Result<BoolExpr, MinimizationError> {
-        use crate::{Cover, CoverType};
-        let mut cover = Cover::new(CoverType::F);
-        // This shouldn't fail because we're using a new cover with a unique output name
-        cover
-            .add_expr(self, "out")
-            .expect("Adding expression to new cover should not fail");
-        cover.minimize()?;
-        // This shouldn't fail because we just created the output "out"
-        Ok(cover
-            .to_expr("out")
-            .expect("Converting output to expression should not fail"))
-    }
+impl Eq for BoolExpr {}
 
-    /// Minimize this boolean expression using exact minimization
-    ///
-    /// This method uses exact minimization which guarantees minimal results,
-    /// unlike the heuristic [`minimize()`](Self::minimize) method.
-    ///
-    /// # Performance vs Quality Trade-off
-    ///
-    /// - **`minimize()`**: Fast heuristic, near-optimal results (~99% optimal in practice)
-    /// - **`minimize_exact()`**: Slower but guaranteed minimal results (exact solution)
-    ///
-    /// Use `minimize_exact()` when:
-    /// - You need provably minimal results (e.g., for equivalency checking)
-    /// - The expression is small enough that exact solving is feasible
-    /// - Quality is more important than speed
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{BoolExpr, expr};
-    ///
-    /// # fn main() -> std::io::Result<()> {
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let c = BoolExpr::variable("c");
-    ///
-    /// // Redundant expression
-    /// let expr = expr!(a * b + a * b * c);
-    ///
-    /// // Minimize exactly for guaranteed minimal result
-    /// let minimized = expr.minimize_exact()?;
-    ///
-    /// // minimized is guaranteed to be minimal (a * b)
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn minimize_exact(self) -> Result<BoolExpr, MinimizationError> {
-        use crate::{Cover, CoverType};
-        let mut cover = Cover::new(CoverType::F);
-        // This shouldn't fail because we're using a new cover with a unique output name
-        cover
-            .add_expr(self, "out")
-            .expect("Adding expression to new cover should not fail");
-        cover.minimize_exact()?;
-        // This shouldn't fail because we just created the output "out"
-        Ok(cover
-            .to_expr("out")
-            .expect("Converting output to expression should not fail"))
-    }
-
+impl BoolExpr {
     /// Check if two boolean expressions are logically equivalent
     ///
-    /// This method uses exact minimization to efficiently check logical equivalence.
-    /// It combines both expressions into a single cover with two outputs, minimizes
-    /// exactly once, and checks if all cubes have identical output patterns.
+    /// This method uses a two-phase approach for optimal performance:
+    /// 1. **Fast [`Bdd`] equality check**: Convert both expressions to BDDs and compare.
+    ///    BDDs use canonical representation, so equal BDDs guarantee equivalence.
+    /// 2. **Exact minimization fallback**: If BDDs differ, use exact minimization
+    ///    for thorough verification (handles edge cases).
     ///
     /// # Performance
     ///
     /// This method is much more efficient than exhaustive truth table comparison:
-    /// - **Old approach**: O(2^n) where n is the number of variables (exponential)
-    /// - **New approach**: O(m × k) where m is cubes and k is variables (polynomial)
+    /// - **BDD check**: O(e) where e is expression size (very fast for most cases)
+    /// - **Minimization fallback**: O(m × k) where m is cubes and k is variables
+    /// - **Old approach (v3.0)**: O(2^n) where n is the number of variables (exponential)
     ///
     /// For expressions with many variables, this is dramatically faster.
+    ///
+    /// [`Bdd`]: crate::expression::bdd::Bdd
     ///
     /// # Examples
     ///
@@ -387,21 +362,34 @@ impl BoolExpr {
             return self.evaluate(&HashMap::new()) == other.evaluate(&HashMap::new());
         }
 
-        // Create a cover with both expressions as separate outputs
+        // OPTIMIZATION: First try BDD equality check (fast)
+        // BDDs use canonical representation, so equal BDDs mean equivalent functions
+        let self_bdd = self.to_bdd();
+        let other_bdd = other.to_bdd();
+
+        if self_bdd == other_bdd {
+            // BDDs are equal - expressions are definitely equivalent
+            return true;
+        }
+
+        // BDDs differ - fall back to exact minimization for thorough verification
+        // This handles edge cases where BDD construction might differ but functions are still equivalent
         let mut cover = Cover::new(CoverType::F);
 
-        // Add both expressions - if this fails, they're not equivalent
-        if cover.add_expr(self.clone(), "expr1").is_err() {
+        // Add both BDDs as separate outputs
+        if cover.add_expr(&self_bdd, "expr1").is_err() {
             return false;
         }
-        if cover.add_expr(other.clone(), "expr2").is_err() {
+        if cover.add_expr(&other_bdd, "expr2").is_err() {
             return false;
         }
 
         // Minimize exactly once - if this fails, assume not equivalent
-        if cover.minimize_exact().is_err() {
-            return false;
-        }
+        use crate::cover::Minimizable as _;
+        cover = match cover.minimize_exact() {
+            Ok(minimized) => minimized,
+            Err(_) => return false,
+        };
 
         // Check if all cubes have identical output patterns for both outputs
         // After exact minimization, if the expressions are equivalent, every cube
@@ -753,111 +741,75 @@ impl Not for BoolExpr {
 }
 
 // ============================================================================
-// DNF Conversion - Helper Functions
+// Conversions to/from Bdd (enables blanket Minimizable implementation)
 // ============================================================================
 
-/// Convert a boolean expression to Disjunctive Normal Form (DNF)
-/// Returns a vector of product terms, where each term is a map from variable to its literal value
-/// (true for positive literal, false for negative literal)
-fn to_dnf_impl(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    match expr.inner() {
-        BoolExprInner::Constant(true) => {
-            // True constant = one product term with no literals (tautology)
-            vec![BTreeMap::new()]
-        }
-        BoolExprInner::Constant(false) => {
-            // False constant = no product terms (empty sum)
-            vec![]
-        }
-        BoolExprInner::Variable(name) => {
-            // Single variable = one product with positive literal
-            let mut term = BTreeMap::new();
-            term.insert(Arc::clone(name), true);
-            vec![term]
-        }
-        BoolExprInner::Not(inner) => {
-            // NOT is handled recursively with De Morgan's laws
-            to_dnf_not_impl(inner)
-        }
-        BoolExprInner::And(left, right) => {
-            // AND: cross product of terms from each side
-            let left_dnf = to_dnf_impl(left);
-            let right_dnf = to_dnf_impl(right);
+/// Convert `BoolExpr` to `Bdd`
+///
+/// This enables the blanket `Minimizable` implementation for `BoolExpr`.
+impl From<BoolExpr> for bdd::Bdd {
+    fn from(expr: BoolExpr) -> Self {
+        expr.to_bdd()
+    }
+}
 
-            let mut result = Vec::new();
-            for left_term in &left_dnf {
-                for right_term in &right_dnf {
-                    // Merge terms, checking for contradictions (x AND ~x)
-                    if let Some(merged) = merge_product_terms(left_term, right_term) {
-                        result.push(merged);
-                    }
-                }
+/// Convert `&BoolExpr` to `Bdd`
+///
+/// This enables the blanket `Minimizable` implementation to work with references
+/// without requiring a clone of the entire expression.
+impl From<&BoolExpr> for bdd::Bdd {
+    fn from(expr: &BoolExpr) -> Self {
+        expr.to_bdd()
+    }
+}
+
+/// Convert `Bdd` back to `BoolExpr`
+///
+/// This conversion extracts the cubes from the BDD and reconstructs a boolean expression.
+/// The resulting expression will be in DNF (disjunctive normal form).
+impl From<bdd::Bdd> for BoolExpr {
+    fn from(bdd: bdd::Bdd) -> Self {
+        let cubes = bdd.to_cubes();
+
+        if cubes.is_empty() {
+            return BoolExpr::constant(false);
+        }
+
+        // Convert each cube to a product term
+        let mut terms = Vec::new();
+        for product_term in cubes {
+            if product_term.is_empty() {
+                // Empty product = tautology
+                terms.push(BoolExpr::constant(true));
+            } else {
+                // Build AND of all literals
+                let factors: Vec<BoolExpr> = product_term
+                    .iter()
+                    .map(|(var, &polarity)| {
+                        let v = BoolExpr::variable(var);
+                        if polarity {
+                            v
+                        } else {
+                            v.not()
+                        }
+                    })
+                    .collect();
+
+                let product = factors.into_iter().reduce(|acc, f| acc.and(&f)).unwrap();
+                terms.push(product);
             }
-            result
         }
-        BoolExprInner::Or(left, right) => {
-            // OR: union of terms from each side
-            let mut left_dnf = to_dnf_impl(left);
-            let right_dnf = to_dnf_impl(right);
-            left_dnf.extend(right_dnf);
-            left_dnf
-        }
+
+        // OR all terms together
+        terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap()
     }
 }
 
-/// Convert NOT expression to DNF using De Morgan's laws
-fn to_dnf_not_impl(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    match expr.inner() {
-        BoolExprInner::Constant(val) => {
-            // NOT of constant
-            to_dnf_impl(&BoolExpr::constant(!val))
-        }
-        BoolExprInner::Variable(name) => {
-            // NOT of variable = one product with negative literal
-            let mut term = BTreeMap::new();
-            term.insert(Arc::clone(name), false);
-            vec![term]
-        }
-        BoolExprInner::Not(inner) => {
-            // Double negation
-            to_dnf_impl(inner)
-        }
-        BoolExprInner::And(left, right) => {
-            // De Morgan: ~(A * B) = ~A + ~B
-            let not_left = left.not();
-            let not_right = right.not();
-            to_dnf_impl(&not_left.or(&not_right))
-        }
-        BoolExprInner::Or(left, right) => {
-            // De Morgan: ~(A + B) = ~A * ~B
-            let not_left = left.not();
-            let not_right = right.not();
-            to_dnf_impl(&not_left.and(&not_right))
-        }
-    }
-}
+// Note: Minimizable for BoolExpr is automatically provided by the blanket implementation
+// in cover/dnf.rs for types that implement Into<Dnf> + From<Dnf>
 
-/// Merge two product terms (AND them together)
-/// Returns None if they contradict (e.g., x AND ~x)
-fn merge_product_terms(
-    left: &BTreeMap<Arc<str>, bool>,
-    right: &BTreeMap<Arc<str>, bool>,
-) -> Option<BTreeMap<Arc<str>, bool>> {
-    let mut result = left.clone();
-
-    for (var, &polarity) in right {
-        if let Some(&existing) = result.get(var) {
-            if existing != polarity {
-                // Contradiction: x AND ~x = false
-                return None;
-            }
-        } else {
-            result.insert(Arc::clone(var), polarity);
-        }
-    }
-
-    Some(result)
-}
+// Note: DNF conversion functionality has been moved to the Dnf type in cover::dnf
+// Use `Dnf::from(&expr)` to convert boolean expressions to DNF.
 
 #[cfg(test)]
 mod tests {
@@ -882,48 +834,6 @@ mod tests {
 
         assert_eq!(t, BoolExpr::constant(true));
         assert_ne!(t, f);
-    }
-
-    #[test]
-    fn test_method_api() {
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-
-        // Test AND method - no clones in user code!
-        let and_expr = a.and(&b);
-        match and_expr.inner() {
-            BoolExprInner::And(_, _) => {}
-            _ => panic!("Expected And expression"),
-        }
-
-        // Test OR method - can still use a and b
-        let or_expr = a.or(&b);
-        match or_expr.inner() {
-            BoolExprInner::Or(_, _) => {}
-            _ => panic!("Expected Or expression"),
-        }
-
-        // Test NOT method
-        let not_expr = a.not();
-        match not_expr.inner() {
-            BoolExprInner::Not(_) => {}
-            _ => panic!("Expected Not expression"),
-        }
-    }
-
-    #[test]
-    fn test_complex_expression() {
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
-
-        // Build complex expression: (a AND b) OR (NOT a AND c)
-        let expr = a.and(&b).or(&a.not().and(&c));
-
-        match expr.inner() {
-            BoolExprInner::Or(_, _) => {}
-            _ => panic!("Expected Or at top level"),
-        }
     }
 
     #[test]
@@ -1947,5 +1857,53 @@ mod tests {
         // Different operations should not be equivalent
         assert_ne!(and_expr, or_expr);
         assert!(!and_expr.equivalent_to(&or_expr));
+    }
+
+    #[test]
+    fn test_bdd_caching() {
+        let a = BoolExpr::variable("a");
+        let b = BoolExpr::variable("b");
+        let expr = a.and(&b);
+
+        // First call computes and caches BDD
+        let bdd1 = expr.to_bdd();
+
+        // Second call should return cached BDD (same result)
+        let bdd2 = expr.to_bdd();
+
+        // Both should be identical
+        assert_eq!(bdd1, bdd2);
+        assert_eq!(bdd1.node_count(), bdd2.node_count());
+
+        // Caching means repeated calls are essentially free
+        for _ in 0..100 {
+            let bdd = expr.to_bdd();
+            assert_eq!(bdd, bdd1);
+        }
+    }
+
+    #[test]
+    fn test_bdd_subexpression_caching() {
+        let a = BoolExpr::variable("a");
+        let b = BoolExpr::variable("b");
+
+        // Create a common subexpression
+        let ab = a.and(&b);
+
+        // Compute BDD for subexpression (gets cached)
+        let ab_bdd = ab.to_bdd();
+
+        // Use subexpression in larger expression using expr!
+        let expr = expr!(ab + !ab); // (a*b) + ~(a*b) = always true
+
+        // When expr.to_bdd() is called, it should reuse ab's cached BDD
+        let expr_bdd = expr.to_bdd();
+
+        // Verify the result is correct (should be TRUE)
+        assert!(expr_bdd.is_true());
+
+        // The subexpression cache was used, making this very efficient
+        let ab_bdd2 = ab.to_bdd();
+        assert_eq!(ab_bdd2, ab_bdd); // Still cached
     }
 }

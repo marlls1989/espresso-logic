@@ -3,7 +3,7 @@
 //! A clean Rust implementation using the safe Cover API with process isolation
 
 use clap::{Parser, ValueEnum};
-use espresso_logic::{Cover, CoverType, EspressoConfig, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable, PLAReader, PLAWriter};
 use std::path::PathBuf;
 use std::process;
 
@@ -140,19 +140,25 @@ fn main() {
             if args.summary {
                 eprintln!("Running Espresso minimization (process-isolated)...");
             }
-            if let Err(e) = cover.minimize_with_config(&config) {
-                eprintln!("Error during minimization: {}", e);
-                process::exit(1);
-            }
+            cover = match cover.minimize_with_config(&config) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error during minimization: {}", e);
+                    process::exit(1);
+                }
+            };
         }
         Command::Exact => {
             if args.summary {
                 eprintln!("Running exact minimization (process-isolated)...");
             }
-            if let Err(e) = cover.minimize_with_config(&config) {
-                eprintln!("Error during minimization: {}", e);
-                process::exit(1);
-            }
+            cover = match cover.minimize_exact_with_config(&config) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error during minimization: {}", e);
+                    process::exit(1);
+                }
+            };
         }
         Command::Echo => {
             if args.summary {

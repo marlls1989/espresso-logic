@@ -4,7 +4,7 @@
 //! storage for global state. Multiple threads can safely use the library
 //! concurrently without synchronization.
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 use std::thread;
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ fn test_basic_thread_safety() {
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
     // Minimize using thread-safe C library
-    cover.minimize().expect("Minimization failed");
+    cover = cover.minimize().expect("Minimization failed");
 
     // Verify XOR pattern cannot be minimized - should remain 2 cubes
     assert_eq!(
@@ -37,7 +37,7 @@ fn test_concurrent_execution() {
                 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
                 // Thread-safe - each thread executes with independent global state
-                cover.minimize().expect("Minimization failed");
+                cover = cover.minimize().expect("Minimization failed");
 
                 let num_cubes = cover.num_cubes();
                 println!("Thread {} completed with {} cubes", i, num_cubes);
@@ -115,7 +115,7 @@ fn test_different_sizes_in_different_threads() {
     let handle1 = thread::spawn(|| {
         let mut cover = Cover::new(CoverType::F);
         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         cover.num_cubes()
     });
 
@@ -125,7 +125,7 @@ fn test_different_sizes_in_different_threads() {
             &[Some(true), Some(false), Some(true)],
             &[Some(true), Some(false)],
         );
-        cover.minimize().unwrap();
+        cover = cover.minimize().unwrap();
         cover.num_cubes()
     });
 
@@ -146,7 +146,8 @@ fn test_stress_concurrent() {
                     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
                     match cover.minimize() {
-                        Ok(_) => {
+                        Ok(minimized) => {
+                            cover = minimized;
                             // XOR pattern should have exactly 2 cubes (cannot be minimized)
                             assert_eq!(cover.num_cubes(), 2);
                         }

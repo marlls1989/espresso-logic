@@ -1,4 +1,4 @@
-use espresso_logic::{expr, BoolExpr};
+use espresso_logic::{expr, BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     println!("=== Expression Composition Example ===\n");

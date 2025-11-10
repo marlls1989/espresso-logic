@@ -1,6 +1,6 @@
 //! Test the new unified Cover API with add_expr and to_exprs
 
-use espresso_logic::{BoolExpr, Cover, CoverType};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Testing New Unified Cover API ===\n");
@@ -14,9 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let c = BoolExpr::variable("c");
 
     println!("Adding expressions...");
-    cover.add_expr(a.and(&b), "out1")?;
+    cover.add_expr(&a.and(&b), "out1")?;
     println!("  out1 = a * b");
-    cover.add_expr(b.or(&c), "out2")?;
+    cover.add_expr(&b.or(&c), "out2")?;
     println!("  out2 = b + c");
 
     println!("\nCover stats:");
@@ -28,14 +28,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try adding to existing output (should fail)
     println!("\nTrying to add to existing output (should fail)...");
-    match cover.add_expr(a.or(&b), "out1") {
+    match cover.add_expr(&a.or(&b), "out1") {
         Ok(_) => println!("  ERROR: Should have failed!"),
         Err(e) => println!("  ✓ Correctly rejected: {}", e),
     }
 
     // Minimize
     println!("\nMinimizing...");
-    cover.minimize()?;
+    cover = cover.minimize()?;
     println!("  After minimization: {} cubes", cover.num_cubes());
 
     // Convert back to expressions

@@ -1,6 +1,6 @@
 //! Example: Using different cover types with Cover
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Cover Type Examples ===\n");
@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fd_cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1 (F cube)
     fd_cover.add_cube(&[Some(true), Some(false)], &[None]); // 10 -> - (D cube)
     println!("   Before minimize: {} cubes", fd_cover.num_cubes());
-    fd_cover.minimize()?;
+    fd_cover = fd_cover.minimize()?;
     println!("   After minimize:  {} cubes\n", fd_cover.num_cubes());
 
     // F type - ON-set only
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     f_cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1 (F cube)
     f_cover.add_cube(&[Some(true), Some(true)], &[None]); // 11 -> - (ignored, F-type doesn't support D)
     println!("   Before minimize: {} cubes", f_cover.num_cubes());
-    f_cover.minimize()?;
+    f_cover = f_cover.minimize()?;
     println!("   After minimize:  {} cubes\n", f_cover.num_cubes());
 
     // FR type - ON-set + OFF-set
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fr_cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1 (F cube)
     fr_cover.add_cube(&[Some(true), Some(true)], &[Some(false)]); // 11 -> 0 (R cube)
     println!("   Before minimize: {} cubes", fr_cover.num_cubes());
-    fr_cover.minimize()?;
+    fr_cover = fr_cover.minimize()?;
     println!("   After minimize:  {} cubes\n", fr_cover.num_cubes());
 
     // FDR type - ON-set + Don't-care + OFF-set
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fdr_cover.add_cube(&[Some(true), Some(false)], &[None]); // 10 -> - (D cube)
     fdr_cover.add_cube(&[Some(true), Some(true)], &[Some(false)]); // 11 -> 0 (R cube)
     println!("   Before minimize: {} cubes", fdr_cover.num_cubes());
-    fdr_cover.minimize()?;
+    fdr_cover = fdr_cover.minimize()?;
     println!("   After minimize:  {} cubes\n", fdr_cover.num_cubes());
 
     Ok(())

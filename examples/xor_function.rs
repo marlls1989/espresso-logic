@@ -1,6 +1,6 @@
 //! XOR function minimization example
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("XOR Function Minimization\n");
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  10 -> 1\n");
 
     // Minimize
-    cover.minimize()?;
+    cover = cover.minimize()?;
 
     println!("Output: {} cubes", cover.num_cubes());
     println!("\n✓ Minimization complete!");

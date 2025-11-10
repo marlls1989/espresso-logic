@@ -16,7 +16,7 @@ The boolean expression API provides a high-level, intuitive interface for workin
 ## Quick Start
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Create variables
@@ -105,7 +105,7 @@ The `expr!` macro is a procedural macro that provides the cleanest syntax. At co
 No variable declarations needed - variables are created automatically:
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     // Simple expressions
@@ -129,7 +129,7 @@ fn main() {
 You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`:
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Create expressions using different methods
@@ -159,7 +159,7 @@ fn main() -> std::io::Result<()> {
 Combine expressions (from parsing, minimization, etc.) with string literals seamlessly:
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Parse complex expressions from user input or config files
@@ -344,7 +344,7 @@ fn main() {
 **Actual macro expansions** (verified with `cargo expand`):
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     let a = BoolExpr::variable("a");
@@ -406,7 +406,7 @@ fn main() {
 The simplest way to minimize an expression using the fast heuristic algorithm:
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let a = BoolExpr::variable("a");
@@ -430,7 +430,7 @@ fn main() -> std::io::Result<()> {
 For provably minimal results, use `minimize_exact()`:
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let a = BoolExpr::variable("a");
@@ -464,14 +464,14 @@ fn main() -> std::io::Result<()> {
 For more control over the minimization process:
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let expr = BoolExpr::parse("a * b + a * b * c")?;
     
     // Create cover and add expression
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "output")?;
+    cover.add_expr(&expr, "output")?;
     
     // Inspect before minimization
     println!("Input variables: {:?}", cover.input_labels());
@@ -480,7 +480,7 @@ fn main() -> std::io::Result<()> {
     println!("Cubes before: {}", cover.num_cubes());
     
     // Minimize
-    cover.minimize()?;
+    cover = cover.minimize()?;
     
     println!("Cubes after: {}", cover.num_cubes());
     
@@ -497,7 +497,7 @@ fn main() -> std::io::Result<()> {
 ### XOR (Exclusive OR)
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Method API
@@ -518,7 +518,7 @@ fn main() -> std::io::Result<()> {
 ### XNOR (Equivalence)
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // Method API
@@ -539,7 +539,7 @@ fn main() -> std::io::Result<()> {
 ### Majority Function (3 inputs)
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     // expr! macro (clearest - using strings)
@@ -563,7 +563,7 @@ fn main() -> std::io::Result<()> {
 ### De Morgan's Laws
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     // ~(a * b) = ~a + ~b (using string notation)
@@ -576,17 +576,123 @@ fn main() {
 }
 ```
 
+## Working with BDDs
+
+Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
+efficient operations. In version 3.1, BDDs are used internally for efficient cover generation
+from boolean expressions before minimization by Espresso.
+
+### BDD Role in Minimization
+
+When you minimize a `BoolExpr`, the library:
+1. Converts the expression to a `Bdd` (canonical representation, automatic optimizations)
+2. Extracts cubes from the BDD to create a `Cover`
+3. Minimizes the cover using Espresso's algorithm (heuristic or exact)
+
+The BDD step enables efficient cover generation with automatic redundancy elimination.
+
+### Direct BDD Usage
+
+BDDs are also available as a public API for advanced use cases:
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Build expression
+    let expr = a.and(&b).or(&b.and(&c));
+    
+    // Convert to BDD
+    let bdd = expr.to_bdd();
+    // Or use: let bdd = Bdd::from_expr(&expr);
+    
+    // Inspect BDD properties
+    println!("BDD nodes: {}", bdd.node_count());
+    println!("Variables: {}", bdd.var_count());
+    
+    // Perform operations directly on BDDs
+    let d = BoolExpr::variable("d");
+    let bdd_d = d.to_bdd();
+    let combined = bdd.and(&bdd_d);
+    
+    // Convert back to expression
+    let result_expr = combined.to_expr();
+    println!("Result: {}", result_expr);
+}
+```
+
+### BDD Advantages
+
+BDDs automatically optimize expressions during construction:
+
+```rust
+use espresso_logic::{BoolExpr, Dnf};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    
+    // Consensus theorem: a*b + ~a*c + b*c
+    // The b*c term is redundant
+    let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
+    
+    // BDD automatically recognizes redundancy
+    let bdd = expr.to_bdd();
+    let dnf = Dnf::from(&bdd);
+    
+    println!("Cubes: {}", dnf.len());  // Outputs: 2 (b*c eliminated)
+}
+```
+
+### When to Use BDDs
+
+Use BDDs directly when you need:
+
+- **Canonical representation**: Compare expressions for equivalence
+- **Efficient operations**: Build complex expressions incrementally
+- **Size inspection**: Check representation size before further operations
+- **Optimization analysis**: Understand how expressions simplify
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+
+fn main() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    
+    // Build two equivalent expressions
+    let expr1 = a.and(&b);
+    let expr2 = b.and(&a);  // Commutative
+    
+    // Convert to BDDs
+    let bdd1 = expr1.to_bdd();
+    let bdd2 = expr2.to_bdd();
+    
+    // BDDs are identical for equivalent expressions
+    assert_eq!(bdd1.node_count(), bdd2.node_count());
+    
+    // Can perform operations efficiently
+    let result = bdd1.or(&bdd2);
+    println!("Result nodes: {}", result.node_count());
+}
+```
+
 ## Working with Cubes
 
 ### Iterating Over Cubes
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let expr = BoolExpr::parse("a * b + ~a * c")?;
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "out")?;
+    cover.add_expr(&expr, "out")?;
     
     for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
         println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
@@ -604,7 +710,7 @@ use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
 fn main() -> std::io::Result<()> {
     let expr = BoolExpr::parse("a * b + c")?;
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "output")?;
+    cover.add_expr(&expr, "output")?;
     
     // Export to PLA string
     let pla_string = cover.to_pla_string(CoverType::F)?;
@@ -631,7 +737,7 @@ fn main() -> std::io::Result<()> {
 
     let expr = expr!(c * a * b);
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "out")?;
+    cover.add_expr(&expr, "out")?;
 
     println!("{:?}", cover.input_labels());  // ["a", "b", "c"] (sorted)
     
@@ -664,7 +770,7 @@ Common parse errors:
 ### Minimization Errors
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let expr = BoolExpr::parse("a * b")?;
@@ -686,18 +792,31 @@ fn main() -> std::io::Result<()> {
 - Expression building: O(1) per operation (uses Arc for sharing)
 - Parsing: O(n) where n is the input length
 
-### DNF Conversion and Minimization
+### BDD-Based Cover Generation (v3.1+)
 
-**DNF Conversion:**
-- Minimization first converts expressions to DNF (Disjunctive Normal Form) to create the cover
-- Conversion to DNF: Worst case exponential (DNF can be exponentially larger)
-- For most practical expressions: linear to quadratic
-- Uses De Morgan's laws to push NOTs to literals
+**Binary Decision Diagrams (BDDs) for Cover Generation:**
+- As of version 3.1, expressions are converted to BDDs before cube extraction
+- BDDs provide canonical representation with automatic optimization
+- Hash consing ensures identical subexpressions are shared
+- Operations (AND, OR, NOT) are memoized for efficiency
+- **Note:** The minimization itself is still performed by Espresso, not the BDD
 
-**Minimization:**
-- Dominated by Espresso algorithm time
-- Boolean expression overhead is negligible
-- Thread-local storage overhead is minimal
+**Performance characteristics:**
+- BDD construction: Polynomial for most practical expressions (vs exponential DNF)
+- Canonical representation: Equivalent expressions produce identical BDDs
+- Automatic simplification: Redundant terms eliminated during BDD construction
+- Memory efficient: Structural sharing via hash consing
+- Global singleton manager: All BDDs share one manager (thread-safe via Mutex)
+
+**Minimization workflow:**
+1. Expression → BDD (fast, polynomial)
+2. BDD → Cover cubes (extraction, linear in BDD size)
+3. Cover → Minimized cover (Espresso algorithm, dominant cost)
+
+**Performance improvements (v3.0 → v3.1):**
+- Faster equivalence checking via BDD canonical representation
+- More efficient cover generation from complex expressions
+- Reduced redundancy in generated covers (better Espresso input)
 
 **Cost Amortization Strategy:**
 - **Minimize partial expressions early** - this amortizes the DNF conversion cost
@@ -790,10 +909,17 @@ fn main() {
 
 **Performance Note:**
 
-The `equivalent_to()` method uses exact minimization for efficient equivalency checking:
+The `equivalent_to()` method uses a two-phase BDD-based approach (v3.1+):
 
-- **Old approach (v2.x)**: Exhaustive truth table comparison - O(2^n) where n = number of variables
-- **New approach (v3.x)**: Exact minimization - O(m × k) where m = cubes, k = variables
+1. **Fast BDD equality check**: Convert both expressions to BDDs and compare. BDDs use canonical 
+   representation, so equal BDDs guarantee equivalence. This is very fast (O(e) where e is expression size).
+2. **Exact minimization fallback**: If BDDs differ, use exact minimization for thorough verification.
+
+Previous approach:
+- **v3.0**: Exhaustive truth table evaluation - O(2^n) where n = number of variables
+  - Generated all 2^n possible variable assignments
+  - Evaluated both expressions for each assignment
+  - Completely impractical for expressions with many variables
 
 This makes equivalency checking **dramatically faster** for expressions with many variables:
 - 10 variables: 1,024x faster
@@ -836,7 +962,7 @@ println!("Result: {}", result2);  // true
 Get all variables used in an expression:
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
 fn main() {
     let expr = expr!("x" * "y" + "z");
@@ -961,7 +1087,7 @@ fn main() -> std::io::Result<()> {
     // The type system prevents mistakes
     let expr: BoolExpr = expr!(a * b);  // Type-safe
     let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
-    cover.add_expr(expr, "output")?;  // Explicit conversion
+    cover.add_expr(&expr, "output")?;  // Explicit conversion
     
     Ok(())
 }
@@ -1043,10 +1169,10 @@ fn main() -> std::io::Result<()> {
     // Check the DNF conversion
     let expr = BoolExpr::parse("(a + b) * (c + d)")?;
     let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(expr, "out")?;
+    cover.add_expr(&expr, "out")?;
 
     println!("Cubes before: {}", cover.num_cubes());  // Check size
-    cover.minimize()?;
+    cover = cover.minimize()?;
     println!("Cubes after: {}", cover.num_cubes());
 
     // View the result

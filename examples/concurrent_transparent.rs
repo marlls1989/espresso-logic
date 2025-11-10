@@ -1,6 +1,6 @@
 //! Example: Concurrent execution with transparent process isolation
 
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Cover, CoverType, Minimizable};
 use std::thread;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
                 // Minimize in isolated process
-                cover.minimize().expect("Minimization failed");
+                cover = cover.minimize().expect("Minimization failed");
 
                 let num_cubes = cover.num_cubes();
                 println!("Thread {} completed with {} cubes", i, num_cubes);
