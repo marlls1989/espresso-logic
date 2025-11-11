@@ -1,0 +1,136 @@
+//! Evaluation and equivalence checking for boolean expressions
+
+use super::{BoolExpr, BoolExprInner};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+impl BoolExpr {
+    /// Check if two boolean expressions are logically equivalent
+    ///
+    /// This method uses a combination of BDD equality check (fast) and exact minimization
+    /// (thorough) to determine if two expressions represent the same boolean function.
+    ///
+    /// # Performance
+    ///
+    /// - **Typical case**: O(n) where n is the number of variables (BDD check)
+    /// - **Worst case**: O(2^n) for exact minimization fallback (rare)
+    ///
+    /// Most equivalences are determined by the fast BDD check. The exact minimization
+    /// fallback only runs when BDD representations differ.
+    ///
+    /// # Performance Comparison to v3.0
+    ///
+    /// Version 3.1+ uses BDD-based equivalence checking (via lazy caching) which provides:
+    ///
+    /// - **First call on expression**: O(n × m) where n = vars, m = nodes in expression tree
+    /// - **Subsequent calls**: O(1) thanks to BDD caching
+    /// - **Minimization fallback**: O(m × k) where m is cubes and k is variables
+    /// - **Old approach (v3.0)**: O(2^n) where n is the number of variables (exponential)
+    ///
+    /// For expressions with many variables, this is dramatically faster.
+    ///
+    /// [`Bdd`]: crate::bdd::Bdd
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::BoolExpr;
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    ///
+    /// let expr1 = a.and(&b);
+    /// let expr2 = b.and(&a); // Commutative
+    ///
+    /// assert!(expr1.equivalent_to(&expr2));
+    /// ```
+    pub fn equivalent_to(&self, other: &BoolExpr) -> bool {
+        use crate::{Cover, CoverType};
+
+        // Handle constant expressions specially
+        let self_vars = self.collect_variables();
+        let other_vars = other.collect_variables();
+
+        if self_vars.is_empty() && other_vars.is_empty() {
+            // Both are constants - just evaluate
+            return self.evaluate(&HashMap::new()) == other.evaluate(&HashMap::new());
+        }
+
+        // OPTIMIZATION: First try BDD equality check (fast)
+        // BDDs use canonical representation, so equal BDDs mean equivalent functions
+        let self_bdd = self.to_bdd();
+        let other_bdd = other.to_bdd();
+
+        if self_bdd == other_bdd {
+            // BDDs are equal - expressions are definitely equivalent
+            return true;
+        }
+
+        // BDDs differ - fall back to exact minimization for thorough verification
+        // This handles edge cases where BDD construction might differ but functions are still equivalent
+        let mut cover = Cover::new(CoverType::F);
+
+        // Add both BDDs as separate outputs
+        if cover.add_expr(&self_bdd, "expr1").is_err() {
+            return false;
+        }
+        if cover.add_expr(&other_bdd, "expr2").is_err() {
+            return false;
+        }
+
+        // Minimize exactly once - if this fails, assume not equivalent
+        use crate::cover::Minimizable as _;
+        cover = match cover.minimize_exact() {
+            Ok(minimized) => minimized,
+            Err(_) => return false,
+        };
+
+        // Check if all cubes have identical output patterns for both outputs
+        // After exact minimization, if the expressions are equivalent, every cube
+        // will have the same value for both outputs (both 0 or both 1)
+        for cube in cover.cubes() {
+            let outputs = cube.outputs();
+            if outputs.len() >= 2 && outputs[0] != outputs[1] {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Evaluate the boolean expression given an assignment of variables to values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::BoolExpr;
+    /// use std::collections::HashMap;
+    /// use std::sync::Arc;
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// let expr = a.and(&b);
+    ///
+    /// let mut assignment = HashMap::new();
+    /// assignment.insert(Arc::from("a"), true);
+    /// assignment.insert(Arc::from("b"), true);
+    ///
+    /// assert_eq!(expr.evaluate(&assignment), true);
+    ///
+    /// assignment.insert(Arc::from("b"), false);
+    /// assert_eq!(expr.evaluate(&assignment), false);
+    /// ```
+    pub fn evaluate(&self, assignment: &HashMap<Arc<str>, bool>) -> bool {
+        match self.inner.as_ref() {
+            BoolExprInner::Variable(name) => *assignment.get(name).unwrap_or(&false),
+            BoolExprInner::Constant(val) => *val,
+            BoolExprInner::And(left, right) => {
+                left.evaluate(assignment) && right.evaluate(assignment)
+            }
+            BoolExprInner::Or(left, right) => {
+                left.evaluate(assignment) || right.evaluate(assignment)
+            }
+            BoolExprInner::Not(expr) => !expr.evaluate(assignment),
+        }
+    }
+}

@@ -69,8 +69,8 @@ fn main() {
     println!();
     println!("Creating intentional leak 4: Forgetting EspressoCover (C memory)");
     let _esp = Espresso::new(2, 1, &EspressoConfig::default());
-    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-    let cover = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+    let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    let cover = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
     // Use it first to prove it's valid
     let _cubes = cover.to_cubes(2, 1, CubeType::F);

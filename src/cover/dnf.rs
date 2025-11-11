@@ -23,7 +23,7 @@
 //! [`BoolExpr`]: crate::expression::BoolExpr
 //! [`Cover`]: crate::Cover
 
-use crate::expression::bdd::Bdd;
+use crate::bdd::Bdd;
 use crate::expression::BoolExpr;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -76,17 +76,17 @@ impl Dnf {
         }
     }
 
-    /// Create a DNF from a vector of cubes
+    /// Create a DNF from a slice of cubes
     ///
     /// This is primarily for internal use. Users should typically convert
     /// from [`BoolExpr`] or [`Bdd`] instead.
     ///
     /// [`BoolExpr`]: crate::expression::BoolExpr
-    /// [`Bdd`]: crate::expression::bdd::Bdd
-    pub fn from_cubes(cubes: Vec<BTreeMap<Arc<str>, bool>>) -> Self {
+    /// [`Bdd`]: crate::bdd::Bdd
+    pub fn from_cubes(cubes: &[BTreeMap<Arc<str>, bool>]) -> Self {
         // Collect all variables from cubes using BTreeSet for sorting
         let mut var_set = std::collections::BTreeSet::new();
-        for cube in &cubes {
+        for cube in cubes {
             for var in cube.keys() {
                 var_set.insert(Arc::clone(var));
             }
@@ -94,7 +94,10 @@ impl Dnf {
         // Convert to Vec for efficient slicing
         let variables: Vec<_> = var_set.into_iter().collect();
 
-        Dnf { cubes, variables }
+        Dnf {
+            cubes: cubes.to_vec(),
+            variables,
+        }
     }
 
     /// Check if the DNF is empty (represents FALSE)
@@ -169,7 +172,7 @@ impl From<BoolExpr> for Dnf {
     fn from(expr: BoolExpr) -> Self {
         let bdd: Bdd = expr.into();
         let cubes = bdd.to_cubes();
-        Dnf::from_cubes(cubes)
+        Dnf::from_cubes(&cubes)
     }
 }
 
@@ -178,7 +181,7 @@ impl From<&BoolExpr> for Dnf {
     fn from(expr: &BoolExpr) -> Self {
         let bdd: Bdd = expr.into();
         let cubes = bdd.to_cubes();
-        Dnf::from_cubes(cubes)
+        Dnf::from_cubes(&cubes)
     }
 }
 
@@ -186,7 +189,7 @@ impl From<&BoolExpr> for Dnf {
 impl From<Bdd> for Dnf {
     fn from(bdd: Bdd) -> Self {
         let cubes = bdd.to_cubes();
-        Dnf::from_cubes(cubes)
+        Dnf::from_cubes(&cubes)
     }
 }
 
@@ -194,7 +197,7 @@ impl From<Bdd> for Dnf {
 impl From<&Bdd> for Dnf {
     fn from(bdd: &Bdd) -> Self {
         let cubes = bdd.to_cubes();
-        Dnf::from_cubes(cubes)
+        Dnf::from_cubes(&cubes)
     }
 }
 
@@ -311,119 +314,8 @@ impl From<Dnf> for Bdd {
 // Blanket Minimizable Implementation
 // ============================================================================
 
-/// Blanket implementation of Minimizable for any type convertible to/from Dnf
-///
-/// This automatically provides minimization for `BoolExpr`, `Bdd`, and any other
-/// type that implements the necessary conversions.
-///
-/// # Workflow
-///
-/// 1. Convert expression to Dnf (via BDD for canonical form)
-/// 2. Convert Dnf to Cover
-/// 3. Minimize the Cover using Espresso
-/// 4. Convert minimized Cover back to Dnf
-/// 5. Convert Dnf back to original type
-///
-/// The DNF serves as the intermediary representation between boolean expressions
-/// and covers, ensuring all conversions go through the efficient BDD path.
-impl<T> crate::cover::Minimizable for T
-where
-    for<'a> &'a T: Into<Dnf>,
-    T: From<Dnf>,
-{
-    fn minimize_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, crate::error::MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Use cached variables (already sorted alphabetically)
-        let var_list = dnf.variables();
-        let var_refs: Vec<&str> = var_list.iter().map(|s| s.as_ref()).collect();
-
-        // Create cover with proper dimensions and labels
-        let mut cover = crate::Cover::with_labels(crate::CoverType::F, &var_refs, &["out"]);
-
-        // Add cubes to cover
-        for cube in dnf.cubes() {
-            let mut inputs = vec![None; var_list.len()];
-            for (i, var) in var_list.iter().enumerate() {
-                if let Some(&polarity) = cube.get(var) {
-                    inputs[i] = Some(polarity);
-                }
-            }
-            cover.add_cube(&inputs, &[Some(true)]);
-        }
-
-        // Minimize the cover
-        let minimized_cover = cover.minimize_with_config(config)?;
-
-        // Convert back to Dnf then to T
-        let minimized_dnf = cover_to_dnf(&minimized_cover);
-        Ok(T::from(minimized_dnf))
-    }
-
-    fn minimize_exact_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, crate::error::MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Use cached variables (already sorted alphabetically)
-        let var_list = dnf.variables();
-        let var_refs: Vec<&str> = var_list.iter().map(|s| s.as_ref()).collect();
-
-        // Create cover with proper dimensions and labels
-        let mut cover = crate::Cover::with_labels(crate::CoverType::F, &var_refs, &["out"]);
-
-        // Add cubes to cover
-        for cube in dnf.cubes() {
-            let mut inputs = vec![None; var_list.len()];
-            for (i, var) in var_list.iter().enumerate() {
-                if let Some(&polarity) = cube.get(var) {
-                    inputs[i] = Some(polarity);
-                }
-            }
-            cover.add_cube(&inputs, &[Some(true)]);
-        }
-
-        // Minimize the cover using exact algorithm
-        let minimized_cover = cover.minimize_exact_with_config(config)?;
-
-        // Convert back to Dnf then to T
-        let minimized_dnf = cover_to_dnf(&minimized_cover);
-        Ok(T::from(minimized_dnf))
-    }
-}
-
-/// Helper function to convert a Cover back to Dnf
-fn cover_to_dnf(cover: &crate::Cover) -> Dnf {
-    let mut cubes = Vec::new();
-
-    for cube in cover.cubes() {
-        let mut product = BTreeMap::new();
-
-        // Get input labels
-        let input_labels = cover.input_labels();
-
-        for (i, &literal) in cube.inputs().iter().enumerate() {
-            if let Some(polarity) = literal {
-                let var_name = if i < input_labels.len() {
-                    Arc::clone(&input_labels[i])
-                } else {
-                    Arc::from(format!("x{}", i).as_str())
-                };
-                product.insert(var_name, polarity);
-            }
-        }
-
-        cubes.push(product);
-    }
-
-    Dnf::from_cubes(cubes)
-}
+// Note: Blanket implementation of Minimizable for types convertible to/from Dnf
+// has been moved to cover/minimisation.rs
 
 #[cfg(test)]
 mod tests {

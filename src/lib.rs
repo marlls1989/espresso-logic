@@ -275,11 +275,11 @@
 //! let _esp = Espresso::new(2, 1, &config);
 //!
 //! // Create cover with raw cube data
-//! let cubes = vec![
-//!     (vec![0, 1], vec![1]),  // 01 -> 1
-//!     (vec![1, 0], vec![1]),  // 10 -> 1
+//! let cubes = [
+//!     (&[0, 1][..], &[1][..]),  // 01 -> 1
+//!     (&[1, 0][..], &[1][..]),  // 10 -> 1
 //! ];
-//! let cover = EspressoCover::from_cubes(cubes, 2, 1)?;
+//! let cover = EspressoCover::from_cubes(&cubes, 2, 1)?;
 //!
 //! // Minimize and get all three covers (F, D, R)
 //! let (f_result, d_result, r_result) = cover.minimize(None, None);
@@ -298,15 +298,18 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Works: same dimensions (2 inputs, 1 output)
-//! let cover1 = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1)?;
-//! let cover2 = EspressoCover::from_cubes(vec![(vec![1, 0], vec![1])], 2, 1)?;
+//! let cubes1 = [(&[0, 1][..], &[1][..])];
+//! let cover1 = EspressoCover::from_cubes(&cubes1, 2, 1)?;
+//! let cubes2 = [(&[1, 0][..], &[1][..])];
+//! let cover2 = EspressoCover::from_cubes(&cubes2, 2, 1)?;
 //!
 //! // Must drop before using different dimensions
 //! drop(cover1);
 //! drop(cover2);
 //!
 //! // Now 3 inputs works
-//! let cover3 = EspressoCover::from_cubes(vec![(vec![0, 1, 0], vec![1])], 3, 1)?;
+//! let cubes3 = [(&[0, 1, 0][..], &[1][..])];
+//! let cover3 = EspressoCover::from_cubes(&cubes3, 3, 1)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -323,6 +326,7 @@
 //! - [`doc::cli`] - Command-line tool documentation
 
 // Public modules
+pub mod bdd;
 pub mod cover;
 pub mod error;
 pub mod espresso;
@@ -331,12 +335,13 @@ pub mod pla;
 pub mod sys;
 
 // Re-export high-level public API
+pub use bdd::Bdd;
 pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable};
 pub use error::{
     AddExprError, CoverError, CubeError, ExpressionParseError, InstanceError, MinimizationError,
     PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
 };
-pub use expression::bdd::Bdd;
+pub use espresso::EspressoConfig;
 pub use expression::BoolExpr;
 pub use pla::{PLAReader, PLAWriter};
 
@@ -370,236 +375,4 @@ pub mod doc {
     #[doc = include_str!("../docs/CLI.md")]
     #[cfg(doc)]
     pub mod cli {}
-}
-
-/// Configuration for the Espresso algorithm
-///
-/// Controls the behavior of the Espresso heuristic logic minimizer. This configuration
-/// can be used with **both the high-level and low-level APIs** to tune the minimization
-/// process for your specific needs.
-///
-/// # When to Use
-///
-/// Most users should use the **default configuration** which provides a good balance
-/// between speed and result quality. Consider customizing when you need:
-///
-/// - **Maximum speed** with acceptable quality loss (`single_expand = true`)
-/// - **Debugging** algorithm behavior (`debug = true`, `trace = true`)
-/// - **Performance metrics** (`summary = true`)
-/// - **Non-deterministic exploration** (`use_random_order = true`)
-///
-/// # Works with Both APIs
-///
-/// ## High-Level API (`Cover`)
-///
-/// Use with [`Cover::minimize_with_config()`](crate::cover::Minimizable::minimize_with_config):
-///
-/// ```
-/// use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable};
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut cover = Cover::new(CoverType::F);
-/// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-///
-/// // Use custom configuration
-/// let mut config = EspressoConfig::default();
-/// config.single_expand = true;  // Fast mode
-/// config.summary = true;        // Show statistics
-///
-/// cover.minimize_with_config(&config)?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Low-Level API (`espresso` module)
-///
-/// Use when creating an [`Espresso`](crate::espresso::Espresso) instance:
-///
-/// ```
-/// use espresso_logic::espresso::{Espresso, EspressoCover};
-/// use espresso_logic::EspressoConfig;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create instance with custom config
-/// let mut config = EspressoConfig::default();
-/// config.single_expand = true;
-/// let _esp = Espresso::new(2, 1, &config);
-///
-/// // All operations use this configuration
-/// let cubes = vec![(vec![0, 1], vec![1])];
-/// let cover = EspressoCover::from_cubes(cubes, 2, 1)?;
-/// let (result, _, _) = cover.minimize(None, None);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// # Common Configuration Patterns
-///
-/// ## Fast Mode (Recommended for Large Problems)
-///
-/// ```
-/// use espresso_logic::EspressoConfig;
-///
-/// let mut config = EspressoConfig::default();
-/// config.single_expand = true;  // Skip iterative expand phase
-/// // Results: ~30-50% faster, typically 5-10% larger covers
-/// ```
-///
-/// ## Quality Mode (Default)
-///
-/// ```
-/// use espresso_logic::EspressoConfig;
-///
-/// let config = EspressoConfig::default();
-/// // remove_essential = true (remove obvious terms first)
-/// // force_irredundant = true (ensure no redundant cubes)
-/// // unwrap_onset = true (preprocessing optimization)
-/// // single_expand = false (iterate for best results)
-/// ```
-///
-/// ## Debug Mode
-///
-/// ```
-/// use espresso_logic::EspressoConfig;
-///
-/// let mut config = EspressoConfig::default();
-/// config.debug = true;      // Print detailed algorithm steps
-/// config.trace = true;      // Show phase transitions
-/// config.summary = true;    // Display final statistics
-/// ```
-///
-/// ## Experimental Mode
-///
-/// ```
-/// use espresso_logic::EspressoConfig;
-///
-/// let mut config = EspressoConfig::default();
-/// config.use_super_gasp = true;    // Enhanced heuristics
-/// config.use_random_order = true;   // Non-deterministic exploration
-/// // May find better solutions but results vary between runs
-/// ```
-///
-/// # Performance Guidelines
-///
-/// | Problem Size | Recommended Setting | Expected Speedup |
-/// |--------------|-------------------|------------------|
-/// | < 100 cubes | Default | N/A (very fast) |
-/// | 100-1000 cubes | `single_expand = true` | 30-50% faster |
-/// | > 1000 cubes | `single_expand = true` | 40-60% faster |
-///
-/// Quality trade-off with `single_expand = true`: typically 5-10% larger results.
-///
-/// # Algorithm Background
-///
-/// Espresso uses a heuristic approach with several phases:
-/// 1. **Reduce** - Remove redundant literals from cubes
-/// 2. **Expand** - Enlarge cubes to cover more area
-/// 3. **Irredundant** - Remove covered cubes
-/// 4. **Lastgasp** - Final optimization pass
-///
-/// The configuration controls how aggressively each phase operates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EspressoConfig {
-    /// Enable debugging output to stderr
-    ///
-    /// When `true`, prints detailed information about the minimization process.
-    /// Useful for understanding algorithm behavior but verbose.
-    ///
-    /// **Default:** `false`
-    pub debug: bool,
-
-    /// Enable verbose debugging output
-    ///
-    /// Even more detailed than `debug`. Only use for deep algorithm analysis.
-    ///
-    /// **Default:** `false`
-    pub verbose_debug: bool,
-
-    /// Print trace information during minimization
-    ///
-    /// Shows progress through different minimization phases.
-    ///
-    /// **Default:** `false`
-    pub trace: bool,
-
-    /// Print summary statistics after minimization
-    ///
-    /// Shows cube counts, execution time, and optimization metrics.
-    ///
-    /// **Default:** `false`
-    pub summary: bool,
-
-    /// Remove essential prime implicants before minimization
-    ///
-    /// Essential primes are terms that must be in any minimal cover. Removing
-    /// them first can speed up minimization for large problems.
-    ///
-    /// **Default:** `true` (recommended)
-    pub remove_essential: bool,
-
-    /// Force the cover to be irredundant
-    ///
-    /// Ensures no cube can be removed without changing the function. Should
-    /// normally be enabled for minimal results.
-    ///
-    /// **Default:** `true` (recommended)
-    pub force_irredundant: bool,
-
-    /// Unwrap the onset before minimization
-    ///
-    /// A preprocessing step that can improve results for certain functions.
-    ///
-    /// **Default:** `true` (recommended)
-    pub unwrap_onset: bool,
-
-    /// Use single expand mode (faster but may be less optimal)
-    ///
-    /// Performs only one expand phase instead of iterating. Significantly
-    /// faster for large problems, with minimal quality loss in practice.
-    ///
-    /// **Performance vs Quality:** Set `true` for speed, `false` for optimal results.
-    ///
-    /// **Default:** `false`
-    pub single_expand: bool,
-
-    /// Use super gasp heuristic
-    ///
-    /// An enhanced version of the GASP (Generalized Algorithm for Simplification
-    /// of Products) heuristic that can find better solutions at some cost.
-    ///
-    /// **Default:** `false`
-    pub use_super_gasp: bool,
-
-    /// Use random order for processing
-    ///
-    /// Randomizes the order of cube processing. Can occasionally find better
-    /// solutions but makes results non-deterministic.
-    ///
-    /// **Default:** `false` (deterministic results)
-    pub use_random_order: bool,
-}
-
-impl Default for EspressoConfig {
-    fn default() -> Self {
-        // Match C defaults from main.c lines 51-72
-        EspressoConfig {
-            debug: false,
-            verbose_debug: false,
-            trace: false,
-            summary: false,
-            remove_essential: true,
-            force_irredundant: true,
-            unwrap_onset: true,
-            single_expand: false,
-            use_super_gasp: false,
-            use_random_order: false,
-        }
-    }
-}
-
-impl EspressoConfig {
-    /// Create a new configuration with defaults
-    pub fn new() -> Self {
-        Self::default()
-    }
 }

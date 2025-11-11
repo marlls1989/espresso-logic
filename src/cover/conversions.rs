@@ -104,8 +104,8 @@ impl From<crate::expression::BoolExpr> for Cover {
 /// let cover = Cover::from(&bdd);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&crate::expression::bdd::Bdd> for Cover {
-    fn from(bdd: &crate::expression::bdd::Bdd) -> Self {
+impl From<&crate::bdd::Bdd> for Cover {
+    fn from(bdd: &crate::bdd::Bdd) -> Self {
         // Convert to DNF
         let dnf = crate::cover::dnf::Dnf::from(bdd);
         let cubes = dnf.cubes();

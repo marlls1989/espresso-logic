@@ -10,9 +10,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build a cover for XOR function: 01->1, 10->1
     // The Espresso instance is created automatically
-    let cubes = vec![
-        (vec![0, 1], vec![1]), // Input: 01, Output: 1
-        (vec![1, 0], vec![1]), // Input: 10, Output: 1
+    let cubes = [
+        (&[0, 1][..], &[1][..]), // Input: 01, Output: 1
+        (&[1, 0][..], &[1][..]), // Input: 10, Output: 1
     ];
 
     println!("Input cover (XOR function):");
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  10 -> 1");
     println!();
 
-    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+    let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
 
     // Minimize directly on the cover
     let (minimized, _d, _r) = f.minimize(None, None);
@@ -55,8 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             thread::spawn(
                 move || -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
                     // No need to create Espresso instance - it's automatic!
-                    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-                    let f = EspressoCover::from_cubes(cubes, 2, 1)?;
+                    let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+                    let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
                     let (result, _, _) = f.minimize(None, None);
                     let result_cubes = result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
                     Ok((thread_id, result_cubes.len()))

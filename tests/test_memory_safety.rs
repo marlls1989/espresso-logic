@@ -36,8 +36,8 @@ fn test_memory_usage_stability() {
     // Warm up to stabilize memory allocations
     for _ in 0..10 {
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
-        let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-        let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+        let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+        let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, _d, _r) = esp.minimize(&f, None, None);
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
@@ -51,8 +51,8 @@ fn test_memory_usage_stability() {
     // Perform many operations that should not accumulate memory
     for _ in 0..1000 {
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
-        let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-        let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+        let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+        let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, _d, _r) = esp.minimize(&f, None, None);
         let _ = result.to_cubes(2, 1, CubeType::F);
     }
@@ -89,8 +89,8 @@ fn test_memory_usage_stability() {
 /// Test that clone creates independent memory and doesn't double-free
 #[test]
 fn test_clone_independence_no_double_free() {
-    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-    let cover1 = EspressoCover::from_cubes(cubes.clone(), 2, 1).unwrap();
+    let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    let cover1 = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
     // Clone creates independent C memory
     let cover2 = cover1.clone();
@@ -117,8 +117,8 @@ fn test_clone_independence_no_double_free() {
 /// Test that into_raw() properly transfers ownership without double-free
 #[test]
 fn test_into_raw_ownership_transfer() {
-    let cubes = vec![(vec![0, 1], vec![1])];
-    let cover = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+    let cubes = [(&[0, 1][..], &[1][..])];
+    let cover = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
     // into_raw() is internal, but we can test via minimize which uses it
     let (result, d, r) = cover.minimize(None, None);
@@ -137,9 +137,12 @@ fn test_into_raw_ownership_transfer() {
 fn test_minimize_with_explicit_covers() {
     let esp = Espresso::new(2, 1, &EspressoConfig::default());
 
-    let f = EspressoCover::from_cubes(vec![(vec![0, 1], vec![1])], 2, 1).unwrap();
-    let d = EspressoCover::from_cubes(vec![(vec![1, 1], vec![1])], 2, 1).unwrap();
-    let r = EspressoCover::from_cubes(vec![(vec![0, 0], vec![1])], 2, 1).unwrap();
+    let cubes_f = [(&[0, 1][..], &[1][..])];
+    let f = EspressoCover::from_cubes(&cubes_f, 2, 1).unwrap();
+    let cubes_d = [(&[1, 1][..], &[1][..])];
+    let d = EspressoCover::from_cubes(&cubes_d, 2, 1).unwrap();
+    let cubes_r = [(&[0, 0][..], &[1][..])];
+    let r = EspressoCover::from_cubes(&cubes_r, 2, 1).unwrap();
 
     // This internally clones F, D, R before passing to C
     let (result, d_out, r_out) = esp.minimize(&f, Some(&d), Some(&r));
@@ -162,8 +165,8 @@ fn test_repeated_operations_amplify_leaks() {
     let esp = Espresso::new(2, 1, &EspressoConfig::default());
 
     for i in 0..ITERATIONS {
-        let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-        let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+        let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+        let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, d, r) = esp.minimize(&f, None, None);
 
         // Use the results to prevent optimizer from removing them
@@ -316,8 +319,8 @@ fn test_multithreaded_memory_isolation() {
                 let esp = Espresso::new(2, 1, &EspressoConfig::default());
 
                 for _ in 0..OPS_PER_THREAD {
-                    let cubes = vec![(vec![0, 1], vec![1]), (vec![1, 0], vec![1])];
-                    let f = EspressoCover::from_cubes(cubes, 2, 1).unwrap();
+                    let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+                    let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
                     let (result, d, r) = esp.minimize(&f, None, None);
 
                     // Use results
@@ -346,8 +349,8 @@ fn test_multithreaded_memory_isolation() {
 fn test_cover_keeps_espresso_alive() {
     let cover = {
         let _esp = Espresso::new(2, 1, &EspressoConfig::default());
-        let cubes = vec![(vec![0, 1], vec![1])];
-        EspressoCover::from_cubes(cubes, 2, 1).unwrap()
+        let cubes = [(&[0, 1][..], &[1][..])];
+        EspressoCover::from_cubes(&cubes, 2, 1).unwrap()
         // _esp goes out of scope here, but cover holds Rc to keep it alive
     };
 

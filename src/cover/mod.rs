@@ -8,17 +8,18 @@
 mod conversions;
 mod cubes;
 mod dnf;
+pub mod error;
 mod expressions;
 mod iterators;
 mod labels;
-mod minimizable;
-mod minimize;
+mod minimisation;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeData, CubeType};
 pub use dnf::Dnf;
+pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
-pub use minimizable::Minimizable;
+pub use minimisation::Minimizable;
 
 // Import internal types for Cover implementation
 use labels::LabelManager;

@@ -5,9 +5,9 @@
 
 use super::cubes::{Cube, CubeType};
 use super::dnf::Dnf;
+use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
 use super::Cover;
-use crate::error::{AddExprError, CoverError, ToExprError};
 use crate::expression::BoolExpr;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -60,7 +60,7 @@ impl Cover {
         // Check if output already exists (fail fast before doing any work)
         if self.output_labels.contains(output_name) {
             return Err(CoverError::OutputAlreadyExists {
-                name: output_name.to_string(),
+                name: Arc::from(output_name),
             }
             .into());
         }
@@ -191,7 +191,7 @@ impl Cover {
             .output_labels
             .find_position(output_name)
             .ok_or_else(|| CoverError::OutputNotFound {
-                name: output_name.to_string(),
+                name: Arc::from(output_name),
             })?;
 
         self.to_expr_by_index(output_idx)

@@ -467,11 +467,11 @@ use espresso_logic::espresso::{EspressoCover, CubeType};
 
 fn main() -> std::io::Result<()> {
     // Build cover from cubes
-    let cubes = vec![
-        (vec![0, 1], vec![1]),  // 01 -> 1
-        (vec![1, 0], vec![1]),  // 10 -> 1
+    let cubes = [
+        (&[0, 1][..], &[1][..]),  // 01 -> 1
+        (&[1, 0][..], &[1][..]),  // 10 -> 1
     ];
-    let f = EspressoCover::from_cubes(cubes, 2, 1)
+    let f = EspressoCover::from_cubes(&cubes, 2, 1)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     
     // Minimize

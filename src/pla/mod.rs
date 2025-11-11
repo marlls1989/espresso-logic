@@ -3,13 +3,16 @@
 //! This module handles PLA file I/O for the unified `Cover` type, supporting
 //! dynamic dimensions when working with PLA files.
 
+pub mod error;
+
+pub use error::{PLAError, PLAReadError, PLAWriteError};
+
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::cover::{CoverType, Cube, CubeType};
-use crate::error::{PLAError, PLAReadError, PLAWriteError};
 
 /// Internal trait for types that can be serialized to and deserialized from PLA format
 ///
@@ -285,7 +288,7 @@ impl<T: PLASerialisable> PLAReader for T {
                         let val: usize =
                             parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
                                 PLAError::InvalidInputDirective {
-                                    value: parts.get(1).unwrap_or(&"").to_string(),
+                                    value: Arc::from(*parts.get(1).unwrap_or(&"")),
                                 }
                             })?;
                         num_inputs = Some(val);
@@ -294,7 +297,7 @@ impl<T: PLASerialisable> PLAReader for T {
                         let val: usize =
                             parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
                                 PLAError::InvalidOutputDirective {
-                                    value: parts.get(1).unwrap_or(&"").to_string(),
+                                    value: Arc::from(*parts.get(1).unwrap_or(&"")),
                                 }
                             })?;
                         num_outputs = Some(val);
@@ -547,7 +550,7 @@ impl<T: PLASerialisable> PLAReader for T {
         if let Some(ref labels) = input_labels {
             if labels.len() != num_inputs {
                 return Err(PLAError::LabelCountMismatch {
-                    label_type: "input".to_string(),
+                    label_type: Arc::from("input"),
                     expected: num_inputs,
                     actual: labels.len(),
                 }
@@ -557,7 +560,7 @@ impl<T: PLASerialisable> PLAReader for T {
         if let Some(ref labels) = output_labels {
             if labels.len() != num_outputs {
                 return Err(PLAError::LabelCountMismatch {
-                    label_type: "output".to_string(),
+                    label_type: Arc::from("output"),
                     expected: num_outputs,
                     actual: labels.len(),
                 }
