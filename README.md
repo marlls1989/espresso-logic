@@ -13,7 +13,7 @@ Espresso takes Boolean functions in sum-of-products form and produces minimal or
 
 - **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
 - **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
-- **Binary Decision Diagrams** - Canonical representation with efficient operations and automatic caching
+- **Binary Decision Diagrams (v3.1+)** - Canonical representation with efficient operations and automatic caching
 - **Flexible Parser** - Supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations
 - **Expression Composition** - Seamlessly compose parsed, minimized, and constructed expressions
 - **Both Algorithms** - Exposes both heuristic and exact minimization algorithms from Espresso

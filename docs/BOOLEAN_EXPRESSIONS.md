@@ -124,10 +124,10 @@ fn main() {
 }
 ```
 
-#### Combining Expressions (v3.1+)
+#### Combining Expressions (v3.0+)
 
 You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`. 
-This powerful feature was enhanced in v3.1 to seamlessly compose any `BoolExpr` values (parsed, minimized, or constructed):
+This powerful feature allows you to seamlessly compose any `BoolExpr` values (parsed, minimized, or constructed):
 
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
@@ -588,8 +588,8 @@ fn main() {
 ## Working with BDDs
 
 Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
-efficient operations. In version 3.1, BDDs are used internally for efficient cover generation
-from boolean expressions before minimization by Espresso.
+efficient operations. BDDs were introduced in version 3.1 and are used internally for efficient 
+cover generation from boolean expressions before minimization by Espresso.
 
 ### BDD Role in Minimization
 
@@ -600,7 +600,7 @@ When you minimize a `BoolExpr`, the library:
 
 The BDD step enables efficient cover generation with automatic redundancy elimination.
 
-**Performance optimization (v3.1):** Each `BoolExpr` lazily caches its BDD representation:
+**BDD Caching (introduced with BDDs in v3.1):** Each `BoolExpr` lazily caches its BDD representation:
 - First call to `to_bdd()` computes and caches the BDD in the expression
 - Subsequent calls return the cached BDD instantly (O(1))
 - During expression composition, subexpression BDD caches are automatically leveraged
@@ -812,10 +812,10 @@ fn main() -> std::io::Result<()> {
 - Expression building: O(1) per operation (uses Arc for sharing)
 - Parsing: O(n) where n is the input length
 
-### BDD-Based Cover Generation (v3.1+)
+### BDD-Based Cover Generation (introduced in v3.1)
 
 **Binary Decision Diagrams (BDDs) for Cover Generation:**
-- As of version 3.1, expressions are converted to BDDs before cube extraction
+- Version 3.1 introduced BDDs; expressions are now converted to BDDs before cube extraction
 - BDDs provide canonical representation with automatic optimization
 - Hash consing ensures identical subexpressions are shared
 - Operations (AND, OR, NOT) are memoized for efficiency
@@ -844,7 +844,7 @@ fn main() -> std::io::Result<()> {
 **BDD Pre-Minimization (Automatic during BDD construction):**
 - **BDD construction provides automatic redundancy elimination** - equivalent subexpressions are shared via hash consing
 - **Reduces cube count before Espresso** - BDD-to-DNF extraction produces fewer, more canonical cubes than direct conversion
-- **BDD caching eliminates redundant conversions** (v3.1+) - same subexpression converted once, cached for reuse
+- **BDD caching eliminates redundant conversions** (introduced in v3.1) - same subexpression converted once, cached for reuse
 - **Pre-minimization is automatic** - Happens during BDD construction, NOT from user calling `.minimize()` early
 - **User-level minimization only matters at final output** - Intermediate minimizations don't reduce the final BDD cube count
 - **Composing expressions via BDD:**
@@ -867,24 +867,27 @@ We measured the actual cube counts at three stages using a threshold gate exampl
 1. **Naive De Morgan Expansion** (no BDD):
    - Simple expressions: 6 cubes each (already in DNF)
    - `hold` (XOR with negation): **375,840 cubes** (exponential blowup!)
-   - `next_q` (negation of OR): **7,006 cubes** (cross-product explosion)
-   - **Total: 382,858 cubes** across all outputs
+   - `next_q_v1` (negation of OR): **20,220 cubes** (cross-product explosion)
+   - `next_q_v2` (alternative formulation): **375,846 cubes** (even more expansion!)
+   - **Total: 771,918 cubes** across all outputs
 
 2. **BDD-Based DNF** (canonical form):
    - Simple expressions: 5 cubes each (BDD eliminated redundancy)
    - `hold`: **14 cubes** (26,845x reduction from naive!)
-   - `next_q`: **19 cubes** (369x reduction from naive!)
-   - **Total: 43 unique cubes** in cover (8,904x overall reduction!)
+   - `next_q_v1`: **19 cubes** (1,064x reduction from naive!)
+   - `next_q_v2`: **19 cubes** (19,781x reduction from naive!)
+   - **Total: 62 unique cubes** in cover (12,450x overall reduction!)
 
 3. **Espresso Minimization** (final optimal form):
    - Simple expressions: 5 cubes each (already optimal)
    - `hold`: **10 cubes** (29% further reduction from BDD)
-   - `next_q`: **15 cubes** (21% further reduction from BDD)
-   - **Total: 30 unique cubes** (30% further reduction from BDD)
+   - `next_q_v1`: **15 cubes** (21% further reduction from BDD)
+   - `next_q_v2`: **15 cubes** (21% further reduction from BDD)
+   - **Total: 30 unique cubes** (52% further reduction from BDD)
 
 **Key Findings:**
-- **BDD is ESSENTIAL**: Without BDD, Espresso would receive 382,858 cubes (intractable). With BDD: 43 cubes (99.99% reduction!)
-- **Espresso is STILL NEEDED**: BDD provides canonical form but not minimal form. Espresso achieves additional 30% reduction.
+- **BDD is ESSENTIAL**: Without BDD, Espresso would receive 771,918 cubes (intractable). With BDD: 62 cubes (99.99% reduction!)
+- **Espresso is STILL NEEDED**: BDD provides canonical form but not minimal form. Espresso achieves additional 52% reduction.
 - **The pipeline is complementary**: BDD prevents exponential blowup from negations; Espresso achieves optimal minimization through heuristic search.
 
 ### Memory
@@ -965,14 +968,14 @@ fn main() {
 
 **Performance Note:**
 
-The `equivalent_to()` method uses a two-phase BDD-based approach (v3.1+):
+The `equivalent_to()` method uses a two-phase BDD-based approach (introduced in v3.1):
 
 1. **Fast BDD equality check**: Convert both expressions to BDDs and compare. BDDs use canonical 
    representation, so equal BDDs guarantee equivalence. This is very fast (O(e) where e is expression size).
 2. **Exact minimization fallback**: If BDDs differ, use exact minimization for thorough verification.
 
-Previous approach:
-- **v3.0**: Exhaustive truth table evaluation - O(2^n) where n = number of variables
+Previous approach (v3.0 and earlier):
+- **Before v3.1**: Exhaustive truth table evaluation - O(2^n) where n = number of variables
   - Generated all 2^n possible variable assignments
   - Evaluated both expressions for each assignment
   - Completely impractical for expressions with many variables
@@ -1237,20 +1240,23 @@ fn main() -> std::io::Result<()> {
     // Stage 1b - Naive DNF expansion (if using De Morgan's laws directly):
     //   activation:   6 cubes
     //   deactivation: 6 cubes
-    //   hold:         ~150 cubes! (exponential expansion from XOR + negation)
-    //   next_q:       ~64 cubes  (negation expansion)
+    //   hold:         375,840 cubes! (exponential expansion from XOR + negation)
+    //   next_q_v1:    20,220 cubes  (negation expansion)
+    //   next_q_v2:    375,846 cubes  (even more expansion)
     //
     // Stage 2 - After BDD construction (canonical DNF - THIS IS WHY WE USE BDD!):
     //   activation:   5 cubes ← BDD eliminated 1 redundant clause
     //   deactivation: 5 cubes ← BDD eliminated 1 redundant clause  
-    //   hold:         14 cubes ← BDD is 10x better than naive expansion (150→14)!
-    //   next_q:       19 cubes ← BDD is 3x better than naive expansion (64→19)!
+    //   hold:         14 cubes ← BDD is 26,845x better than naive (375,840→14)!
+    //   next_q_v1:    19 cubes ← BDD is 1,064x better than naive (20,220→19)!
+    //   next_q_v2:    19 cubes ← BDD is 19,781x better than naive (375,846→19)!
     //
     // Stage 3 - After Espresso minimization (final optimal DNF):
     //   activation:   5 cubes (no change - already minimal)
     //   deactivation: 5 cubes (no change - already minimal)
     //   hold:         10 cubes ← Espresso further reduced by 29% (14→10)
-    //   next_q:       15 cubes ← Espresso further reduced by 21% (19→15)
+    //   next_q_v1:    15 cubes ← Espresso further reduced by 21% (19→15)
+    //   next_q_v2:    15 cubes ← Espresso further reduced by 21% (19→15)
     //
     // Final minimized expressions:
     // activation      = a*b*c*e + a*b*d*e + a*c*d*e + b*c*d*e + a*b*c*d
@@ -1259,9 +1265,10 @@ fn main() -> std::io::Result<()> {
     // hold            = ~a*~b*c*e + ~a*~c*d*e + ~a*c*d*~e + ~a*b*~d*e +
     //                   a*~b*~c*d + a*~b*c*~e + a*~b*~d*e + b*~c*d*~e +
     //                   a*b*~c*~d + b*c*~d*~e
-    // next_q          = a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
+    // next_q_v1       = a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
     //                   b*c*q + c*d*q + c*e*q + d*e*q + a*b*c*e + a*b*d*e +
     //                   a*c*d*e + b*c*d*e + a*b*c*d
+    // next_q_v2       = Same as next_q_v1 (both formulations are equivalent)
     
     Ok(())
 }
@@ -1280,9 +1287,9 @@ fn main() -> std::io::Result<()> {
 **Key insights (with measured data)**: 
 - **BDD avoids exponential expansion**: Naive De Morgan's law application produces **375,840 cubes** for `hold`; BDD produces only 14 (99.996% reduction!)
 - **BDD provides canonical representation**: Eliminates redundancy during construction (activation 6→5, deactivation 6→5)
-- **This is why we use BDD instead of De Morgan's laws**: Polynomial time vs exponential blowup (8,904x overall reduction: 382,858→43 cubes)
+- **This is why we use BDD instead of De Morgan's laws**: Polynomial time vs exponential blowup (12,450x overall reduction: 771,918→62 cubes)
 - **Espresso still necessary**: BDD gave us 14 cubes for `hold`, Espresso reduced to 10 (optimal, 29% further reduction)
-- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimization (additional 30%)
+- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimization (additional 52%)
 - **This is why "minimize early" doesn't help**: BDD reconstructs the full composed expression in canonical DNF regardless of intermediate minimizations
 - **Run the example yourself**: `cargo run --example threshold_gate_example` to see the actual cube counts at each stage
 

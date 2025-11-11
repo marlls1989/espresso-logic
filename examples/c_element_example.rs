@@ -113,34 +113,30 @@ fn main() -> std::io::Result<()> {
 
     // Define the C-element characteristic functions
     let activation = expr!("a" * "b");
-    let hold = expr!("a" + "b");
     let deactivation = expr!(!"a" * !"b");
 
-    // Compute hold_xor = activation XOR !deactivation
-    let hold_xor = xor(&activation, &deactivation.not());
+    // Hold region: XOR of activation and negation of deactivation
+    // This is the unique hold region where neither activation nor deactivation occurs
+    let hold = xor(&activation, &deactivation.not());
 
     // Two equivalent formulations of next_q:
     // Version 1: Using deactivation directly
     let next_q_v1 = expr!((activation + "q") * !deactivation);
 
-    // Version 2: Using hold_xor (where hold_xor = activation XOR !deactivation)
-    let next_q_v2 = expr!(activation + "q" * hold_xor);
+    // Version 2: Using hold (where hold = activation XOR !deactivation)
+    let next_q_v2 = expr!(activation + "q" * hold);
 
     println!("Original Functions:");
     println!("  activation   = {}", activation);
     println!("  deactivation = {}", deactivation);
-    println!("  hold         = {}", hold);
-    println!(
-        "  hold_xor     = {} (activation XOR !deactivation)",
-        hold_xor
-    );
+    println!("  hold         = {} (activation XOR !deactivation)", hold);
     println!();
 
     println!("Two Formulations of next_q (before minimization):");
     println!("  next_q_v1 = (activation + q) * !deactivation");
     println!("            = {}", next_q_v1);
     println!();
-    println!("  next_q_v2 = activation + q * hold_xor");
+    println!("  next_q_v2 = activation + q * hold");
     println!("            = {}", next_q_v2);
     println!();
 
@@ -154,20 +150,12 @@ fn main() -> std::io::Result<()> {
 
     let output_names = [
         "activation",
-        "hold",
         "deactivation",
-        "hold_xor",
+        "hold",
         "next_q_v1",
         "next_q_v2",
     ];
-    let expressions = [
-        &activation,
-        &hold,
-        &deactivation,
-        &hold_xor,
-        &next_q_v1,
-        &next_q_v2,
-    ];
+    let expressions = [&activation, &deactivation, &hold, &next_q_v1, &next_q_v2];
 
     // Stage 1: Count cubes with naive De Morgan expansion
     println!("Stage 1: Naive De Morgan expansion...");
@@ -188,9 +176,8 @@ fn main() -> std::io::Result<()> {
     println!("Stage 2: Creating cover with BDD conversion (canonical form)...");
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&activation, "activation")?;
-    cover.add_expr(&hold, "hold")?;
     cover.add_expr(&deactivation, "deactivation")?;
-    cover.add_expr(&hold_xor, "hold_xor")?;
+    cover.add_expr(&hold, "hold")?;
     cover.add_expr(&next_q_v1, "next_q_v1")?;
     cover.add_expr(&next_q_v2, "next_q_v2")?;
 
@@ -211,9 +198,9 @@ fn main() -> std::io::Result<()> {
         total_naive as f64 / total_bdd as f64
     );
 
-    // Stage 3: Minimize with Espresso
-    println!("Stage 3: Running Espresso minimization...");
-    let minimized = cover.minimize()?;
+    // Stage 3: Minimize with Espresso (using exact algorithm)
+    println!("Stage 3: Running Espresso exact minimization...");
+    let minimized = cover.minimize_exact()?;
 
     // Count cubes per output after Espresso minimization
     let mut esp_counts = Vec::new();
@@ -240,7 +227,7 @@ fn main() -> std::io::Result<()> {
     );
     println!("{}", "-".repeat(70));
 
-    for i in 0..6 {
+    for i in 0..5 {
         println!(
             "{:<15} {:>10} {:>10} {:>10} {:>14.1}x",
             output_names[i],
@@ -252,7 +239,7 @@ fn main() -> std::io::Result<()> {
     }
 
     println!("\nKey Insights:");
-    for i in 0..6 {
+    for i in 0..5 {
         if naive_counts[i] > bdd_counts[i] * 2 {
             println!(
                 "• BDD reduces '{}' from {} to {} cubes ({}x reduction!)",
@@ -284,8 +271,8 @@ fn main() -> std::io::Result<()> {
     if min_next_q_v1.equivalent_to(&min_next_q_v2) {
         println!("✓ Both formulations are logically equivalent!");
         println!("  - Version 1: (activation + q) * !deactivation");
-        println!("  - Version 2: activation + q * hold_xor");
-        println!("  where hold_xor = activation XOR !deactivation");
+        println!("  - Version 2: activation + q * hold");
+        println!("  where hold = activation XOR !deactivation");
     } else {
         println!("✗ Formulations differ (unexpected!)");
     }

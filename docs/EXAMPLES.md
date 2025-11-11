@@ -87,7 +87,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Expression Composition (v3.1+)
+### Expression Composition (v3.0+)
 
 Seamlessly compose expressions from different sources:
 
@@ -314,8 +314,8 @@ fn main() -> std::io::Result<()> {
     
     // Demonstrates why BDD is superior to naive De Morgan expansion:
     //
-    // Naive DNF (De Morgan's laws): hold ~150 cubes, next_q ~64 cubes (exponential!)
-    // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (10x and 3x better!)
+    // Naive DNF (De Morgan's laws): hold 375,840 cubes, next_q 20,220-375,846 cubes (exponential!)
+    // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (26,845x and 1,064x better!)
     // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimized)
     //
     // BDD avoids exponential blowup while providing canonical representation
@@ -439,7 +439,7 @@ fn main() {
 ## Binary Decision Diagrams (BDDs)
 
 Binary Decision Diagrams provide canonical representation with efficient operations. 
-Introduced in v3.1, BDDs are used internally for cover generation and are also available 
+BDDs were introduced in version 3.1 for efficient cover generation and are also available 
 as a public API.
 
 ### Basic BDD Construction
@@ -614,7 +614,7 @@ fn main() -> std::io::Result<()> {
     // Redundant expression
     let expr = a.and(&b).or(&a.and(&b).and(&c));
     
-    // Minimization workflow (v3.1):
+    // Minimization workflow (introduced in v3.1 with BDDs):
     // 1. Expression → BDD (efficient canonical form)
     // 2. BDD → Cover cubes (optimized extraction)
     // 3. Cover → Minimized cover (Espresso algorithm)
@@ -780,7 +780,7 @@ cargo run --example expr_macro_demo
 # Inspect cubes
 cargo run --example inspect_cubes
 
-# Expression composition (v3.1+)
+# Expression composition (v3.0+)
 cargo run --example expression_composition
 
 # Threshold gate example (v3.1+)

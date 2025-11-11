@@ -339,9 +339,10 @@ fn main() -> std::io::Result<()> {
     //   activation:    6 cubes (simple OR of products - already in DNF)
     //   deactivation:  6 cubes (simple OR of products - already in DNF)
     //   hold:          375,840 cubes! (XOR + negation → MASSIVE explosion!)
-    //   next_q:        7,006 cubes (negation of 6-term OR → huge cross-product)
+    //   next_q_v1:     20,220 cubes (negation of 6-term OR → huge cross-product)
+    //   next_q_v2:     375,846 cubes (even more expansion!)
     //   ─────────────────────────────────────────────────────────────
-    //   TOTAL:         382,858 cubes (sum across all outputs)
+    //   TOTAL:         771,918 cubes (sum across all outputs)
     //
     // The 'hold' expression is particularly dramatic: xor(activation, !deactivation)
     // expands to (A*!B + !A*B), where !B requires negating a 6-term OR. De Morgan's
@@ -356,9 +357,10 @@ fn main() -> std::io::Result<()> {
     //   activation:    5 cubes (BDD eliminated 1 redundant term, 1.2x reduction)
     //   deactivation:  5 cubes (BDD eliminated 1 redundant term, 1.2x reduction)
     //   hold:          14 cubes (BDD achieves 26,845x reduction! 375,840→14)
-    //   next_q:        19 cubes (BDD achieves 369x reduction! 7,006→19)
+    //   next_q_v1:     19 cubes (BDD achieves 1,064x reduction! 20,220→19)
+    //   next_q_v2:     19 cubes (BDD achieves 19,781x reduction! 375,846→19)
     //   ─────────────────────────────────────────────────────────────
-    //   TOTAL:         43 unique cubes in cover (8,904x reduction!)
+    //   TOTAL:         62 unique cubes in cover (12,450x reduction!)
     //
     // Note: The total is unique cubes, not the sum of per-output counts, because
     // cubes can have multiple output bits set (shared across functions).
@@ -370,20 +372,21 @@ fn main() -> std::io::Result<()> {
     //   activation:    5 cubes (already minimal - no change)
     //   deactivation:  5 cubes (already minimal - no change)
     //   hold:          10 cubes (Espresso achieves 29% further reduction, 14→10)
-    //   next_q:        15 cubes (Espresso achieves 21% further reduction, 19→15)
+    //   next_q_v1:     15 cubes (Espresso achieves 21% further reduction, 19→15)
+    //   next_q_v2:     15 cubes (Espresso achieves 21% further reduction, 19→15)
     //   ─────────────────────────────────────────────────────────────
-    //   TOTAL:         30 unique cubes in cover (30% further reduction)
+    //   TOTAL:         30 unique cubes in cover (52% further reduction)
     //
     // KEY INSIGHTS:
     // =============
     // 1. **BDD is ESSENTIAL** for expressions with negations:
-    //    - Without BDD: 382,858 cubes → Espresso would be intractable
-    //    - With BDD: 43 cubes → Espresso runs efficiently
-    //    - Reduction factor: 8,904x (reduces input by 99.99%!)
+    //    - Without BDD: 771,918 cubes → Espresso would be intractable
+    //    - With BDD: 62 cubes → Espresso runs efficiently
+    //    - Reduction factor: 12,450x (reduces input by 99.99%!)
     //
     // 2. **Espresso is STILL NEEDED** after BDD:
     //    - BDD provides canonical form, but not necessarily minimal form
-    //    - Espresso achieves additional 30% reduction (43→30 cubes)
+    //    - Espresso achieves additional 52% reduction (62→30 cubes)
     //    - Critical for final optimization of hold (14→10) and next_q (19→15)
     //
     // 3. **The Pipeline is Complementary**:
@@ -402,9 +405,11 @@ fn main() -> std::io::Result<()> {
     //                          a*~b*~c*d + a*~b*c*~e + a*~b*~d*e + b*~c*d*~e +
     //                          a*b*~c*~d + b*c*~d*~e
     //
-    // next_q       (15 cubes): a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
+    // next_q_v1    (15 cubes): a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
     //                          b*c*q + c*d*q + c*e*q + d*e*q + a*b*c*e + a*b*d*e +
     //                          a*c*d*e + b*c*d*e + a*b*c*d
+    //
+    // next_q_v2    (15 cubes): Same as next_q_v1 (both formulations are equivalent)
 
     Ok(())
 }
