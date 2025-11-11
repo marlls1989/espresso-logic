@@ -66,8 +66,8 @@
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Style 1: String literals (most concise - no declarations!)
-//! let xor = expr!("a" * "b" + !"a" * !"b");
-//! println!("{}", xor);  // Output: a * b + ~a * ~b (minimal parentheses!)
+//! let xor = expr!("a" * !"b" + !"a" * "b");
+//! println!("{}", xor);  // Output: a * ~b + ~a * b (minimal parentheses!)
 //!
 //! // Style 2: Existing BoolExpr variables
 //! let a = BoolExpr::variable("a");
@@ -342,7 +342,7 @@ pub use error::{
     PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
 };
 pub use espresso::EspressoConfig;
-pub use expression::BoolExpr;
+pub use expression::{BoolExpr, ExprNode};
 pub use pla::{PLAReader, PLAWriter};
 
 // Re-export procedural macro

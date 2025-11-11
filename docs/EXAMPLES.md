@@ -24,7 +24,7 @@ fn main() -> std::io::Result<()> {
     // Three styles of building expressions
     
     // Style 1: String literals (most concise)
-    let xor = expr!("a" * "b" + !"a" * !"b");
+    let xor = expr!("a" * !"b" + !"a" * "b");
     println!("XOR: {}", xor);
     
     // Style 2: Variables
@@ -49,7 +49,7 @@ fn main() -> std::io::Result<()> {
 use espresso_logic::{BoolExpr, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    // Parse from string
+    // Parse from string (mathematical notation)
     let expr = BoolExpr::parse("(a + b) * (c + d)")?;
     let minimized = expr.minimize()?;
     println!("Result: {}", minimized);
@@ -61,6 +61,69 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+### Alternative Parser Syntax (v3.1+)
+
+The parser supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations:
+
+```rust
+use espresso_logic::{BoolExpr, Minimizable};
+
+fn main() -> std::io::Result<()> {
+    // Mathematical notation
+    let math = BoolExpr::parse("a * b + c")?;
+    
+    // Logical notation (v3.1+)
+    let logical = BoolExpr::parse("a & b | c")?;
+    
+    // Mixed notation (v3.1+)
+    let mixed = BoolExpr::parse("a * b | c & d")?;
+    
+    // All three are equivalent for minimization
+    println!("Math: {}", math);
+    println!("Logical: {}", logical);
+    
+    Ok(())
+}
+```
+
+### Expression Composition (v3.1+)
+
+Seamlessly compose expressions from different sources:
+
+```rust
+use espresso_logic::{BoolExpr, expr, Minimizable};
+
+fn main() -> std::io::Result<()> {
+    // Parse expressions from user input
+    let user_func1 = BoolExpr::parse("a * b + c")?;
+    let user_func2 = BoolExpr::parse("d + e * f")?;
+    let user_func3 = BoolExpr::parse("g * h")?;
+    
+    println!("User function 1: {}", user_func1);
+    println!("User function 2: {}", user_func2);
+    println!("User function 3: {}", user_func3);
+    
+    // Compose them using expr! macro - clean and readable
+    let combined = expr!(user_func1 * user_func2 + !user_func3);
+    println!("Combined: {}", combined);
+    
+    // Build more complex compositions
+    let condition = BoolExpr::parse("enable")?;
+    let output = expr!(condition * user_func1 + !condition * user_func2);
+    println!("Conditional (enable ? func1 : func2): {}", output);
+    
+    // Compose minimized sub-expressions
+    let minimized1 = user_func1.minimize()?;
+    let minimized2 = user_func2.minimize()?;
+    let final_expr = expr!(minimized1 + minimized2);
+    println!("Composed minimized expressions: {}", final_expr);
+    
+    Ok(())
+}
+```
+
+See `examples/expression_composition.rs` for a complete working example.
 
 ### Operator Overloading
 
@@ -137,6 +200,8 @@ fn main() -> std::io::Result<()> {
 
 ### Named Outputs
 
+**This is the correct way to get multiple minimized expressions (including intermediates):**
+
 ```rust
 use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
 
@@ -151,7 +216,7 @@ fn main() -> std::io::Result<()> {
     cover.add_expr(&expr!(a + c), "or_output")?;
     cover.add_expr(&expr!(a * b + b * c), "complex_output")?;
     
-    // Minimize all together
+    // Minimize all together (single call minimizes ALL outputs efficiently)
     cover = cover.minimize()?;
     
     // Retrieve minimized expressions
@@ -162,6 +227,109 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+
+### Multiple Outputs with Composition
+
+When you need both intermediate and final minimized expressions:
+
+```rust
+use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
+
+fn main() -> std::io::Result<()> {
+    let mut cover = Cover::new(CoverType::F);
+    
+    // Define expressions (don't minimize individually!)
+    let expr1 = expr!("a" * "b" + "c" * "d");
+    let expr2 = expr!("x" * "y" + "z");
+    let composed = expr!(expr1 * expr2);
+    
+    // Add all as separate outputs
+    cover.add_expr(&expr1, "intermediate1")?;
+    cover.add_expr(&expr2, "intermediate2")?;
+    cover.add_expr(&composed, "final")?;
+    
+    // Single minimize call gets optimal results for ALL outputs
+    cover = cover.minimize()?;
+    
+    // Now you have minimized versions of all expressions
+    for (name, expr) in cover.to_exprs() {
+        println!("{}: {}", name, expr);
+    }
+    
+    Ok(())
+}
+```
+
+### Real-World Example: 5-Input Threshold Gate
+
+A threshold gate with complex activation/deactivation regions demonstrates dramatic minimization and proper expression composition.
+
+Run with: `cargo run --example threshold_gate_example`
+
+```rust
+use espresso_logic::{Cover, CoverType, expr, BoolExpr, Minimizable};
+
+/// Compute XOR of two boolean expressions using expr! macro
+fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
+    expr!(a * !b + !a * b)
+}
+
+fn main() -> std::io::Result<()> {
+    // 5-input threshold gate: activate on ≥4 high, deactivate on ≤1 high
+    
+    // Activation: at least 4 of 5 inputs high (6 combinations)
+    let activation = expr!(
+        "a" * "b" * "c" * "d" * "e" +
+        "a" * "b" * "c" * "d" * !"e" +
+        "a" * "b" * "c" * !"d" * "e" +
+        "a" * "b" * !"c" * "d" * "e" +
+        "a" * !"b" * "c" * "d" * "e" +
+        !"a" * "b" * "c" * "d" * "e"
+    );
+    
+    // Deactivation: at most 1 of 5 inputs high (6 combinations)
+    let deactivation = expr!(
+        !"a" * !"b" * !"c" * !"d" * !"e" +
+        "a" * !"b" * !"c" * !"d" * !"e" +
+        !"a" * "b" * !"c" * !"d" * !"e" +
+        !"a" * !"b" * "c" * !"d" * !"e" +
+        !"a" * !"b" * !"c" * "d" * !"e" +
+        !"a" * !"b" * !"c" * !"d" * "e"
+    );
+    
+    // Hold region: XOR of activation and negation of deactivation
+    let hold = xor(&activation, &deactivation.not());
+    
+    // Next state function (set on activation, hold when not deactivating)
+    let next_q = expr!(activation + "q" * !deactivation);
+    
+    // Add all functions to a single cover
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(&activation, "activation")?;
+    cover.add_expr(&deactivation, "deactivation")?;
+    cover.add_expr(&hold, "hold")?;
+    cover.add_expr(&next_q, "next_q")?;
+    
+    let minimized = cover.minimize()?;
+    
+    // Demonstrates why BDD is superior to naive De Morgan expansion:
+    //
+    // Naive DNF (De Morgan's laws): hold ~150 cubes, next_q ~64 cubes (exponential!)
+    // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (10x and 3x better!)
+    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimized)
+    //
+    // BDD avoids exponential blowup while providing canonical representation
+    
+    Ok(())
+}
+```
+
+**Key points:**
+- **Helper function `xor()`**: Returns `BoolExpr` for clean composition
+- **Complex expressions**: `hold` starts with 22 terms, minimizes to 10
+- **Stateful logic**: `next_q` efficiently combines activation with feedback
+- **No early minimization**: Compose all expressions first, minimize once
+- **Multiple outputs**: All four functions optimized together in one call
 
 ## PLA Files
 
@@ -611,5 +779,22 @@ cargo run --example expr_macro_demo
 
 # Inspect cubes
 cargo run --example inspect_cubes
+
+# Expression composition (v3.1+)
+cargo run --example expression_composition
+
+# Threshold gate example (v3.1+)
+cargo run --example threshold_gate_example
+
+# C-element example (v3.1+)
+cargo run --example c_element_example
 ```
+
+### New in v3.1
+
+The following examples demonstrate new features in v3.1:
+
+- **expression_composition.rs** - Shows how to compose expressions from parsed functions, variables, and minimized results
+- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimization and proper composition of complex functions
+- **c_element_example.rs** - C-element (Muller C-element) demonstrating proper asynchronous circuit design with set/reset logic
 

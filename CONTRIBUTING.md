@@ -66,7 +66,7 @@ cargo run --example pla_file
 
 ## Documentation
 
-- Update API.md for new public APIs
+- Update rustdocs (doc comments) for new public APIs
 - Add examples for new features
 - Update README if adding significant functionality
 

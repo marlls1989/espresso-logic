@@ -181,7 +181,7 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 /// use espresso_logic::{BoolExpr, expr};
 ///
 /// // Option 1: Use string literals (variables created automatically)
-/// let xor = expr!("a" * "b" + !"a" * !"b");
+/// let xor = expr!("a" * !"b" + !"a" * "b");
 /// let complex = expr!(("a" + "b") * "c");
 ///
 /// // Option 2: Use existing BoolExpr variables
@@ -202,7 +202,7 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 /// let combined = expr!(expr1 + "c" * 1);
 ///
 /// // Complex nested expressions
-/// let xor = expr!(a * b + !a * !b);
+/// let xor = expr!(a * !b + !a * b);
 /// let complex = expr!((a + b) * c);
 ///
 /// // Can compose sub-expressions

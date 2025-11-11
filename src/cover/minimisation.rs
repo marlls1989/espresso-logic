@@ -18,6 +18,15 @@ use std::sync::Arc;
 /// using the Espresso algorithm. All methods take `&self` and return a new minimized instance,
 /// following an immutable functional style.
 ///
+/// **Note (v3.1+):** You must explicitly import this trait to use its methods:
+/// ```
+/// use espresso_logic::{BoolExpr, Minimizable};
+///
+/// let expr = BoolExpr::parse("a * b + a * b * c")?;
+/// let minimized = expr.minimize()?;  // Requires `use Minimizable`
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
 /// # Transparent Minimization
 ///
 /// The beauty of this trait is that minimization works the same way regardless of input type.

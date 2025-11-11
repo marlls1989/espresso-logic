@@ -18,8 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Complex patterns:");
     println!("   expr!(a * b + c) = {}", expr!(a * b + c));
     println!(
-        "   expr!(a * b + !a * !b) = {} (XOR)",
-        expr!(a * b + !a * !b)
+        "   expr!(a * !b + !a * b) = {} (XOR)",
+        expr!(a * !b + !a * b)
     );
     println!("   expr!((a + b) * c) = {}", expr!((a + b) * c));
     println!("   expr!((a + b) * (c + d)) = {}", expr!((a + b) * (c + d)));
@@ -30,8 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   expr!(\"x\" + \"y\") = {}", expr!("x" + "y"));
     println!("   expr!(!(\"x\" * \"y\")) = {}", expr!(!("x" * "y")));
     println!(
-        "   expr!(\"x\" * \"y\" + !\"x\" * !\"y\") = {} (XOR)",
-        expr!("x" * "y" + !"x" * !"y")
+        "   expr!(\"x\" * !\"y\" + !\"x\" * \"y\") = {} (XOR)",
+        expr!("x" * !"y" + !"x" * "y")
     );
     println!();
 

@@ -64,6 +64,14 @@ path = "examples/boolean_expressions.rs"
 name = "espresso_direct_api"
 path = "examples/espresso_direct_api.rs"
 
+[[example]]
+name = "c_element_example"
+path = "examples/c_element_example.rs"
+
+[[example]]
+name = "threshold_gate_example"
+path = "examples/threshold_gate_example.rs"
+
 [[bench]]
 name = "pla_benchmarks"
 harness = false

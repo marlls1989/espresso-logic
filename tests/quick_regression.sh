@@ -79,7 +79,7 @@ run_quick_test() {
 }
 
 # Test a few key examples for quick feedback
-for file in examples/ex5 examples/b3 examples/in1 examples/t1; do
+for file in pla/ex5 pla/b3 pla/in1 pla/t1; do
 	if [ -f "$file" ]; then
 		run_quick_test "$file"
 	fi

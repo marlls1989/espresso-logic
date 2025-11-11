@@ -5,6 +5,194 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2025-11-11
+
+### Breaking Changes
+
+**API Ownership & References:**
+- **`Cover::minimize()`** - Now returns new instance instead of mutating: `self -> Self`
+- **`Espresso::minimize()`** - Takes reference instead of owned value: `EspressoCover -> &EspressoCover`
+- **`EspressoCover::minimize()`** - Takes reference instead of owned value: `self -> &self`
+- **`Cover::add_expr()`** - Takes reference instead of owned expression: `BoolExpr -> &BoolExpr`
+- **Ownership semantics** - More explicit throughout API, following Rust best practices
+
+### Added
+
+**Binary Decision Diagram (BDD) Support:**
+- **`Bdd` type** - Canonical representation of boolean functions using reduced ordered BDDs (ROBDDs)
+- **Global singleton manager** - Shared BDD manager with hash consing and operation caching
+- **`BoolExpr::to_bdd()`** - Convert expressions to BDDs with internal caching for efficiency
+- **Efficient operations** - AND, OR, NOT operations in polynomial time
+- **Conversions** - Seamless conversion between BoolExpr ↔ BDD ↔ DNF ↔ Cover
+- **Canonical representation** - Equivalent functions have identical BDD representations
+- **Thread-safe** - Mutex-protected manager enables concurrent BDD operations
+- **Comprehensive BDD tests** - Extensive test suite covering operations, caching, and conversions
+- **Two-step minimization (BDD + Espresso):**
+  - BDD provides automatic redundancy elimination and canonical form (ordering-dependent, uses alphabetical order)
+  - Espresso provides optimal logic minimization (ordering-independent)
+  - **BDD avoids exponential blowup**: Converts complex compositions to DNF in polynomial time vs exponential with naive De Morgan's law expansion
+  - **Example**: XOR of two 6-term expressions → BDD: 14 cubes, naive De Morgan: ~150 cubes (10x improvement!)
+  - BDD pre-minimization reduces cube count fed to Espresso, improving overall efficiency
+  - Both steps are necessary: BDD efficiently converts to canonical DNF, Espresso achieves optimal minimization
+  - Optimal BDD variable ordering is NP-complete, so Espresso's ordering-independent minimization is essential
+
+**Enhanced Boolean Expression Parser:**
+- **Alternative operator syntax** - Support both `&` and `*` for AND operations
+- **Alternative OR syntax** - Support both `|` and `+` for OR operations
+- **Mixed notation** - Allow mixing notations within the same expression
+- **Enhanced `expr!` macro** - Compose existing `BoolExpr` values with string literals
+- **Expression composition** - Build complex formulas from parsed, minimized, or constructed sub-expressions
+
+**New Public API Exports:**
+- **`Minimizable` trait** - Publicly exported to enable explicit trait-based minimization
+- **`Dnf` type** - Disjunctive Normal Form type made public for advanced use cases
+- **`Bdd` type** - Binary Decision Diagram type exposed at crate root for direct BDD manipulation
+- **`ExprNode<'a, T>` enum** - New public type representing expression tree nodes for folding operations used with `fold()` and `fold_with_context()`
+
+**Expression Tree Folding API:**
+- **`BoolExpr::fold()`** - New method for bottom-up tree folding with custom transformations
+- **`BoolExpr::fold_with_context()`** - New method for top-down context-based tree folding
+
+**New Examples:**
+- `examples/threshold_gate_example.rs` - 5-input threshold gate showing dramatic minimization (hold: 22→10 terms) and complex composition with XOR helper
+- `examples/c_element_example.rs` - Simple C-element for basic demonstration
+
+**Enhanced Tests:**
+- Consolidated test suite with comprehensive coverage for all features
+- **216 unit tests** - All passing with comprehensive coverage
+
+### Changed
+
+**Modular Codebase Restructuring:**
+- **BDD module** - Moved from `expression::bdd` to top-level `bdd` module
+- **Module directories** - Converted monolithic files to focused module directories:
+  - `src/espresso.rs` → `src/espresso/mod.rs` + `src/espresso/error.rs`
+  - `src/pla.rs` → `src/pla/mod.rs` + `src/pla/error.rs`
+  - Split `src/expression/mod.rs` into specialized submodules:
+    - `conversions.rs` - Type conversion implementations
+    - `display.rs` - Display trait implementations
+    - `error.rs` - Expression parsing error types
+    - `eval.rs` - Evaluation and equivalence checking
+    - `operators.rs` - Operator overloading implementations
+    - `parser.rs` - Parsing logic
+    - `tests.rs` - Comprehensive expression test suite
+  - Split `src/cover/mod.rs` into focused submodules:
+    - `cubes.rs` - Cube-related types
+    - `labels.rs` - Label management utility
+    - `iterators.rs` - Iterator types
+    - `dnf.rs` - DNF and minimization functionality
+    - `expressions.rs` - Expression integration methods
+    - `minimisation.rs` - Minimizable trait implementation
+    - `conversions.rs` - Trait implementations
+    - `error.rs` - Cover-specific error types
+    - `tests.rs` - All test cases
+
+**API Improvements:**
+- **Explicit ownership** - All methods now make ownership explicit (no implicit moves)
+- **Reference-based minimize** - Allows reusing input covers without cloning
+- **Better composition** - `expr!` macro seamlessly composes any `BoolExpr` values
+- **Clearer documentation** - Updated rustdocs to reflect new patterns
+
+**Documentation Updates:**
+- **docs/BOOLEAN_EXPRESSIONS.md** - Added alternative syntax and composition patterns
+- **docs/EXAMPLES.md** - Added BDD examples and new example file documentation
+- **README.md** - Updated with BDD example and alternative operator syntax
+- **All examples** - Updated to use new reference-based API
+- **Rustdocs** - Comprehensive API documentation with all public types and methods
+
+**Repository Reorganization:**
+- **PLA test files** - Moved 127 PLA example files from `examples/` to `pla/` directory to separate test data from code examples
+- **API documentation** - Removed `docs/API.md` in favor of comprehensive rustdocs for better integration with docs.rs
+- **Test consolidation** - Merged standalone test example files into main test suite for better organization
+
+### Fixed
+
+- **Parser flexibility** - Now accepts both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations
+- **Expression composition** - `expr!` macro can now compose any `BoolExpr` value, not just string literals
+
+### Performance
+
+- **Lazy BDD caching** - Each `BoolExpr` lazily caches its BDD representation using `OnceLock`
+  - First call to `to_bdd()` computes and caches the BDD at expression level
+  - Subsequent calls return the cached BDD (O(1) access)
+  - During composition, subexpression BDD caches are automatically leveraged
+  - Prevents redundant BDD construction when the same subexpression appears multiple times
+  - Especially beneficial during complex expression composition and transformation
+  - **Important:** Minimization creates a new `BoolExpr` with empty expression-level cache
+  - Global BDD manager caches (ITE cache, unique table) persist while any Bdd exists
+  - Prefer minimizing late (after composition) to maximize expression-level cache hits
+- **Hash consing** - Global node sharing across all BDDs reduces memory usage
+- **Operation memoization** - ITE results cached and shared across all BDD operations
+
+### Migration Guide
+
+**API Ownership Changes:**
+
+```rust
+// v3.0.0 - mutating minimize
+let mut cover = Cover::new(CoverType::F);
+cover.add_cube(...)?;
+cover.minimize()?; // mutates in place
+
+// v3.1.0 - returns new instance
+let mut cover = Cover::new(CoverType::F);
+cover.add_cube(...)?;
+let minimized = cover.minimize()?; // returns new instance
+```
+
+**Expression References:**
+
+```rust
+// v3.0.0 - takes ownership
+let expr = BoolExpr::parse("a * b")?;
+cover.add_expr(expr)?; // expr moved
+
+// v3.1.0 - takes reference
+let expr = BoolExpr::parse("a * b")?;
+cover.add_expr(&expr)?; // expr can be reused
+```
+
+**Using BDDs:**
+
+```rust
+use espresso_logic::{BoolExpr, Bdd};
+
+let expr = BoolExpr::parse("a * b + a * b * c")?;
+let bdd = expr.to_bdd(); // Cached conversion
+println!("BDD has {} nodes", bdd.node_count());
+
+// BDDs support efficient operations
+let bdd_a = BoolExpr::variable("a").to_bdd();
+let combined = bdd.and(&bdd_a);
+```
+
+**Alternative Parser Syntax:**
+
+```rust
+// Both notations work identically
+let expr1 = BoolExpr::parse("a * b + c")?;  // Mathematical notation
+let expr2 = BoolExpr::parse("a & b | c")?;  // Logical notation
+let expr3 = BoolExpr::parse("a * b | c")?;  // Mixed notation
+```
+
+**Expression Composition:**
+
+```rust
+// Compose parsed, minimized, or constructed expressions
+let func1 = BoolExpr::parse("a * b")?;
+let func2 = BoolExpr::parse("c + d")?;
+let minimized = func1.minimize()?;
+
+// Seamlessly compose with expr! macro
+let combined = expr!(minimized * func2 + "e");
+```
+
+### Statistics
+
+- **Test coverage:** 373 automated tests (51 unit/integration + 322 doc tests + ~276 regression tests), all passing
+- **Modular organization:** 4 major modules refactored into focused submodules
+- **Repository cleanup:** Moved 127 PLA test files from `examples/` to `pla/` directory
+
 ## [3.0.0] - 2025-11-09
 
 ### Breaking Changes
@@ -359,7 +547,7 @@ If you were using the removed methods on `CoverBuilder`:
 
 ### Technical Details
 - Boolean expressions use `Arc<str>` for efficient variable name sharing
-- Expressions are converted to DNF using De Morgan's laws
+- **Note (updated v3.1):** Expressions are now converted to DNF via BDD (Binary Decision Diagrams) for efficiency, avoiding exponential complexity of direct DNF conversion
 - Variables are stored in alphabetical order (BTreeSet) for consistency
 - DNF cubes are directly compatible with Espresso's cover format
 - Expression parsing is type-safe and returns helpful error messages
@@ -367,7 +555,7 @@ If you were using the removed methods on `CoverBuilder`:
 
 ### Performance
 - Expression parsing: microseconds for typical expressions
-- DNF conversion: linear in expression size
+- **Note (updated v3.1):** DNF conversion via BDD: polynomial time for most practical expressions (was direct conversion in v2.6)
 - No overhead vs. direct cover construction for minimization
 - Operator overloading is zero-cost (inlined)
 

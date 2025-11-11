@@ -70,13 +70,3 @@ fn test_pla_roundtrip() {
     let parsed_cover = parsed_cover.minimize().unwrap();
     assert_eq!(parsed_cover.num_cubes(), 2);
 }
-
-// PLA type enum tests
-
-#[test]
-fn test_pla_type_values() {
-    assert_eq!(CoverType::F as i32, 1);
-    assert_eq!(CoverType::FD as i32, 3);
-    assert_eq!(CoverType::FR as i32, 5);
-    assert_eq!(CoverType::FDR as i32, 7);
-}

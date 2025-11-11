@@ -315,6 +315,5 @@ Can include additional directives for documentation:
 ## See Also
 
 - [Examples Guide](EXAMPLES.md) - Code examples using PLA files
-- [API Documentation](API.md) - Complete API reference
 - [CLI Guide](CLI.md) - Command-line usage with PLA files
 

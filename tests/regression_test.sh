@@ -96,7 +96,7 @@ run_test() {
 echo "Testing basic minimization (default output)..."
 echo "─────────────────────────────────────────────────────────────────────"
 
-for file in examples/ex{4,5,7} examples/b{2,3,4,7,9,10,11,12} examples/{in0,in1,in2,in3,in4,in5,in6,in7} examples/{m1,m2,m3,m4} examples/{t1,t2,t3,t4}; do
+for file in pla/ex{4,5,7} pla/b{2,3,4,7,9,10,11,12} pla/{in0,in1,in2,in3,in4,in5,in6,in7} pla/{m1,m2,m3,m4} pla/{t1,t2,t3,t4}; do
 	if [ -f "$file" ]; then
 		basename=$(basename "$file")
 		run_test "$file" "${basename}" ""
@@ -108,7 +108,7 @@ echo ""
 echo "Testing output formats (f, fd, fr, fdr)..."
 echo "─────────────────────────────────────────────────────────────────────"
 
-for file in examples/ex{4,5,7} examples/b{2,3,4,7} examples/{in0,in1,in2} examples/{m1,m2} examples/{t1,t2}; do
+for file in pla/ex{4,5,7} pla/b{2,3,4,7} pla/{in0,in1,in2} pla/{m1,m2} pla/{t1,t2}; do
 	if [ -f "$file" ]; then
 		basename=$(basename "$file")
 		run_test "$file" "${basename}_f" "-o f"

@@ -213,7 +213,6 @@ espresso /full/path/to/input.pla
 
 ## See Also
 
-- [API Documentation](API.md)
 - [PLA File Format](../espresso-src/README)
 - [Examples](../examples/)
 

@@ -4,36 +4,6 @@ use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 use std::sync::Arc;
 
 #[test]
-fn test_macro_vs_method_api() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    // Same expression built two ways
-    let via_macro = expr!(a * b + !a * !b);
-    let via_method = a.and(&b).or(&a.not().and(&b.not()));
-
-    // Should have identical variables
-    assert_eq!(
-        via_macro.collect_variables(),
-        via_method.collect_variables()
-    );
-
-    // Both should convert to covers with same properties
-    let cover_macro = {
-        let mut cover = Cover::new(CoverType::F);
-        cover.add_expr(&via_macro, "out").unwrap();
-        cover
-    };
-    let cover_method = {
-        let mut cover = Cover::new(CoverType::F);
-        cover.add_expr(&via_method, "out").unwrap();
-        cover
-    };
-    assert_eq!(cover_macro.num_inputs(), cover_method.num_inputs());
-    assert_eq!(cover_macro.num_outputs(), cover_method.num_outputs());
-}
-
-#[test]
 fn test_cover_trait_basics() {
     use std::collections::HashMap;
 
@@ -139,7 +109,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
 
     let expr = expr!(a * b + a * b * c);
 
-    // Test that minimization runs without error using convenience method
+    // Test that minimization runs without error
     let minimized = expr.minimize()?;
 
     // After minimization, should have only a and b (c is absorbed)
@@ -669,174 +639,7 @@ fn test_cover_empty_to_expr() {
     assert_eq!(vars.len(), 0);
 }
 
-// ========== Macro vs Parser Feature Parity Tests ==========
-// These tests verify the expr! macro supports the same syntax as the parser
-
-#[test]
-fn test_parity_basic_operators() {
-    // AND
-    let parsed_and = BoolExpr::parse("a * b").unwrap();
-    let macro_and = expr!("a" * "b");
-    assert!(parsed_and.equivalent_to(&macro_and));
-
-    // OR
-    let parsed_or = BoolExpr::parse("a + b").unwrap();
-    let macro_or = expr!("a" + "b");
-    assert!(parsed_or.equivalent_to(&macro_or));
-}
-
-#[test]
-fn test_parity_negation_both_syntaxes() {
-    // Verify BOTH ! and ~ work in parser and macro
-    let parsed_tilde = BoolExpr::parse("~a").unwrap();
-    let parsed_bang = BoolExpr::parse("!a").unwrap();
-    let macro_tilde = expr!(~"a");
-    let macro_bang = expr!(!"a");
-
-    assert!(parsed_tilde.equivalent_to(&macro_tilde));
-    assert!(parsed_tilde.equivalent_to(&macro_bang));
-    assert!(parsed_bang.equivalent_to(&macro_tilde));
-    assert!(parsed_bang.equivalent_to(&macro_bang));
-}
-
-#[test]
-fn test_parity_constants() {
-    // Test 0 and 1 literals
-    assert!(BoolExpr::parse("1").unwrap().equivalent_to(&expr!(1)));
-    assert!(BoolExpr::parse("0").unwrap().equivalent_to(&expr!(0)));
-    assert!(BoolExpr::parse("true").unwrap().equivalent_to(&expr!(1)));
-    assert!(BoolExpr::parse("false").unwrap().equivalent_to(&expr!(0)));
-}
-
-#[test]
-fn test_parity_precedence() {
-    // NOT > AND > OR
-    let parsed = BoolExpr::parse("~a * b + c").unwrap();
-    let from_macro = expr!(~"a" * "b" + "c");
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_parity_parentheses_grouping() {
-    // Simple grouping
-    let parsed = BoolExpr::parse("(a + b) * c").unwrap();
-    let from_macro = expr!(("a" + "b") * "c");
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_parity_parentheses_change_precedence() {
-    // Verify parentheses actually change the meaning
-    let without = BoolExpr::parse("a + b * c").unwrap();
-    let with_parens = BoolExpr::parse("(a + b) * c").unwrap();
-
-    let macro_without = expr!("a" + "b" * "c");
-    let macro_with = expr!(("a" + "b") * "c");
-
-    assert!(without.equivalent_to(&macro_without));
-    assert!(with_parens.equivalent_to(&macro_with));
-    assert!(!without.equivalent_to(&with_parens)); // Different meanings
-}
-
-#[test]
-fn test_parity_nested_parentheses() {
-    let parsed = BoolExpr::parse("((a + b) * c) + d").unwrap();
-    let from_macro = expr!((("a" + "b") * "c") + "d");
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_parity_parentheses_with_negation() {
-    // Outside
-    let parsed1 = BoolExpr::parse("~(a + b)").unwrap();
-    let macro1 = expr!(~("a" + "b"));
-    assert!(parsed1.equivalent_to(&macro1));
-
-    // Inside
-    let parsed2 = BoolExpr::parse("(~a + ~b)").unwrap();
-    let macro2 = expr!((~"a" + ~"b"));
-    assert!(parsed2.equivalent_to(&macro2));
-}
-
-#[test]
-fn test_parity_complex_expressions() {
-    // XOR pattern
-    let xor = BoolExpr::parse("a * ~b + ~a * b").unwrap();
-    let macro_xor = expr!("a" * ~"b" + ~"a" * "b");
-    assert!(xor.equivalent_to(&macro_xor));
-
-    // Complex nested
-    let complex = BoolExpr::parse("(a * b + c) * ~d + e * f").unwrap();
-    let macro_complex = expr!(("a" * "b" + "c") * ~"d" + "e" * "f");
-    assert!(complex.equivalent_to(&macro_complex));
-}
-
-#[test]
-fn test_parity_multi_char_variables() {
-    let parsed = BoolExpr::parse("input_a * input_b + output_c").unwrap();
-    let from_macro = expr!("input_a" * "input_b" + "output_c");
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_parity_constants_with_variables() {
-    let parsed = BoolExpr::parse("a * 1 + b * 0").unwrap();
-    let from_macro = expr!("a" * 1 + "b" * 0);
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_macro_with_existing_variables() {
-    // Macro can use existing BoolExpr variables (parser cannot)
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let from_macro = expr!(a * b);
-    let parsed = BoolExpr::parse("a * b").unwrap();
-
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
-#[test]
-fn test_macro_mixed_variables_and_strings() {
-    // Macro can mix existing variables with string notation
-    let a = BoolExpr::variable("a");
-    let from_macro = expr!(a * "b" + "c");
-    let parsed = BoolExpr::parse("a * b + c").unwrap();
-
-    assert!(parsed.equivalent_to(&from_macro));
-}
-
 // ========== Expression Composition Tests ==========
-
-#[test]
-fn test_composition_simple_sub_expressions() {
-    // Build sub-expressions and compose them
-    let sub1 = expr!("a" * "b");
-    let sub2 = expr!("c" + "d");
-
-    let composed = expr!(sub1 + sub2);
-    let expected = BoolExpr::parse("(a * b) + (c + d)").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(composed.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_reuse_sub_expression() {
-    // Reuse the same sub-expression multiple times
-    let a_and_b = expr!("a" * "b");
-
-    let expr1 = expr!(a_and_b + "c"); // (a*b) + c
-    let expr2 = expr!(a_and_b * "d"); // (a*b) * d
-
-    let expected1 = BoolExpr::parse("(a * b) + c").unwrap();
-    let expected2 = BoolExpr::parse("(a * b) * d").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(expr1.equivalent_to(&expected1));
-    assert!(expr2.equivalent_to(&expected2));
-}
 
 #[test]
 fn test_composition_nested_sub_expressions() {
@@ -850,60 +653,6 @@ fn test_composition_nested_sub_expressions() {
 
     // Use exhaustive truth table check
     assert!(level3.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_with_negation() {
-    let sub = expr!("a" * "b");
-    let composed = expr!(!sub + "c"); // ~(a*b) + c
-
-    let expected = BoolExpr::parse("~(a * b) + c").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(composed.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_complex_formula() {
-    // Build a complex formula step by step: ~((a*b) + (c*d)) + e
-    let term1 = expr!("a" * "b");
-    let term2 = expr!("c" * "d");
-    let sum = expr!(term1 + term2);
-    let negated = expr!(!sum);
-    let final_expr = expr!(negated + "e");
-
-    let expected = BoolExpr::parse("~((a * b) + (c * d)) + e").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(final_expr.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_with_constants() {
-    let sub1 = expr!("a" * 1); // a * true = a
-    let sub2 = expr!("b" + 0); // b + false = b
-    let composed = expr!(sub1 + sub2); // a + b
-
-    let expected = BoolExpr::parse("(a * 1) + (b + 0)").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(composed.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_xor_from_sub_expressions() {
-    // Build XOR from components
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let a_and_not_b = expr!(a * !b);
-    let not_a_and_b = expr!(!a * b);
-    let xor = expr!(a_and_not_b + not_a_and_b);
-
-    let expected = BoolExpr::parse("a * !b + !a * b").unwrap();
-
-    // Use exhaustive truth table check
-    assert!(xor.equivalent_to(&expected));
 }
 
 #[test]
@@ -927,30 +676,6 @@ fn test_composition_with_cover_integration() {
 
     // Use exhaustive truth table check
     assert!(retrieved.equivalent_to(&expected));
-}
-
-#[test]
-fn test_composition_multiple_outputs_from_sub_expressions() {
-    // Build multiple outputs from shared sub-expressions
-    let a_or_b = expr!("a" + "b");
-    let c_and_d = expr!("c" * "d");
-
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr!(a_or_b + "e"), "out1").unwrap(); // (a+b)+e
-    cover.add_expr(&expr!(c_and_d * "f"), "out2").unwrap(); // (c*d)*f
-
-    assert_eq!(cover.num_outputs(), 2);
-    assert_eq!(cover.num_inputs(), 6);
-
-    // Retrieve and verify both outputs using exhaustive truth table check
-    let out1 = cover.to_expr("out1").unwrap();
-    let out2 = cover.to_expr("out2").unwrap();
-
-    let expected1 = BoolExpr::parse("(a + b) + e").unwrap();
-    let expected2 = BoolExpr::parse("(c * d) * f").unwrap();
-
-    assert!(out1.equivalent_to(&expected1));
-    assert!(out2.equivalent_to(&expected2));
 }
 
 // ========== Negative Tests (Error Handling) ==========

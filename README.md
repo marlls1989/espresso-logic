@@ -13,7 +13,9 @@ Espresso takes Boolean functions in sum-of-products form and produces minimal or
 
 - **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
 - **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
-- **Binary Decision Diagrams** - Efficient cover generation with canonical representation
+- **Binary Decision Diagrams** - Canonical representation with efficient operations and automatic caching
+- **Flexible Parser** - Supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations
+- **Expression Composition** - Seamlessly compose parsed, minimized, and constructed expressions
 - **Both Algorithms** - Exposes both heuristic and exact minimization algorithms from Espresso
 - **PLA File Support** - Read and write Berkeley PLA format
 - **Two API Levels** - High-level for ease of use, low-level for maximum control
@@ -107,17 +109,23 @@ fn main() {
 
 ### High-Level API (Recommended)
 
-Use `BoolExpr` and `Cover` for most applications:
+Use `BoolExpr`, `Bdd`, and `Cover` for most applications:
 
 - Automatic memory management and dimension tracking
 - Thread-safe by design
 - Clean, idiomatic Rust API
+- BDD caching for efficient repeated operations
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
 
-let xor = expr!("a" * "b" + !"a" * !"b");
+// Parse with flexible notation: * or & for AND, + or | for OR
+let xor = expr!("a" * !"b" + !"a" * "b");
+let xor_alt = BoolExpr::parse("a & !b | !a & b")?;
+
+// Minimize and get canonical BDD representation
 let minimized = xor.minimize()?;
+let bdd = xor.to_bdd();  // Cached for efficiency
 ```
 
 ### Low-Level API (Advanced)

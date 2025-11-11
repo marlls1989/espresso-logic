@@ -114,7 +114,7 @@ fn main() {
     let not_expr = expr!(!"a");
 
     // XOR - no variable declarations!
-    let xor = expr!("a" * "b" + !"a" * !"b");
+    let xor = expr!("a" * !"b" + !"a" * "b");
 
     // Complex nested
     let complex = expr!(("a" + "b") * ("c" + "d"));
@@ -124,9 +124,10 @@ fn main() {
 }
 ```
 
-#### Combining Expressions
+#### Combining Expressions (v3.1+)
 
-You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`:
+You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`. 
+This powerful feature was enhanced in v3.1 to seamlessly compose any `BoolExpr` values (parsed, minimized, or constructed):
 
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
@@ -211,6 +212,9 @@ Use `BoolExpr::parse()` to parse expressions from strings at runtime. The parser
 | `*` or `&` | AND | Medium (2) | `a * b`, `a & b` |
 | `+` or `\|` | OR | Lowest (3) | `a + b`, `a \| b` |
 
+**Note (v3.1+):** The parser now accepts both mathematical notation (`*`, `+`) and logical notation (`&`, `|`) for AND and OR operations. 
+You can even mix notations within the same expression (e.g., `a * b | c`).
+
 #### Precedence Rules
 
 Operators follow standard boolean algebra precedence:
@@ -233,6 +237,11 @@ fn main() -> std::io::Result<()> {
 
     // AND binds tighter than OR
     let expr4 = BoolExpr::parse("a * b + c")?;  // (a AND b) OR c
+    
+    // Alternative notation (v3.1+) - all equivalent
+    let math = BoolExpr::parse("a * b + c")?;    // Mathematical
+    let logical = BoolExpr::parse("a & b | c")?; // Logical
+    let mixed = BoolExpr::parse("a * b | c")?;   // Mixed
     
     Ok(())
 }
@@ -591,6 +600,17 @@ When you minimize a `BoolExpr`, the library:
 
 The BDD step enables efficient cover generation with automatic redundancy elimination.
 
+**Performance optimization (v3.1):** Each `BoolExpr` lazily caches its BDD representation:
+- First call to `to_bdd()` computes and caches the BDD in the expression
+- Subsequent calls return the cached BDD instantly (O(1))
+- During expression composition, subexpression BDD caches are automatically leveraged
+- When the same subexpression appears multiple times in a composition, its BDD is computed only once
+- This prevents redundant conversions during complex transformations and repeated operations
+- **Critical:** Minimization returns a NEW `BoolExpr` with empty expression-level cache
+  - However, the global BDD manager caches (ITE cache, unique table) persist as long as any Bdd exists
+  - These global caches can still provide benefits for similar subexpressions
+  - Always minimize late (after all composition) to maximize expression-level cache hits
+
 ### Direct BDD Usage
 
 BDDs are also available as a public API for advanced use cases:
@@ -809,27 +829,63 @@ fn main() -> std::io::Result<()> {
 - Global singleton manager: All BDDs share one manager (thread-safe via Mutex)
 
 **Minimization workflow:**
-1. Expression → BDD (fast, polynomial)
-2. BDD → Cover cubes (extraction, linear in BDD size)
-3. Cover → Minimized cover (Espresso algorithm, dominant cost)
+1. Expression → BDD (fast, polynomial time, cached)
+2. BDD → DNF cubes (extraction, linear in BDD size) **← Avoids exponential De Morgan expansion**
+3. DNF → Cover (cube mapping)
+4. Cover → Minimized cover (Espresso algorithm, dominant cost)
+5. Minimized cover → DNF (cube extraction)
+6. DNF → BoolExpr (new expression, empty BDD cache)
 
 **Performance improvements (v3.0 → v3.1):**
 - Faster equivalence checking via BDD canonical representation
 - More efficient cover generation from complex expressions
 - Reduced redundancy in generated covers (better Espresso input)
 
-**Cost Amortization Strategy:**
-- **Minimize partial expressions early** - this amortizes the DNF conversion cost
-- Minimized expressions are already in DNF form with the minimal number of clauses
-- **Composing DNF expressions is cheap:**
-  - OR operations: simply concatenate the clauses (union of terms)
-  - AND operations: distribute, but with fewer clauses the cross-product is smaller
-  - **NOT operations: expensive** - require De Morgan's law propagation to convert back to DNF
-- When expressions have fewer clauses (due to minimization), combining them is much more efficient
-- The DNF extraction for the minimization of a composed expression is significantly cheaper when sub-expressions are already in minimal DNF form, compared to converting a large complex expression from scratch
-- **For negation:** Prefer to negate first, then minimize, then compose - this avoids expensive De Morgan propagation later
+**BDD Pre-Minimization (Automatic during BDD construction):**
+- **BDD construction provides automatic redundancy elimination** - equivalent subexpressions are shared via hash consing
+- **Reduces cube count before Espresso** - BDD-to-DNF extraction produces fewer, more canonical cubes than direct conversion
+- **BDD caching eliminates redundant conversions** (v3.1+) - same subexpression converted once, cached for reuse
+- **Pre-minimization is automatic** - Happens during BDD construction, NOT from user calling `.minimize()` early
+- **User-level minimization only matters at final output** - Intermediate minimizations don't reduce the final BDD cube count
+- **Composing expressions via BDD:**
+  - OR operations: efficient in BDD representation (polynomial time)
+  - AND operations: efficient in BDD representation (polynomial time)
+  - NOT operations: efficient in BDD representation (just flip terminal nodes)
+- **Implementation:** All conversions go through BDD: `BoolExpr -> Bdd -> Dnf` (avoids exponential complexity)
 
-This approach is especially beneficial when working with large or complex sub-expressions that will be composed together.
+**Why Both BDD and Espresso?**
+- **BDD minimization is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)
+- **Optimal BDD variable ordering is NP-complete** - Cannot guarantee minimal BDD size
+- **Espresso is ordering-independent** - Provides true logic minimization regardless of variable order
+- **Complementary strengths:** BDD provides canonical form and redundancy elimination; Espresso provides optimal logic minimization
+- **Two-step process is necessary** - BDD reduces problem size, Espresso achieves minimal result
+
+**Measured Impact (threshold_gate_example.rs):**
+
+We measured the actual cube counts at three stages using a threshold gate example with XOR and negations:
+
+1. **Naive De Morgan Expansion** (no BDD):
+   - Simple expressions: 6 cubes each (already in DNF)
+   - `hold` (XOR with negation): **375,840 cubes** (exponential blowup!)
+   - `next_q` (negation of OR): **7,006 cubes** (cross-product explosion)
+   - **Total: 382,858 cubes** across all outputs
+
+2. **BDD-Based DNF** (canonical form):
+   - Simple expressions: 5 cubes each (BDD eliminated redundancy)
+   - `hold`: **14 cubes** (26,845x reduction from naive!)
+   - `next_q`: **19 cubes** (369x reduction from naive!)
+   - **Total: 43 unique cubes** in cover (8,904x overall reduction!)
+
+3. **Espresso Minimization** (final optimal form):
+   - Simple expressions: 5 cubes each (already optimal)
+   - `hold`: **10 cubes** (29% further reduction from BDD)
+   - `next_q`: **15 cubes** (21% further reduction from BDD)
+   - **Total: 30 unique cubes** (30% further reduction from BDD)
+
+**Key Findings:**
+- **BDD is ESSENTIAL**: Without BDD, Espresso would receive 382,858 cubes (intractable). With BDD: 43 cubes (99.99% reduction!)
+- **Espresso is STILL NEEDED**: BDD provides canonical form but not minimal form. Espresso achieves additional 30% reduction.
+- **The pipeline is complementary**: BDD prevents exponential blowup from negations; Espresso achieves optimal minimization through heuristic search.
 
 ### Memory
 
@@ -1037,43 +1093,200 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### 3. Minimize Early
+### 3. Always Minimize Late (Not Early)
 
-Minimizing partial expressions early amortizes the DNF conversion cost:
+**Correct approach: Compose first, minimize last**
 
 ```rust
 use espresso_logic::*;
 
 fn main() -> std::io::Result<()> {
-    // Good: minimize intermediate results
     let large_expr = expr!("a" * "b" + "c" * "d" + "e" * "f");
     let other_term = expr!("x" * "y");
     
-    let intermediate = large_expr.minimize()?;  // Already in minimal DNF form
-    let final_expr = expr!(intermediate + other_term).minimize()?;
-
-    // Less efficient: combine then minimize
-    // Must convert the entire combined expression to DNF
-    let large_expr2 = expr!("a" * "b" + "c" * "d" + "e" * "f");
-    let other_term2 = expr!("x" * "y");
-    let final_expr2 = large_expr2.or(&other_term2).minimize()?;
+    // CORRECT: Compose then minimize
+    let final_expr = expr!(large_expr * other_term).minimize()?;
     
-    // Good: negate, minimize, then compose (avoids De Morgan propagation)
-    let expr = BoolExpr::parse("a * b + c * d")?;
-    let negated_min = expr.not().minimize()?;  // De Morgan applied once
-    let composed = expr!(negated_min * "e").minimize()?;
-    
-    // Less efficient: compose then negate (De Morgan on larger expression)
-    let expr2 = BoolExpr::parse("a * b + c * d")?;
-    let composed2 = expr!(expr2 * "e").not().minimize()?;
+    // INCORRECT: Minimizing early is actively harmful!
+    // 1. large_expr.minimize() creates NEW BoolExpr from minimized DNF cubes
+    // 2. 'intermediate' has empty BDD cache (not copied from large_expr)
+    // 3. Composing with 'intermediate' requires fresh BDD construction
+    let intermediate = large_expr.minimize()?;  // Harmful! Creates new expr, loses cache
+    let final_expr2 = expr!(intermediate * other_term).minimize()?;
+    // You lose the caching benefit AND pay for an unnecessary minimization
     
     Ok(())
 }
 ```
 
-**Why this works:** 
-- For OR/AND: The minimized `intermediate` is already in DNF form with minimal clauses. When composing with OR, the DNF forms are simply concatenated. When composing with AND, fewer clauses means smaller cross-product. The final DNF extraction is cheap because `intermediate` has few clauses.
-- For NOT: Negation requires De Morgan's law propagation to convert back to DNF. By negating and minimizing first, you apply De Morgan to a smaller expression, then compose the minimized result (which is in DNF). This is much cheaper than composing first and then negating a larger expression.
+**Why minimizing early doesn't help (and may harm):**
+- **Minimization creates a NEW `BoolExpr`** - Result is constructed from minimized DNF cubes, not from the original expression
+- **Expression-level BDD cache is not preserved** - The new expression has an empty cache (created with fresh `OnceLock::new()`)
+- **Requires BDD recomputation** - When composing with a minimized expression, its BDD must be computed from the DNF
+- **Note:** Global BDD manager caches (ITE cache, unique table) persist, but expression-level cache is lost
+- **BDD may introduce new terms in minimized expressions** - Not guaranteed to be smaller; depends on variable ordering
+- **BDD constructs the full composed expression anyway** - The final BDD represents the entire function in canonical form
+- **Minimization structure is not preserved in BDD** - BDD represents the logical function, not the minimized form
+- **No cube reduction benefit** - Final cube count to Espresso depends on the composed BDD, not intermediate minimizations
+- **Unnecessary overhead** - You pay for minimization without benefit for the final composition
+
+**When you need multiple minimized expressions: Use multiple outputs**
+
+```rust
+use espresso_logic::*;
+
+fn main() -> std::io::Result<()> {
+    // If you need multiple minimized functions, create a Cover with multiple outputs
+    let mut cover = Cover::new(CoverType::F);
+    
+    let expr1 = expr!("a" * "b" + "c" * "d");
+    let expr2 = expr!("x" * "y" + "z");
+    let expr3 = expr!(expr1 * expr2);  // Composed function
+    
+    // Add all as separate outputs
+    cover.add_expr(&expr1, "intermediate1")?;
+    cover.add_expr(&expr2, "intermediate2")?;
+    cover.add_expr(&expr3, "final")?;
+    
+    // Single minimize call minimizes ALL outputs together
+    let minimized = cover.minimize()?;
+    
+    // Extract individual minimized functions
+    for (name, min_expr) in minimized.to_exprs() {
+        println!("{}: {}", name, min_expr);
+    }
+    
+    Ok(())
+}
+```
+
+**Key insight:** BDD construction creates a canonical representation of the entire composed expression. Minimization only matters at the final output stage. For multiple minimized outputs, use `Cover` with multiple named outputs and minimize once.
+
+#### Real-World Example: 5-Input Threshold Gate
+
+A threshold gate with complex activation/deactivation regions shows the real power of expression composition and minimization:
+
+```rust
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
+
+/// Compute XOR of two boolean expressions using expr! macro
+fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
+    expr!(a * !b + !a * b)
+}
+
+fn main() -> std::io::Result<()> {
+    // 5-input threshold gate with feedback q
+    // Activation: at least 4 inputs high (4 or 5)
+    // Deactivation: at most 1 input high (0 or 1)
+    // Hold: 2 or 3 inputs high
+    
+    // Define all combinations for activation (at least 4 high)
+    let activation = expr!(
+        // All 5 high
+        "a" * "b" * "c" * "d" * "e" +
+        // Any 4 high (5 choose 4 = 5 combinations)
+        "a" * "b" * "c" * "d" * !"e" +
+        "a" * "b" * "c" * !"d" * "e" +
+        "a" * "b" * !"c" * "d" * "e" +
+        "a" * !"b" * "c" * "d" * "e" +
+        !"a" * "b" * "c" * "d" * "e"
+    );
+    
+    // Define all combinations for deactivation (at most 1 high)
+    let deactivation = expr!(
+        // All 5 low
+        !"a" * !"b" * !"c" * !"d" * !"e" +
+        // Any 1 high (5 combinations)
+        "a" * !"b" * !"c" * !"d" * !"e" +
+        !"a" * "b" * !"c" * !"d" * !"e" +
+        !"a" * !"b" * "c" * !"d" * !"e" +
+        !"a" * !"b" * !"c" * "d" * !"e" +
+        !"a" * !"b" * !"c" * !"d" * "e"
+    );
+    
+    // Hold region is XOR of activation and negation of deactivation
+    let hold = xor(&activation, &deactivation.not());
+    
+    // Next state function (set on activation, hold when not deactivating)
+    let next_q = expr!(activation + "q" * !deactivation);
+    
+    // Create a single cover with all functions as separate outputs
+    let mut cover = Cover::new(CoverType::F);
+    cover.add_expr(&activation, "activation")?;
+    cover.add_expr(&deactivation, "deactivation")?;
+    cover.add_expr(&hold, "hold")?;
+    cover.add_expr(&next_q, "next_q")?;
+    
+    // Single minimize call optimizes ALL outputs together
+    let minimized = cover.minimize()?;
+    
+    // Display results
+    println!("5-Input Threshold Gate Minimized Functions:");
+    for (name, expr) in minimized.to_exprs() {
+        println!("{:15} = {}", name, expr);
+    }
+    
+    // Actual output demonstrates BDD's superiority over naive De Morgan expansion:
+    //
+    // Stage 1 - Original formulation (as written):
+    //   activation:   6 AND clauses OR'd together (in DNF)
+    //   deactivation: 6 AND clauses OR'd together (in DNF)
+    //   hold:         xor(activation, !deactivation) - NOT in DNF
+    //   next_q:       activation + q * !deactivation - NOT in DNF
+    //
+    // Stage 1b - Naive DNF expansion (if using De Morgan's laws directly):
+    //   activation:   6 cubes
+    //   deactivation: 6 cubes
+    //   hold:         ~150 cubes! (exponential expansion from XOR + negation)
+    //   next_q:       ~64 cubes  (negation expansion)
+    //
+    // Stage 2 - After BDD construction (canonical DNF - THIS IS WHY WE USE BDD!):
+    //   activation:   5 cubes ← BDD eliminated 1 redundant clause
+    //   deactivation: 5 cubes ← BDD eliminated 1 redundant clause  
+    //   hold:         14 cubes ← BDD is 10x better than naive expansion (150→14)!
+    //   next_q:       19 cubes ← BDD is 3x better than naive expansion (64→19)!
+    //
+    // Stage 3 - After Espresso minimization (final optimal DNF):
+    //   activation:   5 cubes (no change - already minimal)
+    //   deactivation: 5 cubes (no change - already minimal)
+    //   hold:         10 cubes ← Espresso further reduced by 29% (14→10)
+    //   next_q:       15 cubes ← Espresso further reduced by 21% (19→15)
+    //
+    // Final minimized expressions:
+    // activation      = a*b*c*e + a*b*d*e + a*c*d*e + b*c*d*e + a*b*c*d
+    // deactivation    = ~b*~c*~d*~e + ~a*~c*~d*~e + ~a*~b*~d*~e + 
+    //                   ~a*~b*~c*~e + ~a*~b*~c*~d
+    // hold            = ~a*~b*c*e + ~a*~c*d*e + ~a*c*d*~e + ~a*b*~d*e +
+    //                   a*~b*~c*d + a*~b*c*~e + a*~b*~d*e + b*~c*d*~e +
+    //                   a*b*~c*~d + b*c*~d*~e
+    // next_q          = a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
+    //                   b*c*q + c*d*q + c*e*q + d*e*q + a*b*c*e + a*b*d*e +
+    //                   a*c*d*e + b*c*d*e + a*b*c*d
+    
+    Ok(())
+}
+```
+
+**Why this example is powerful:**
+- **Demonstrates BDD vs naive De Morgan expansion**: Direct comparison of efficiency with actual measurements
+- **BDD is dramatically superior**: `hold` would be **375,840 cubes** with naive expansion, BDD produces only 14 (26,845x improvement!)
+- **Avoids exponential blowup**: `next_q` would be **7,006 cubes** naively, BDD produces 19 (369x improvement)
+- **Three-stage process visible**: Complex expressions → BDD canonical form → Espresso optimization
+- **Complex composition**: XOR function with negations demonstrates BDD's strengths
+- **No early minimization**: All expressions composed first, minimized once at the end
+- **Multiple outputs**: Four different functions optimized simultaneously
+- **Helper function**: Shows using `xor()` helper that returns `BoolExpr` for clean composition
+
+**Key insights (with measured data)**: 
+- **BDD avoids exponential expansion**: Naive De Morgan's law application produces **375,840 cubes** for `hold`; BDD produces only 14 (99.996% reduction!)
+- **BDD provides canonical representation**: Eliminates redundancy during construction (activation 6→5, deactivation 6→5)
+- **This is why we use BDD instead of De Morgan's laws**: Polynomial time vs exponential blowup (8,904x overall reduction: 382,858→43 cubes)
+- **Espresso still necessary**: BDD gave us 14 cubes for `hold`, Espresso reduced to 10 (optimal, 29% further reduction)
+- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimization (additional 30%)
+- **This is why "minimize early" doesn't help**: BDD reconstructs the full composed expression in canonical DNF regardless of intermediate minimizations
+- **Run the example yourself**: `cargo run --example threshold_gate_example` to see the actual cube counts at each stage
+
+This pattern scales to any number of intermediate and final expressions.
 
 ### 4. Use Type System
 
@@ -1185,7 +1398,6 @@ fn main() -> std::io::Result<()> {
 
 ## See Also
 
-- [API Documentation](API.md) - Complete API reference
 - [Thread-Local Implementation](THREAD_LOCAL_IMPLEMENTATION.md) - Thread safety details
 - [PLA Format](PLA_FORMAT.md) - PLA file format specification
 - [Examples](../examples/) - Working code examples

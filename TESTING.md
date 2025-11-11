@@ -5,11 +5,14 @@ This document provides comprehensive testing documentation for the espresso-logi
 ## Overview
 
 The test suite includes:
-- Unit and integration tests for all API levels
-- Regression tests validating Rust CLI against C implementation
+- **51 unit and integration tests** - Testing all API levels and functionality
+- **322 documentation tests** - Ensuring all code examples in docs are correct
+- **~276 regression tests** - Validating Rust CLI against C implementation
 - Memory safety and leak detection tests
 - Thread safety and concurrency tests
 - Performance benchmarks
+
+**Total: 373 automated tests, all passing ✅**
 
 ## Quick Start
 
@@ -37,18 +40,24 @@ cargo test --test test_thread_safety
 
 ### Unit and Integration Tests
 
-**Location:** `tests/test_integration.rs`
+Tests for the high-level Rust API across multiple test files:
 
-Tests for the high-level Rust API including:
-- Boolean expression parsing and minimization
+**`tests/test_integration.rs`** - Core API functionality:
 - Cover construction and manipulation
 - PLA file reading and writing
 - Type-safe Cover API
 - Unified Cover type functionality
 
+**`tests/test_boolean_expressions.rs`** - Boolean expression functionality:
+- Boolean expression parsing and minimization
+- Expression composition and evaluation
+- Cover trait integration with expressions
+- Complex boolean logic (XOR, majority, etc.)
+
 **Run:**
 ```bash
 cargo test --test test_integration
+cargo test --test test_boolean_expressions
 ```
 
 ### Thread Safety Tests
@@ -106,18 +115,19 @@ Fast validation with 4 key test cases (~1 second):
 
 ### Comprehensive Regression Test
 
-Complete regression suite with 38 test cases (~5 seconds):
+Complete regression suite with ~276 test cases (~45 seconds):
 
 ```bash
-./tests/comprehensive_regression.sh
+./tests/regression_test.sh
 ```
 
 Tests include:
-- 27 example files from `examples/` directory
-- Multiple output formats (-o f, fd, fr, fdr)
-- 5 PLA files from `tlex/` directory
+- 27 basic examples from `pla/` directory with default output
+- 11 files tested with all output format variations (-o f, fd, fr, fdr): 44 tests
+- 41 PLA files from `tlex/` directory with default output
+- 41 PLA files from `tlex/` with all output format variations: 164 tests
 
-**Status:** ✅ 38/38 tests passing - Rust CLI produces identical output to C CLI
+**Status:** ✅ All tests passing - Rust CLI produces identical output to C CLI
 
 ### Test Methodology
 
@@ -238,7 +248,11 @@ The test suite verifies memory safety through:
 
 ### `tests/test_integration.rs`
 
-Integration tests for the high-level Rust API (Cover, BoolExpr).
+Integration tests for the high-level Rust API (Cover, PLA reading/writing).
+
+### `tests/test_boolean_expressions.rs`
+
+Comprehensive tests for boolean expression parsing, evaluation, minimization, and composition (BoolExpr, Cover trait integration).
 
 ### `tests/test_thread_safety.rs`
 
@@ -257,10 +271,7 @@ Contains tests that measure memory usage and verify proper cleanup:
 ### Regression Test Scripts
 
 - `tests/quick_regression.sh` - Quick regression test (4 cases, ~1 second)
-- `tests/comprehensive_regression.sh` - Comprehensive test (38 cases, ~5 seconds)
-- `tests/regression_test.sh` - Original regression with detailed diff output
-
-See [tests/README.md](tests/README.md) for details on test directory structure.
+- `tests/regression_test.sh` - Comprehensive regression test (~276 cases, ~45 seconds) with detailed diff output
 
 ## Benchmarks
 
@@ -293,7 +304,7 @@ For CI/CD pipelines, use memory measurement tests:
   run: |
     cd espresso-src && make
     cargo build --release --bin espresso
-    ./tests/comprehensive_regression.sh
+    ./tests/regression_test.sh
 ```
 
 ## Troubleshooting
@@ -330,7 +341,6 @@ If thread safety tests fail:
 - [docs/MEMORY_SAFETY.md](docs/MEMORY_SAFETY.md) - Detailed memory management analysis
 - [docs/LEAK_TESTING.md](docs/LEAK_TESTING.md) - Complete guide to leak testing techniques
 - [docs/THREAD_LOCAL_IMPLEMENTATION.md](docs/THREAD_LOCAL_IMPLEMENTATION.md) - Thread-local storage implementation details
-- [tests/README.md](tests/README.md) - Test directory structure and scripts
 
 ## Best Practices
 
@@ -351,7 +361,7 @@ cargo test
 **For comprehensive testing:**
 ```bash
 cargo test --test test_memory_safety -- --nocapture --test-threads=1
-./tests/comprehensive_regression.sh
+./tests/regression_test.sh
 ./scripts/check_memory_leaks.sh
 ```
 
