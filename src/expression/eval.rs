@@ -1,5 +1,6 @@
 //! Evaluation and equivalence checking for boolean expressions
 
+use super::manager::{BddNode, NodeId};
 use super::BoolExpr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -68,8 +69,8 @@ impl BoolExpr {
 
         // OPTIMIZATION: First try BDD equality check (fast)
         // BDDs use canonical representation, so equal BDDs mean equivalent functions
-        let self_bdd = self.to_bdd();
-        let other_bdd = other.to_bdd();
+        let self_bdd = self;
+        let other_bdd = other;
 
         if self_bdd == other_bdd {
             // BDDs are equal - expressions are definitely equivalent
@@ -108,7 +109,10 @@ impl BoolExpr {
         true
     }
 
-    /// Evaluate the boolean expression given an assignment of variables to values
+    /// Evaluate the expression with a given variable assignment
+    ///
+    /// Traverses the BDD following the variable assignments until reaching a terminal node.
+    /// Returns the boolean value of the terminal node.
     ///
     /// # Examples
     ///
@@ -131,7 +135,38 @@ impl BoolExpr {
     /// assert_eq!(expr.evaluate(&assignment), false);
     /// ```
     pub fn evaluate(&self, assignment: &HashMap<Arc<str>, bool>) -> bool {
-        // Use direct BDD evaluation (more efficient than AST traversal)
-        self.bdd.evaluate(assignment)
+        self.evaluate_node(self.root, assignment)
+    }
+
+    /// Recursively evaluate a BDD node
+    fn evaluate_node(&self, node_id: NodeId, assignment: &HashMap<Arc<str>, bool>) -> bool {
+        // Acquire lock, extract needed data, then release before recursing
+        let node_info = {
+            let mgr = self.manager.read().unwrap();
+            match mgr.get_node(node_id) {
+                Some(BddNode::Terminal(val)) => (true, *val, 0, 0, None),
+                Some(BddNode::Decision { var, low, high }) => {
+                    let var_name = mgr
+                        .var_name(*var)
+                        .expect("Invalid variable ID in BDD evaluation");
+                    (false, false, *low, *high, Some(Arc::clone(var_name)))
+                }
+                None => panic!("Invalid node ID {} in BDD evaluation", node_id),
+            }
+        }; // Lock released here
+
+        match node_info {
+            (true, val, _, _, _) => val, // Terminal node
+            (false, _, low, high, Some(var_name)) => {
+                // Decision node: follow edge based on variable value
+                let var_value = assignment.get(&var_name).copied().unwrap_or(false);
+                if var_value {
+                    self.evaluate_node(high, assignment)
+                } else {
+                    self.evaluate_node(low, assignment)
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 }

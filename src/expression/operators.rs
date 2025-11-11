@@ -1,7 +1,9 @@
-//! Operator overloading for boolean expressions
+//! Operator overloading and boolean operations for boolean expressions
 
+use super::manager::{FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use std::ops::{Add, Mul, Not};
+use std::sync::{Arc, OnceLock};
 
 /// Logical AND operator for references: `&a * &b`
 ///
@@ -137,5 +139,65 @@ impl Not for BoolExpr {
 
     fn not(self) -> BoolExpr {
         BoolExpr::not(&self)
+    }
+}
+
+// Boolean operation methods
+impl BoolExpr {
+    /// Logical AND: create a new expression that is the conjunction of this and another
+    ///
+    /// Computes the conjunction using the BDD ITE operation:
+    /// `and(f, g) = ite(f, g, false)`
+    pub fn and(&self, other: &BoolExpr) -> BoolExpr {
+        // Use ITE: and(f, g) = ite(f, g, false)
+        let manager = Arc::clone(&self.manager);
+        let result = manager
+            .write()
+            .unwrap()
+            .ite(self.root, other.root, FALSE_NODE);
+        BoolExpr {
+            manager,
+            root: result,
+            dnf_cache: OnceLock::new(),
+            ast_cache: OnceLock::new(),
+        }
+    }
+
+    /// Logical OR: create a new expression that is the disjunction of this and another
+    ///
+    /// Computes the disjunction using the BDD ITE operation:
+    /// `or(f, g) = ite(f, true, g)`
+    pub fn or(&self, other: &BoolExpr) -> BoolExpr {
+        // Use ITE: or(f, g) = ite(f, true, g)
+        let manager = Arc::clone(&self.manager);
+        let result = manager
+            .write()
+            .unwrap()
+            .ite(self.root, TRUE_NODE, other.root);
+        BoolExpr {
+            manager,
+            root: result,
+            dnf_cache: OnceLock::new(),
+            ast_cache: OnceLock::new(),
+        }
+    }
+
+    /// Logical NOT: create a new expression that is the negation of this one
+    ///
+    /// Computes the negation using the BDD ITE operation:
+    /// `not(f) = ite(f, false, true)`
+    pub fn not(&self) -> BoolExpr {
+        // Use ITE: not(f) = ite(f, false, true)
+        let manager = Arc::clone(&self.manager);
+        let result = manager
+            .write()
+            .unwrap()
+            .ite(self.root, FALSE_NODE, TRUE_NODE);
+        BoolExpr {
+            manager,
+            root: result,
+            dnf_cache: OnceLock::new(),
+            ast_cache: OnceLock::new(),
+        }
     }
 }

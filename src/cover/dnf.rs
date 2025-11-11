@@ -23,8 +23,10 @@
 //! [`BoolExpr`]: crate::expression::BoolExpr
 //! [`Cover`]: crate::Cover
 
-use crate::bdd::Bdd;
 use crate::expression::BoolExpr;
+
+#[cfg(test)]
+use crate::expression::Bdd;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -170,8 +172,8 @@ impl Default for Dnf {
 /// Ensures conversions go through BDD for canonical form and optimizations.
 impl From<BoolExpr> for Dnf {
     fn from(expr: BoolExpr) -> Self {
-        let bdd: Bdd = expr.into();
-        let cubes = bdd.to_cubes();
+        // Note: BoolExpr IS a BDD now, so just use it directly
+        let cubes = expr.to_cubes();
         Dnf::from_cubes(&cubes)
     }
 }
@@ -179,27 +181,14 @@ impl From<BoolExpr> for Dnf {
 /// Convert &BoolExpr to DNF (via BDD for efficiency)
 impl From<&BoolExpr> for Dnf {
     fn from(expr: &BoolExpr) -> Self {
-        let bdd: Bdd = expr.into();
-        let cubes = bdd.to_cubes();
+        // Note: BoolExpr IS a BDD now, so just use it directly
+        let cubes = expr.to_cubes();
         Dnf::from_cubes(&cubes)
     }
 }
 
-/// Convert Bdd to DNF (direct cube extraction)
-impl From<Bdd> for Dnf {
-    fn from(bdd: Bdd) -> Self {
-        let cubes = bdd.to_cubes();
-        Dnf::from_cubes(&cubes)
-    }
-}
-
-/// Convert &Bdd to DNF (direct cube extraction)
-impl From<&Bdd> for Dnf {
-    fn from(bdd: &Bdd) -> Self {
-        let cubes = bdd.to_cubes();
-        Dnf::from_cubes(&cubes)
-    }
-}
+// Note: Bdd is now a type alias for BoolExpr, so From<Bdd> implementations
+// are covered by the From<BoolExpr> implementations above.
 
 // ============================================================================
 // Conversions FROM Dnf
@@ -259,56 +248,8 @@ impl From<Dnf> for BoolExpr {
     }
 }
 
-/// Convert DNF directly to BDD
-///
-/// This implementation builds the BDD directly from cubes without going through
-/// BoolExpr, which is more efficient.
-///
-/// # Examples
-///
-/// ```
-/// use espresso_logic::{BoolExpr, Bdd, Dnf};
-///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let expr = a.or(&b);
-///
-/// let dnf = Dnf::from(&expr);
-/// let bdd = Bdd::from(dnf);
-///
-/// // Should produce equivalent BDD
-/// assert_eq!(bdd, expr.to_bdd());
-/// ```
-impl From<Dnf> for Bdd {
-    fn from(dnf: Dnf) -> Self {
-        if dnf.is_empty() {
-            return Bdd::constant(false);
-        }
-
-        // Start with FALSE and OR each cube
-        let mut result = Bdd::constant(false);
-
-        for cube in dnf.cubes {
-            if cube.is_empty() {
-                // Empty cube = tautology, entire function is TRUE
-                return Bdd::constant(true);
-            }
-
-            // Build conjunction for this cube
-            let mut cube_bdd = Bdd::constant(true);
-            for (var, &polarity) in &cube {
-                let var_bdd = Bdd::variable(var);
-                let literal_bdd = if polarity { var_bdd } else { var_bdd.not() };
-                cube_bdd = cube_bdd.and(&literal_bdd);
-            }
-
-            // OR this cube with the accumulator
-            result = result.or(&cube_bdd);
-        }
-
-        result
-    }
-}
+// Note: Bdd is now a type alias for BoolExpr, so From<Dnf> for Bdd
+// is covered by the From<Dnf> for BoolExpr implementation above.
 
 // ============================================================================
 // Blanket Minimizable Implementation

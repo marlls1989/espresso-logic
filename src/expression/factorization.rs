@@ -11,8 +11,7 @@
 //!
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
-use crate::bdd::Bdd;
-use crate::expression::{BoolExpr, BoolExprAst};
+use super::{Bdd, BoolExpr, BoolExprAst};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -248,7 +247,7 @@ fn factorise_multipass(terms: Vec<ProductTerm>, _max_iterations: usize) -> Arc<B
 /// Count the number of operators in an expression (as a rough size metric)
 #[cfg(test)]
 fn count_operators(expr: &BoolExpr) -> usize {
-    use crate::expression::ExprNode;
+    use super::ExprNode;
 
     expr.fold(|node: ExprNode<usize>| -> usize {
         match node {
@@ -297,8 +296,8 @@ pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Arc<str>, bool>, bool)>) -> B
     let bdd = ast_to_bdd(&factored_ast);
 
     // Create BoolExpr with both BDD and pre-computed AST
-    let expr = BoolExpr::from(bdd);
-    // Cache the factored AST so it's used for display instead of regenerating
+    let expr = bdd; // Bdd is now just a type alias for BoolExpr
+                    // Cache the factored AST so it's used for display instead of regenerating
     let _ = expr.ast_cache.set(factored_ast);
     expr
 }

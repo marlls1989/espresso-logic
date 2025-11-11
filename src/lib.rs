@@ -326,7 +326,6 @@
 //! - [`doc::cli`] - Command-line tool documentation
 
 // Public modules
-pub mod bdd;
 pub mod cover;
 pub mod error;
 pub mod espresso;
@@ -335,14 +334,13 @@ pub mod pla;
 pub mod sys;
 
 // Re-export high-level public API
-pub use bdd::Bdd;
 pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable};
 pub use error::{
     AddExprError, CoverError, CubeError, ExpressionParseError, InstanceError, MinimizationError,
     PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
 };
 pub use espresso::EspressoConfig;
-pub use expression::{BoolExpr, ExprNode};
+pub use expression::{Bdd, BoolExpr, ExprNode};
 pub use pla::{PLAReader, PLAWriter};
 
 // Re-export procedural macro
