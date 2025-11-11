@@ -32,9 +32,12 @@ fn test_precedence_and_over_or() {
     let c = BoolExpr::variable("c");
     let expr = a.and(&b).or(&c);
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "a * b + c"); // No parens needed
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("a * b + c").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -47,9 +50,12 @@ fn test_precedence_or_in_and_needs_parens() {
     let c = BoolExpr::variable("c");
     let expr = a.or(&b).and(&c);
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "(a + b) * c"); // Parens required
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("(a + b) * c").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -61,14 +67,18 @@ fn test_not_of_compound_requires_parens() {
     let b = BoolExpr::variable("b");
 
     let expr_and = a.and(&b).not();
+    let expected_and = BoolExpr::parse("~(a * b)").unwrap();
+    assert!(expr_and.equivalent_to(&expected_and));
+
     let display_and = format!("{}", expr_and);
-    assert_eq!(display_and, "~(a * b)");
     let parsed_and = BoolExpr::parse(&display_and).unwrap();
     assert!(expr_and.equivalent_to(&parsed_and));
 
     let expr_or = a.or(&b).not();
+    let expected_or = BoolExpr::parse("~(a + b)").unwrap();
+    assert!(expr_or.equivalent_to(&expected_or));
+
     let display_or = format!("{}", expr_or);
-    assert_eq!(display_or, "~(a + b)");
     let parsed_or = BoolExpr::parse(&display_or).unwrap();
     assert!(expr_or.equivalent_to(&parsed_or));
 }
@@ -82,9 +92,12 @@ fn test_complex_nested_parentheses() {
     let d = BoolExpr::variable("d");
     let expr = a.or(&b).and(&c.or(&d));
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "(a + b) * (c + d)");
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("(a + b) * (c + d)").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -98,9 +111,12 @@ fn test_deeply_nested_expressions() {
     let d = BoolExpr::variable("d");
     let expr = a.or(&b).and(&c).or(&d);
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "(a + b) * c + d");
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("(a + b) * c + d").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -126,9 +142,12 @@ fn test_xor_pattern_formatting() {
     let b = BoolExpr::variable("b");
     let expr = a.and(&(!&b)).or(&(!&a).and(&b));
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "a * ~b + ~a * b");
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("a * ~b + ~a * b").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -141,9 +160,12 @@ fn test_majority_function_formatting() {
     let c = BoolExpr::variable("c");
     let expr = a.and(&b).or(&b.and(&c)).or(&a.and(&c));
 
-    let display = format!("{}", expr);
-    assert_eq!(display, "a * b + b * c + a * c");
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("a * b + b * c + a * c").unwrap();
+    assert!(expr.equivalent_to(&expected));
 
+    // Round-trip test: display → parse → equivalence
+    let display = format!("{}", expr);
     let parsed = BoolExpr::parse(&display).unwrap();
     assert!(expr.equivalent_to(&parsed));
 }
@@ -156,8 +178,14 @@ fn test_constants_formatting() {
 
     assert_eq!(format!("{}", t), "1");
     assert_eq!(format!("{}", f), "0");
-    assert_eq!(format!("{}", a.and(&t)), "a * 1");
-    assert_eq!(format!("{}", a.or(&f)), "a + 0");
+
+    // BDD optimises a∧1 → a, a∨0 → a
+    let a_and_true = a.and(&t);
+    let a_or_false = a.or(&f);
+
+    // Check logical equivalence instead of exact format
+    assert!(a_and_true.equivalent_to(&a));
+    assert!(a_or_false.equivalent_to(&a));
 }
 
 // ========== Operator Overloading Tests ==========
@@ -192,7 +220,10 @@ fn test_operator_overloading_complex() {
     let manual = a.or(&b).and(&c.or(&d));
     let with_ops = (&a + &b) * (&c + &d);
     assert_eq!(manual, with_ops);
-    assert_eq!(format!("{}", with_ops), "(a + b) * (c + d)");
+
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("(a + b) * (c + d)").unwrap();
+    assert!(with_ops.equivalent_to(&expected));
 }
 
 #[test]
@@ -238,7 +269,10 @@ fn test_expr_macro_with_parens() {
     let macro_expr = expr!((a + b) * c);
     let manual = a.or(&b).and(&c);
     assert_eq!(macro_expr, manual);
-    assert_eq!(format!("{}", macro_expr), "(a + b) * c");
+
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("(a + b) * c").unwrap();
+    assert!(macro_expr.equivalent_to(&expected));
 }
 
 #[test]
@@ -280,7 +314,10 @@ fn test_expr_macro_string_literals() {
     let manual = a.and(&b).or(&a.not().and(&b.not()));
 
     assert_eq!(macro_expr, manual);
-    assert_eq!(format!("{}", macro_expr), "a * b + ~a * ~b");
+
+    // BDD may produce different but equivalent form - check logical equivalence
+    let expected = BoolExpr::parse("a * b + ~a * ~b").unwrap();
+    assert!(macro_expr.equivalent_to(&expected));
 }
 
 #[test]
@@ -310,16 +347,17 @@ fn test_parse_display_operator_macro_equivalence() {
     let from_parse = BoolExpr::parse("a * b + c").unwrap();
     let from_macro = expr!(a * b + c);
 
-    // All should be structurally equal
+    // All should be equal (BDD canonical form)
     assert_eq!(manual, with_ops);
     assert_eq!(manual, from_parse);
     assert_eq!(manual, from_macro);
 
-    // All should display the same
-    assert_eq!(format!("{}", manual), "a * b + c");
-    assert_eq!(format!("{}", with_ops), "a * b + c");
-    assert_eq!(format!("{}", from_parse), "a * b + c");
-    assert_eq!(format!("{}", from_macro), "a * b + c");
+    // All should be logically equivalent
+    let expected = BoolExpr::parse("a * b + c").unwrap();
+    assert!(manual.equivalent_to(&expected));
+    assert!(with_ops.equivalent_to(&expected));
+    assert!(from_parse.equivalent_to(&expected));
+    assert!(from_macro.equivalent_to(&expected));
 }
 
 // ========== Semantic Equivalence Tests ==========
@@ -329,16 +367,16 @@ fn test_commutative_properties() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
 
-    // AND commutative
+    // AND commutative - With BDD as primary storage, equality is canonical!
     let expr1 = a.and(&b);
     let expr2 = b.and(&a);
-    assert_ne!(expr1, expr2); // Structurally different
-    assert!(expr1.equivalent_to(&expr2)); // But logically equivalent
+    assert_eq!(expr1, expr2); // BDD provides canonical equality
+    assert!(expr1.equivalent_to(&expr2)); // And logically equivalent
 
-    // OR commutative
+    // OR commutative - With BDD as primary storage, equality is canonical!
     let expr3 = a.or(&b);
     let expr4 = b.or(&a);
-    assert_ne!(expr3, expr4);
+    assert_eq!(expr3, expr4); // BDD provides canonical equality
     assert!(expr3.equivalent_to(&expr4));
 }
 
@@ -349,8 +387,9 @@ fn test_double_negation_equivalence() {
     let expr1 = a.clone();
     let expr2 = a.not().not();
 
-    assert_ne!(expr1, expr2); // Structurally different
-    assert!(expr1.equivalent_to(&expr2)); // But logically equivalent
+    // With BDD as primary storage, !!a == a (canonical form)
+    assert_eq!(expr1, expr2); // BDD provides canonical equality
+    assert!(expr1.equivalent_to(&expr2)); // And logically equivalent
 }
 
 #[test]

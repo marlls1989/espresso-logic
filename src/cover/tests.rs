@@ -222,7 +222,8 @@ fn test_label_uniqueness_on_growth() {
     // When converting to expression, default labels should be used
     let expr = cover.to_expr_by_index(0).unwrap();
     let vars = expr.collect_variables();
-    assert_eq!(vars.len(), 2); // x0 and x1 (x2 is don't care in the 3rd cube)
+    // BDD canonicalises: x0=1, x0=1∧x1=0, x0=1∧x1=0∧x2=- → x0 (absorption law)
+    assert_eq!(vars.len(), 1); // Only x0 after BDD optimisation
 }
 
 #[test]

@@ -254,15 +254,18 @@ pub(super) fn cubes_to_expr(
     variables: &[Arc<str>],
     num_inputs: usize,
 ) -> BoolExpr {
+    use std::collections::BTreeMap;
+
     if cubes.is_empty() {
         return BoolExpr::constant(false);
     }
 
-    let mut terms = Vec::new();
+    // Build product terms directly for factorization
+    let mut product_terms = Vec::new();
 
     for cube in cubes.iter() {
-        // Build product term for this cube
-        let mut factors = Vec::new();
+        // Build product term as a map of literals
+        let mut literals = BTreeMap::new();
 
         for i in 0..num_inputs {
             // Get variable name - use provided label or generate default
@@ -275,11 +278,11 @@ pub(super) fn cubes_to_expr(
             match cube.inputs().get(i) {
                 Some(Some(true)) => {
                     // Positive literal
-                    factors.push(BoolExpr::variable(&var_name));
+                    literals.insert(var_name, true);
                 }
                 Some(Some(false)) => {
                     // Negative literal
-                    factors.push(BoolExpr::variable(&var_name).not());
+                    literals.insert(var_name, false);
                 }
                 Some(None) | None => {
                     // Don't care - skip this variable
@@ -287,20 +290,10 @@ pub(super) fn cubes_to_expr(
             }
         }
 
-        // AND all factors together
-        if factors.is_empty() {
-            // No literals means tautology (true)
-            terms.push(BoolExpr::constant(true));
-        } else {
-            let product = factors.into_iter().reduce(|acc, f| acc.and(&f)).unwrap();
-            terms.push(product);
-        }
+        // Add this product term (include=true for all cubes we process)
+        product_terms.push((literals, true));
     }
 
-    // OR all terms together
-    if terms.is_empty() {
-        BoolExpr::constant(false)
-    } else {
-        terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap()
-    }
+    // Apply algebraic factorization to produce more compact multi-level logic
+    crate::expression::factorization::factorise_cubes(product_terms)
 }

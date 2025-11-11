@@ -87,6 +87,7 @@ mod conversions;
 mod display;
 pub mod error;
 mod eval;
+pub(crate) mod factorization;
 mod operators;
 mod parser;
 
@@ -127,17 +128,20 @@ pub enum ExprNode<'a, T> {
     Constant(bool),
 }
 
-/// Inner representation of a boolean expression
+/// AST representation of a boolean expression
+///
+/// Pure AST tree structure - holds Arc<BoolExprAst> children, not BoolExpr.
+/// This allows the AST to be reconstructed from BDD without circular dependencies.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BoolExprInner {
+pub(crate) enum BoolExprAst {
     /// A named variable
     Variable(Arc<str>),
     /// Logical AND of two expressions
-    And(BoolExpr, BoolExpr),
+    And(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical OR of two expressions
-    Or(BoolExpr, BoolExpr),
+    Or(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical NOT of an expression
-    Not(BoolExpr),
+    Not(Arc<BoolExprAst>),
     /// A constant value (true or false)
     Constant(bool),
 }
@@ -170,26 +174,47 @@ pub(crate) enum BoolExprInner {
 /// ```
 #[derive(Clone)]
 pub struct BoolExpr {
-    pub(crate) inner: Arc<BoolExprInner>,
-    /// Cached BDD representation (computed lazily on first access)
-    pub(crate) bdd_cache: Arc<OnceLock<Bdd>>,
+    /// Primary representation: BDD (canonical form)
+    bdd: Bdd,
+    /// Cached AST representation (reconstructed lazily when needed for display/fold)
+    pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
 }
 
 impl BoolExpr {
     /// Create a variable expression with the given name
     pub fn variable(name: &str) -> Self {
         BoolExpr {
-            inner: Arc::new(BoolExprInner::Variable(Arc::from(name))),
-            bdd_cache: Arc::new(OnceLock::new()),
+            bdd: Bdd::variable(name),
+            ast_cache: OnceLock::new(),
         }
     }
 
     /// Create a constant expression (true or false)
     pub fn constant(value: bool) -> Self {
         BoolExpr {
-            inner: Arc::new(BoolExprInner::Constant(value)),
-            bdd_cache: Arc::new(OnceLock::new()),
+            bdd: Bdd::constant(value),
+            ast_cache: OnceLock::new(),
         }
+    }
+
+    /// Get or create the AST representation from the BDD
+    ///
+    /// This is called internally when AST is needed (for display, fold, etc.)
+    ///
+    /// Uses factorization-based reconstruction for beautiful, compact expressions.
+    fn get_or_create_ast(&self) -> Arc<BoolExprAst> {
+        // Check if we have a cached AST
+        if let Some(ast) = self.ast_cache.get() {
+            return Arc::clone(ast);
+        }
+
+        // Need to reconstruct from BDD using factorization
+        let ast = self.bdd.to_ast_optimised();
+
+        // Try to store it (may fail if another thread beat us to it, that's fine)
+        let _ = self.ast_cache.set(Arc::clone(&ast));
+
+        ast
     }
 
     /// Fold the expression tree depth-first from leaves to root
@@ -210,7 +235,7 @@ impl BoolExpr {
     ///
     /// let a = BoolExpr::variable("a");
     /// let b = BoolExpr::variable("b");
-    /// let expr = a.and(&b).or(&a.not());
+    /// let expr = a.and(&b);
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
@@ -218,7 +243,7 @@ impl BoolExpr {
     ///     ExprNode::Not(inner) => inner + 1,
     /// });
     ///
-    /// assert_eq!(op_count, 3); // AND, OR, NOT
+    /// assert_eq!(op_count, 1); // Just AND
     /// ```
     pub fn fold<T, F>(&self, f: F) -> T
     where
@@ -231,23 +256,32 @@ impl BoolExpr {
     where
         F: Fn(ExprNode<T>) -> T,
     {
-        match self.inner.as_ref() {
-            BoolExprInner::Variable(name) => f(ExprNode::Variable(name)),
-            BoolExprInner::And(left, right) => {
-                let left_result = left.fold_impl(f);
-                let right_result = right.fold_impl(f);
+        let ast = self.get_or_create_ast();
+        Self::fold_ast(&ast, f)
+    }
+
+    /// Fold over an AST (helper for fold_impl)
+    fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
+    where
+        F: Fn(ExprNode<T>) -> T,
+    {
+        match ast {
+            BoolExprAst::Variable(name) => f(ExprNode::Variable(name)),
+            BoolExprAst::And(left, right) => {
+                let left_result = Self::fold_ast(left, f);
+                let right_result = Self::fold_ast(right, f);
                 f(ExprNode::And(left_result, right_result))
             }
-            BoolExprInner::Or(left, right) => {
-                let left_result = left.fold_impl(f);
-                let right_result = right.fold_impl(f);
+            BoolExprAst::Or(left, right) => {
+                let left_result = Self::fold_ast(left, f);
+                let right_result = Self::fold_ast(right, f);
                 f(ExprNode::Or(left_result, right_result))
             }
-            BoolExprInner::Not(inner) => {
-                let inner_result = inner.fold_impl(f);
+            BoolExprAst::Not(inner) => {
+                let inner_result = Self::fold_ast(inner, f);
                 f(ExprNode::Not(inner_result))
             }
-            BoolExprInner::Constant(val) => f(ExprNode::Constant(*val)),
+            BoolExprAst::Constant(val) => f(ExprNode::Constant(*val)),
         }
     }
 
@@ -344,26 +378,36 @@ impl BoolExpr {
         C: Copy,
         F: Fn(ExprNode<()>, C, &dyn Fn(C) -> T, &dyn Fn(C) -> T) -> T,
     {
-        match self.inner.as_ref() {
-            BoolExprInner::Variable(name) => f(
+        let ast = self.get_or_create_ast();
+        Self::fold_with_context_ast(&ast, context, f)
+    }
+
+    /// Fold with context over an AST (helper for fold_with_context_impl)
+    fn fold_with_context_ast<C, T, F>(ast: &BoolExprAst, context: C, f: &F) -> T
+    where
+        C: Copy,
+        F: Fn(ExprNode<()>, C, &dyn Fn(C) -> T, &dyn Fn(C) -> T) -> T,
+    {
+        match ast {
+            BoolExprAst::Variable(name) => f(
                 ExprNode::Variable(name),
                 context,
                 &|_| unreachable!(),
                 &|_| unreachable!(),
             ),
-            BoolExprInner::Constant(val) => f(
+            BoolExprAst::Constant(val) => f(
                 ExprNode::Constant(*val),
                 context,
                 &|_| unreachable!(),
                 &|_| unreachable!(),
             ),
-            BoolExprInner::Not(inner) => {
-                let recurse = |ctx: C| inner.fold_with_context_impl(ctx, f);
+            BoolExprAst::Not(inner) => {
+                let recurse = |ctx: C| Self::fold_with_context_ast(inner, ctx, f);
                 f(ExprNode::Not(()), context, &recurse, &|_| unreachable!())
             }
-            BoolExprInner::And(left, right) => {
-                let recurse_left = |ctx: C| left.fold_with_context_impl(ctx, f);
-                let recurse_right = |ctx: C| right.fold_with_context_impl(ctx, f);
+            BoolExprAst::And(left, right) => {
+                let recurse_left = |ctx: C| Self::fold_with_context_ast(left, ctx, f);
+                let recurse_right = |ctx: C| Self::fold_with_context_ast(right, ctx, f);
                 f(
                     ExprNode::And((), ()),
                     context,
@@ -371,9 +415,9 @@ impl BoolExpr {
                     &recurse_right,
                 )
             }
-            BoolExprInner::Or(left, right) => {
-                let recurse_left = |ctx: C| left.fold_with_context_impl(ctx, f);
-                let recurse_right = |ctx: C| right.fold_with_context_impl(ctx, f);
+            BoolExprAst::Or(left, right) => {
+                let recurse_left = |ctx: C| Self::fold_with_context_ast(left, ctx, f);
+                let recurse_right = |ctx: C| Self::fold_with_context_ast(right, ctx, f);
                 f(ExprNode::Or((), ()), context, &recurse_left, &recurse_right)
             }
         }
@@ -384,45 +428,24 @@ impl BoolExpr {
     /// Returns a `BTreeSet` which maintains variables in sorted order.
     /// This ordering is used when converting to covers for minimization.
     pub fn collect_variables(&self) -> BTreeSet<Arc<str>> {
-        let mut vars = BTreeSet::new();
-        self.collect_variables_impl(&mut vars);
-        vars
+        // Use BDD-native traversal (no need to reconstruct AST)
+        self.bdd.collect_variables()
     }
 
     /// Convert this boolean expression to a Binary Decision Diagram ([`Bdd`])
     ///
     /// BDDs provide a canonical representation of boolean functions and support
-    /// efficient operations. This conversion walks the expression tree and builds
-    /// the BDD bottom-up.
+    /// efficient operations. Since BoolExpr now uses BDD as primary storage,
+    /// this method simply returns a clone of the internal BDD.
     ///
-    /// # Caching
+    /// # Performance
     ///
-    /// **The BDD is lazily cached on first computation for O(1) subsequent access.**
-    ///
-    /// - First call to `to_bdd()` computes and caches the BDD at expression level
-    /// - Subsequent calls return the cached BDD instantly (O(1))
-    /// - During expression composition, subexpression BDD caches are automatically leveraged
-    /// - When the same subexpression appears multiple times, its BDD is computed only once
-    /// - This prevents redundant conversions during complex transformations
-    ///
-    /// **Important (v3.1):** Minimization returns a NEW `BoolExpr` with empty expression-level cache.
-    /// The global BDD manager caches (ITE cache, unique table) persist as long as any Bdd exists,
-    /// but the expression-level cache is lost. **Always minimize late (after all composition) to
-    /// maximize expression-level cache hits.**
-    ///
-    /// # Performance Benefits
-    ///
-    /// During expression composition, when the same subexpression appears multiple times,
-    /// its BDD is computed only once and reused. This prevents redundant conversions during
-    /// complex transformations and compositions, providing significant performance gains for
-    /// large expressions.
+    /// This operation is O(1) - just a clone of an Arc-based structure.
     ///
     /// # Use in Minimization
     ///
-    /// When a [`BoolExpr`] is minimized, it is first converted to a [`Bdd`],
-    /// then cubes are extracted from the BDD to create a [`Cover`], which is
-    /// then minimized by the Espresso algorithm. BDDs enable efficient cover
-    /// generation with automatic optimizations.
+    /// When a [`BoolExpr`] is minimized, its BDD is used to extract cubes
+    /// which are then minimized by the Espresso algorithm.
     ///
     /// # Examples
     ///
@@ -433,87 +456,48 @@ impl BoolExpr {
     /// let b = BoolExpr::variable("b");
     /// let expr = a.and(&b);
     ///
-    /// let bdd1 = expr.to_bdd();  // Computes and caches
-    /// let bdd2 = expr.to_bdd();  // Returns cached (O(1))
-    /// println!("BDD has {} nodes", bdd1.node_count());
+    /// let bdd = expr.to_bdd();  // O(1) operation
+    /// println!("BDD has {} nodes", bdd.node_count());
     /// ```
     ///
     /// [`Bdd`]: crate::bdd::Bdd
     /// [`Cover`]: crate::Cover
     pub fn to_bdd(&self) -> Bdd {
-        self.bdd_cache
-            .get_or_init(|| {
-                match self.inner.as_ref() {
-                    BoolExprInner::Constant(val) => Bdd::constant(*val),
-                    BoolExprInner::Variable(name) => Bdd::variable(name),
-                    BoolExprInner::And(left, right) => {
-                        // Use to_bdd() on subexpressions to leverage their caches
-                        let left_bdd = left.to_bdd();
-                        let right_bdd = right.to_bdd();
-                        left_bdd.and(&right_bdd)
-                    }
-                    BoolExprInner::Or(left, right) => {
-                        // Use to_bdd() on subexpressions to leverage their caches
-                        let left_bdd = left.to_bdd();
-                        let right_bdd = right.to_bdd();
-                        left_bdd.or(&right_bdd)
-                    }
-                    BoolExprInner::Not(inner) => {
-                        // Use to_bdd() on subexpression to leverage its cache
-                        let inner_bdd = inner.to_bdd();
-                        inner_bdd.not()
-                    }
-                }
-            })
-            .clone()
-    }
-
-    fn collect_variables_impl(&self, vars: &mut BTreeSet<Arc<str>>) {
-        match self.inner.as_ref() {
-            BoolExprInner::Variable(name) => {
-                vars.insert(Arc::clone(name));
-            }
-            BoolExprInner::And(left, right) | BoolExprInner::Or(left, right) => {
-                left.collect_variables_impl(vars);
-                right.collect_variables_impl(vars);
-            }
-            BoolExprInner::Not(expr) => {
-                expr.collect_variables_impl(vars);
-            }
-            BoolExprInner::Constant(_) => {}
-        }
+        self.bdd.clone()
     }
 
     /// Logical AND: create a new expression that is the conjunction of this and another
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr {
-            inner: Arc::new(BoolExprInner::And(self.clone(), other.clone())),
-            bdd_cache: Arc::new(OnceLock::new()),
+            bdd: self.bdd.and(&other.bdd),
+            ast_cache: OnceLock::new(),
         }
     }
 
     /// Logical OR: create a new expression that is the disjunction of this and another
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr {
-            inner: Arc::new(BoolExprInner::Or(self.clone(), other.clone())),
-            bdd_cache: Arc::new(OnceLock::new()),
+            bdd: self.bdd.or(&other.bdd),
+            ast_cache: OnceLock::new(),
         }
     }
 
     /// Logical NOT: create a new expression that is the negation of this one
     pub fn not(&self) -> BoolExpr {
         BoolExpr {
-            inner: Arc::new(BoolExprInner::Not(self.clone())),
-            bdd_cache: Arc::new(OnceLock::new()),
+            bdd: self.bdd.not(),
+            ast_cache: OnceLock::new(),
         }
     }
 }
 
-/// Manual PartialEq implementation that only compares the expression structure,
-/// not the cached BDD (cache is an optimization, not part of the logical value)
+/// PartialEq implementation that compares BDDs for canonical equality
+///
+/// Since BDDs are canonical, two BoolExprs are equal if and only if
+/// they represent the same logical function.
 impl PartialEq for BoolExpr {
     fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
+        self.bdd == other.bdd
     }
 }
 

@@ -18,7 +18,7 @@
 //! - **Thread-safe**: Mutex-protected manager enables concurrent BDD operations
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 /// Node identifier in the BDD
 pub type NodeId = usize;
@@ -83,6 +83,12 @@ struct BddManager {
     id_to_var: Vec<Arc<str>>,
     /// Cache for ITE operations: (f, g, h) -> result
     ite_cache: HashMap<(NodeId, NodeId, NodeId), NodeId>,
+    /// Cache for DNF: NodeId -> Weak<Dnf>
+    /// Weak references allow sharing DNF across BDDs without preventing cleanup
+    dnf_cache: HashMap<NodeId, Weak<crate::cover::Dnf>>,
+    /// Cache for factorized ASTs: NodeId -> Weak<BoolExprAst>
+    /// Weak references allow sharing factorized ASTs without preventing cleanup
+    ast_cache: HashMap<NodeId, Weak<crate::expression::BoolExprAst>>,
 }
 
 impl BddManager {
@@ -106,6 +112,8 @@ impl BddManager {
                 var_to_id: BTreeMap::new(),
                 id_to_var: Vec::new(),
                 ite_cache: HashMap::new(),
+                dnf_cache: HashMap::new(),
+                ast_cache: HashMap::new(),
             }));
             *guard = Arc::downgrade(&manager);
             manager
@@ -262,6 +270,10 @@ impl BddManager {
 pub struct Bdd {
     manager: Arc<RwLock<BddManager>>,
     root: NodeId,
+    /// Cached DNF (cubes) for this BDD, kept alive with strong reference
+    /// This avoids expensive BDD traversal when converting to expressions
+    /// Uses OnceLock for interior mutability across clones
+    dnf_cache: std::sync::OnceLock<Arc<crate::cover::Dnf>>,
 }
 
 impl Bdd {
@@ -271,6 +283,7 @@ impl Bdd {
         Bdd {
             manager,
             root: if value { TRUE_NODE } else { FALSE_NODE },
+            dnf_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -284,6 +297,7 @@ impl Bdd {
         Bdd {
             manager,
             root: node,
+            dnf_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -312,7 +326,7 @@ impl Bdd {
 
     /// Convert this BDD to a [`BoolExpr`]
     ///
-    /// Extracts cubes from the BDD and reconstructs a [`BoolExpr`] in DNF form.
+    /// Since BoolExpr now uses BDD as primary storage, this is a simple wrapper.
     ///
     /// [`BoolExpr`]: crate::expression::BoolExpr
     ///
@@ -332,43 +346,7 @@ impl Bdd {
     /// assert!(expr.equivalent_to(&expr2));
     /// ```
     pub fn to_expr(&self) -> crate::expression::BoolExpr {
-        use crate::expression::BoolExpr;
-
-        let cubes = self.to_cubes();
-
-        if cubes.is_empty() {
-            return BoolExpr::constant(false);
-        }
-
-        // Convert each cube to a product term
-        let mut terms = Vec::new();
-        for cube in cubes {
-            if cube.is_empty() {
-                // Empty cube means all variables are don't-care (tautology)
-                terms.push(BoolExpr::constant(true));
-            } else {
-                // Build product term for this cube
-                let mut factors: Vec<BoolExpr> = Vec::new();
-                for (var, &polarity) in &cube {
-                    let var_expr = BoolExpr::variable(var);
-                    if polarity {
-                        factors.push(var_expr);
-                    } else {
-                        factors.push(var_expr.not());
-                    }
-                }
-
-                let product = factors.into_iter().reduce(|acc, f| acc.and(&f)).unwrap();
-                terms.push(product);
-            }
-        }
-
-        // OR all terms together
-        let mut ret = terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap();
-
-        // populate the cache with the current BDD
-        ret.bdd_cache = Arc::new(OnceLock::from(self.clone()));
-        ret
+        crate::expression::BoolExpr::from(self.clone())
     }
 
     /// Check if this BDD is a terminal (constant)
@@ -421,12 +399,12 @@ impl Bdd {
     /// Get the variable count (number of distinct variables)
     pub fn var_count(&self) -> usize {
         let mut vars = std::collections::HashSet::new();
-        self.collect_vars(self.root, &mut vars);
+        self.collect_var_ids(self.root, &mut vars);
         vars.len()
     }
 
-    /// Collect all variables reachable from a node
-    fn collect_vars(&self, node: NodeId, vars: &mut std::collections::HashSet<VarId>) {
+    /// Collect all variable IDs reachable from a node
+    fn collect_var_ids(&self, node: NodeId, vars: &mut std::collections::HashSet<VarId>) {
         // Acquire lock, extract needed data, then release before recursing.
         // This is safe because NodeIds are stable (nodes are never removed/reordered).
         let node_info = {
@@ -442,10 +420,26 @@ impl Bdd {
 
         if let Some((var, low, high)) = node_info {
             if vars.insert(var) {
-                self.collect_vars(low, vars);
-                self.collect_vars(high, vars);
+                self.collect_var_ids(low, vars);
+                self.collect_var_ids(high, vars);
             }
         }
+    }
+
+    /// Collect all variable names used in this BDD
+    ///
+    /// Returns a BTreeSet of variable names in alphabetical order.
+    /// This is useful for determining which variables a boolean function depends on.
+    pub fn collect_variables(&self) -> std::collections::BTreeSet<std::sync::Arc<str>> {
+        let mut var_ids = std::collections::HashSet::new();
+        self.collect_var_ids(self.root, &mut var_ids);
+
+        // Convert var IDs to names
+        let mgr = self.manager.read().unwrap();
+        var_ids
+            .into_iter()
+            .filter_map(|id| mgr.var_name(id).cloned())
+            .collect()
     }
 
     /// Extract cubes (product terms) from the BDD
@@ -526,6 +520,7 @@ impl Bdd {
         Bdd {
             manager,
             root: result,
+            dnf_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -544,6 +539,7 @@ impl Bdd {
         Bdd {
             manager,
             root: result,
+            dnf_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -562,7 +558,148 @@ impl Bdd {
         Bdd {
             manager,
             root: result,
+            dnf_cache: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Evaluate the BDD with a given variable assignment
+    ///
+    /// Traverses the BDD following the variable assignments until reaching a terminal node.
+    /// Returns the boolean value of the terminal node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Bdd;
+    /// use std::collections::HashMap;
+    /// use std::sync::Arc;
+    ///
+    /// let a = Bdd::variable("a");
+    /// let b = Bdd::variable("b");
+    /// let bdd = a.and(&b);
+    ///
+    /// let mut assignment = HashMap::new();
+    /// assignment.insert(Arc::from("a"), true);
+    /// assignment.insert(Arc::from("b"), true);
+    ///
+    /// assert_eq!(bdd.evaluate(&assignment), true);
+    ///
+    /// assignment.insert(Arc::from("b"), false);
+    /// assert_eq!(bdd.evaluate(&assignment), false);
+    /// ```
+    pub fn evaluate(
+        &self,
+        assignment: &std::collections::HashMap<std::sync::Arc<str>, bool>,
+    ) -> bool {
+        self.evaluate_node(self.root, assignment)
+    }
+
+    /// Recursively evaluate a BDD node
+    fn evaluate_node(
+        &self,
+        node_id: NodeId,
+        assignment: &std::collections::HashMap<std::sync::Arc<str>, bool>,
+    ) -> bool {
+        // Acquire lock, extract needed data, then release before recursing
+        let node_info = {
+            let mgr = self.manager.read().unwrap();
+            match mgr.get_node(node_id) {
+                Some(BddNode::Terminal(val)) => (true, *val, 0, 0, None),
+                Some(BddNode::Decision { var, low, high }) => {
+                    let var_name = mgr
+                        .var_name(*var)
+                        .expect("Invalid variable ID in BDD evaluation");
+                    (false, false, *low, *high, Some(Arc::clone(var_name)))
+                }
+                None => panic!("Invalid node ID {} in BDD evaluation", node_id),
+            }
+        }; // Lock released here
+
+        match node_info {
+            (true, val, _, _, _) => val, // Terminal node
+            (false, _, low, high, Some(var_name)) => {
+                // Decision node: follow edge based on variable value
+                let var_value = assignment.get(&var_name).copied().unwrap_or(false);
+                if var_value {
+                    self.evaluate_node(high, assignment)
+                } else {
+                    self.evaluate_node(low, assignment)
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Convert BDD to optimised AST representation using factorization
+    ///
+    /// Extracts cubes from the BDD and applies algebraic factorization to produce
+    /// a compact, readable expression.
+    ///
+    /// Uses two-level caching for both DNF and AST:
+    /// 1. Bdd's own dnf_cache (strong reference, lives with this Bdd)
+    /// 2. BddManager's dnf_cache and ast_cache (weak references, shared across BDDs)
+    pub(crate) fn to_ast_optimised(&self) -> std::sync::Arc<crate::expression::BoolExprAst> {
+        // Check AST cache first (fastest path)
+        {
+            let mgr = self.manager.read().unwrap();
+            if let Some(weak) = mgr.ast_cache.get(&self.root) {
+                if let Some(ast) = weak.upgrade() {
+                    return ast;
+                }
+            }
+        }
+
+        // AST not cached, get DNF and factorize
+        // Level 1: Check if this Bdd instance has cached DNF
+        let dnf = if let Some(dnf_arc) = self.dnf_cache.get() {
+            // Use cached DNF (clone the Arc, cheap)
+            Arc::clone(dnf_arc)
+        } else {
+            // Level 2: Check manager's DNF cache
+            let from_manager = {
+                let mgr = self.manager.read().unwrap();
+                mgr.dnf_cache
+                    .get(&self.root)
+                    .and_then(|weak| weak.upgrade())
+            };
+
+            if let Some(dnf_arc) = from_manager {
+                // Found in manager's cache, store in our cache too
+                let _ = self.dnf_cache.set(Arc::clone(&dnf_arc));
+                dnf_arc
+            } else {
+                // Not cached anywhere, extract cubes
+                let cubes = self.to_cubes();
+                let dnf = Arc::new(crate::cover::Dnf::from_cubes(&cubes));
+
+                // Store in both caches
+                let _ = self.dnf_cache.set(Arc::clone(&dnf));
+                {
+                    let mut mgr = self.manager.write().unwrap();
+                    mgr.dnf_cache.insert(self.root, Arc::downgrade(&dnf));
+                }
+
+                dnf
+            }
+        };
+
+        // Convert DNF cubes to the format expected by factorization
+        let cube_terms: Vec<(std::collections::BTreeMap<std::sync::Arc<str>, bool>, bool)> = dnf
+            .cubes()
+            .iter()
+            .map(|cube| (cube.clone(), true))
+            .collect();
+
+        // Use factorization to build a nice AST
+        let ast = crate::expression::factorization::factorise_cubes_to_ast(cube_terms);
+
+        // Cache the AST in the manager for sharing
+        {
+            let mut mgr = self.manager.write().unwrap();
+            mgr.ast_cache.insert(self.root, Arc::downgrade(&ast));
+        }
+
+        ast
     }
 }
 

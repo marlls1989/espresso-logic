@@ -1,6 +1,6 @@
 //! Evaluation and equivalence checking for boolean expressions
 
-use super::{BoolExpr, BoolExprInner};
+use super::BoolExpr;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -131,16 +131,7 @@ impl BoolExpr {
     /// assert_eq!(expr.evaluate(&assignment), false);
     /// ```
     pub fn evaluate(&self, assignment: &HashMap<Arc<str>, bool>) -> bool {
-        match self.inner.as_ref() {
-            BoolExprInner::Variable(name) => *assignment.get(name).unwrap_or(&false),
-            BoolExprInner::Constant(val) => *val,
-            BoolExprInner::And(left, right) => {
-                left.evaluate(assignment) && right.evaluate(assignment)
-            }
-            BoolExprInner::Or(left, right) => {
-                left.evaluate(assignment) || right.evaluate(assignment)
-            }
-            BoolExprInner::Not(expr) => !expr.evaluate(assignment),
-        }
+        // Use direct BDD evaluation (more efficient than AST traversal)
+        self.bdd.evaluate(assignment)
     }
 }

@@ -1,6 +1,6 @@
 //! Display and Debug formatting for boolean expressions
 
-use super::{BoolExpr, BoolExprInner};
+use super::{BoolExpr, BoolExprAst};
 use std::fmt;
 
 /// Context for formatting expressions with minimal parentheses
@@ -15,11 +15,21 @@ enum OpContext {
 impl BoolExpr {
     /// Format with operator precedence context to minimize parentheses
     fn fmt_with_context(&self, f: &mut fmt::Formatter<'_>, ctx: OpContext) -> fmt::Result {
-        match self.inner.as_ref() {
-            BoolExprInner::Variable(name) => write!(f, "{}", name),
-            BoolExprInner::Constant(val) => write!(f, "{}", if *val { "1" } else { "0" }),
+        let ast = self.get_or_create_ast();
+        Self::fmt_ast_with_context(f, &ast, ctx)
+    }
 
-            BoolExprInner::And(left, right) => {
+    /// Format AST with context (helper method)
+    fn fmt_ast_with_context(
+        f: &mut fmt::Formatter<'_>,
+        ast: &BoolExprAst,
+        ctx: OpContext,
+    ) -> fmt::Result {
+        match ast {
+            BoolExprAst::Variable(name) => write!(f, "{}", name),
+            BoolExprAst::Constant(val) => write!(f, "{}", if *val { "1" } else { "0" }),
+
+            BoolExprAst::And(left, right) => {
                 // AND needs parens if inside a NOT
                 let needs_parens = ctx == OpContext::Not;
 
@@ -27,9 +37,9 @@ impl BoolExpr {
                     write!(f, "(")?;
                 }
 
-                left.fmt_with_context(f, OpContext::And)?;
+                Self::fmt_ast_with_context(f, left, OpContext::And)?;
                 write!(f, " * ")?;
-                right.fmt_with_context(f, OpContext::And)?;
+                Self::fmt_ast_with_context(f, right, OpContext::And)?;
 
                 if needs_parens {
                     write!(f, ")")?;
@@ -37,7 +47,7 @@ impl BoolExpr {
                 Ok(())
             }
 
-            BoolExprInner::Or(left, right) => {
+            BoolExprAst::Or(left, right) => {
                 // OR needs parens if inside AND or NOT (lower precedence)
                 let needs_parens = ctx == OpContext::And || ctx == OpContext::Not;
 
@@ -45,9 +55,9 @@ impl BoolExpr {
                     write!(f, "(")?;
                 }
 
-                left.fmt_with_context(f, OpContext::Or)?;
+                Self::fmt_ast_with_context(f, left, OpContext::Or)?;
                 write!(f, " + ")?;
-                right.fmt_with_context(f, OpContext::Or)?;
+                Self::fmt_ast_with_context(f, right, OpContext::Or)?;
 
                 if needs_parens {
                     write!(f, ")")?;
@@ -55,17 +65,17 @@ impl BoolExpr {
                 Ok(())
             }
 
-            BoolExprInner::Not(expr) => {
+            BoolExprAst::Not(inner) => {
                 write!(f, "~")?;
                 // NOT needs parens around compound expressions (AND/OR)
                 // but NOT of NOT or variables/constants don't need parens
-                match expr.inner.as_ref() {
-                    BoolExprInner::Variable(_)
-                    | BoolExprInner::Constant(_)
-                    | BoolExprInner::Not(_) => expr.fmt_with_context(f, OpContext::Not),
+                match inner.as_ref() {
+                    BoolExprAst::Variable(_) | BoolExprAst::Constant(_) | BoolExprAst::Not(_) => {
+                        Self::fmt_ast_with_context(f, inner, OpContext::Not)
+                    }
                     _ => {
                         write!(f, "(")?;
-                        expr.fmt_with_context(f, OpContext::None)?;
+                        Self::fmt_ast_with_context(f, inner, OpContext::None)?;
                         write!(f, ")")
                     }
                 }

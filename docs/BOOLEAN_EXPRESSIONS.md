@@ -944,15 +944,15 @@ fn main() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
 
-    // Different structures, same logic
+    // Commutative operations now have canonical equality (BDD-based)
     let expr1 = expr!(a * b);
     let expr2 = expr!(b * a);  // Commutative
 
-    // Structural equality (tree comparison)
-    assert_ne!(expr1, expr2);  // Different tree structure
+    // Canonical equality (BDD provides canonical form)
+    assert_eq!(expr1, expr2);  // BDD canonicalisation makes them equal!
 
-    // Logical equivalence (efficient exact minimization check)
-    assert!(expr1.equivalent_to(&expr2));  // Same logic!
+    // Also logically equivalent
+    assert!(expr1.equivalent_to(&expr2));
 
     // Test double negation
     let expr3 = a.clone();
