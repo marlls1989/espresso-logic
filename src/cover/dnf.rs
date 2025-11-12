@@ -22,11 +22,6 @@
 //!
 //! [`BoolExpr`]: crate::expression::BoolExpr
 //! [`Cover`]: crate::Cover
-
-use crate::expression::BoolExpr;
-
-#[cfg(test)]
-use crate::expression::Bdd;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -162,94 +157,8 @@ impl Default for Dnf {
         Self::new()
     }
 }
-
-// ============================================================================
-// Blanket Conversions TO Dnf
-// ============================================================================
-
-/// Convert BoolExpr to DNF (via BDD for efficiency)
-///
-/// Ensures conversions go through BDD for canonical form and optimizations.
-impl From<BoolExpr> for Dnf {
-    fn from(expr: BoolExpr) -> Self {
-        // Note: BoolExpr IS a BDD now, so just use it directly
-        let cubes = expr.to_cubes();
-        Dnf::from_cubes(&cubes)
-    }
-}
-
-/// Convert &BoolExpr to DNF (via BDD for efficiency)
-impl From<&BoolExpr> for Dnf {
-    fn from(expr: &BoolExpr) -> Self {
-        // Note: BoolExpr IS a BDD now, so just use it directly
-        let cubes = expr.to_cubes();
-        Dnf::from_cubes(&cubes)
-    }
-}
-
-// Note: Bdd is now a type alias for BoolExpr, so From<Bdd> implementations
-// are covered by the From<BoolExpr> implementations above.
-
-// ============================================================================
-// Conversions FROM Dnf
-// ============================================================================
-
-/// Convert DNF to BoolExpr
-///
-/// Reconstructs a boolean expression in DNF form (OR of AND terms).
-///
-/// # Examples
-///
-/// ```
-/// use espresso_logic::{BoolExpr, Dnf};
-///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let expr = a.and(&b);
-///
-/// let dnf = Dnf::from(&expr);
-/// let expr2 = BoolExpr::from(dnf);
-///
-/// assert!(expr.equivalent_to(&expr2));
-/// ```
-impl From<Dnf> for BoolExpr {
-    fn from(dnf: Dnf) -> Self {
-        if dnf.is_empty() {
-            return BoolExpr::constant(false);
-        }
-
-        // Convert each cube to a product term
-        let mut terms = Vec::new();
-        for cube in dnf.cubes {
-            if cube.is_empty() {
-                // Empty cube means tautology (all variables are don't-care)
-                terms.push(BoolExpr::constant(true));
-            } else {
-                // Build AND of all literals in this cube
-                let factors: Vec<BoolExpr> = cube
-                    .iter()
-                    .map(|(var, &polarity)| {
-                        let v = BoolExpr::variable(var);
-                        if polarity {
-                            v
-                        } else {
-                            v.not()
-                        }
-                    })
-                    .collect();
-
-                let product = factors.into_iter().reduce(|acc, f| acc.and(&f)).unwrap();
-                terms.push(product);
-            }
-        }
-
-        // OR all terms together
-        terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap()
-    }
-}
-
-// Note: Bdd is now a type alias for BoolExpr, so From<Dnf> for Bdd
-// is covered by the From<Dnf> for BoolExpr implementation above.
+// Note: Conversion trait implementations (From<BoolExpr> for Dnf, From<Dnf> for BoolExpr)
+// have been moved to src/expression/conversions.rs
 
 // ============================================================================
 // Blanket Minimizable Implementation
@@ -261,6 +170,7 @@ impl From<Dnf> for BoolExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expression::{Bdd, BoolExpr};
 
     #[test]
     fn test_dnf_creation() {
@@ -284,9 +194,8 @@ mod tests {
         let a = BoolExpr::variable("a");
         let b = BoolExpr::variable("b");
         let expr = a.or(&b);
-        let bdd = expr.to_bdd();
 
-        let dnf = Dnf::from(&bdd);
+        let dnf = Dnf::from(&expr);
         assert_eq!(dnf.len(), 2); // Two cubes
     }
 
@@ -311,7 +220,7 @@ mod tests {
         let dnf = Dnf::from(&expr);
         let bdd = Bdd::from(dnf);
 
-        assert_eq!(bdd, expr.to_bdd());
+        assert_eq!(bdd, expr);
     }
 
     #[test]
@@ -332,12 +241,11 @@ mod tests {
         let a = BoolExpr::variable("a");
         let b = BoolExpr::variable("b");
         let expr = a.and(&b);
-        let bdd = expr.to_bdd();
 
-        let dnf = Dnf::from(&bdd);
+        let dnf = Dnf::from(&expr);
         let bdd2 = Bdd::from(dnf);
 
-        assert_eq!(bdd, bdd2);
+        assert_eq!(expr, bdd2);
     }
 
     #[test]

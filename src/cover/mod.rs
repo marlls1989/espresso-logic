@@ -21,6 +21,9 @@ pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
 
+// Internal re-export for expression module
+pub(crate) use minimisation::minimize_via_cover;
+
 // Import internal types for Cover implementation
 use labels::LabelManager;
 use std::sync::Arc;

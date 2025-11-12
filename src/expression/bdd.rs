@@ -48,15 +48,24 @@ impl BoolExpr {
         }
     }
 
-    /// Extract cubes (product terms) from the BDD
+    /// Extract cubes (product terms) from the BDD using cached DNF
     ///
     /// Returns a vector of cubes, where each cube is a map from variable name to
     /// its literal value (true for positive literal, false for negative literal).
     ///
     /// Each cube represents one path from the root to the TRUE terminal.
     ///
-    /// **Internal use only.** Public API should use `Dnf::from(&expr)` instead.
-    pub(crate) fn to_cubes(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
+    /// This method uses the DNF cache to avoid expensive BDD traversal.
+    pub fn to_cubes(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
+        let dnf = self.get_or_create_dnf();
+        dnf.cubes().to_vec()
+    }
+
+    /// Extract cubes directly from BDD via traversal (bypasses cache)
+    ///
+    /// This is the internal method that actually traverses the BDD structure.
+    /// Most code should use `to_cubes()` instead, which uses caching.
+    pub(super) fn extract_cubes_from_bdd(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
         let mut results = Vec::new();
         let mut current_path = BTreeMap::new();
         self.extract_cubes(self.root, &mut current_path, &mut results);

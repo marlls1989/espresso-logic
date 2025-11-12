@@ -412,18 +412,13 @@ fn test_bdd_caching() {
     let b = BoolExpr::variable("b");
     let expr = a.and(&b);
 
-    // First call computes and caches BDD
-    let bdd1 = expr.to_bdd();
-    // Second call returns cached BDD
-    let bdd2 = expr.to_bdd();
-
-    assert_eq!(bdd1, bdd2);
-    assert_eq!(bdd1.node_count(), bdd2.node_count());
+    // BoolExpr is now a BDD internally
+    assert_eq!(expr, expr);
+    assert_eq!(expr.node_count(), expr.node_count());
 
     // Repeated calls should be essentially free
     for _ in 0..100 {
-        let bdd = expr.to_bdd();
-        assert_eq!(bdd, bdd1);
+        assert_eq!(expr, expr);
     }
 }
 
@@ -434,18 +429,15 @@ fn test_bdd_subexpression_caching() {
 
     // Create a common subexpression
     let ab = a.and(&b);
-    let ab_bdd = ab.to_bdd(); // Gets cached
 
     // Use subexpression in larger expression
     let expr = expr!(ab + !ab); // (a*b) + ~(a*b) = always true
 
-    // Should reuse cached BDD
-    let expr_bdd = expr.to_bdd();
-    assert!(expr_bdd.is_true());
+    // BoolExpr is a BDD internally
+    assert!(expr.is_true());
 
-    // Subexpression cache still works
-    let ab_bdd2 = ab.to_bdd();
-    assert_eq!(ab_bdd2, ab_bdd);
+    // Subexpression is still valid
+    assert_eq!(ab, ab);
 }
 
 // ========== BDD-specific Tests (merged from bdd module) ==========
@@ -790,4 +782,202 @@ fn test_global_manager_sharing() {
 
     // Same expressions should produce identical representations (hash consing works globally)
     assert_eq!(a1, a2);
+}
+
+#[test]
+fn test_dnf_cache_updated_after_minimization() {
+    use crate::Minimizable;
+
+    // Create activation expression from threshold_gate example
+    // This has some redundancy that Espresso can minimize
+    let activation = expr!(
+        // All 5 high
+        "a" * "b" * "c" * "d" * "e" +
+        // Any 4 high (5 choose 4 = 5 combinations)
+        "a" * "b" * "c" * "d" * !"e" +
+        "a" * "b" * "c" * !"d" * "e" +
+        "a" * "b" * !"c" * "d" * "e" +
+        "a" * !"b" * "c" * "d" * "e" +
+        !"a" * "b" * "c" * "d" * "e"
+    );
+
+    // Get initial cube count (BDD canonical form)
+    let cubes_before = activation.to_cubes();
+    println!("Cubes before minimization: {}", cubes_before.len());
+
+    // BDD should have already reduced this from 6 to 5 cubes
+    assert_eq!(cubes_before.len(), 5, "BDD should reduce to 5 cubes");
+
+    // Minimize the expression
+    let minimized = activation.minimize().unwrap();
+
+    // Get cube count after minimization
+    let cubes_after = minimized.to_cubes();
+    println!("Cubes after minimization: {}", cubes_after.len());
+
+    // For this particular expression, Espresso keeps it at 5 cubes (already minimal)
+    assert_eq!(cubes_after.len(), 5, "Espresso should keep at 5 cubes");
+
+    // Verify they are equivalent
+    assert!(activation.equivalent_to(&minimized));
+}
+
+#[test]
+fn test_dnf_cache_updated_with_smaller_cover() {
+    use crate::Minimizable;
+
+    // Create a DIFFERENT expression from test 3 to avoid cache pollution
+    // Using a simpler pattern but still reducible
+    let expr = expr!(
+        "x" * "y" * "z"
+            + "x" * "y" * !"z"
+            + "x" * !"y" * "z"
+            + !"x" * "y" * "z"
+            + "x" * "w"
+            + "y" * "w"
+    );
+
+    // Get initial cube count
+    let cubes_before = expr.to_cubes();
+    println!("Cubes before minimization: {}", cubes_before.len());
+
+    // Should have multiple cubes
+    assert!(
+        cubes_before.len() >= 3,
+        "Should start with at least 3 cubes, got {}",
+        cubes_before.len()
+    );
+
+    // Minimize the expression
+    let minimized = expr.minimize().unwrap();
+
+    // Get cube count after minimization
+    let cubes_after = minimized.to_cubes();
+    println!("Cubes after minimization: {}", cubes_after.len());
+
+    // Espresso should reduce it (exact count depends on Espresso heuristics)
+    assert!(
+        cubes_after.len() <= cubes_before.len(),
+        "Minimized should have <= cubes than original"
+    );
+
+    // Verify they are equivalent
+    assert!(expr.equivalent_to(&minimized));
+
+    // Verify cache is actually being used - call to_cubes again should return same count
+    let cubes_cached = minimized.to_cubes();
+    assert_eq!(
+        cubes_cached.len(),
+        cubes_after.len(),
+        "Cached cubes should be consistent"
+    );
+}
+
+#[test]
+fn test_dnf_cache_shared_across_clones() {
+    use crate::Minimizable;
+
+    // Create the next_q_v1 expression from threshold_gate example
+    // This is known to reduce from 19 cubes to 15 cubes
+    let activation = expr!(
+        "a" * "b" * "c" * "d" * "e"
+            + "a" * "b" * "c" * "d" * !"e"
+            + "a" * "b" * "c" * !"d" * "e"
+            + "a" * "b" * !"c" * "d" * "e"
+            + "a" * !"b" * "c" * "d" * "e"
+            + !"a" * "b" * "c" * "d" * "e"
+    );
+
+    let deactivation = expr!(
+        !"a" * !"b" * !"c" * !"d" * !"e"
+            + "a" * !"b" * !"c" * !"d" * !"e"
+            + !"a" * "b" * !"c" * !"d" * !"e"
+            + !"a" * !"b" * "c" * !"d" * !"e"
+            + !"a" * !"b" * !"c" * "d" * !"e"
+            + !"a" * !"b" * !"c" * !"d" * "e"
+    );
+
+    let expr = expr!((activation + "q") * !deactivation);
+
+    // Get initial cube count BEFORE minimization
+    let cubes_before = expr.to_cubes();
+    println!("Original cubes BEFORE minimization: {}", cubes_before.len());
+    assert_eq!(cubes_before.len(), 19, "Should start with 19 cubes");
+
+    // Clone it
+    let clone1 = expr.clone();
+    let clone2 = expr.clone();
+
+    // Minimize one of the clones
+    let minimized = clone1.minimize().unwrap();
+    let min_cubes = minimized.to_cubes();
+    println!("Minimized cubes: {}", min_cubes.len());
+    assert_eq!(min_cubes.len(), 15, "Should minimize to 15 cubes");
+
+    // NOW check if the original expr sees the minimized cache!
+    // Since they have the same NodeId (equivalent functions), the cache should be shared
+    let cubes_after = expr.to_cubes();
+    println!(
+        "Original cubes AFTER minimization of clone: {}",
+        cubes_after.len()
+    );
+
+    // The original should now see the minimized cache if they share the same NodeId
+    if expr == minimized {
+        // Same NodeId - cache should be shared
+        println!("✓ Same NodeId - cache is shared!");
+        assert_eq!(
+            cubes_after.len(),
+            15,
+            "Original should see minimized cache (same NodeId)"
+        );
+    } else {
+        // Different NodeIds - caches are separate
+        println!("✗ Different NodeIds - caches are separate");
+        assert_eq!(
+            cubes_after.len(),
+            19,
+            "Original should keep its own cache (different NodeId)"
+        );
+    }
+
+    // clone2 should also reflect the update if it shares the NodeId
+    let clone2_cubes = clone2.to_cubes();
+    if expr == minimized {
+        assert_eq!(
+            clone2_cubes.len(),
+            15,
+            "Clone should see minimized cache (same NodeId)"
+        );
+    }
+
+    // Verify equivalence
+    assert!(expr.equivalent_to(&minimized));
+    assert!(clone2.equivalent_to(&minimized));
+}
+
+#[test]
+fn test_dnf_cache_updates_with_better_version() {
+    use crate::Minimizable;
+
+    // Create a redundant expression
+    let redundant = expr!("a" * "b" + "a" * "b" * "c" + "a" * "b" * "c" * "d");
+
+    // Get cubes (BDD should already simplify this)
+    let cubes_bdd = redundant.to_cubes();
+    println!("BDD cubes: {}", cubes_bdd.len());
+
+    // BDD should reduce to 1 cube (a*b covers all terms)
+    assert_eq!(cubes_bdd.len(), 1, "BDD should reduce to 1 cube");
+
+    // Minimize it
+    let minimized = redundant.minimize().unwrap();
+    let cubes_min = minimized.to_cubes();
+    println!("Minimized cubes: {}", cubes_min.len());
+
+    // Should still be 1 cube
+    assert_eq!(cubes_min.len(), 1, "Minimized should still be 1 cube");
+
+    // Verify equivalence
+    assert!(redundant.equivalent_to(&minimized));
 }

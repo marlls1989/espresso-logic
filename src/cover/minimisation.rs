@@ -268,8 +268,10 @@ impl Minimizable for Cover {
     }
 }
 
-/// Private helper function to minimize via Cover conversion
-fn minimize_via_cover<F>(
+/// Helper function to minimize via Cover conversion
+///
+/// Used by Minimizable implementations to convert DNF → Cover → minimize → DNF
+pub(crate) fn minimize_via_cover<F>(
     dnf: &Dnf,
     config: &EspressoConfig,
     minimize_fn: F,
@@ -303,7 +305,7 @@ where
 }
 
 /// Helper function to convert a Cover back to Dnf
-fn cover_to_dnf(cover: &Cover) -> Dnf {
+pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
     let mut cubes = Vec::new();
 
     for cube in cover.cubes() {
@@ -329,52 +331,5 @@ fn cover_to_dnf(cover: &Cover) -> Dnf {
     Dnf::from_cubes(&cubes)
 }
 
-/// Blanket implementation of Minimizable for any type convertible to/from Dnf
-///
-/// This automatically provides minimization for `BoolExpr`, `Bdd`, and any other
-/// type that implements the necessary conversions.
-///
-/// # Workflow
-///
-/// 1. Convert expression to Dnf (via BDD for canonical form)
-/// 2. Convert Dnf to Cover
-/// 3. Minimize the Cover using Espresso
-/// 4. Convert minimized Cover back to Dnf
-/// 5. Convert Dnf back to original type
-///
-/// The DNF serves as the intermediary representation between boolean expressions
-/// and covers, ensuring all conversions go through the efficient BDD path.
-impl<T> Minimizable for T
-where
-    for<'a> &'a T: Into<Dnf>,
-    T: From<Dnf>,
-{
-    fn minimize_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the heuristic algorithm
-        let minimized_dnf =
-            minimize_via_cover(&dnf, config, |cover, cfg| cover.minimize_with_config(cfg))?;
-
-        Ok(T::from(minimized_dnf))
-    }
-
-    fn minimize_exact_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the exact algorithm
-        let minimized_dnf = minimize_via_cover(&dnf, config, |cover, cfg| {
-            cover.minimize_exact_with_config(cfg)
-        })?;
-
-        Ok(T::from(minimized_dnf))
-    }
-}
+// Note: The Minimizable implementation for BoolExpr has been moved to
+// src/expression/minimize.rs where it belongs organizationally.

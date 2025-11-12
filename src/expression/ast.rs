@@ -95,38 +95,7 @@ impl BoolExpr {
         }
 
         // AST not cached, get DNF and factorise
-        // Level 1: Check if this BoolExpr instance has cached DNF
-        let dnf = if let Some(dnf_arc) = self.dnf_cache.get() {
-            // Use cached DNF (clone the Arc, cheap)
-            Arc::clone(dnf_arc)
-        } else {
-            // Level 2: Check manager's DNF cache
-            let from_manager = {
-                let mgr = self.manager.read().unwrap();
-                mgr.dnf_cache
-                    .get(&self.root)
-                    .and_then(|weak| weak.upgrade())
-            };
-
-            if let Some(dnf_arc) = from_manager {
-                // Found in manager's cache, store in our cache too
-                let _ = self.dnf_cache.set(Arc::clone(&dnf_arc));
-                dnf_arc
-            } else {
-                // Not cached anywhere, extract cubes
-                let cubes = self.to_cubes();
-                let dnf = Arc::new(crate::cover::Dnf::from_cubes(&cubes));
-
-                // Store in both caches
-                let _ = self.dnf_cache.set(Arc::clone(&dnf));
-                {
-                    let mut mgr = self.manager.write().unwrap();
-                    mgr.dnf_cache.insert(self.root, Arc::downgrade(&dnf));
-                }
-
-                dnf
-            }
-        };
+        let dnf = self.get_or_create_dnf();
 
         // Convert DNF cubes to the format expected by factorisation
         let cube_terms: Vec<(std::collections::BTreeMap<Arc<str>, bool>, bool)> = dnf

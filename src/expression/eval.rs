@@ -82,10 +82,10 @@ impl BoolExpr {
         let mut cover = Cover::new(CoverType::F);
 
         // Add both BDDs as separate outputs
-        if cover.add_expr(&self_bdd, "expr1").is_err() {
+        if cover.add_expr(self_bdd, "expr1").is_err() {
             return false;
         }
-        if cover.add_expr(&other_bdd, "expr2").is_err() {
+        if cover.add_expr(other_bdd, "expr2").is_err() {
             return false;
         }
 
