@@ -11,7 +11,7 @@
 //!
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
-use super::{Bdd, BoolExpr, BoolExprAst};
+use super::{BoolExpr, BoolExprAst};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -292,24 +292,22 @@ pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Arc<str>, bool>, bool)>) -> B
     // Get factored AST
     let factored_ast = factorise_cubes_to_ast(cubes);
 
-    // Convert AST to BoolExpr by building BDD
-    let bdd = ast_to_bdd(&factored_ast);
+    // Convert AST to BoolExpr
+    let expr = ast_to_expr(&factored_ast);
 
-    // Create BoolExpr with both BDD and pre-computed AST
-    let expr = bdd; // Bdd is now just a type alias for BoolExpr
-                    // Cache the factored AST so it's used for display instead of regenerating
+    // Cache the factored AST so it's used for display instead of regenerating
     let _ = expr.ast_cache.set(factored_ast);
     expr
 }
 
-/// Convert AST to BDD for semantic operations
-fn ast_to_bdd(ast: &BoolExprAst) -> Bdd {
+/// Convert AST to BoolExpr for semantic operations
+fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
     match ast {
-        BoolExprAst::Constant(val) => Bdd::constant(*val),
-        BoolExprAst::Variable(name) => Bdd::variable(name),
-        BoolExprAst::Not(inner) => ast_to_bdd(inner).not(),
-        BoolExprAst::And(left, right) => ast_to_bdd(left).and(&ast_to_bdd(right)),
-        BoolExprAst::Or(left, right) => ast_to_bdd(left).or(&ast_to_bdd(right)),
+        BoolExprAst::Constant(val) => BoolExpr::constant(*val),
+        BoolExprAst::Variable(name) => BoolExpr::variable(name),
+        BoolExprAst::Not(inner) => ast_to_expr(inner).not(),
+        BoolExprAst::And(left, right) => ast_to_expr(left).and(&ast_to_expr(right)),
+        BoolExprAst::Or(left, right) => ast_to_expr(left).or(&ast_to_expr(right)),
     }
 }
 

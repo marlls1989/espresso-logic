@@ -86,10 +86,9 @@ impl Dnf {
     /// Create a DNF from a slice of cubes
     ///
     /// This is primarily for internal use. Users should typically convert
-    /// from [`BoolExpr`] or [`Bdd`] instead.
+    /// from [`BoolExpr`] instead.
     ///
     /// [`BoolExpr`]: crate::expression::BoolExpr
-    /// [`Bdd`]: crate::expression::Bdd
     pub fn from_cubes(cubes: &[BTreeMap<Arc<str>, bool>]) -> Self {
         // Collect all variables from cubes using BTreeSet for sorting
         let mut var_set = std::collections::BTreeSet::new();
@@ -182,7 +181,7 @@ impl Default for Dnf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expression::{Bdd, BoolExpr};
+    use crate::expression::BoolExpr;
 
     #[test]
     fn test_dnf_creation() {
@@ -224,15 +223,15 @@ mod tests {
     }
 
     #[test]
-    fn test_dnf_to_bdd() {
+    fn test_dnf_to_bool_expr_or() {
         let a = BoolExpr::variable("a");
         let b = BoolExpr::variable("b");
         let expr = a.or(&b);
 
         let dnf = Dnf::from(&expr);
-        let bdd = Bdd::from(dnf);
+        let expr2 = BoolExpr::from(dnf);
 
-        assert_eq!(bdd, expr);
+        assert_eq!(expr2, expr);
     }
 
     #[test]
@@ -249,15 +248,15 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_bdd() {
+    fn test_roundtrip_bool_expr_and() {
         let a = BoolExpr::variable("a");
         let b = BoolExpr::variable("b");
         let expr = a.and(&b);
 
         let dnf = Dnf::from(&expr);
-        let bdd2 = Bdd::from(dnf);
+        let expr2 = BoolExpr::from(dnf);
 
-        assert_eq!(expr, bdd2);
+        assert_eq!(expr, expr2);
     }
 
     #[test]

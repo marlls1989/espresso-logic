@@ -1,35 +1,33 @@
 //! Boolean expression types with operator overloading and parsing support
 //!
-//! This module provides a boolean expression representation that can be constructed
+//! This module provides a high-level boolean expression representation that can be constructed
 //! programmatically using operator overloading, the `expr!` macro, or parsed from strings.
-//! Expressions can be minimised using the Espresso algorithm.
+//! Expressions can be minimised directly using the Espresso algorithm.
 //!
 //! # Main Types
 //!
-//! - [`BoolExpr`] - A boolean expression that supports three construction methods:
-//!   1. Method API: `a.and(&b).or(&c)`
-//!   2. Operator overloading: `&a * &b + &c`
-//!   3. **`expr!` macro**: `expr!(a * b + c)` - Recommended!
+//! - [`BoolExpr`] - A boolean expression supporting three construction methods:
+//!   1. **`expr!` macro**: `expr!(a * b + c)` - Recommended!
+//!   2. Method API: `a.and(&b).or(&c)`
+//!   3. Operator overloading: `&a * &b + &c`
 //!   
-//!   **Important (v3.1.1+):** All `BoolExpr` instances use BDD as their internal representation,
-//!   providing canonical form, efficient operations, and automatic simplification.
+//!   Expressions can be minimised directly with `.minimize()` or `.minimize_exact()`.
 //!
-//! - [`Bdd`] - Type alias for [`BoolExpr`] (unified in v3.1.1).
-//!   Previously a separate type, now exists only for backwards compatibility.
+//! # Implementation Details
 //!
-//! # Unified BDD Architecture (v3.1.1+)
+//! Starting in v3.1.1, `BoolExpr` uses Binary Decision Diagrams (BDDs) internally for
+//! efficient representation and operations. This is an implementation detail that enables:
 //!
-//! Starting in v3.1.1, `BoolExpr` and `Bdd` are the same type. All boolean expressions
-//! use Binary Decision Diagrams as their canonical internal representation, providing:
-//!
-//! - **Canonical representation**: Equivalent expressions have identical internal structure
-//! - **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation
-//! - **Memory efficiency**: Structural sharing across all operations
+//! - **Efficient operations**: Polynomial-time AND/OR/NOT operations
+//! - **Canonical form**: Equivalent expressions have identical internal structure
+//! - **Memory efficiency**: Structural sharing via global singleton manager
 //! - **Automatic simplification**: Redundancy elimination during construction
-//! - **Fast equality checks**: O(1) pointer comparison for equivalent expressions
+//!
+//! The BDD implementation makes the high-level API practical for complex expressions,
+//! but the primary purpose remains **Boolean function minimisation via Espresso**.
 //!
 //! **Deprecated methods:**
-//! - `to_bdd()` - Returns `self.clone()` (expression IS a BDD)
+//! - `to_bdd()` - Returns `self.clone()` (expression already uses BDD internally)
 //! - `Bdd::from_expr()` - Returns `expr.clone()` (redundant conversion)
 //! - `Bdd::to_expr()` - Returns `self.clone()` (redundant conversion)
 //!
@@ -68,7 +66,7 @@
 //! # }
 //! ```
 //!
-//! ## Minimizing and Evaluating
+//! ## Minimising and Evaluating
 //!
 //! ```
 //! use espresso_logic::{BoolExpr, expr, Minimizable};
@@ -91,16 +89,23 @@
 //! let result = redundant.evaluate(&assignment);
 //! assert_eq!(result, true);
 //!
-//! // Minimize it (returns new minimized instance)
-//! let minimized = redundant.minimize()?;
-//! println!("Minimized: {}", minimized);  // Output: a * b
+//! // Minimise it (returns new minimised instance)
+//! let minimised = redundant.minimize()?;
+//! println!("Minimised: {}", minimised);  // Output: a * b
 //!
 //! // Check logical equivalence
 //! let redundant2 = expr!(a * b + a * b * c);
-//! assert!(redundant2.equivalent_to(&minimized));
+//! assert!(redundant2.equivalent_to(&minimised));
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # 📚 Comprehensive Guide
+//!
+//! For a complete guide to the Boolean expression API including detailed examples,
+//! composition patterns, BDD architecture, performance considerations, and best practices,
+//! see the embedded documentation below.
+#![doc = include_str!("../../docs/BOOLEAN_EXPRESSIONS.md")]
 
 // Submodules
 mod ast;
@@ -111,7 +116,6 @@ pub mod error;
 mod eval;
 pub(crate) mod factorization;
 mod manager;
-mod minimize;
 mod operators;
 mod parser;
 
@@ -126,14 +130,51 @@ use manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
 
 use std::sync::{Arc, OnceLock, RwLock};
 
-/// A boolean expression that can be manipulated programmatically
+/// A boolean expression for logic minimisation
 ///
-/// This type represents boolean expressions as Binary Decision Diagrams (BDDs) for efficient
-/// operations and canonical representation. It also maintains an optional AST cache for
-/// display and tree traversal operations.
+/// `BoolExpr` provides a high-level interface for building and minimising Boolean functions.
+/// Expressions can be constructed programmatically, parsed from strings, or composed from
+/// existing expressions, then minimised using the Espresso algorithm.
 ///
-/// Uses `Arc` internally for efficient cloning. Provides a fluent method-based API
-/// and an `expr!` macro for clean syntax.
+/// # Construction Methods
+///
+/// Three ways to build expressions:
+///
+/// 1. **`expr!` macro** (recommended) - Clean syntax without explicit references
+/// 2. **Method API** - Explicit `.and()`, `.or()`, `.not()` calls
+/// 3. **Operator overloading** - Requires `&` references
+///
+/// # Minimisation
+///
+/// Expressions support direct minimisation via:
+/// - `.minimize()` - Fast heuristic algorithm (~99% optimal)
+/// - `.minimize_exact()` - Slower but guaranteed minimal result
+///
+/// # Implementation Details
+///
+/// **Internal representation:** Uses Binary Decision Diagrams (BDDs) for efficient
+/// operations and canonical form. This is an implementation detail that makes the
+/// high-level API practical for complex expressions.
+///
+/// Each `BoolExpr` contains:
+/// - **Node ID** - Reference to BDD structure in global manager
+/// - **Manager Reference** - Shared access to global singleton BDD manager
+/// - **DNF Cache** - Lazily cached cubes for Espresso minimisation
+/// - **AST Cache** - Lazily cached syntax tree for display
+///
+/// The BDD manager is a global singleton (protected by `RwLock`) shared by all
+/// expressions, providing structural sharing and canonical representation.
+///
+/// # Cloning
+///
+/// Cloning is very cheap - copies Arc references and node ID. `OnceLock::clone()` copies
+/// the cached content (Arc pointers), so clones share the actual cached data. The BDD
+/// structure itself is shared via the global manager.
+///
+/// # Thread Safety
+///
+/// Thread-safe via global BDD manager with `RwLock` protection. Multiple threads
+/// can safely create and manipulate expressions concurrently.
 ///
 /// # Examples
 ///
@@ -144,15 +185,33 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// let a = BoolExpr::variable("a");
 /// let b = BoolExpr::variable("b");
 /// let expr = a.and(&b).or(&a.not().and(&b.not()));
+/// println!("{}", expr);  // Uses factored display
 /// ```
 ///
-/// ## Using operator overloading (requires explicit &)
-/// ```  
-/// use espresso_logic::BoolExpr;
+/// ## Using `expr!` macro (recommended)
+/// ```
+/// use espresso_logic::{BoolExpr, expr};
 ///
 /// let a = BoolExpr::variable("a");
 /// let b = BoolExpr::variable("b");
-/// let expr = &a * &b + &(&a).not() * &(&b).not();
+/// // No & references needed!
+/// let expr = expr!(a * b + !a * !b);
+/// println!("{}", expr);
+/// ```
+///
+/// ## BDD Operations
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let expr = BoolExpr::parse("a * b + b * c").unwrap();
+///
+/// // Query BDD properties
+/// println!("BDD nodes: {}", expr.node_count());
+/// println!("Variables: {}", expr.var_count());
+///
+/// // All operations are efficient BDD operations
+/// let vars = expr.collect_variables();
+/// println!("Variables: {:?}", vars);
 /// ```
 #[derive(Clone)]
 pub struct BoolExpr {
@@ -162,9 +221,10 @@ pub struct BoolExpr {
     root: NodeId,
     /// Cached DNF (cubes) for this BDD
     /// This avoids expensive BDD traversal when converting to DNF
-    /// Uses OnceLock for lazy initialization
+    /// OnceLock's Clone copies the content, so clones share cached data via Arc
     dnf_cache: OnceLock<crate::cover::Dnf>,
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
+    /// OnceLock's Clone copies the content, so clones share cached data via Arc
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
 }
 
@@ -279,8 +339,10 @@ impl Eq for BoolExpr {}
 
 /// Type alias for backwards compatibility.
 ///
-/// `Bdd` and `BoolExpr` are now the same type. This alias exists to ensure
-/// that code using the `Bdd` name continues to compile seamlessly.
+/// **Deprecated:** Use [`BoolExpr`] directly instead.
+///
+/// `Bdd` and `BoolExpr` are now the same type in the unified architecture (v3.1.1+).
+/// This alias exists for backwards compatibility but should not be used in new code.
 ///
 /// # Migration
 ///
@@ -293,7 +355,7 @@ impl Eq for BoolExpr {}
 /// let result = a.and(&b);
 /// ```
 ///
-/// Can continue to work unchanged, or be updated to:
+/// Should be updated to use [`BoolExpr`] directly:
 /// ```
 /// use espresso_logic::BoolExpr;
 ///
@@ -301,6 +363,10 @@ impl Eq for BoolExpr {}
 /// let b = BoolExpr::variable("b");
 /// let result = a.and(&b);
 /// ```
+#[deprecated(
+    since = "3.1.1",
+    note = "Use `BoolExpr` directly. `Bdd` is now just a type alias for backwards compatibility."
+)]
 pub type Bdd = BoolExpr;
 
 #[cfg(test)]

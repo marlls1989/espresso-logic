@@ -17,7 +17,6 @@ impl Cover {
     ///
     /// This generic method accepts any type that can be converted to DNF:
     /// - `&BoolExpr` - Boolean expressions
-    /// - `&Bdd` - Binary Decision Diagrams
     /// - `&Dnf` - Direct DNF representation
     ///
     /// Input variables are matched by name with existing variables,
@@ -35,12 +34,12 @@ impl Cover {
     /// let b = BoolExpr::variable("b");
     /// let expr = a.and(&b);
     ///
-    /// // Works with BoolExpr
+    /// // Add expression to cover
     /// cover.add_expr(&expr, "output1").unwrap();
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     ///
-    /// // Also works with any BoolExpr (Bdd is a type alias in v3.1.1+)
+    /// // Add another expression as a second output
     /// let expr2 = b.or(&a);
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```

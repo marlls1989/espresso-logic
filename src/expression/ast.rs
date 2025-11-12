@@ -184,12 +184,6 @@ impl BoolExpr {
     /// This is useful for operations like applying De Morgan's laws where negations
     /// need to be pushed down through the tree.
     ///
-    /// # Real-World Usage
-    ///
-    /// See `examples/threshold_gate_example.rs` and `examples/c_element_example.rs` for
-    /// complete working examples that use `fold_with_context` to implement naive De Morgan
-    /// expansion for performance comparison against BDD-based conversion.
-    ///
     /// # Examples
     ///
     /// Count depth with context tracking current level:

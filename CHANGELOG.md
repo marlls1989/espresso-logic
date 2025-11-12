@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2025-11-12
+
+### Documentation
+
+**Comprehensive rustdoc overhaul** - Improved and reorganised all documentation to be more accurate and comprehensive:
+
+- **lib.rs landing page**: Simplified structure, properly positioned Espresso as the main feature with BDDs as implementation detail
+- **expression module**: Embedded comprehensive BOOLEAN_EXPRESSIONS.md guide into module documentation
+- **cover module**: Enhanced with detailed explanations of covers, cover types, and when to use Cover vs BoolExpr
+- **pla module**: Moved into `cover::pla` submodule and embedded PLA_FORMAT.md specification
+- **examples module**: Created documentation-only module embedding EXAMPLES.md for comprehensive examples
+- **Thread safety**: Fixed incorrect documentation - correctly explains Cover's lazy thread-local Espresso creation
+- **BoolExpr struct**: Enhanced documentation explaining internal BDD representation, cloning behavior, and thread safety
+- **Cover struct**: Comprehensive documentation of structure, dynamic dimensions, input/output encoding, and thread safety
+- **Removed outdated references**: Cleaned up `fold_with_context` documentation that referenced old example code
+
+### Changed
+
+- **Deprecated `Bdd` type alias** - Added `#[deprecated]` attribute to encourage using `BoolExpr` directly
+- **Removed error type re-exports** - Error types now accessed via their respective modules (`error::*`, `cover::error::*`, `expression::error::*`)
+- **Code organization**: Moved blanket `Minimizable` implementation from removed `minimize.rs` to `minimisation.rs`
+
+### Fixed
+
+- **Cache sharing documentation**: Correctly documented that `OnceLock::clone()` copies content, so caches ARE shared between clones via Arc
+- **Bdd/BoolExpr references**: Cleaned up all documentation treating them as separate types (they're unified since v3.1.1)
+
+### Documentation Structure
+
+All markdown documentation files remain in `docs/` for GitHub display, but are now embedded into rustdoc where appropriate:
+- `docs/BOOLEAN_EXPRESSIONS.md` → embedded in `expression` module
+- `docs/EXAMPLES.md` → embedded in `examples` module  
+- `docs/PLA_FORMAT.md` → embedded in `cover::pla` module
+- `docs/CLI.md`, `docs/INSTALLATION.md` → kept standalone for GitHub-friendly access
+
+**Note:** This is a documentation-only release with no functional changes to the API or implementation.
+
 ## [3.1.1] - 2025-11-12
 
 ### Changed

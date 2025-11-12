@@ -14,34 +14,49 @@ impl BoolExpr {
     /// 1. **Fast BDD equality check** - Compare the internal BDD representations directly. BDDs use
     ///    canonical representation, so equal BDDs guarantee equivalence. Very fast (O(e) where
     ///    e is expression size).
-    /// 2. **Exact minimization fallback** - If BDDs differ, use exact minimization for thorough
-    ///    verification. This handles edge cases and provides definitive results.
-    ///
-    /// Much more efficient than exhaustive truth table comparison for expressions with many variables.
+    /// 2. **Exact minimisation fallback** - If BDD representations differ, uses exact Espresso
+    ///    minimisation to guarantee equality. This handles cases where equivalent functions present
+    ///    different BDDs (not supposed to happen, but better safe than sorry). Even exact
+    ///    minimisation is typically much faster than exhaustive O(2^n) evaluation.
     ///
     /// # Performance
     ///
-    /// - **Typical case**: O(n) where n is the number of variables (BDD check)
-    /// - **Worst case**: O(2^n) for exact minimization fallback (rare)
+    /// - **BDD match**: O(1) constant-time check when BDD representations are identical
+    /// - **BDD mismatch**: Espresso exact minimisation (typically still faster than O(2^n))
     ///
-    /// Most equivalences are determined by the fast BDD check. The exact minimization
-    /// fallback only runs when BDD representations differ.
+    /// The BDD check is attempted first. If BDDs differ, Espresso exact minimisation
+    /// is used to guarantee equality in cases where equivalent functions present different BDDs.
+    ///
+    /// # BDD-Only Checking
+    ///
+    /// If you're content with BDD-only equality checking (without the Espresso fallback),
+    /// you can use the `==` operator instead, which performs a constant-time O(1) comparison
+    /// of BDD representations:
+    ///
+    /// ```
+    /// use espresso_logic::BoolExpr;
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// let expr1 = a.and(&b);
+    /// let expr2 = a.and(&b);
+    ///
+    /// // Constant-time BDD comparison (O(1))
+    /// assert!(expr1 == expr2);
+    /// ```
     ///
     /// # Performance Comparison to v3.0
     ///
-    /// Version 3.1.1+ uses unified BDD architecture (all expressions are BDDs internally) which provides:
+    /// Version 3.1.1+ uses unified BDD architecture (all expressions are BDDs from construction):
     ///
-    /// - **First call on expression**: O(n × m) where n = vars, m = nodes in expression tree
-    /// - **Subsequent calls**: O(1) thanks to BDD caching
-    /// - **Minimization fallback**: O(m × k) where m is cubes and k is variables
-    /// - **Old approach (v3.0)**: O(2^n) where n is the number of variables (exponential)
+    /// - **BDD comparison**: O(1) constant-time check (BoolExpr is already a BDD)
+    /// - **Minimisation fallback**: Espresso heuristic (exact mode, typically efficient)
+    /// - **Old approach (v3.0)**: O(2^n) exhaustive truth table evaluation (exponential)
     ///
     /// This makes equivalency checking **dramatically faster** for expressions with many variables:
     /// - 10 variables: 1,024× faster
     /// - 20 variables: 1,048,576× faster
     /// - 30 variables: Previously impossible, now feasible
-    ///
-    /// [`Bdd`]: crate::expression::Bdd
     ///
     /// # Examples
     ///

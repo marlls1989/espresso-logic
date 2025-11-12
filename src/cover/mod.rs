@@ -1,8 +1,94 @@
-//! Cover types and traits for Boolean function minimization
+//! Cover types and traits for Boolean function minimisation
 //!
-//! This module provides the unified Cover type for working with covers (sum-of-products representations
-//! of Boolean functions). The Cover type supports dynamic dimensions that grow as cubes are added,
-//! and can work with both manually constructed cubes and boolean expressions.
+//! This module provides the [`Cover`] type for working with covers - sum-of-products
+//! (truth table) representations of Boolean functions.
+//!
+//! # What is a Cover?
+//!
+//! A **cover** represents a Boolean function as a set of **cubes** (product terms). Each cube
+//! specifies input conditions and corresponding output values. Covers are the fundamental
+//! representation used by the Espresso minimisation algorithm.
+//!
+//! ## Key Concepts
+//!
+//! - **Cube**: A product term - one row in a truth table
+//! - **Input pattern**: Binary values (0, 1) or don't-cares (-) for input variables
+//! - **Output pattern**: Binary values showing which outputs are active
+//! - **Cover type**: Specifies which sets are included (F, FD, FR, or FDR)
+//!
+//! ## Cover Types
+//!
+//! - **F Type** (ON-set only) - Specifies where outputs are 1
+//! - **FD Type** (ON-set + Don't-cares) - Adds flexibility for optimisation
+//! - **FR Type** (ON-set + OFF-set) - Specifies both 1s and 0s explicitly
+//! - **FDR Type** (Complete) - ON-set + Don't-cares + OFF-set
+//!
+//! # When to Use Cover vs BoolExpr
+//!
+//! Use **[`Cover`]** when you need:
+//! - Manual truth table construction
+//! - Direct cube manipulation
+//! - Multi-output functions
+//! - Fine control over don't-care and off-sets
+//!
+//! Use **[`BoolExpr`](crate::BoolExpr)** when you need:
+//! - Expression parsing or composition
+//! - High-level boolean operations
+//! - Automatic BDD-based simplification
+//! - Single-output functions
+//!
+//! # Dynamic Dimensions
+//!
+//! Unlike the low-level API, [`Cover`] has **dynamic dimensions** that grow automatically
+//! as cubes are added. This eliminates the need for manual dimension tracking.
+//!
+//! # Examples
+//!
+//! ## Basic Usage
+//!
+//! ```
+//! use espresso_logic::{Cover, CoverType, Minimizable};
+//!
+//! // Create a cover for XOR function
+//! let mut cover = Cover::new(CoverType::F);
+//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
+//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
+//!
+//! println!("Before: {} cubes", cover.num_cubes());
+//!
+//! // Minimise
+//! let minimised = cover.minimize().unwrap();
+//! println!("After: {} cubes", minimised.num_cubes());
+//! ```
+//!
+//! ## With Boolean Expressions
+//!
+//! ```
+//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! let expr = BoolExpr::parse("a * b + a * b * c")?;
+//!
+//! // Convert expression to cover
+//! let mut cover = Cover::new(CoverType::F);
+//! cover.add_expr(&expr, "output")?;
+//!
+//! // Minimise
+//! let minimised = cover.minimize()?;
+//!
+//! // Convert back to expression
+//! let result = minimised.to_expr("output")?;
+//! println!("Result: {}", result);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # See Also
+//!
+//! - [`CoverType`] - Different types of covers (F, FD, FR, FDR)
+//! - [`Cube`] - Individual product terms in a cover
+//! - [`Minimizable`] - Trait for minimisation operations
+//! - [`pla`] - PLA file I/O for reading/writing covers in original Espresso format
 
 // Module declarations
 mod conversions;
@@ -13,6 +99,7 @@ mod expressions;
 mod iterators;
 mod labels;
 mod minimisation;
+pub mod pla;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeData, CubeType};
@@ -20,9 +107,6 @@ pub use dnf::Dnf;
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
-
-// Internal re-export for expression module
-pub(crate) use minimisation::minimize_via_cover;
 
 // Import internal types for Cover implementation
 use labels::LabelManager;
@@ -67,28 +151,111 @@ impl CoverType {
     }
 }
 
-/// A unified cover type with dynamic dimensions
+/// A cover representing a Boolean function as sum-of-products (truth table)
 ///
-/// The `Cover` type represents a Boolean function as a sum-of-products (cover).
-/// It supports dynamic sizing - dimensions grow automatically as cubes are added.
-/// It can work with manually constructed cubes or boolean expressions.
+/// `Cover` is the primary type for working with truth tables and PLA files. It represents
+/// Boolean functions as a collection of **cubes** (product terms), where each cube specifies
+/// input patterns and corresponding output values.
+///
+/// # Structure
+///
+/// A cover consists of:
+///
+/// - **Inputs** - Boolean variables (columns in truth table)
+/// - **Outputs** - Function outputs (can have multiple outputs)
+/// - **Cubes** - Product terms, each specifying an input→output mapping
+/// - **Cover Type** - Which sets are included (F, FD, FR, or FDR)
+/// - **Labels** - Optional variable names for inputs/outputs
+///
+/// # Dynamic Dimensions
+///
+/// Unlike the low-level API, `Cover` has **dynamic dimensions** that automatically grow
+/// as cubes are added. This means:
+///
+/// - Start with an empty cover (0 inputs, 0 outputs)
+/// - Add cubes of any size - dimensions expand automatically
+/// - No need to pre-declare or track dimensions
+/// - Existing cubes are padded with don't-cares when dimensions grow
+///
+/// This makes `Cover` much easier to use than the low-level [`crate::espresso::EspressoCover`].
+///
+/// # Cover Types
+///
+/// Four types specify which sets the cover contains:
+///
+/// - **F** - ON-set only (where outputs are 1)
+/// - **FD** - ON-set + Don't-cares (flexibility for minimisation)
+/// - **FR** - ON-set + OFF-set (explicit 0s and 1s)
+/// - **FDR** - Complete (all three sets)
+///
+/// See [`CoverType`] for details.
+///
+/// # Input/Output Encoding
+///
+/// **Inputs** use three-valued logic:
+/// - `Some(true)` or `1` - Variable must be 1
+/// - `Some(false)` or `0` - Variable must be 0
+/// - `None` or `-` - Don't care (variable can be either)
+///
+/// **Outputs** specify membership in F/D/R sets:
+/// - `Some(true)` - Bit set in F cube (ON-set)
+/// - `Some(false)` - Bit set in R cube (OFF-set, only if cover type includes R)
+/// - `None` - Bit set in D cube (Don't-care, only if cover type includes D)
+///
+/// # Thread Safety
+///
+/// `Cover` is `Send` and `Sync`, allowing it to be freely moved between and shared across threads.
+/// Unlike the low-level API, `Cover` doesn't hold a thread-local Espresso instance - it only
+/// creates one temporarily when `.minimize()` is called, then releases it immediately after.
+/// This makes `Cover` ideal for concurrent applications.
 ///
 /// # Examples
+///
+/// ## Basic Truth Table
 ///
 /// ```
 /// use espresso_logic::{Cover, CoverType, Minimizable};
 ///
-/// // Create an empty cover
+/// // XOR function
 /// let mut cover = Cover::new(CoverType::F);
+/// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
+/// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 ///
-/// // Add cubes (dimensions grow automatically)
-/// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-/// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+/// println!("Before: {} cubes", cover.num_cubes());
+/// let minimised = cover.minimize().unwrap();
+/// println!("After: {} cubes", minimised.num_cubes());
+/// ```
 ///
-/// // Minimize it (returns new instance)
-/// cover = cover.minimize().unwrap();
+/// ## With Labels
 ///
-/// println!("Minimized to {} cubes", cover.num_cubes());
+/// ```
+/// use espresso_logic::{Cover, CoverType};
+///
+/// let mut cover = Cover::with_labels(
+///     CoverType::F,
+///     &["a", "b", "c"],
+///     &["sum", "carry"],
+/// );
+///
+/// println!("Inputs: {:?}", cover.input_labels());
+/// println!("Outputs: {:?}", cover.output_labels());
+/// ```
+///
+/// ## From Boolean Expression
+///
+/// ```
+/// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+///
+/// # fn main() -> std::io::Result<()> {
+/// let expr = BoolExpr::parse("a * b + b * c")?;
+/// let mut cover = Cover::new(CoverType::F);
+/// cover.add_expr(&expr, "output")?;
+///
+/// let minimised = cover.minimize()?;
+/// let result = minimised.to_expr("output")?;
+/// println!("{}", result);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone)]
 pub struct Cover {

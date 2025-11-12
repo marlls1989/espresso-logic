@@ -1,7 +1,7 @@
 //! # Espresso Logic Minimizer
 //!
-//! This crate provides Rust bindings to the Espresso heuristic logic minimizer
-//! (Version 2.3), a classic tool from UC Berkeley for minimizing Boolean functions.
+//! This crate provides Rust bindings to the Espresso heuristic logic minimiser
+//! (Version 2.3), a classic tool from UC Berkeley for minimising Boolean functions.
 //!
 //! ## Overview
 //!
@@ -10,9 +10,9 @@
 //! useful for:
 //!
 //! - Digital logic synthesis
-//! - PLA (Programmable Logic Array) minimization
+//! - PLA (Programmable Logic Array) minimisation
 //! - Boolean function simplification
-//! - Logic optimization in CAD tools
+//! - Logic optimisation in CAD tools
 //!
 //! ## API Levels
 //!
@@ -24,7 +24,6 @@
 //!
 //! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, and the `expr!` macro
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
-//! - **[`PLAReader`]** and **[`PLAWriter`]** traits - File I/O for PLA format
 //!
 //! **Benefits:**
 //! - ✅ Automatic memory management
@@ -55,7 +54,7 @@
 //!
 //! See the [`espresso`] module documentation for detailed usage and safety guidelines.
 //!
-//! ## Three Ways to Use the High-Level API
+//! ## Using the High-Level API
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
@@ -95,11 +94,9 @@
 //! // Parse using standard operators: +, *, ~, ! (or & and |)
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //!
-//! // All expressions ARE BDDs internally (v3.1.1+)
-//! println!("BDD nodes: {}", expr.node_count());
-//!
-//! // Minimize
-//! let minimized = expr.minimize()?;
+//! // Minimise using Espresso algorithm
+//! let minimised = expr.minimize()?;
+//! println!("Minimised: {}", minimised);
 //! # Ok(())
 //! # }
 //! ```
@@ -161,9 +158,9 @@
 //! # }
 //! ```
 //!
-//! ### 3. PLA Files (Dynamic dimensions from files)
+//! ### 3. PLA Files
 //!
-//! Load and minimize PLA files:
+//! Covers can be read from and written to PLA format files (compatible with original Espresso):
 //!
 //! ```
 //! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
@@ -224,27 +221,25 @@
 //!
 //! ## Thread Safety and Concurrency
 //!
-//! **This library IS thread-safe!** The underlying C library uses **C11 thread-local storage**
-//! (`_Thread_local`) for all global state. Each thread gets its own independent copy of all
-//! global variables, making concurrent use completely safe without any synchronization.
+//! ### High-Level API ([`Cover`])
 //!
-//! ### Multi-threaded Applications
-//!
-//! Just use `Cover` directly - each thread executes Espresso independently:
+//! [`Cover`] is `Send` and `Sync`, making it freely shareable across threads. The key
+//! advantage is that Espresso instances are created **lazily on-demand** - only when
+//! `.minimize()` is called, the thread-local Espresso instance is created for that thread.
 //!
 //! ```
 //! use espresso_logic::{Cover, CoverType, Minimizable};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Spawn threads - no synchronization needed!
+//! // Covers can be freely moved between threads
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
 //!         let mut cover = Cover::new(CoverType::F);
 //!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 //!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //!         
-//!         // Thread-safe - each thread executes with independent global state
+//!         // Creates thread-local Espresso instance on first minimize()
 //!         cover = cover.minimize()?;
 //!         Ok(cover.num_cubes())
 //!     })
@@ -258,10 +253,11 @@
 //! # }
 //! ```
 //!
-//! **How it works:**
-//! - **Thread-local storage**: All C global variables use `_Thread_local`
-//! - **Independent state**: Each thread has its own copy of all globals
-//! - **Native safety**: Uses standard C11 thread safety features
+//! ### Low-Level API ([`espresso`])
+//!
+//! The low-level API uses C11 thread-local storage. Each thread gets its own independent
+//! Espresso instance and global state, but types are `!Send` and `!Sync`. See the
+//! [`espresso`] module for details on dimension constraints.
 //!
 //! ## Using the Low-Level API (Advanced)
 //!
@@ -333,18 +329,19 @@ pub mod cover;
 pub mod error;
 pub mod espresso;
 pub mod expression;
-pub mod pla;
 pub mod sys;
 
+// Documentation-only module
+#[cfg(doc)]
+pub mod examples;
+
 // Re-export high-level public API
+pub use cover::pla::{PLAReader, PLAWriter};
 pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable};
-pub use error::{
-    AddExprError, CoverError, CubeError, ExpressionParseError, InstanceError, MinimizationError,
-    PLAError, PLAReadError, PLAWriteError, ParseBoolExprError, ToExprError,
-};
 pub use espresso::EspressoConfig;
-pub use expression::{Bdd, BoolExpr, ExprNode};
-pub use pla::{PLAReader, PLAWriter};
+#[allow(deprecated)]
+pub use expression::Bdd;
+pub use expression::{BoolExpr, ExprNode};
 
 // Re-export procedural macro
 pub use espresso_logic_macros::expr;

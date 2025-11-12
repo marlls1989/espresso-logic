@@ -1,7 +1,50 @@
 //! PLA (Programmable Logic Array) format support
 //!
-//! This module handles PLA file I/O for the unified `Cover` type, supporting
-//! dynamic dimensions when working with PLA files.
+//! This module provides traits and utilities for reading and writing Boolean functions
+//! in the PLA (Programmable Logic Array) format, a standard text-based format developed
+//! at UC Berkeley for representing Boolean functions.
+//!
+//! # Overview
+//!
+//! The PLA format represents Boolean functions as truth tables with:
+//! - Input variables and their patterns (0, 1, or don't-care)
+//! - Output variables and their values
+//! - Optional variable labels for readability
+//!
+//! This module provides two main traits:
+//!
+//! - [`PLAReader`] - For types that can be constructed from PLA format
+//! - [`PLAWriter`] - For types that can be serialised to PLA format
+//!
+//! Both traits are implemented for [`Cover`](crate::Cover), making PLA file I/O
+//! straightforward and idiomatic.
+//!
+//! # Quick Example
+//!
+//! ```
+//! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! # let pla_text = ".i 2\n.o 1\n.p 2\n01 1\n10 1\n.e\n";
+//! # let cover = Cover::from_pla_string(pla_text)?;
+//! // Read PLA file
+//! // let cover = Cover::from_pla_file("input.pla")?;
+//!
+//! // Minimise
+//! let minimised = cover.minimize()?;
+//!
+//! // Write result
+//! // minimised.to_pla_file("output.pla", CoverType::F)?;
+//! let pla_string = minimised.to_pla_string(CoverType::F)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # PLA Format Specification
+//!
+//! For complete details on the PLA file format including directives, encoding rules,
+//! and examples, see the comprehensive guide below:
+#![doc = include_str!("../../../docs/PLA_FORMAT.md")]
 
 pub mod error;
 
@@ -12,7 +55,7 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::cover::{CoverType, Cube, CubeType};
+use super::{CoverType, Cube, CubeType};
 
 /// Internal trait for types that can be serialized to and deserialized from PLA format
 ///

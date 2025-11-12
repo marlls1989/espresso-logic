@@ -1,7 +1,7 @@
 //! Tests for the cover module
 
+use super::pla::{PLAReader, PLAWriter};
 use super::*;
-use crate::pla::{PLAReader, PLAWriter};
 
 #[test]
 fn test_cover_creation() {

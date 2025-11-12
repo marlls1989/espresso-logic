@@ -12,7 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
-impl crate::pla::PLASerialisable for Cover {
+impl super::pla::PLASerialisable for Cover {
     type CubesIter<'a> = std::slice::Iter<'a, Cube>;
 
     fn num_inputs(&self) -> usize {
@@ -88,10 +88,10 @@ impl From<crate::expression::BoolExpr> for Cover {
     }
 }
 
-/// Convert a `&Bdd` into a `Cover` with a single output named "out"
+/// Convert a `&BoolExpr` into a `Cover` with a single output named "out"
 ///
-/// This conversion extracts the cubes from the BDD representation without
-/// requiring ownership of the BDD.
+/// This conversion extracts the cubes from the internal BDD representation without
+/// requiring ownership of the expression.
 ///
 /// # Examples
 ///
@@ -99,15 +99,15 @@ impl From<crate::expression::BoolExpr> for Cover {
 /// use espresso_logic::{BoolExpr, Cover};
 ///
 /// let a = BoolExpr::variable("a");
-/// // Note: BoolExpr IS a BDD internally (v3.1.1+), no conversion needed
+/// // Note: BoolExpr uses BDD internally (v3.1.1+)
 ///
 /// let cover = Cover::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&crate::expression::Bdd> for Cover {
-    fn from(bdd: &crate::expression::Bdd) -> Self {
+impl From<&crate::expression::BoolExpr> for Cover {
+    fn from(expr: &crate::expression::BoolExpr) -> Self {
         // Convert to DNF
-        let dnf = crate::cover::dnf::Dnf::from(bdd);
+        let dnf = crate::cover::dnf::Dnf::from(expr);
         let cubes = dnf.cubes();
 
         // Collect all variables from the DNF cubes

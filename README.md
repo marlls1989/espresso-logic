@@ -3,24 +3,27 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A Rust library for minimizing Boolean functions using the classic Espresso heuristic logic minimizer from UC Berkeley. Perfect for digital logic synthesis, PLA optimization, and Boolean function simplification.
+Rust bindings to the Espresso heuristic logic minimiser from UC Berkeley, with a modern high-level API for Boolean function minimisation.
 
-## Why Espresso?
+## Overview
 
-Espresso takes Boolean functions in sum-of-products form and produces minimal or near-minimal equivalents. This Rust crate provides safe, thread-safe bindings with modern features like expression parsing and operator overloading.
+Espresso takes Boolean functions and produces minimal or near-minimal equivalent representations. This Rust crate provides safe, thread-safe bindings with modern features:
+
+- **High-Level API** - Boolean expressions and truth tables (covers) with automatic dimension tracking
+- **Automatic Minimisation** - Heuristic and exact algorithms
+- **Multi-Output Support** - Minimise multiple outputs simultaneously
+- **Thread-Safe** - Safe concurrent execution
+- **Flexible Input** - Parse expressions, build truth tables, or load PLA files
 
 ## Features
 
-- **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
-- **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
-- **Unified BDD Representation (v3.1.1+)** - All boolean expressions use BDD as their canonical internal representation, providing efficient operations, structural sharing, and automatic simplification
-- **Flexible Parser** - Supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations
-- **Expression Composition** - Seamlessly compose parsed, minimised, and constructed expressions
-- **Algebraic Factorisation (v3.1.1+)** - Beautiful multi-level logic display with common factor extraction
-- **Both Algorithms** - Exposes both heuristic and exact minimisation algorithms from Espresso
-- **PLA File Support** - Read and write Berkeley PLA format
-- **Two API Levels** - High-level for ease of use, low-level for maximum control
-- **Well Documented** - Comprehensive API docs and examples
+- **Boolean Expressions** - Parse and compose expressions with the `expr!` macro, supporting both mathematical (`*`, `+`) and logical (`&`, `|`) notation
+- **Cover API** - Direct truth table manipulation with automatic dimension management for precise control
+- **Multi-Output Functions** - Minimise multiple outputs simultaneously in a single cover
+- **Advanced Minimisation** - Both heuristic (fast, ~99% optimal) and exact (guaranteed minimal) algorithms
+- **Don't-Care Optimisation** - FD, FR, and FDR cover types for flexible optimisation with don't-care and off-sets
+- **Thread-Safe** - Safe concurrent execution with C11 thread-local storage
+- **PLA File Support** - Read and write Berkeley PLA format for interoperability
 
 ## Quick Start
 
@@ -31,7 +34,7 @@ Add to your `Cargo.toml`:
 espresso-logic = "3.1"
 ```
 
-### Boolean Expression Minimization
+### Boolean Expression Minimisation
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
@@ -41,103 +44,75 @@ fn main() -> std::io::Result<()> {
     let redundant = expr!("a" * "b" + "a" * "b" * "c");
     println!("Original: {}", redundant);
     
-    // Minimize it
-    let minimized = redundant.minimize()?;
-    println!("Minimized: {}", minimized);  // Output: a * b
+    // Minimise it
+    let minimised = redundant.minimize()?;
+    println!("Minimised: {}", minimised);  // Output: a * b
     
     Ok(())
 }
 ```
 
-### Truth Table Minimization
+### Truth Table Minimisation (Cover API)
 
 ```rust
 use espresso_logic::{Cover, CoverType};
 
 fn main() -> std::io::Result<()> {
+    // Create a cover for XOR function
     let mut cover = Cover::new(CoverType::F);
     
-    // XOR function: output is 1 when inputs differ
+    // Add cubes: output is 1 when inputs differ
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)])?;  // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)])?;  // 10 -> 1
     
-    cover.minimize()?;
-    println!("Minimized to {} cubes", cover.num_cubes());
+    let minimised = cover.minimize()?;
+    println!("Minimised to {} cubes", minimised.num_cubes());
     
     Ok(())
 }
 ```
 
-### PLA File Processing
-
-```rust
-use espresso_logic::{Cover, CoverType, PLAReader, PLAWriter};
-
-fn main() -> std::io::Result<()> {
-    let mut cover = Cover::from_pla_file("input.pla")?;
-    cover.minimize()?;
-    cover.to_pla_file("output.pla", CoverType::F)?;
-    Ok(())
-}
-```
-
-### Binary Decision Diagrams
-
-**Note (v3.1.1+):** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. All expressions use BDD as their internal representation, providing canonical form, efficient operations, and automatic simplification.
-
-```rust
-use espresso_logic::{BoolExpr, Bdd};
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    let expr = a.and(&b).or(&b.and(&c));
-    
-    // BoolExpr IS a BDD - canonical representation
-    println!("BDD has {} nodes", expr.node_count());
-    
-    // All BoolExpr instances support efficient BDD operations
-    let combined = expr.and(&c);
-    
-    // Display uses algebraic factorisation (v3.1.1+)
-    println!("Result: {}", combined);
-}
-```
+**Note:** Covers support multi-output functions, don't-care optimisation, and PLA file I/O.
 
 ## API Overview
 
-### High-Level API (Recommended)
+Choose the right API for your use case:
 
-Use `BoolExpr` (alias `Bdd`) and `Cover` for most applications:
+### BoolExpr - For Expression-Based Logic
 
-- **Unified BDD representation (v3.1.1+)** - All expressions are BDDs internally
-- Automatic memory management and dimension tracking
-- Thread-safe by design
-- Clean, idiomatic Rust API
-- Canonical representation with structural sharing
-- Efficient operations via hash consing and memoisation
+Use when you need to:
+- Parse or compose Boolean expressions
+- Work with single-output functions
+- Use high-level operators and the `expr!` macro
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{BoolExpr, expr, Minimizable};
 
-// Parse with flexible notation: * or & for AND, + or | for OR
 let xor = expr!("a" * !"b" + !"a" * "b");
-let xor_alt = BoolExpr::parse("a & !b | !a & b")?;
-
-// All expressions ARE BDDs - canonical representation
-// Minimise to get optimal logic
 let minimised = xor.minimize()?;
-println!("{}", minimised);  // Uses algebraic factorisation (v3.1.1+)
 ```
 
-### Low-Level API (Advanced)
+### Cover - For Truth Tables and Multi-Output Functions
 
-Direct `espresso::Espresso` access for specialized needs:
+Use when you need to:
+- Build truth tables directly with cubes
+- Handle multi-output functions
+- Control don't-care and off-sets (FD, FR, FDR types)
+- Read/write PLA files
 
+```rust
+use espresso_logic::{Cover, CoverType};
+
+let mut cover = Cover::new(CoverType::FD);  // with don't-cares
+cover.add_cube(&[Some(true), None], &[Some(true)])?;  // 1- -> 1
+```
+
+### Low-Level API - For Maximum Control
+
+Use the `espresso` module directly when you need:
 - Access to intermediate covers (ON-set, don't-care, OFF-set)
-- Custom don't-care/off-set optimization
 - Maximum performance (~5-10% faster)
+- Fine-grained control over the minimisation process
 
 See the [`espresso` module documentation](https://docs.rs/espresso-logic/latest/espresso_logic/espresso/) for details.
 

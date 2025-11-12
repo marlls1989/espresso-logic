@@ -60,11 +60,9 @@ use std::sync::Arc;
 ///
 /// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
 /// - **Blanket implementation** (v3.1+): For `T where &T: Into<Dnf>, T: From<Dnf>`
-///   - Automatically covers [`BoolExpr`] and [`Bdd`] (unified in v3.1.1+)
+///   - Automatically covers [`BoolExpr`] (v3.1.1+)
 ///   - Workflow: Expression → Dnf (from internal BDD representation) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
 ///   - DNF is extracted from the internal BDD representation, minimized, then used to create a new expression
-///
-/// [`Bdd`]: crate::Bdd
 ///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
@@ -331,5 +329,50 @@ pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
     Dnf::from_cubes(&cubes)
 }
 
-// Note: The Minimizable implementation for BoolExpr has been moved to
-// src/expression/minimize.rs where it belongs organizationally.
+/// Blanket implementation of Minimizable for types convertible to/from Dnf
+///
+/// This provides automatic minimization support for any type that can convert
+/// to and from [`Dnf`]. The implementation follows this workflow:
+///
+/// 1. Convert `&T` to `Dnf` (via `Into<Dnf>`)
+/// 2. Convert Dnf to Cover with labeled variables
+/// 3. Minimize Cover using Espresso
+/// 4. Convert minimized Cover back to Dnf
+/// 5. Convert Dnf back to original type (via `From<Dnf>`)
+///
+/// The DNF serves as the intermediary representation between boolean expressions
+/// and covers, ensuring all conversions go through the efficient BDD path.
+impl<T> Minimizable for T
+where
+    for<'a> &'a T: Into<Dnf>,
+    T: From<Dnf>,
+{
+    fn minimize_with_config(
+        &self,
+        config: &crate::EspressoConfig,
+    ) -> Result<Self, MinimizationError> {
+        // Convert to Dnf (goes through BDD for canonical representation)
+        let dnf: Dnf = self.into();
+
+        // Minimize via cover using the heuristic algorithm
+        let minimized_dnf =
+            minimize_via_cover(&dnf, config, |cover, cfg| cover.minimize_with_config(cfg))?;
+
+        Ok(T::from(minimized_dnf))
+    }
+
+    fn minimize_exact_with_config(
+        &self,
+        config: &crate::EspressoConfig,
+    ) -> Result<Self, MinimizationError> {
+        // Convert to Dnf (goes through BDD for canonical representation)
+        let dnf: Dnf = self.into();
+
+        // Minimize via cover using the exact algorithm
+        let minimized_dnf = minimize_via_cover(&dnf, config, |cover, cfg| {
+            cover.minimize_exact_with_config(cfg)
+        })?;
+
+        Ok(T::from(minimized_dnf))
+    }
+}

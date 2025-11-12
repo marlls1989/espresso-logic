@@ -6,7 +6,7 @@
 //! - [`espresso::error`](crate::espresso::error) - Instance and cube errors
 //! - [`cover::error`](crate::cover::error) - Cover operation errors  
 //! - [`expression::error`](crate::expression::error) - Expression parsing errors
-//! - [`pla::error`](crate::pla::error) - PLA format errors
+//! - [`cover::pla::error`](crate::cover::pla::error) - PLA format errors
 //!
 //! # Organization
 //!
@@ -37,6 +37,6 @@
 
 // Re-export error types from submodules for backward compatibility
 pub use crate::cover::error::{AddExprError, CoverError, ToExprError};
+pub use crate::cover::pla::error::{PLAError, PLAReadError, PLAWriteError};
 pub use crate::espresso::error::{CubeError, InstanceError, MinimizationError};
 pub use crate::expression::error::{ExpressionParseError, ParseBoolExprError};
-pub use crate::pla::error::{PLAError, PLAReadError, PLAWriteError};
