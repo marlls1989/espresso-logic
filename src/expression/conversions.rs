@@ -91,7 +91,7 @@ impl From<Dnf> for BoolExpr {
         let expr = terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap();
 
         // Cache the source DNF (likely minimised from Espresso)
-        expr.cache_dnf(dnf);
+        let _ = expr.dnf_cache.set(dnf);
 
         expr
     }

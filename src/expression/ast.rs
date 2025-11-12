@@ -80,18 +80,11 @@ impl BoolExpr {
     /// Extracts cubes from the BDD and applies algebraic factorisation to produce
     /// a compact, readable expression.
     ///
-    /// Uses two-level caching for both DNF and AST:
-    /// 1. BoolExpr's own dnf_cache (strong reference, lives with this BoolExpr)
-    /// 2. BddManager's dnf_cache and ast_cache (weak references, shared across BoolExprs)
+    /// Uses local caching for both DNF and AST.
     pub(super) fn to_ast_optimised(&self) -> Arc<BoolExprAst> {
-        // Check AST cache first (fastest path)
-        {
-            let mgr = self.manager.read().unwrap();
-            if let Some(weak) = mgr.ast_cache.get(&self.root) {
-                if let Some(ast) = weak.upgrade() {
-                    return ast;
-                }
-            }
+        // Check local AST cache first
+        if let Some(ast) = self.ast_cache.get() {
+            return Arc::clone(ast);
         }
 
         // AST not cached, get DNF and factorise
@@ -107,11 +100,8 @@ impl BoolExpr {
         // Use factorisation to build a nice AST
         let ast = crate::expression::factorization::factorise_cubes_to_ast(cube_terms);
 
-        // Cache the AST in the manager for sharing
-        {
-            let mut mgr = self.manager.write().unwrap();
-            mgr.ast_cache.insert(self.root, Arc::downgrade(&ast));
-        }
+        // Cache locally
+        let _ = self.ast_cache.set(Arc::clone(&ast));
 
         ast
     }

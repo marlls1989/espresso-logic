@@ -73,12 +73,6 @@ pub(super) struct BddManager {
     pub(super) id_to_var: Vec<Arc<str>>,
     /// Cache for ITE operations: (f, g, h) -> result
     pub(super) ite_cache: HashMap<(NodeId, NodeId, NodeId), NodeId>,
-    /// Cache for DNF: NodeId -> Weak<RwLock<Dnf>>
-    /// Weak references allow sharing mutable DNF across BDDs without preventing cleanup
-    pub(super) dnf_cache: HashMap<NodeId, Weak<RwLock<crate::cover::Dnf>>>,
-    /// Cache for factorised ASTs: NodeId -> Weak<BoolExprAst>
-    /// Weak references allow sharing factorised ASTs without preventing cleanup
-    pub(super) ast_cache: HashMap<NodeId, Weak<super::BoolExprAst>>,
 }
 
 impl BddManager {
@@ -102,8 +96,6 @@ impl BddManager {
                 var_to_id: BTreeMap::new(),
                 id_to_var: Vec::new(),
                 ite_cache: HashMap::new(),
-                dnf_cache: HashMap::new(),
-                ast_cache: HashMap::new(),
             }));
             *guard = Arc::downgrade(&manager);
             manager

@@ -140,10 +140,10 @@ pub struct BoolExpr {
     manager: Arc<RwLock<BddManager>>,
     /// Root node ID in the BDD
     root: NodeId,
-    /// Cached DNF (cubes) for this BDD, kept alive with strong reference
-    /// This avoids expensive BDD traversal when converting to expressions
-    /// Uses OnceLock to adopt shared RwLock from manager for mutable caching
-    dnf_cache: OnceLock<Arc<RwLock<crate::cover::Dnf>>>,
+    /// Cached DNF (cubes) for this BDD
+    /// This avoids expensive BDD traversal when converting to DNF
+    /// Uses OnceLock for lazy initialization
+    dnf_cache: OnceLock<crate::cover::Dnf>,
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
 }
@@ -223,107 +223,23 @@ impl BoolExpr {
         self.clone()
     }
 
-    /// Get or create the DNF representation with proper caching
+    /// Get or create the DNF representation with local caching
     ///
-    /// Uses double-check locking to prevent cache fragmentation from race conditions.
+    /// Extracts cubes from BDD on first access and caches for subsequent calls.
     fn get_or_create_dnf(&self) -> crate::cover::Dnf {
         // Check local cache
-        if let Some(arc) = self.dnf_cache.get() {
-            return arc.read().unwrap().clone();
+        if let Some(dnf) = self.dnf_cache.get() {
+            return dnf.clone(); // Cheap Arc clone
         }
 
-        // Check manager cache (first check)
-        let from_manager = {
-            let mgr = self.manager.read().unwrap();
-            mgr.dnf_cache
-                .get(&self.root)
-                .and_then(|weak| weak.upgrade())
-        };
-
-        if let Some(arc) = from_manager {
-            // Found in manager - adopt and return
-            let dnf = arc.read().unwrap().clone();
-            let _ = self.dnf_cache.set(arc);
-            return dnf;
-        }
-
-        // Not cached - extract from BDD (expensive, outside locks)
+        // Not cached - extract from BDD
         let cubes = self.extract_cubes_from_bdd();
         let dnf = crate::cover::Dnf::from_cubes(&cubes);
 
-        // Acquire write lock and double-check (someone may have populated while we extracted)
-        let mut mgr = self.manager.write().unwrap();
+        // Cache it locally
+        let _ = self.dnf_cache.set(dnf.clone());
 
-        let final_arc =
-            if let Some(existing) = mgr.dnf_cache.get(&self.root).and_then(|w| w.upgrade()) {
-                // Someone else populated it - use theirs
-                existing
-            } else {
-                // Still not there - insert ours
-                let arc = Arc::new(RwLock::new(dnf));
-                mgr.dnf_cache.insert(self.root, Arc::downgrade(&arc));
-                arc
-            };
-
-        drop(mgr); // Release write lock
-
-        // Update local cache with final Arc
-        let result = final_arc.read().unwrap().clone();
-        let _ = self.dnf_cache.set(final_arc);
-
-        result
-    }
-
-    /// Create a new BoolExpr with the same BDD but fresh caches
-    ///
-    /// This is used by minimization to avoid copying the old AST cache.
-    /// The new instance will share the same manager and root NodeId but
-    /// have empty caches that can be populated with minimized DNF/AST.
-    pub(crate) fn with_fresh_caches(&self) -> Self {
-        BoolExpr {
-            manager: Arc::clone(&self.manager),
-            root: self.root,
-            dnf_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
-    }
-
-    /// Cache a DNF with proper synchronisation
-    ///
-    /// Updates the cache only if the new DNF is smaller (fewer cubes).
-    pub(crate) fn cache_dnf(&self, dnf: crate::cover::Dnf) {
-        // Check local cache
-        if let Some(arc) = self.dnf_cache.get() {
-            let mut cache = arc.write().unwrap();
-            if dnf.cubes().len() < cache.cubes().len() {
-                *cache = dnf;
-            }
-            return;
-        }
-
-        // Acquire write lock on manager
-        let mut mgr = self.manager.write().unwrap();
-
-        let final_arc =
-            if let Some(existing) = mgr.dnf_cache.get(&self.root).and_then(|w| w.upgrade()) {
-                // Cache exists - update if better
-                let mut cache = existing.write().unwrap();
-                if dnf.cubes().len() < cache.cubes().len() {
-                    *cache = dnf;
-                }
-                drop(cache);
-                existing
-            } else {
-                // No cache - create new
-                let arc = Arc::new(RwLock::new(dnf));
-                mgr.dnf_cache.insert(self.root, Arc::downgrade(&arc));
-                arc
-            };
-
-        drop(mgr);
-
-        // Update local cache
-        let _ = self.dnf_cache.set(final_arc);
+        dnf
     }
 }
 

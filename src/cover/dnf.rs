@@ -25,12 +25,23 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Inner data for Dnf (wrapped in Arc for cheap cloning)
+#[derive(Debug, PartialEq, Eq)]
+struct DnfInner {
+    /// Product terms (cubes), each mapping variables to their polarity
+    cubes: Vec<BTreeMap<Arc<str>, bool>>,
+    /// Cached list of all variables (sorted alphabetically)
+    variables: Vec<Arc<str>>,
+}
+
 /// Disjunctive Normal Form representation of a boolean function
 ///
 /// A DNF is a sum (OR) of products (AND), where each product term is called a "cube".
 /// Each cube is represented as a map from variable names to their polarity:
 /// - `true` means the variable appears positively (e.g., `a`)
 /// - `false` means the variable appears negatively (e.g., `~a`)
+///
+/// Uses `Arc` internally for efficient cloning.
 ///
 /// # Examples
 ///
@@ -49,10 +60,7 @@ use std::sync::Arc;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dnf {
-    /// Product terms (cubes), each mapping variables to their polarity
-    cubes: Vec<BTreeMap<Arc<str>, bool>>,
-    /// Cached list of all variables (sorted alphabetically)
-    variables: Vec<Arc<str>>,
+    inner: Arc<DnfInner>,
 }
 
 impl Dnf {
@@ -68,8 +76,10 @@ impl Dnf {
     /// ```
     pub fn new() -> Self {
         Dnf {
-            cubes: Vec::new(),
-            variables: Vec::new(),
+            inner: Arc::new(DnfInner {
+                cubes: Vec::new(),
+                variables: Vec::new(),
+            }),
         }
     }
 
@@ -92,8 +102,10 @@ impl Dnf {
         let variables: Vec<_> = var_set.into_iter().collect();
 
         Dnf {
-            cubes: cubes.to_vec(),
-            variables,
+            inner: Arc::new(DnfInner {
+                cubes: cubes.to_vec(),
+                variables,
+            }),
         }
     }
 
@@ -109,7 +121,7 @@ impl Dnf {
     /// assert!(dnf.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
-        self.cubes.is_empty()
+        self.inner.cubes.is_empty()
     }
 
     /// Get the number of cubes (product terms) in the DNF
@@ -127,28 +139,28 @@ impl Dnf {
     /// assert_eq!(dnf.len(), 2); // Two cubes: a and b
     /// ```
     pub fn len(&self) -> usize {
-        self.cubes.len()
+        self.inner.cubes.len()
     }
 
     /// Get an iterator over the cubes
     ///
     /// Each cube is a map from variable names to their polarity.
     pub fn iter(&self) -> impl Iterator<Item = &BTreeMap<Arc<str>, bool>> {
-        self.cubes.iter()
+        self.inner.cubes.iter()
     }
 
     /// Get a reference to the cubes
     ///
     /// This provides direct access to the underlying cube representation.
     pub fn cubes(&self) -> &[BTreeMap<Arc<str>, bool>] {
-        &self.cubes
+        &self.inner.cubes
     }
 
     /// Get the cached variables (sorted alphabetically)
     ///
     /// Returns a slice of all variables that appear in the DNF.
     pub fn variables(&self) -> &[Arc<str>] {
-        &self.variables
+        &self.inner.variables
     }
 }
 

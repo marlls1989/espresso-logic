@@ -874,7 +874,7 @@ fn test_dnf_cache_updated_with_smaller_cover() {
 }
 
 #[test]
-fn test_dnf_cache_shared_across_clones() {
+fn test_dnf_cache_local_per_instance() {
     use crate::Minimizable;
 
     // Create the next_q_v1 expression from threshold_gate example
@@ -914,42 +914,34 @@ fn test_dnf_cache_shared_across_clones() {
     println!("Minimized cubes: {}", min_cubes.len());
     assert_eq!(min_cubes.len(), 15, "Should minimize to 15 cubes");
 
-    // NOW check if the original expr sees the minimized cache!
-    // Since they have the same NodeId (equivalent functions), the cache should be shared
+    // With local caching, original should NOT see the minimized cache
+    // Each instance has its own independent cache (functional programming principle)
     let cubes_after = expr.to_cubes();
     println!(
         "Original cubes AFTER minimization of clone: {}",
         cubes_after.len()
     );
 
-    // The original should now see the minimized cache if they share the same NodeId
-    if expr == minimized {
-        // Same NodeId - cache should be shared
-        println!("✓ Same NodeId - cache is shared!");
-        assert_eq!(
-            cubes_after.len(),
-            15,
-            "Original should see minimized cache (same NodeId)"
-        );
-    } else {
-        // Different NodeIds - caches are separate
-        println!("✗ Different NodeIds - caches are separate");
-        assert_eq!(
-            cubes_after.len(),
-            19,
-            "Original should keep its own cache (different NodeId)"
-        );
-    }
+    // They have the same NodeId (same function) but separate local caches
+    assert_eq!(expr, minimized, "Should have same NodeId (canonical BDD)");
+    assert_eq!(
+        cubes_after.len(),
+        19,
+        "Original should keep its own 19-cube cache (local caching)"
+    );
+    assert_eq!(
+        min_cubes.len(),
+        15,
+        "Minimized should have its own 15-cube cache (local caching)"
+    );
 
-    // clone2 should also reflect the update if it shares the NodeId
+    // clone2 also has its own cache
     let clone2_cubes = clone2.to_cubes();
-    if expr == minimized {
-        assert_eq!(
-            clone2_cubes.len(),
-            15,
-            "Clone should see minimized cache (same NodeId)"
-        );
-    }
+    assert_eq!(
+        clone2_cubes.len(),
+        19,
+        "Clone should have its own 19-cube cache (local caching)"
+    );
 
     // Verify equivalence
     assert!(expr.equivalent_to(&minimized));
