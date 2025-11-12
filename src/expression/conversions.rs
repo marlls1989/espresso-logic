@@ -2,8 +2,9 @@
 //!
 //! This module provides conversion implementations between `BoolExpr` and `Dnf`.
 //!
-//! Note: `BoolExpr` and `Bdd` are now the same type (with `Bdd` being a type alias).
-//! The From implementations below are identity conversions maintained for API compatibility.
+//! **Note (v3.1.1+):** `BoolExpr` and `Bdd` were unified—`Bdd` is now a type alias for `BoolExpr`.
+//! All boolean expressions use BDD as their internal representation. The conversions extract
+//! DNF from the internal BDD or create new BDD-backed expressions from DNF.
 
 use crate::cover::Dnf;
 use crate::expression::BoolExpr;
@@ -12,9 +13,10 @@ use crate::expression::BoolExpr;
 // Blanket Conversions TO Dnf
 // ============================================================================
 
-/// Convert BoolExpr to DNF (via BDD for efficiency)
+/// Convert BoolExpr to DNF
 ///
-/// Ensures conversions go through BDD for canonical form and optimisations.
+/// **Note (v3.1.1+):** BoolExpr IS a BDD internally. This extracts DNF from the internal
+/// BDD representation, ensuring canonical form and automatic optimisations.
 /// Uses caching to avoid expensive BDD traversal.
 impl From<BoolExpr> for Dnf {
     fn from(expr: BoolExpr) -> Self {
@@ -22,17 +24,18 @@ impl From<BoolExpr> for Dnf {
     }
 }
 
-/// Convert &BoolExpr to DNF (via BDD for efficiency)
+/// Convert &BoolExpr to DNF
 ///
-/// Uses caching to avoid expensive BDD traversal.
+/// **Note (v3.1.1+):** BoolExpr IS a BDD internally. This extracts DNF from the internal
+/// BDD representation. Uses caching to avoid expensive BDD traversal.
 impl From<&BoolExpr> for Dnf {
     fn from(expr: &BoolExpr) -> Self {
         expr.get_or_create_dnf()
     }
 }
 
-// Note: Bdd is now a type alias for BoolExpr, so From<Bdd> implementations
-// are covered by the From<BoolExpr> implementations above.
+// Note (v3.1.1+): Bdd is a type alias for BoolExpr (unified architecture).
+// From<Bdd> implementations are covered by From<BoolExpr> above.
 
 // ============================================================================
 // Conversions FROM Dnf
@@ -40,7 +43,9 @@ impl From<&BoolExpr> for Dnf {
 
 /// Convert DNF to BoolExpr
 ///
-/// Reconstructs a boolean expression in DNF form (OR of AND terms).
+/// **Note (v3.1.1+):** Creates a new BoolExpr with BDD as internal representation.
+/// Reconstructs a boolean expression in DNF form (OR of AND terms), which is then
+/// converted to BDD representation internally.
 ///
 /// # Examples
 ///

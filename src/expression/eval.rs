@@ -8,8 +8,10 @@ use std::sync::Arc;
 impl BoolExpr {
     /// Check if two boolean expressions are logically equivalent
     ///
-    /// Uses a two-phase BDD-based approach (v3.1+):
-    /// 1. **Fast BDD equality check** - Convert both expressions to BDDs and compare. BDDs use
+    /// **Note (v3.1.1+):** All `BoolExpr` instances are BDDs internally (unified architecture).
+    ///
+    /// Uses a two-phase BDD-based approach:
+    /// 1. **Fast BDD equality check** - Compare the internal BDD representations directly. BDDs use
     ///    canonical representation, so equal BDDs guarantee equivalence. Very fast (O(e) where
     ///    e is expression size).
     /// 2. **Exact minimization fallback** - If BDDs differ, use exact minimization for thorough
@@ -27,7 +29,7 @@ impl BoolExpr {
     ///
     /// # Performance Comparison to v3.0
     ///
-    /// Version 3.1+ uses BDD-based equivalence checking (via lazy caching) which provides:
+    /// Version 3.1.1+ uses unified BDD architecture (all expressions are BDDs internally) which provides:
     ///
     /// - **First call on expression**: O(n × m) where n = vars, m = nodes in expression tree
     /// - **Subsequent calls**: O(1) thanks to BDD caching
@@ -39,7 +41,7 @@ impl BoolExpr {
     /// - 20 variables: 1,048,576× faster
     /// - 30 variables: Previously impossible, now feasible
     ///
-    /// [`Bdd`]: crate::bdd::Bdd
+    /// [`Bdd`]: crate::expression::Bdd
     ///
     /// # Examples
     ///

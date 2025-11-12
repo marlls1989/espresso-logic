@@ -92,8 +92,11 @@
 //! use espresso_logic::{BoolExpr, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Parse using standard operators: +, *, ~, !
+//! // Parse using standard operators: +, *, ~, ! (or & and |)
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
+//!
+//! // All expressions ARE BDDs internally (v3.1.1+)
+//! println!("BDD nodes: {}", expr.node_count());
 //!
 //! // Minimize
 //! let minimized = expr.minimize()?;

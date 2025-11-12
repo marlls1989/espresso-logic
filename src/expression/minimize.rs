@@ -10,15 +10,16 @@ use crate::{EspressoConfig, Minimizable};
 
 /// Specialised implementation of Minimizable for BoolExpr
 ///
-/// Minimizes the DNF representation and rebuilds the BDD from it.
-/// Since BDDs are canonical, the resulting BoolExpr will have the same
-/// NodeId as the original, but with a minimised DNF cached.
+/// **Note (v3.1.1+):** `BoolExpr` and `Bdd` are unified—all expressions are BDDs internally.
+///
+/// Extracts DNF from the internal BDD representation, minimizes it via Espresso,
+/// then creates a new `BoolExpr` from the minimized DNF (which builds a new BDD).
 ///
 /// # Workflow
 ///
-/// 1. Extract DNF from BoolExpr (uses local cache if available)
+/// 1. Extract DNF from BoolExpr's internal BDD (uses local cache if available)
 /// 2. Minimize the DNF via Cover/Espresso
-/// 3. Convert minimised DNF back to BoolExpr
+/// 3. Create new BoolExpr from minimised DNF (builds new BDD internally)
 /// 4. The minimised DNF is cached in the new instance
 ///
 /// This ensures the minimised BoolExpr has the minimised DNF cached,

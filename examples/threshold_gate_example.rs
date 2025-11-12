@@ -1,10 +1,50 @@
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, ExprNode, Minimizable};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Compute XOR of two boolean expressions using expr! macro
 fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
     expr!(a * !b + !a * b)
+}
+
+// ============================================================================
+// Naive Expression AST (for accurate complexity measurement)
+// ============================================================================
+// This is a simple AST that captures expression structure as-built, without
+// any BDD optimization. It allows us to measure the true exponential blowup
+// that occurs with naive De Morgan expansion.
+
+/// Simple expression AST that captures structure without BDD optimization
+#[derive(Clone)]
+enum NaiveExpr {
+    Variable(Arc<str>),
+    And(Box<NaiveExpr>, Box<NaiveExpr>),
+    Or(Box<NaiveExpr>, Box<NaiveExpr>),
+    Not(Box<NaiveExpr>),
+}
+
+impl NaiveExpr {
+    fn variable(name: &str) -> Self {
+        NaiveExpr::Variable(Arc::from(name))
+    }
+
+    fn and(self, other: NaiveExpr) -> Self {
+        NaiveExpr::And(Box::new(self), Box::new(other))
+    }
+
+    fn or(self, other: NaiveExpr) -> Self {
+        NaiveExpr::Or(Box::new(self), Box::new(other))
+    }
+
+    fn not(self) -> Self {
+        NaiveExpr::Not(Box::new(self))
+    }
+}
+
+/// XOR for naive expressions
+fn naive_xor(a: NaiveExpr, b: NaiveExpr) -> NaiveExpr {
+    // a XOR b = (a * !b) + (!a * b)
+    a.clone().and(b.clone().not()).or(a.not().and(b))
 }
 
 // ============================================================================
@@ -17,80 +57,68 @@ fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
 // De Morgan's laws work TOP-DOWN: we push negations down through the tree.
 
 /// Compute naive DNF cube count using De Morgan's laws (top-down approach)
-fn naive_cube_count(expr: &BoolExpr) -> usize {
-    naive_to_dnf(expr).len()
+fn naive_cube_count(expr: &NaiveExpr) -> usize {
+    naive_to_dnf(expr, false).len()
 }
 
-/// Convert expression to DNF with naive De Morgan expansion (top-down)
-/// Uses fold_with_context to pass negation flag top-down through the tree
-fn naive_to_dnf(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    expr.fold_with_context(false, |node, negate, recurse_left, recurse_right| {
-        match node {
-            ExprNode::Constant(val) => {
-                let result_val = if negate { !val } else { val };
-                if result_val {
-                    vec![BTreeMap::new()] // TRUE = one empty cube
-                } else {
-                    vec![] // FALSE = no cubes
-                }
-            }
-            ExprNode::Variable(name) => {
-                let mut cube = BTreeMap::new();
-                cube.insert(Arc::from(name), !negate); // Flip polarity if negated
-                vec![cube]
-            }
-            ExprNode::Not(()) => {
-                // NOT: flip the negation flag for the child (De Morgan top-down!)
-                recurse_left(!negate)
-            }
-            ExprNode::And((), ()) => {
-                if negate {
-                    // De Morgan: ~(A * B) = ~A + ~B (OR of negated children)
-                    let left_cubes = recurse_left(true); // Negate left
-                    let right_cubes = recurse_right(true); // Negate right
-                    let mut result = left_cubes;
-                    result.extend(right_cubes);
-                    result
-                } else {
-                    // AND: cross product
-                    let left_cubes = recurse_left(false);
-                    let right_cubes = recurse_right(false);
-                    let mut result = Vec::new();
-                    for left_cube in &left_cubes {
-                        for right_cube in &right_cubes {
-                            if let Some(merged) = merge_cubes(left_cube, right_cube) {
-                                result.push(merged);
-                            }
+/// Convert naive expression to DNF with naive De Morgan expansion (top-down)
+/// Directly walks the NaiveExpr tree with pattern matching
+fn naive_to_dnf(expr: &NaiveExpr, negate: bool) -> Vec<BTreeMap<Arc<str>, bool>> {
+    match expr {
+        NaiveExpr::Variable(name) => {
+            let mut cube = BTreeMap::new();
+            cube.insert(Arc::clone(name), !negate); // Flip polarity if negated
+            vec![cube]
+        }
+        NaiveExpr::Not(inner) => {
+            // NOT: flip the negation flag (De Morgan top-down!)
+            naive_to_dnf(inner, !negate)
+        }
+        NaiveExpr::And(left, right) => {
+            if negate {
+                // De Morgan: ~(A * B) = ~A + ~B (OR of negated children)
+                let mut left_cubes = naive_to_dnf(left, true);
+                let right_cubes = naive_to_dnf(right, true);
+                left_cubes.extend(right_cubes);
+                left_cubes
+            } else {
+                // AND: cross product
+                let left_cubes = naive_to_dnf(left, false);
+                let right_cubes = naive_to_dnf(right, false);
+                let mut result = Vec::new();
+                for left_cube in &left_cubes {
+                    for right_cube in &right_cubes {
+                        if let Some(merged) = merge_cubes(left_cube, right_cube) {
+                            result.push(merged);
                         }
                     }
-                    result
                 }
-            }
-            ExprNode::Or((), ()) => {
-                if negate {
-                    // De Morgan: ~(A + B) = ~A * ~B (AND of negated children)
-                    let left_cubes = recurse_left(true); // Negate left
-                    let right_cubes = recurse_right(true); // Negate right
-                    let mut result = Vec::new();
-                    for left_cube in &left_cubes {
-                        for right_cube in &right_cubes {
-                            if let Some(merged) = merge_cubes(left_cube, right_cube) {
-                                result.push(merged);
-                            }
-                        }
-                    }
-                    result
-                } else {
-                    // OR: union
-                    let left_cubes = recurse_left(false);
-                    let right_cubes = recurse_right(false);
-                    let mut result = left_cubes;
-                    result.extend(right_cubes);
-                    result
-                }
+                result
             }
         }
-    })
+        NaiveExpr::Or(left, right) => {
+            if negate {
+                // De Morgan: ~(A + B) = ~A * ~B (AND of negated children)
+                let left_cubes = naive_to_dnf(left, true);
+                let right_cubes = naive_to_dnf(right, true);
+                let mut result = Vec::new();
+                for left_cube in &left_cubes {
+                    for right_cube in &right_cubes {
+                        if let Some(merged) = merge_cubes(left_cube, right_cube) {
+                            result.push(merged);
+                        }
+                    }
+                }
+                result
+            } else {
+                // OR: union
+                let mut left_cubes = naive_to_dnf(left, false);
+                let right_cubes = naive_to_dnf(right, false);
+                left_cubes.extend(right_cubes);
+                left_cubes
+            }
+        }
+    }
 }
 
 /// Merge two cubes (AND them together)
@@ -118,6 +146,120 @@ fn main() -> std::io::Result<()> {
     // Activation: at least 4 inputs high (4 or 5)
     // Deactivation: at most 1 input high (0 or 1)
     // Hold: 2 or 3 inputs high
+
+    // ========================================================================
+    // Build NAIVE expressions (capture structure without BDD optimization)
+    // ========================================================================
+    // These naive expressions preserve the actual expression structure,
+    // allowing us to measure the true cost of naive De Morgan expansion.
+
+    let a = NaiveExpr::variable("a");
+    let b = NaiveExpr::variable("b");
+    let c = NaiveExpr::variable("c");
+    let d = NaiveExpr::variable("d");
+    let e = NaiveExpr::variable("e");
+    let q = NaiveExpr::variable("q");
+
+    // Activation: at least 4 of 5 inputs high (6 terms)
+    let naive_activation = a
+        .clone()
+        .and(b.clone())
+        .and(c.clone())
+        .and(d.clone())
+        .and(e.clone())
+        .or(a
+            .clone()
+            .and(b.clone())
+            .and(c.clone())
+            .and(d.clone())
+            .and(e.clone().not()))
+        .or(a
+            .clone()
+            .and(b.clone())
+            .and(c.clone())
+            .and(d.clone().not())
+            .and(e.clone()))
+        .or(a
+            .clone()
+            .and(b.clone())
+            .and(c.clone().not())
+            .and(d.clone())
+            .and(e.clone()))
+        .or(a
+            .clone()
+            .and(b.clone().not())
+            .and(c.clone())
+            .and(d.clone())
+            .and(e.clone()))
+        .or(a
+            .clone()
+            .not()
+            .and(b.clone())
+            .and(c.clone())
+            .and(d.clone())
+            .and(e.clone()));
+
+    // Deactivation: at most 1 of 5 inputs high (6 terms)
+    let naive_deactivation = a
+        .clone()
+        .not()
+        .and(b.clone().not())
+        .and(c.clone().not())
+        .and(d.clone().not())
+        .and(e.clone().not())
+        .or(a
+            .clone()
+            .and(b.clone().not())
+            .and(c.clone().not())
+            .and(d.clone().not())
+            .and(e.clone().not()))
+        .or(a
+            .clone()
+            .not()
+            .and(b.clone())
+            .and(c.clone().not())
+            .and(d.clone().not())
+            .and(e.clone().not()))
+        .or(a
+            .clone()
+            .not()
+            .and(b.clone().not())
+            .and(c.clone())
+            .and(d.clone().not())
+            .and(e.clone().not()))
+        .or(a
+            .clone()
+            .not()
+            .and(b.clone().not())
+            .and(c.clone().not())
+            .and(d.clone())
+            .and(e.clone().not()))
+        .or(a
+            .clone()
+            .not()
+            .and(b.clone().not())
+            .and(c.clone().not())
+            .and(d.clone().not())
+            .and(e.clone()));
+
+    // Hold: XOR of activation and negation of deactivation
+    // This is where exponential blowup occurs!
+    let naive_hold = naive_xor(naive_activation.clone(), naive_deactivation.clone().not());
+
+    // next_q_v1: (activation + q) * !deactivation
+    let naive_next_q_v1 = naive_activation
+        .clone()
+        .or(q.clone())
+        .and(naive_deactivation.clone().not());
+
+    // next_q_v2: activation + q * hold
+    let naive_next_q_v2 = naive_activation
+        .clone()
+        .or(q.clone().and(naive_hold.clone()));
+
+    // ========================================================================
+    // Build BDD-backed expressions (for actual minimization)
+    // ========================================================================
 
     // Define all combinations for activation (at least 4 high)
     let activation = expr!(
@@ -168,13 +310,20 @@ fn main() -> std::io::Result<()> {
         "next_q_v1",
         "next_q_v2",
     ];
-    let expressions = [&activation, &deactivation, &hold, &next_q_v1, &next_q_v2];
+    let naive_expressions = [
+        &naive_activation,
+        &naive_deactivation,
+        &naive_hold,
+        &naive_next_q_v1,
+        &naive_next_q_v2,
+    ];
 
     // Stage 1: Count cubes with naive De Morgan expansion (before any optimization)
     println!("Stage 1: Naive De Morgan expansion (exponential blowup)...");
+    println!("           Walking actual expression structure (not BDD-optimised)");
     let mut naive_counts = Vec::new();
     let mut total_naive = 0;
-    for (i, expr) in expressions.iter().enumerate() {
+    for (i, expr) in naive_expressions.iter().enumerate() {
         let count = naive_cube_count(expr);
         naive_counts.push(count);
         total_naive += count;

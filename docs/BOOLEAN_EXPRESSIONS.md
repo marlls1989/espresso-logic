@@ -587,33 +587,42 @@ fn main() {
 
 ## Working with BDDs
 
+**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. 
+All boolean expressions use BDD as their internal representation, not as a separate conversion step.
+
 Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
-efficient operations. BDDs were introduced in version 3.1 and are used internally for efficient 
-cover generation from boolean expressions before minimization by Espresso.
+efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally, providing:
 
-### BDD Role in Minimization
+- **Canonical representation**: Equivalent expressions have identical internal structure
+- **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation  
+- **Memory efficiency**: Structural sharing across all operations
+- **Automatic simplification**: Redundancy elimination during construction
+- **Fast equality checks**: O(1) pointer comparison for equivalent expressions
 
-When you minimize a `BoolExpr`, the library:
-1. Converts the expression to a `Bdd` (canonical representation, automatic optimizations)
+### BDD Role in Minimisation
+
+When you minimise a `BoolExpr`, the library:
+1. Uses the expression's internal BDD representation (already canonical)
 2. Extracts cubes from the BDD to create a `Cover`
-3. Minimizes the cover using Espresso's algorithm (heuristic or exact)
+3. Minimises the cover using Espresso's algorithm (heuristic or exact)
+4. Returns a new `BoolExpr` from the minimised cubes
 
-The BDD step enables efficient cover generation with automatic redundancy elimination.
+**Unified Architecture (v3.1.1+):** Since `BoolExpr` IS a BDD:
+- No conversion needed—expressions are already in canonical BDD form
+- Automatic redundancy elimination during construction
+- Operations (AND/OR/NOT) use efficient BDD algorithms
+- Hash consing ensures structural sharing across all expressions
+- Global manager caches ITE results for efficiency
 
-**BDD Caching (introduced with BDDs in v3.1):** Each `BoolExpr` lazily caches its BDD representation:
-- First call to `to_bdd()` computes and caches the BDD in the expression
-- Subsequent calls return the cached BDD instantly (O(1))
-- During expression composition, subexpression BDD caches are automatically leveraged
-- When the same subexpression appears multiple times in a composition, its BDD is computed only once
-- This prevents redundant conversions during complex transformations and repeated operations
-- **Critical:** Minimization returns a NEW `BoolExpr` with empty expression-level cache
-  - However, the global BDD manager caches (ITE cache, unique table) persist as long as any Bdd exists
-  - These global caches can still provide benefits for similar subexpressions
-  - Always minimize late (after all composition) to maximize expression-level cache hits
+**Caching Architecture (v3.1.1+):**
+- **BDD Representation**: Every expression has a canonical BDD (core representation)
+- **DNF Cache**: Lazily cached Arc-wrapped Dnf for cube extraction
+- **AST Cache**: Lazily cached factored AST for beautiful display
+- All caches are local per-expression with cheap Arc cloning
 
 ### Direct BDD Usage
 
-BDDs are also available as a public API for advanced use cases:
+**Note (v3.1.1+):** `Bdd` is now a type alias for `BoolExpr`. The types are unified—all expressions are BDDs.
 
 ```rust
 use espresso_logic::{BoolExpr, Bdd};
@@ -623,34 +632,35 @@ fn main() {
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
     
-    // Build expression
+    // Build expression (already a BDD internally)
     let expr = a.and(&b).or(&b.and(&c));
     
-    // Convert to BDD
-    let bdd = expr.to_bdd();
-    // Or use: let bdd = Bdd::from_expr(&expr);
+    // Inspect BDD properties (no conversion needed)
+    println!("BDD nodes: {}", expr.node_count());
+    println!("Variables: {}", expr.var_count());
     
-    // Inspect BDD properties
-    println!("BDD nodes: {}", bdd.node_count());
-    println!("Variables: {}", bdd.var_count());
-    
-    // Perform operations directly on BDDs
+    // All operations use efficient BDD algorithms
     let d = BoolExpr::variable("d");
-    let bdd_d = d.to_bdd();
-    let combined = bdd.and(&bdd_d);
+    let combined = expr.and(&d);
     
-    // Convert back to expression
-    let result_expr = combined.to_expr();
-    println!("Result: {}", result_expr);
+    // Display uses algebraic factorisation (v3.1.1+)
+    println!("Result: {}", combined);
 }
 ```
 
+**Deprecated Methods (v3.1.1+):**
+- `to_bdd()` - Returns `self.clone()` (expression IS a BDD)
+- `from_expr()` - Returns `expr.clone()` (redundant)
+- `to_expr()` - Returns `self.clone()` (redundant)
+
+These remain for backwards compatibility but are no-ops.
+
 ### BDD Advantages
 
-BDDs automatically optimize expressions during construction:
+Since v3.1.1, all expressions automatically benefit from BDD optimisations during construction:
 
 ```rust
-use espresso_logic::{BoolExpr, Dnf};
+use espresso_logic::BoolExpr;
 
 fn main() {
     let a = BoolExpr::variable("a");
@@ -661,22 +671,24 @@ fn main() {
     // The b*c term is redundant
     let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
     
-    // BDD automatically recognizes redundancy
-    let bdd = expr.to_bdd();
-    let dnf = Dnf::from(&bdd);
+    // BDD automatically recognises redundancy during construction
+    // Expression IS a BDD - no conversion needed
+    println!("BDD nodes: {}", expr.node_count());
     
-    println!("Cubes: {}", dnf.len());  // Outputs: 2 (b*c eliminated)
+    // Equivalent expressions have identical internal structure
+    let expr2 = a.and(&b).or(&a.not().and(&c));
+    println!("Same function: {}", expr == expr2);  // May be true due to canonical form
 }
 ```
 
-### When to Use BDDs
+### Benefits of Unified BDD Architecture (v3.1.1+)
 
-Use BDDs directly when you need:
+All `BoolExpr` instances automatically get BDD benefits:
 
-- **Canonical representation**: Compare expressions for equivalence
-- **Efficient operations**: Build complex expressions incrementally
-- **Size inspection**: Check representation size before further operations
-- **Optimization analysis**: Understand how expressions simplify
+- **Canonical representation**: Equivalent expressions have identical structure
+- **Efficient operations**: All AND/OR/NOT use polynomial-time BDD algorithms
+- **Size inspection**: Check representation size with `node_count()`
+- **Fast equality**: O(1) comparison for equivalent expressions
 
 ```rust
 use espresso_logic::{BoolExpr, Bdd};
@@ -689,15 +701,12 @@ fn main() {
     let expr1 = a.and(&b);
     let expr2 = b.and(&a);  // Commutative
     
-    // Convert to BDDs
-    let bdd1 = expr1.to_bdd();
-    let bdd2 = expr2.to_bdd();
+    // Both ARE BDDs - canonical representation
+    // Equivalent expressions have identical internal structure
+    assert_eq!(expr1.node_count(), expr2.node_count());
     
-    // BDDs are identical for equivalent expressions
-    assert_eq!(bdd1.node_count(), bdd2.node_count());
-    
-    // Can perform operations efficiently
-    let result = bdd1.or(&bdd2);
+    // All operations are efficient BDD operations
+    let result = expr1.or(&expr2);
     println!("Result nodes: {}", result.node_count());
 }
 ```

@@ -2389,7 +2389,7 @@ mod tests {
 ///
 /// ## Low-Level API (`espresso` module)
 ///
-/// Use when creating an [`Espresso`](crate::espresso::Espresso) instance:
+/// Use when creating an [`Espresso`] instance:
 ///
 /// ```
 /// use espresso_logic::espresso::{Espresso, EspressoCover};

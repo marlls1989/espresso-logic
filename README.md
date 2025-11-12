@@ -13,10 +13,11 @@ Espresso takes Boolean functions in sum-of-products form and produces minimal or
 
 - **Thread-Safe** - Safe concurrent execution via C11 thread-local storage
 - **Boolean Expressions** - High-level API with parsing, operators, and `expr!` macro
-- **Binary Decision Diagrams (v3.1+)** - Canonical representation with efficient operations and automatic caching
+- **Unified BDD Representation (v3.1.1+)** - All boolean expressions use BDD as their canonical internal representation, providing efficient operations, structural sharing, and automatic simplification
 - **Flexible Parser** - Supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations
-- **Expression Composition** - Seamlessly compose parsed, minimized, and constructed expressions
-- **Both Algorithms** - Exposes both heuristic and exact minimization algorithms from Espresso
+- **Expression Composition** - Seamlessly compose parsed, minimised, and constructed expressions
+- **Algebraic Factorisation (v3.1.1+)** - Beautiful multi-level logic display with common factor extraction
+- **Both Algorithms** - Exposes both heuristic and exact minimisation algorithms from Espresso
 - **PLA File Support** - Read and write Berkeley PLA format
 - **Two API Levels** - High-level for ease of use, low-level for maximum control
 - **Well Documented** - Comprehensive API docs and examples
@@ -82,6 +83,8 @@ fn main() -> std::io::Result<()> {
 
 ### Binary Decision Diagrams
 
+**Note (v3.1.1+):** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. All expressions use BDD as their internal representation, providing canonical form, efficient operations, and automatic simplification.
+
 ```rust
 use espresso_logic::{BoolExpr, Bdd};
 
@@ -91,17 +94,14 @@ fn main() {
     let c = BoolExpr::variable("c");
     let expr = a.and(&b).or(&b.and(&c));
     
-    // Convert to BDD for canonical representation
-    let bdd = expr.to_bdd();
-    println!("BDD has {} nodes", bdd.node_count());
+    // BoolExpr IS a BDD - canonical representation
+    println!("BDD has {} nodes", expr.node_count());
     
-    // BDDs support efficient operations
-    let bdd_c = c.to_bdd();
-    let combined = bdd.and(&bdd_c);
+    // All BoolExpr instances support efficient BDD operations
+    let combined = expr.and(&c);
     
-    // Convert back to expression
-    let result = combined.to_expr();
-    println!("Result: {}", result);
+    // Display uses algebraic factorisation (v3.1.1+)
+    println!("Result: {}", combined);
 }
 ```
 
@@ -109,12 +109,14 @@ fn main() {
 
 ### High-Level API (Recommended)
 
-Use `BoolExpr`, `Bdd`, and `Cover` for most applications:
+Use `BoolExpr` (alias `Bdd`) and `Cover` for most applications:
 
+- **Unified BDD representation (v3.1.1+)** - All expressions are BDDs internally
 - Automatic memory management and dimension tracking
 - Thread-safe by design
 - Clean, idiomatic Rust API
-- BDD caching for efficient repeated operations
+- Canonical representation with structural sharing
+- Efficient operations via hash consing and memoisation
 
 ```rust
 use espresso_logic::{BoolExpr, expr};
@@ -123,9 +125,10 @@ use espresso_logic::{BoolExpr, expr};
 let xor = expr!("a" * !"b" + !"a" * "b");
 let xor_alt = BoolExpr::parse("a & !b | !a & b")?;
 
-// Minimize and get canonical BDD representation
-let minimized = xor.minimize()?;
-let bdd = xor.to_bdd();  // Cached for efficiency
+// All expressions ARE BDDs - canonical representation
+// Minimise to get optimal logic
+let minimised = xor.minimize()?;
+println!("{}", minimised);  // Uses algebraic factorisation (v3.1.1+)
 ```
 
 ### Low-Level API (Advanced)

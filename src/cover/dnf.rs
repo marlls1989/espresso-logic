@@ -89,7 +89,7 @@ impl Dnf {
     /// from [`BoolExpr`] or [`Bdd`] instead.
     ///
     /// [`BoolExpr`]: crate::expression::BoolExpr
-    /// [`Bdd`]: crate::bdd::Bdd
+    /// [`Bdd`]: crate::expression::Bdd
     pub fn from_cubes(cubes: &[BTreeMap<Arc<str>, bool>]) -> Self {
         // Collect all variables from cubes using BTreeSet for sorting
         let mut var_set = std::collections::BTreeSet::new();

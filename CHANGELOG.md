@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2025-11-12
+
+### Changed
+
+**Internal Architecture (No Breaking Changes):**
+- **Unified `Bdd` and `BoolExpr` types** - `Bdd` is now a type alias for `BoolExpr`. All boolean expressions now use BDD as their canonical internal representation, eliminating redundancy and providing significant advantages:
+  - **Canonical representation**: Equivalent expressions have identical internal structure
+  - **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation
+  - **Memory efficiency**: Structural sharing across all operations
+  - **Automatic simplification**: Redundancy elimination during construction
+  - **Fast equality checks**: O(1) pointer comparison for equivalent expressions
+- **Algebraic factorisation for expression display** - Expressions now display as multi-level logic with common factor extraction (e.g., `a*(b+c)` instead of `a*b + a*c`)
+- **Simplified caching architecture** - Local-only DNF and AST caching with Arc-wrapped structures for efficient cloning
+- **Reorganised expression module** - Split into focused submodules (ast.rs, bdd.rs, operators.rs, eval.rs, manager.rs) with 70% reduction in main module size
+
+**Caching Architecture:**
+- **DNF Cache**: Arc-wrapped Dnf for efficient cube extraction (local per-expression)
+- **AST Cache**: Cached factored AST for beautiful expression display
+- **BDD Representation**: Canonical form with hash consing (shared via manager)
+
+### Improved
+
+- **Expression display quality** - Produces factored multi-level logic expressions instead of flat DNF
+- **Code organisation** - Better module structure with clearer separation of concerns
+- **Performance** - Cheaper BoolExpr cloning with Arc-wrapped internal structures
+
+### Deprecated
+
+- **`BoolExpr::to_bdd()`** - Returns `self.clone()` (BoolExpr IS a BDD now)
+- **`Bdd::from_expr()`** - Returns `expr.clone()` (redundant conversion)
+- **`Bdd::to_expr()`** - Returns `self.clone()` (redundant conversion)
+
+These methods remain for backwards compatibility but are no-ops in v3.1.1+.
+
+### Documentation
+
+- Updated performance metrics with actual measured values from threshold gate examples
+- Clarified that BDD is now the internal representation (not a separate conversion)
+- Improved explanation of BDD/BoolExpr unification and its advantages
+- Enhanced example clarity in documentation
+
+### Technical Notes
+
+All changes are internal improvements with full backwards compatibility. The public API remains unchanged from v3.1.0. Existing code will continue to work without modification, though deprecated conversion methods can be removed for cleaner code.
+
 ## [3.1.0] - 2025-11-11
 
 ### Breaking Changes

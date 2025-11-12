@@ -2,7 +2,7 @@
 //!
 //! This module provides a boolean expression representation that can be constructed
 //! programmatically using operator overloading, the `expr!` macro, or parsed from strings.
-//! Expressions can be minimized using the Espresso algorithm.
+//! Expressions can be minimised using the Espresso algorithm.
 //!
 //! # Main Types
 //!
@@ -10,8 +10,28 @@
 //!   1. Method API: `a.and(&b).or(&c)`
 //!   2. Operator overloading: `&a * &b + &c`
 //!   3. **`expr!` macro**: `expr!(a * b + c)` - Recommended!
-//! - [`Bdd`] - Binary Decision Diagram for canonical representation and efficient
-//!   operations. Used internally for efficient cover generation during minimization.
+//!   
+//!   **Important (v3.1.1+):** All `BoolExpr` instances use BDD as their internal representation,
+//!   providing canonical form, efficient operations, and automatic simplification.
+//!
+//! - [`Bdd`] - Type alias for [`BoolExpr`] (unified in v3.1.1).
+//!   Previously a separate type, now exists only for backwards compatibility.
+//!
+//! # Unified BDD Architecture (v3.1.1+)
+//!
+//! Starting in v3.1.1, `BoolExpr` and `Bdd` are the same type. All boolean expressions
+//! use Binary Decision Diagrams as their canonical internal representation, providing:
+//!
+//! - **Canonical representation**: Equivalent expressions have identical internal structure
+//! - **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation
+//! - **Memory efficiency**: Structural sharing across all operations
+//! - **Automatic simplification**: Redundancy elimination during construction
+//! - **Fast equality checks**: O(1) pointer comparison for equivalent expressions
+//!
+//! **Deprecated methods:**
+//! - `to_bdd()` - Returns `self.clone()` (expression IS a BDD)
+//! - `Bdd::from_expr()` - Returns `expr.clone()` (redundant conversion)
+//! - `Bdd::to_expr()` - Returns `self.clone()` (redundant conversion)
 //!
 //! # Quick Start
 //!

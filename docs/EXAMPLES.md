@@ -438,9 +438,9 @@ fn main() {
 
 ## Binary Decision Diagrams (BDDs)
 
-Binary Decision Diagrams provide canonical representation with efficient operations. 
-BDDs were introduced in version 3.1 for efficient cover generation and are also available 
-as a public API.
+**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. All boolean expressions use BDD as their internal representation, providing canonical form, efficient operations, and automatic simplification.
+
+Binary Decision Diagrams provide canonical representation with efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally.
 
 ### Basic BDD Construction
 
@@ -449,21 +449,21 @@ use espresso_logic::{BoolExpr, Bdd};
 use std::sync::Arc;
 
 fn main() {
-    // Create BDDs from constants
-    let true_bdd = Bdd::constant(true);
-    let false_bdd = Bdd::constant(false);
+    // Create expressions (already BDDs internally)
+    let true_expr = BoolExpr::constant(true);
+    let false_expr = BoolExpr::constant(false);
     
-    // Create BDD from variable
-    let a = Bdd::variable("a");
+    // Create from variable (already a BDD)
+    let a = BoolExpr::variable("a");
     
-    // Convert expression to BDD
+    // Build expression (uses BDD operations internally)
     let expr = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
-    let bdd = expr.to_bdd();
     
-    // Or use the from_expr method
-    let bdd2 = Bdd::from_expr(&expr);
+    // All expressions ARE BDDs - no conversion needed
+    println!("BDD has {} nodes", expr.node_count());
     
-    println!("BDD has {} nodes", bdd.node_count());
+    // Bdd is just a type alias now (v3.1.1+)
+    let bdd: Bdd = expr.clone();
 }
 ```
 
@@ -474,11 +474,12 @@ use espresso_logic::{BoolExpr, Bdd};
 use std::sync::Arc;
 
 fn main() {
-    let a = Bdd::variable("a");
-    let b = Bdd::variable("b");
-    let c = Bdd::variable("c");
+    // BoolExpr and Bdd are the same (v3.1.1+)
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
     
-    // Logical operations
+    // All operations use efficient BDD algorithms
     let a_and_b = a.and(&b);
     let a_or_b = a.or(&b);
     let not_a = a.not();
@@ -486,12 +487,15 @@ fn main() {
     // Complex expression: (a AND b) OR (NOT a AND c)
     let complex = a.and(&b).or(&a.not().and(&c));
     
+    // All expressions ARE BDDs with canonical representation
     println!("Complex BDD has {} nodes", complex.node_count());
     println!("Uses {} variables", complex.var_count());
 }
 ```
 
-### Converting Between BDD and BoolExpr
+### Working with BDD Representation (v3.1.1+)
+
+**Note:** Conversion methods `to_bdd()`, `from_expr()`, and `to_expr()` are deprecated as they're no-ops (return clones). BoolExpr IS a BDD.
 
 ```rust
 use espresso_logic::{BoolExpr, Bdd, Minimizable};
@@ -501,19 +505,20 @@ fn main() -> std::io::Result<()> {
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
     
-    // Create expression
+    // Create expression (already a BDD internally)
     let expr = a.and(&b).or(&b.and(&c));
     
-    // Convert to BDD (efficient canonical representation)
-    let bdd = expr.to_bdd();
-    println!("Original expression as BDD: {} nodes", bdd.node_count());
+    // Already in canonical BDD form
+    println!("BDD has {} nodes", expr.node_count());
     
-    // Convert back to expression (DNF form)
-    let expr2 = bdd.to_expr();
-    println!("Converted back: {}", expr2);
+    // Display uses algebraic factorisation (v3.1.1+)
+    println!("Expression: {}", expr);
     
-    // Verify equivalence
-    assert!(expr.equivalent_to(&expr2));
+    // Can assign to Bdd type (it's just an alias)
+    let bdd: Bdd = expr.clone();
+    
+    // Verify they're the same
+    assert_eq!(expr.node_count(), bdd.node_count());
     
     Ok(())
 }
@@ -531,6 +536,9 @@ fn main() {
     // Two equivalent expressions (commutative)
     let expr1 = a.and(&b);
     let expr2 = b.and(&a);
+    
+    // BDD canonical representation means equivalent expressions
+    // have identical internal structure (v3.1.1+)
     
     // Convert to BDDs
     let bdd1 = expr1.to_bdd();

@@ -40,9 +40,9 @@ impl Cover {
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     ///
-    /// // Also works with Bdd
-    /// let bdd = b.or(&a).to_bdd();
-    /// cover.add_expr(&bdd, "output2").unwrap();
+    /// // Also works with any BoolExpr (Bdd is a type alias in v3.1.1+)
+    /// let expr2 = b.or(&a);
+    /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
     pub fn add_expr<T>(&mut self, expr: &T, output_name: &str) -> Result<(), AddExprError>
     where

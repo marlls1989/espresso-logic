@@ -99,9 +99,9 @@ impl From<crate::expression::BoolExpr> for Cover {
 /// use espresso_logic::{BoolExpr, Cover};
 ///
 /// let a = BoolExpr::variable("a");
-/// let bdd = a.to_bdd();
+/// // Note: BoolExpr IS a BDD internally (v3.1.1+), no conversion needed
 ///
-/// let cover = Cover::from(&bdd);
+/// let cover = Cover::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
 impl From<&crate::expression::Bdd> for Cover {

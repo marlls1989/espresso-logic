@@ -60,9 +60,9 @@ use std::sync::Arc;
 ///
 /// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
 /// - **Blanket implementation** (v3.1+): For `T where &T: Into<Dnf>, T: From<Dnf>`
-///   - Automatically covers [`BoolExpr`] and [`Bdd`]
-///   - Workflow: Expression → Dnf (via BDD for canonical form) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
-///   - DNF serves as the intermediary representation, with BDD ensuring efficient conversion
+///   - Automatically covers [`BoolExpr`] and [`Bdd`] (unified in v3.1.1+)
+///   - Workflow: Expression → Dnf (from internal BDD representation) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
+///   - DNF is extracted from the internal BDD representation, minimized, then used to create a new expression
 ///
 /// [`Bdd`]: crate::Bdd
 ///
@@ -88,8 +88,8 @@ use std::sync::Arc;
 /// println!("Original: {}", original);
 /// println!("Minimized: {}", minimized);
 ///
-/// // Can continue using original
-/// let bdd = original.to_bdd();
+/// // Can continue using original (already a BDD internally)
+/// println!("Original has {} BDD nodes", original.node_count());
 /// # Ok(())
 /// # }
 /// ```
