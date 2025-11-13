@@ -110,6 +110,7 @@ pub use minimisation::Minimizable;
 
 // Import internal types for Cover implementation
 use labels::LabelManager;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Represents the type of cover (F, FD, FR, or FDR)
@@ -408,22 +409,99 @@ impl Cover {
 
     /// Iterate over cubes (inputs, outputs)
     ///
-    /// Returns cubes in a format compatible with add_cube (owned vecs for easy use)
+    /// Returns cubes in a format compatible with add_cube (owned vecs for easy use).
+    /// Groups cubes by input pattern and merges outputs based on cube types.
     pub fn cubes_iter(&self) -> CubesIter<'_, CubeData> {
         let cover_type = self.cover_type;
+        let num_outputs = self.num_outputs;
+
+        // Helper function to map output bit based on cover_type and cube_type
+        let map_output_bit =
+            |cover_type: CoverType, cube_type: CubeType, output_bit: bool| -> Option<bool> {
+                match (cover_type, cube_type, output_bit) {
+                    // F Covers (only F cubes)
+                    (CoverType::F, CubeType::F, true) => Some(true),
+                    (CoverType::F, CubeType::F, false) => Some(false),
+
+                    // FR Covers (F and R cubes)
+                    (CoverType::FR, CubeType::F, true) => Some(true),
+                    (CoverType::FR, CubeType::F, false) => None,
+                    (CoverType::FR, CubeType::R, true) => Some(false),
+                    (CoverType::FR, CubeType::R, false) => None,
+
+                    // FD Covers (F and D cubes)
+                    (CoverType::FD, CubeType::F, true) => Some(true),
+                    (CoverType::FD, CubeType::F, false) => Some(false),
+                    (CoverType::FD, CubeType::D, true) => None,
+                    (CoverType::FD, CubeType::D, false) => Some(false),
+
+                    // FDR Covers (F, D, and R cubes)
+                    (CoverType::FDR, CubeType::F, true) => Some(true),
+                    (CoverType::FDR, CubeType::F, false) => None,
+                    (CoverType::FDR, CubeType::D, true) => None,
+                    (CoverType::FDR, CubeType::D, false) => Some(false),
+                    (CoverType::FDR, CubeType::R, true) => Some(false),
+                    (CoverType::FDR, CubeType::R, false) => None,
+
+                    // Catch-all for invalid combinations (shouldn't happen due to filtering)
+                    _ => None,
+                }
+            };
+
+        // Collect cubes into BTreeMap, grouping by input pattern
+        // Track both the output value and whether it was SET (from true bit) or ASSUMED (from false bit)
+        // Type alias to reduce complexity
+        type GroupedCubes = BTreeMap<Vec<Option<bool>>, (Vec<Option<bool>>, Vec<bool>)>;
+        let mut grouped: GroupedCubes = GroupedCubes::new();
+
+        for cube in self.cubes() {
+            let inputs = cube.inputs().to_vec();
+            let entry = grouped
+                .entry(inputs)
+                .or_insert_with(|| (vec![None; num_outputs], vec![false; num_outputs]));
+
+            let (ref mut outputs, ref mut is_set_from_true) = entry;
+
+            // Apply mapping for each output bit
+            for (i, &output_bit) in cube.outputs().iter().enumerate() {
+                let mapped = map_output_bit(cover_type, cube.cube_type(), output_bit);
+
+                if output_bit {
+                    // Source cube has TRUE for this bit - this is a SET value (not assumed)
+                    if is_set_from_true[i] {
+                        // We already have a SET value from another true bit - check for conflict
+                        if outputs[i] != mapped {
+                            // Different cube types both have true for same output bit
+                            panic!(
+                                "Invalid cover: conflicting cube types for same input pattern at output {}",
+                                i
+                            );
+                        }
+                        // Same mapping, no conflict - keep existing value
+                    } else {
+                        // First SET value - override any ASSUMED value from false bits
+                        outputs[i] = mapped;
+                        is_set_from_true[i] = true;
+                    }
+                } else {
+                    // Source cube has FALSE for this bit - this is an ASSUMED value
+                    if !is_set_from_true[i] {
+                        // No SET value exists yet, so we can update with this ASSUMED value
+                        outputs[i] = mapped;
+                        // Keep is_set_from_true[i] = false (this is still an assumed value)
+                    }
+                    // If is_set_from_true[i] is true, ignore this ASSUMED value (SET wins)
+                }
+            }
+        }
+
+        // Create iterator from BTreeMap, extracting only the output values
+        // and discarding the is_set_from_true tracking
         CubesIter {
             iter: Box::new(
-                self.cubes
-                    .iter()
-                    .filter(move |cube| {
-                        cover_type != CoverType::F || cube.cube_type() == CubeType::F
-                    })
-                    .map(|cube| {
-                        let inputs = cube.inputs().to_vec();
-                        let outputs: Vec<Option<bool>> =
-                            cube.outputs().iter().map(|&b| Some(b)).collect();
-                        (inputs, outputs)
-                    }),
+                grouped
+                    .into_iter()
+                    .map(|(inputs, (outputs, _is_set_from_true))| (inputs, outputs)),
             ),
         }
     }

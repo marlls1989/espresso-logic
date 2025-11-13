@@ -10,6 +10,11 @@ Cargo.lock
 *.o
 /bin
 .code-review
+.vite/
+node_modules/
+dist/
+public/
+package-lock.json
 
 # Temporary files
 *_tmp.md
