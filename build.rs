@@ -1,3 +1,20 @@
+// Build script for espresso-logic
+//
+// This script compiles the C code from the original Espresso implementation
+// and generates Rust FFI bindings.
+//
+// ## WebAssembly/Emscripten Support
+//
+// To build for WebAssembly, use the wasm32-unknown-emscripten target:
+//   cargo build --target wasm32-unknown-emscripten
+//
+// Requirements:
+// - Emscripten SDK installed and activated
+// - EMSDK environment variable set (should be set by emsdk_env.sh)
+//
+// Note: The wasm32-unknown-unknown target is NOT supported due to the
+// C code requiring libc functions. Use Emscripten instead.
+
 use std::env;
 use std::path::PathBuf;
 
@@ -6,6 +23,8 @@ fn main() {
     lalrpop::process_root().unwrap();
 
     let espresso_src = PathBuf::from("espresso-src");
+    let target = env::var("TARGET").unwrap();
+    let is_emscripten = target == "wasm32-unknown-emscripten";
 
     println!("cargo:rerun-if-changed=espresso-src");
 
@@ -108,13 +127,62 @@ fn main() {
         build.flag_if_supported("-fno-sanitize=undefined");
     }
 
+    // Special configuration for Emscripten/WebAssembly target
+    if is_emscripten {
+        println!("cargo:warning=Building for WebAssembly with Emscripten");
+        // Emscripten handles compiler selection automatically via emcc wrapper
+        // The cc crate will detect and use emcc when TARGET is wasm32-unknown-emscripten
+        // Just ensure we have optimization and don't enable features that don't work in WASM
+        build.flag("-s").flag("ERROR_ON_UNDEFINED_SYMBOLS=0");
+    }
+
     // Compile
     build.compile("espresso");
 
     // Generate bindings
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header("espresso-src/thread_local_accessors.h")
-        .clang_arg(format!("-I{}", espresso_src.display()))
+        .clang_arg(format!("-I{}", espresso_src.display()));
+
+    // Configure bindgen for Emscripten target
+    if is_emscripten {
+        // Emscripten provides system headers in its sysroot
+        // We need to tell clang (used by bindgen) where to find them
+        let sysroot = if let Ok(emsdk) = env::var("EMSDK") {
+            // Standard EMSDK installation
+            format!("{}/upstream/emscripten/cache/sysroot", emsdk)
+        } else if let Ok(emscripten_root) = env::var("EMSCRIPTEN") {
+            // Alternative: EMSCRIPTEN variable
+            format!("{}/cache/sysroot", emscripten_root)
+        } else {
+            // Try Homebrew installation on macOS (common case)
+            let homebrew_paths = vec![
+                "/opt/homebrew/opt/emscripten/libexec/cache/sysroot", // Apple Silicon
+                "/usr/local/opt/emscripten/libexec/cache/sysroot",    // Intel Mac
+            ];
+
+            homebrew_paths
+                .iter()
+                .find(|path| PathBuf::from(path).exists())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    println!("cargo:warning=Could not locate Emscripten sysroot. Set EMSDK environment variable.");
+                    String::new()
+                })
+        };
+
+        if !sysroot.is_empty() {
+            builder = builder
+                .clang_arg(format!("--sysroot={}", sysroot))
+                .clang_arg("-target")
+                .clang_arg("wasm32-unknown-emscripten")
+                // Additional flags to ensure functions are parsed correctly
+                .clang_arg("-fvisibility=default")
+                .clang_arg("-D__EMSCRIPTEN__");
+        }
+    }
+
+    let bindings = builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Whitelist the functions and types we want to expose
         .allowlist_function("espresso")
