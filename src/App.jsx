@@ -316,12 +316,6 @@ function App() {
           whilst maintaining logical equivalence, resulting in simplified expressions that
           require fewer gates when implemented in hardware.
         </p>
-        <p>
-          <strong>Syntax:</strong> Use <code>*</code> or <code>&</code> for AND,{' '}
-          <code>+</code> or <code>|</code> for OR,{' '}
-          <code>~</code> or <code>!</code> for NOT. Define multiple outputs as{' '}
-          <code>name = expression</code> (one per line).
-        </p>
         <div className="info-links">
           <a href="https://crates.io/crates/espresso-logic" target="_blank" rel="noopener noreferrer">
             📦 Crates.io

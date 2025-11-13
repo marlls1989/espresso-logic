@@ -46,15 +46,58 @@ export async function initWasm() {
   return initPromise;
 }
 
-export function callMinimise(inputText, coverType) {
+export function callMinimise(input, coverType, isTruthTable = false) {
   if (!wasmModule) {
     throw new Error('WASM module not initialized');
   }
 
   try {
-    // Call the function using ccall
+    let resultPtr;
+    
+    if (isTruthTable) {
+      // Convert truth table object to JSON string
+      const truthTableJson = JSON.stringify(input);
+      
+      // Call the truth table function
+      resultPtr = wasmModule.ccall(
+        'minimise_truth_table',
+        'number',
+        ['string', 'number'],
+        [truthTableJson, coverType]
+      );
+    } else {
+      // Call the expression function
+      resultPtr = wasmModule.ccall(
+        'minimise_expressions',
+        'number',
+        ['string', 'number'],
+        [input, coverType]
+      );
+    }
+    
+    // Read the result
+    const resultJson = wasmModule.UTF8ToString(resultPtr);
+    
+    // Free the result string
+    wasmModule.ccall('free_string', null, ['number'], [resultPtr]);
+    
+    // Parse and return
+    return JSON.parse(resultJson);
+  } catch (error) {
+    console.error('Error calling WASM function:', error);
+    throw error;
+  }
+}
+
+export function callEnumerate(inputText, coverType) {
+  if (!wasmModule) {
+    throw new Error('WASM module not initialized');
+  }
+
+  try {
+    // Call the enumerate function (doesn't minimize)
     const resultPtr = wasmModule.ccall(
-      'minimise_expressions',
+      'enumerate_expressions',
       'number',
       ['string', 'number'],
       [inputText, coverType]
@@ -69,7 +112,38 @@ export function callMinimise(inputText, coverType) {
     // Parse and return
     return JSON.parse(resultJson);
   } catch (error) {
-    console.error('Error calling WASM function:', error);
+    console.error('Error calling WASM enumerate function:', error);
+    throw error;
+  }
+}
+
+export function callEnumerateTruthTable(truthTableData, coverType) {
+  if (!wasmModule) {
+    throw new Error('WASM module not initialized');
+  }
+
+  try {
+    // Convert truth table object to JSON string
+    const truthTableJson = JSON.stringify(truthTableData);
+    
+    // Call the enumerate truth table function (doesn't minimize)
+    const resultPtr = wasmModule.ccall(
+      'enumerate_truth_table',
+      'number',
+      ['string', 'number'],
+      [truthTableJson, coverType]
+    );
+    
+    // Read the result
+    const resultJson = wasmModule.UTF8ToString(resultPtr);
+    
+    // Free the result string
+    wasmModule.ccall('free_string', null, ['number'], [resultPtr]);
+    
+    // Parse and return
+    return JSON.parse(resultJson);
+  } catch (error) {
+    console.error('Error calling WASM enumerate truth table function:', error);
     throw error;
   }
 }

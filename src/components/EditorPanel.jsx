@@ -71,8 +71,27 @@ export default function EditorPanel({ value, onChange, onLoadExample, error }) {
   return (
     <div className="panel">
       <div className="panel-header">
-        <h3>Input Expressions</h3>
+        <h3>
+          Input Expressions
+        </h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="tooltip-wrapper">
+            <span className="help-icon" title="Syntax Help">?</span>
+            <div className="tooltip-content">
+              <strong>Expression Syntax</strong>
+              <p>
+                Define Boolean expressions using the following operators:
+              </p>
+              <ul>
+                <li><strong>AND:</strong> Use <code>*</code> or <code>&</code></li>
+                <li><strong>OR:</strong> Use <code>+</code> or <code>|</code></li>
+                <li><strong>NOT:</strong> Use <code>~</code> or <code>!</code></li>
+              </ul>
+              <p className="tooltip-note">
+                <strong>Format:</strong> Define multiple outputs as <code>name = expression</code> (one per line).
+              </p>
+            </div>
+          </div>
           <button 
             className="load-example-btn"
             onClick={(e) => {

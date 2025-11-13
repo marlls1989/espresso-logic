@@ -33,9 +33,8 @@ export default function TruthTable({ cubes, inputLabels, outputLabels }) {
             {inputLabels.map((label) => (
               <th key={label}>{label}</th>
             ))}
-            <th style={{ borderLeft: '2px solid white' }}>→</th>
             {outputLabels.map((label) => (
-              <th key={label}>{label}</th>
+              <th key={label} style={{ borderLeft: label === outputLabels[0] ? '2px solid #cbd5e1' : undefined }}>{label}</th>
             ))}
           </tr>
         </thead>
@@ -47,11 +46,8 @@ export default function TruthTable({ cubes, inputLabels, outputLabels }) {
                   {getCubeChar(val)}
                 </td>
               ))}
-              <td style={{ borderLeft: '2px solid #e2e8f0', background: '#f8fafc' }}>
-                →
-              </td>
               {cube.outputs.map((val, i) => (
-                <td key={i} className={getCubeClass(val)}>
+                <td key={i} className={getCubeClass(val)} style={{ borderLeft: i === 0 ? '2px solid #cbd5e1' : undefined }}>
                   {getCubeChar(val)}
                 </td>
               ))}
