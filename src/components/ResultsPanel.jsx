@@ -10,6 +10,7 @@ export default function ResultsPanel({ result, coverType, onCoverTypeChange }) {
             {result ? `${result.stats.numCubes} cubes` : '0 cubes'}
           </span>
         </h3>
+{/* Cover type selector temporarily hidden - only FR is working currently
       <div className="output-format-selector">
         <label htmlFor="cover-type">Cover Type:</label>
         <div className="tooltip-wrapper">
@@ -48,6 +49,7 @@ export default function ResultsPanel({ result, coverType, onCoverTypeChange }) {
           <option value="3">FDR: Full specification</option>
         </select>
       </div>
+      */}
       </div>
 
       <div className="empty-state" style={{ display: !result ? 'block' : 'none' }}>
