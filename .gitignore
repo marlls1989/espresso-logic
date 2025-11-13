@@ -1,0 +1,23 @@
+/target
+Cargo.lock
+**/*.rs.bk
+*.swp
+*.swo
+*~
+.DS_Store
+/tests/regression_temp
+*.out
+*.o
+/bin
+.code-review
+.vite/
+node_modules/
+dist/
+public/
+package-lock.json
+
+# Temporary files
+*_tmp.md
+
+# Generated output files
+output.pla
