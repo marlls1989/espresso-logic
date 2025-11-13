@@ -400,9 +400,13 @@ impl Cover {
         let cover_type = self.cover_type;
         CubesIter {
             iter: Box::new(
-                self.cubes.iter().filter(move |cube| {
-                    cover_type != CoverType::F || cube.cube_type() == CubeType::F
-                }),
+                self.cubes
+                    .iter()
+                    .filter(move |cube| match cube.cube_type() {
+                        CubeType::D => cover_type.has_d(),
+                        CubeType::R => cover_type.has_r(),
+                        CubeType::F => cover_type.has_f(),
+                    }),
             ),
         }
     }

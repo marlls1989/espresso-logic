@@ -41,11 +41,9 @@ fn main() -> std::io::Result<()> {
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-}
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
 ```
 
 Variable names can be:
@@ -58,10 +56,8 @@ Variable names can be:
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let t = BoolExpr::constant(true);
-    let f = BoolExpr::constant(false);
-}
+let t = BoolExpr::constant(true);
+let f = BoolExpr::constant(false);
 ```
 
 ### Method 3: Parsing Strings
@@ -107,21 +103,19 @@ No variable declarations needed - variables are created automatically:
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
 
-fn main() {
-    // Simple expressions
-    let and_expr = expr!("a" * "b");
-    let or_expr = expr!("a" + "b");
-    let not_expr = expr!(!"a");
+// Simple expressions
+let and_expr = expr!("a" * "b");
+let or_expr = expr!("a" + "b");
+let not_expr = expr!(!"a");
 
-    // XOR - no variable declarations!
-    let xor = expr!("a" * !"b" + !"a" * "b");
+// XOR - no variable declarations!
+let xor = expr!("a" * !"b" + !"a" * "b");
 
-    // Complex nested
-    let complex = expr!(("a" + "b") * ("c" + "d"));
+// Complex nested
+let complex = expr!(("a" + "b") * ("c" + "d"));
 
-    // Majority function
-    let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
-}
+// Majority function
+let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
 ```
 
 #### Combining Expressions (v3.0+)
@@ -309,17 +303,15 @@ Boolean expressions support Rust's standard operators as an alternative to the `
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
 
-    let and_expr = &a * &b;        // AND
-    let or_expr = &a + &b;         // OR
-    let not_expr = !&a;            // NOT
+let and_expr = &a * &b;        // AND
+let or_expr = &a + &b;         // OR
+let not_expr = !&a;            // NOT
 
-    // Complex: XNOR
-    let xnor = &a * &b + &(!&a) * &(!&b);
-}
+// Complex: XNOR
+let xnor = &a * &b + &(!&a) * &(!&b);
 ```
 
 **Note:** Requires `&` references due to Rust's ownership rules. The `expr!` macro is preferred as it avoids this requirement.
@@ -331,23 +323,21 @@ The monadic interface provides explicit method calls for building expressions. T
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
 
-    // AND
-    let and_expr = a.and(&b);
+// AND
+let and_expr = a.and(&b);
 
-    // OR
-    let or_expr = a.or(&b);
+// OR
+let or_expr = a.or(&b);
 
-    // NOT
-    let not_expr = a.not();
+// NOT
+let not_expr = a.not();
 
-    // Complex expression: (a * b) + (~a * c)
-    let complex = a.and(&b).or(&a.not().and(&c));
-}
+// Complex expression: (a * b) + (~a * c)
+let complex = a.and(&b).or(&a.not().and(&c));
 ```
 
 **Actual macro expansions** (verified with `cargo expand`):
@@ -355,32 +345,30 @@ fn main() {
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
 
-    // let _expr1 = expr!(a * b);
-    // Expands to:
-    let _expr1 = (&(a)).and(&(b));
+// let _expr1 = expr!(a * b);
+// Expands to:
+let _expr1 = (&(a)).and(&(b));
 
-    // let _expr2 = expr!(a + b);
-    // Expands to:
-    let _expr2 = (&(a)).or(&(b));
+// let _expr2 = expr!(a + b);
+// Expands to:
+let _expr2 = (&(a)).or(&(b));
 
-    // let _expr3 = expr!(!a);
-    // Expands to:
-    let _expr3 = (&(a)).not();
+// let _expr3 = expr!(!a);
+// Expands to:
+let _expr3 = (&(a)).not();
 
-    // let _expr4 = expr!(a * b + !c);
-    // Expands to:
-    let _expr4 = (&((&(a)).and(&(b)))).or(&((&(c)).not()));
+// let _expr4 = expr!(a * b + !c);
+// Expands to:
+let _expr4 = (&((&(a)).and(&(b)))).or(&((&(c)).not()));
 
-    // let _expr5 = expr!("x" * "y" + !"z");
-    // Expands to:
-    let _expr5 = (&((&(BoolExpr::variable("x"))).and(&(BoolExpr::variable("y")))))
-        .or(&((&(BoolExpr::variable("z"))).not()));
-}
+// let _expr5 = expr!("x" * "y" + !"z");
+// Expands to:
+let _expr5 = (&((&(BoolExpr::variable("x"))).and(&(BoolExpr::variable("y")))))
+    .or(&((&(BoolExpr::variable("z"))).not()));
 ```
 
 The macro generates clean calls to the monadic interface, using references for all arguments. The monadic methods (`.and()`, `.or()`, `.not()`) all take `&self` and handle any necessary cloning internally - the macro itself does not clone. String literals are automatically converted to `BoolExpr::variable()` calls.
@@ -395,17 +383,15 @@ The macro generates clean calls to the monadic interface, using references for a
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let mut expr = BoolExpr::variable("a");
-    
-    // Build expression dynamically
-    for var_name in ["b", "c", "d"] {
-        expr = expr.and(&BoolExpr::variable(var_name));
-    }
-    
-    // Results in: a * b * c * d
-    println!("{}", expr);
+let mut expr = BoolExpr::variable("a");
+
+// Build expression dynamically
+for var_name in ["b", "c", "d"] {
+    expr = expr.and(&BoolExpr::variable(var_name));
 }
+
+// Results in: a * b * c * d
+println!("{}", expr);
 ```
 
 ## Minimization
@@ -574,15 +560,13 @@ fn main() -> std::io::Result<()> {
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
 
-fn main() {
-    // ~(a * b) = ~a + ~b (using string notation)
-    let expr1 = expr!(!("a" * "b"));
-    let expr2 = expr!(!"a" + !"b");
+// ~(a * b) = ~a + ~b (using string notation)
+let expr1 = expr!(!("a" * "b"));
+let expr2 = expr!(!"a" + !"b");
 
-    // ~(a + b) = ~a * ~b
-    let expr3 = expr!(!("a" + "b"));
-    let expr4 = expr!(!"a" * !"b");
-}
+// ~(a + b) = ~a * ~b
+let expr3 = expr!(!("a" + "b"));
+let expr4 = expr!(!"a" * !"b");
 ```
 
 ## Working with BDDs
@@ -627,25 +611,23 @@ When you minimise a `BoolExpr`, the library:
 ```rust
 use espresso_logic::{BoolExpr, Bdd};
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    // Build expression (already a BDD internally)
-    let expr = a.and(&b).or(&b.and(&c));
-    
-    // Inspect BDD properties (no conversion needed)
-    println!("BDD nodes: {}", expr.node_count());
-    println!("Variables: {}", expr.var_count());
-    
-    // All operations use efficient BDD algorithms
-    let d = BoolExpr::variable("d");
-    let combined = expr.and(&d);
-    
-    // Display uses algebraic factorisation (v3.1.1+)
-    println!("Result: {}", combined);
-}
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
+
+// Build expression (already a BDD internally)
+let expr = a.and(&b).or(&b.and(&c));
+
+// Inspect BDD properties (no conversion needed)
+println!("BDD nodes: {}", expr.node_count());
+println!("Variables: {}", expr.var_count());
+
+// All operations use efficient BDD algorithms
+let d = BoolExpr::variable("d");
+let combined = expr.and(&d);
+
+// Display uses algebraic factorisation (v3.1.1+)
+println!("Result: {}", combined);
 ```
 
 **Deprecated Methods (v3.1.1+):**
@@ -662,23 +644,21 @@ Since v3.1.1, all expressions automatically benefit from BDD optimisations durin
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    // Consensus theorem: a*b + ~a*c + b*c
-    // The b*c term is redundant
-    let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
-    
-    // BDD automatically recognises redundancy during construction
-    // Expression IS a BDD - no conversion needed
-    println!("BDD nodes: {}", expr.node_count());
-    
-    // Equivalent expressions have identical internal structure
-    let expr2 = a.and(&b).or(&a.not().and(&c));
-    println!("Same function: {}", expr == expr2);  // May be true due to canonical form
-}
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
+
+// Consensus theorem: a*b + ~a*c + b*c
+// The b*c term is redundant
+let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
+
+// BDD automatically recognises redundancy during construction
+// Expression IS a BDD - no conversion needed
+println!("BDD nodes: {}", expr.node_count());
+
+// Equivalent expressions have identical internal structure
+let expr2 = a.and(&b).or(&a.not().and(&c));
+println!("Same function: {}", expr == expr2);  // May be true due to canonical form
 ```
 
 ### Benefits of Unified BDD Architecture (v3.1.1+)
@@ -693,22 +673,20 @@ All `BoolExpr` instances automatically get BDD benefits:
 ```rust
 use espresso_logic::{BoolExpr, Bdd};
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    
-    // Build two equivalent expressions
-    let expr1 = a.and(&b);
-    let expr2 = b.and(&a);  // Commutative
-    
-    // Both ARE BDDs - canonical representation
-    // Equivalent expressions have identical internal structure
-    assert_eq!(expr1.node_count(), expr2.node_count());
-    
-    // All operations are efficient BDD operations
-    let result = expr1.or(&expr2);
-    println!("Result nodes: {}", result.node_count());
-}
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+
+// Build two equivalent expressions
+let expr1 = a.and(&b);
+let expr2 = b.and(&a);  // Commutative
+
+// Both ARE BDDs - canonical representation
+// Equivalent expressions have identical internal structure
+assert_eq!(expr1.node_count(), expr2.node_count());
+
+// All operations are efficient BDD operations
+let result = expr1.or(&expr2);
+println!("Result nodes: {}", result.node_count());
 ```
 
 ## Working with Cubes
@@ -783,11 +761,9 @@ This ensures consistent ordering in truth tables and PLA files.
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() {
-    match BoolExpr::parse("a * * b") {
-        Ok(expr) => println!("Parsed: {}", expr),
-        Err(e) => println!("Parse error: {}", e),
-    }
+match BoolExpr::parse("a * * b") {
+    Ok(expr) => println!("Parsed: {}", expr),
+    Err(e) => println!("Parse error: {}", e),
 }
 ```
 
@@ -914,24 +890,22 @@ Boolean expressions are displayed with minimal parentheses based on operator pre
 ```rust
 use espresso_logic::*;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+let c = BoolExpr::variable("c");
 
-    // Simple operations - no unnecessary parentheses
-    println!("{}", expr!(a * b));        // Output: a * b
-    println!("{}", expr!(a + b));        // Output: a + b
-    println!("{}", expr!(a * b + c));    // Output: a * b + c
+// Simple operations - no unnecessary parentheses
+println!("{}", expr!(a * b));        // Output: a * b
+println!("{}", expr!(a + b));        // Output: a + b
+println!("{}", expr!(a * b + c));    // Output: a * b + c
 
-    // Parentheses only when needed for precedence
-    println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
-    println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
+// Parentheses only when needed for precedence
+println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
+println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
 
-    // Clean formatting for complex expressions
-    let xor = expr!(a * b + !a * !b);
-    println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
-}
+// Clean formatting for complex expressions
+let xor = expr!(a * b + !a * !b);
+println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
 ```
 
 **Formatting rules:**
@@ -949,30 +923,28 @@ Check if two expressions are logically equivalent (produce same outputs):
 ```rust
 use espresso_logic::*;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
 
-    // Commutative operations now have canonical equality (BDD-based)
-    let expr1 = expr!(a * b);
-    let expr2 = expr!(b * a);  // Commutative
+// Commutative operations now have canonical equality (BDD-based)
+let expr1 = expr!(a * b);
+let expr2 = expr!(b * a);  // Commutative
 
-    // Canonical equality (BDD provides canonical form)
-    assert_eq!(expr1, expr2);  // BDD canonicalisation makes them equal!
+// Canonical equality (BDD provides canonical form)
+assert_eq!(expr1, expr2);  // BDD canonicalisation makes them equal!
 
-    // Also logically equivalent
-    assert!(expr1.equivalent_to(&expr2));
+// Also logically equivalent
+assert!(expr1.equivalent_to(&expr2));
 
-    // Test double negation
-    let expr3 = a.clone();
-    let expr4 = expr!(!!a);
-    assert!(expr3.equivalent_to(&expr4));
+// Test double negation
+let expr3 = a.clone();
+let expr4 = expr!(!!a);
+assert!(expr3.equivalent_to(&expr4));
 
-    // Non-equivalent expressions
-    let and_expr = expr!(a * b);
-    let or_expr = expr!(a + b);
-    assert!(!and_expr.equivalent_to(&or_expr));
-}
+// Non-equivalent expressions
+let and_expr = expr!(a * b);
+let or_expr = expr!(a + b);
+assert!(!and_expr.equivalent_to(&or_expr));
 ```
 
 **Performance Note:**
@@ -1032,19 +1004,17 @@ Get all variables used in an expression:
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
 
-fn main() {
-    let expr = expr!("x" * "y" + "z");
+let expr = expr!("x" * "y" + "z");
 
-    let vars = expr.collect_variables();
-    // Returns BTreeSet<Arc<str>> in alphabetical order
-    for var in vars {
-        println!("Variable: {}", var);
-    }
-    // Output:
-    // Variable: x
-    // Variable: y
-    // Variable: z
+let vars = expr.collect_variables();
+// Returns BTreeSet<Arc<str>> in alphabetical order
+for var in vars {
+    println!("Variable: {}", var);
 }
+// Output:
+// Variable: x
+// Variable: y
+// Variable: z
 ```
 
 ## Best Practices

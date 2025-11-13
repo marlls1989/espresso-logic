@@ -156,7 +156,7 @@ fn main() {
             format!("{}/cache/sysroot", emscripten_root)
         } else {
             // Try Homebrew installation on macOS (common case)
-            let homebrew_paths = vec![
+            let homebrew_paths = [
                 "/opt/homebrew/opt/emscripten/libexec/cache/sysroot", // Apple Silicon
                 "/usr/local/opt/emscripten/libexec/cache/sysroot",    // Intel Mac
             ];
