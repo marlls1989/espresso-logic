@@ -1,17 +1,16 @@
 [package]
-name = "espresso-logic-demo"
+name = "espresso-wasm"
 version = "0.1.0"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
-description = "WebAssembly demo for the Espresso logic minimizer"
+
+[[bin]]
+name = "espresso_demo"
+path = "src/main.rs"
 
 [dependencies]
-yew = { version = "0.21", features = ["csr"] }
-wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["HtmlTextAreaElement", "HtmlSelectElement"] }
-espresso-logic = "3.1"
-gloo-console = "0.3"
+espresso-logic = { git = "https://github.com/marlls1989/espresso-logic", branch = "master" }
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
+[profile.release]
+opt-level = "z"
+lto = true

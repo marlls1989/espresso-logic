@@ -1,6 +1,6 @@
 # Espresso Logic Minimiser - WebAssembly Demo
 
-This is an interactive WebAssembly demonstration of the [espresso-logic](https://crates.io/crates/espresso-logic) Rust library, built with [Yew](https://yew.rs).
+This is an interactive WebAssembly demonstration of the [espresso-logic](https://crates.io/crates/espresso-logic) Rust library, built with React and Emscripten.
 
 ## 🌐 Live Demo
 
@@ -20,15 +20,10 @@ Visit the live demo at: **[https://marlls1989.github.io/espresso-logic/](https:/
 ### Prerequisites
 
 - Rust 1.70+ ([Install Rust](https://rustup.rs))
-- [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
+- Node.js 18+ ([Install Node.js](https://nodejs.org))
+- Emscripten ([Install Emscripten](https://emscripten.org/docs/getting_started/downloads.html))
 
-Install wasm-pack:
-
-```bash
-curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-```
-
-### Building
+### Setup
 
 1. Clone this repository and checkout the `gh-pages` branch:
 
@@ -38,77 +33,123 @@ cd espresso-logic
 git checkout gh-pages
 ```
 
-2. Build the WebAssembly package:
+2. Install Node dependencies:
 
 ```bash
-wasm-pack build --target web --release
+npm install
 ```
 
-3. Serve locally:
+3. Add the wasm32-unknown-emscripten target:
 
 ```bash
-# Using Python
-python3 -m http.server 8080
-
-# Or using a simple Rust server
-cargo install simple-http-server
-simple-http-server -p 8080
+rustup target add wasm32-unknown-emscripten
 ```
 
-4. Open your browser to `http://localhost:8080`
-
-### Development Build
-
-For faster iteration during development:
+4. Build the WASM module:
 
 ```bash
-wasm-pack build --target web --dev
+./build-wasm.sh
+# Or manually:
+cargo build --target wasm32-unknown-emscripten --release
+mkdir -p public/wasm
+cp target/wasm32-unknown-emscripten/release/espresso_wasm.js public/wasm/
+cp target/wasm32-unknown-emscripten/release/espresso_wasm.wasm public/wasm/
 ```
+
+5. Start the development server:
+
+```bash
+npm run dev
+```
+
+6. Open your browser to `http://localhost:5173`
+
+### Production Build
+
+```bash
+./build-wasm.sh
+npm run build
+```
+
+The output will be in the `dist/` directory.
 
 ## 🏗️ Architecture
+
+### Technology Stack
+
+- **Frontend**: React 18 for UI components and state management
+- **Build Tool**: Vite for fast development and optimised builds
+- **WebAssembly**: Emscripten-compiled Rust (wasm32-unknown-emscripten target)
+- **Rust Library**: espresso-logic v3.1.3 with Emscripten support
 
 ### Project Structure
 
 ```
 .
 ├── src/
-│   ├── lib.rs                      # Main Yew application
+│   ├── lib.rs                      # Rust FFI bindings for JavaScript
+│   ├── main.jsx                    # React entry point
+│   ├── App.jsx                     # Main React app component
+│   ├── styles.css                  # Global styles
 │   └── components/
-│       ├── mod.rs                  # Component exports
-│       ├── cover_type_selector.rs  # Cover type dropdown
-│       ├── examples_selector.rs    # Example presets
-│       └── truth_table.rs          # Cube display table
+│       ├── CoverTypeSelector.jsx   # Cover type dropdown
+│       ├── EditorPanel.jsx         # Expression input editor
+│       ├── ExamplesSelector.jsx    # Example presets
+│       ├── ResultsPanel.jsx        # Output display
+│       └── TruthTable.jsx          # Cube display table
+├── Cargo.toml                      # Rust dependencies
+├── package.json                    # Node dependencies
+├── vite.config.js                  # Vite configuration
+├── build-wasm.sh                   # WASM build script
 ├── index.html                      # Entry point
-├── styles.css                      # Styling
-├── Cargo.toml                      # Dependencies
 └── .github/workflows/deploy.yml    # Auto-deployment
+
 ```
 
-### Technology Stack
+### How It Works
 
-- **[Yew](https://yew.rs)** - Rust framework for building web applications
-- **[WebAssembly](https://webassembly.org)** - Binary instruction format for the web
-- **[espresso-logic](https://crates.io/crates/espresso-logic)** - Boolean logic minimisation library
-- **[wasm-pack](https://rustwasm.github.io/wasm-pack/)** - Build tool for WebAssembly
+1. **Rust Side** - The `src/lib.rs` file exposes C-compatible FFI functions:
+   - `minimise_expressions()` - Takes input text and cover type, returns JSON results
+   - `free_string()` - Frees strings allocated by Rust
+
+2. **Emscripten** - Compiles Rust + C code to WebAssembly:
+   - Handles the original Espresso C code (requires libc functions)
+   - Generates JS glue code for calling Rust functions
+   - Provides memory management utilities
+
+3. **React Side** - The `App.jsx` component:
+   - Loads the Emscripten module on startup
+   - Calls Rust functions via the Module interface
+   - Displays results using React components
 
 ### Key Components
 
-1. **App Component** (`src/lib.rs`)
-   - Main application state management
-   - Expression parsing and validation
-   - Minimisation pipeline
+1. **App** (`src/App.jsx`)
+   - Loads WASM module
+   - Manages application state
+   - Calls Rust functions for minimisation
 
-2. **CoverTypeSelector** (`src/components/cover_type_selector.rs`)
+2. **CoverTypeSelector** (`src/components/CoverTypeSelector.jsx`)
    - Dropdown for F/FD/FR/FDR selection
-   - Tooltip explanations for each type
+   - Tooltips explaining each type
 
-3. **ExamplesSelector** (`src/components/examples_selector.rs`)
+3. **ExamplesSelector** (`src/components/ExamplesSelector.jsx`)
    - Pre-loaded example expressions
    - Quick-start for users
 
-4. **TruthTable** (`src/components/truth_table.rs`)
-   - Display minimised cubes
-   - Shows inputs and outputs in tabular format
+4. **EditorPanel** (`src/components/EditorPanel.jsx`)
+   - Textarea for expression input
+   - Minimise button with loading state
+   - Error display
+
+5. **ResultsPanel** (`src/components/ResultsPanel.jsx`)
+   - Displays minimised expressions
+   - Shows statistics
+   - Renders truth table
+
+6. **TruthTable** (`src/components/TruthTable.jsx`)
+   - Displays cubes with inputs and outputs
+   - Colour-coded values (1, 0, don't-care)
 
 ## 📖 Usage
 
@@ -138,33 +179,38 @@ z = ~a * c
 
 ## 🔧 Customisation
 
-To modify the examples, edit `src/components/examples_selector.rs`:
+### Adding Examples
 
-```rust
-const EXAMPLES: &[Example] = &[
-    Example {
-        name: "Your Example",
-        description: "Description here",
-        code: "out = your + expression",
-    },
-    // ... more examples
+Edit `src/components/ExamplesSelector.jsx`:
+
+```javascript
+const EXAMPLES = [
+  {
+    name: 'Your Example',
+    description: 'Description here',
+    code: 'out = your + expression',
+  },
+  // ... more examples
 ];
 ```
 
-To change styling, modify `styles.css` (uses CSS custom properties for theming).
+### Styling
+
+Modify `src/styles.css` (uses CSS custom properties for theming).
 
 ## 📦 Deployment
 
 This branch uses GitHub Actions for automatic deployment:
 
 1. Push to `gh-pages` branch
-2. GitHub Actions builds WebAssembly automatically
+2. GitHub Actions builds WASM and React automatically
 3. Deploys to GitHub Pages
 
 Manual deployment:
 
 ```bash
-wasm-pack build --target web --release
+./build-wasm.sh
+npm run build
 # Upload dist/ contents to your web server
 ```
 
@@ -177,15 +223,16 @@ wasm-pack build --target web --release
 
 ## 📄 License
 
-This demo inherits the MIT license from the espresso-logic library.
+This demo inherits the MIT licence from the espresso-logic library.
 
 ## 🙏 Acknowledgements
 
 - **Original Espresso** - Robert K. Brayton and team at UC Berkeley
 - **Modernised C Code** - Sébastien Cottinet
 - **Rust Wrapper** - Marcos Sartori
-- **Yew Framework** - Yew contributors
+- **React** - Meta and contributors
+- **Emscripten** - Emscripten contributors
 
 ---
 
-Built with ❤️ using Rust and WebAssembly
+Built with ❤️ using Rust, React, and WebAssembly

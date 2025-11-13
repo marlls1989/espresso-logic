@@ -94,95 +94,6 @@ header p {
     text-decoration: underline;
 }
 
-.controls {
-    background: var(--surface-color);
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    box-shadow: var(--shadow);
-}
-
-.control-group {
-    margin-bottom: 1rem;
-}
-
-.control-group:last-child {
-    margin-bottom: 0;
-}
-
-.control-group label {
-    display: block;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: var(--text-color);
-}
-
-.control-group select {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid var(--border-color);
-    border-radius: 0.375rem;
-    font-size: 1rem;
-    background: var(--surface-color);
-    color: var(--text-color);
-}
-
-.control-group select:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.help-text {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-}
-
-.examples-selector {
-    background: var(--surface-color);
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    box-shadow: var(--shadow);
-}
-
-.examples-selector h3 {
-    font-size: 1.125rem;
-    margin-bottom: 1rem;
-    color: var(--text-color);
-}
-
-.examples-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 0.75rem;
-}
-
-.example-btn {
-    padding: 0.75rem 1rem;
-    background: var(--code-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 0.375rem;
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.2s;
-    font-size: 0.875rem;
-}
-
-.example-btn:hover {
-    background: var(--primary-color);
-    color: white;
-    border-color: var(--primary-color);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow);
-}
-
-.example-btn strong {
-    display: block;
-    margin-bottom: 0.25rem;
-}
-
 .workspace {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -212,6 +123,178 @@ header p {
     justify-content: space-between;
 }
 
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.panel-header h3 {
+    margin-bottom: 0;
+}
+
+.load-example-btn {
+    padding: 0.375rem 0.75rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    color: var(--text-color);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.load-example-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.load-example-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.output-format-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.output-format-selector label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.output-format-selector select {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    background: var(--surface-color);
+    color: var(--text-color);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.output-format-selector select:hover {
+    border-color: var(--primary-color);
+}
+
+.output-format-selector select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.tooltip-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: help;
+    transition: all 0.2s;
+}
+
+.help-icon:hover {
+    background: var(--primary-dark);
+    transform: scale(1.1);
+}
+
+.tooltip-content {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    z-index: 1000;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 0.5rem;
+    width: 400px;
+    max-width: 90vw;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: var(--shadow-lg);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    text-align: left;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+}
+
+.tooltip-wrapper:hover .tooltip-content {
+    visibility: visible;
+    opacity: 1;
+}
+
+.tooltip-content strong {
+    display: block;
+    color: var(--text-color);
+    font-size: 0.9375rem;
+    margin-bottom: 0.75rem;
+}
+
+.tooltip-content p {
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.tooltip-content ul {
+    margin: 0.5rem 0;
+    padding-left: 1.25rem;
+    list-style-type: none;
+}
+
+.tooltip-content li {
+    margin-bottom: 0.75rem;
+    color: var(--text-color);
+    position: relative;
+}
+
+.tooltip-content li::before {
+    content: "▸";
+    color: var(--primary-color);
+    font-weight: bold;
+    position: absolute;
+    left: -1.25rem;
+}
+
+.tooltip-content li strong {
+    display: inline;
+    color: var(--primary-color);
+    font-size: inherit;
+    margin: 0;
+}
+
+.tooltip-note {
+    margin-top: 0.75rem;
+    padding: 0.5rem;
+    background: var(--code-bg);
+    border-radius: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--text-color);
+    font-style: italic;
+}
+
+.tooltip-note strong {
+    display: inline;
+    font-style: normal;
+}
+
 .panel-badge {
     font-size: 0.75rem;
     padding: 0.25rem 0.5rem;
@@ -219,10 +302,64 @@ header p {
     color: white;
     border-radius: 0.25rem;
     font-weight: 500;
+    margin-left: 0.75rem;
 }
 
 .editor-wrapper {
     position: relative;
+}
+
+.editor-with-overlay {
+    position: relative;
+    width: 100%;
+}
+
+.line-highlights {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 1rem;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    pointer-events: none;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow: hidden;
+    color: transparent;
+    z-index: 1;
+    background: var(--code-bg);
+}
+
+.line-highlight {
+    min-height: 1.3125rem;
+}
+
+.line-highlight.error-line {
+    background-color: rgba(220, 38, 38, 0.08);
+}
+
+.error-token {
+    position: relative;
+    display: inline-block;
+    padding-bottom: 3px;
+}
+
+.error-token::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background-image: 
+        linear-gradient(135deg, transparent 30%, #dc2626 30%, #dc2626 70%, transparent 70%),
+        linear-gradient(45deg, transparent 30%, #dc2626 30%, #dc2626 70%, transparent 70%);
+    background-size: 6px 3px;
+    background-position: 0px 0px, 3px 0px;
+    background-repeat: repeat-x;
+    pointer-events: none;
 }
 
 textarea {
@@ -235,8 +372,14 @@ textarea {
     border: 1px solid var(--border-color);
     border-radius: 0.375rem;
     resize: vertical;
-    background: var(--code-bg);
+    background: transparent;
     color: var(--text-color);
+    position: relative;
+    z-index: 2;
+}
+
+.editor-with-overlay textarea {
+    background: transparent;
 }
 
 textarea:focus {
@@ -245,14 +388,33 @@ textarea:focus {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
-.error-message {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 0.375rem;
+textarea.has-error {
+    border-color: rgba(220, 38, 38, 0.3);
+}
+
+textarea.has-error:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.error-hint-minimal {
+    margin-top: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
     color: var(--error-color);
+    opacity: 0.8;
+    cursor: help;
+}
+
+.error-icon-small {
     font-size: 0.875rem;
+}
+
+.error-text-small {
+    font-weight: 500;
 }
 
 .output-expressions {
@@ -401,5 +563,19 @@ button:hover {
 button:disabled {
     background: var(--text-muted);
     cursor: not-allowed;
+}
+
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
