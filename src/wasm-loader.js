@@ -12,7 +12,7 @@ export async function initWasm() {
     initPromise = new Promise((resolve, reject) => {
       // Create script element to load Emscripten generated JS
       const script = document.createElement('script');
-      script.src = '/espresso_demo.js';
+      script.src = `${import.meta.env.BASE_URL}espresso_demo.js`;
       script.async = true;
       
       script.onload = () => {
