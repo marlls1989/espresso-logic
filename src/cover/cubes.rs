@@ -22,7 +22,7 @@ pub enum CubeType {
 }
 
 /// A cube in a PLA cover
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cube {
     pub(crate) inputs: Arc<[Option<bool>]>,
     pub(crate) outputs: Arc<[bool]>, // Simplified: true = bit set, false = bit not set

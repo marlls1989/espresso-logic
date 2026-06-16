@@ -292,7 +292,7 @@ where
                 inputs[i] = Some(polarity);
             }
         }
-        cover.add_cube(&inputs, &[Some(true)]);
+        cover.try_add_cube(&inputs, &[Some(true)])?;
     }
 
     // Minimize the cover using the provided function

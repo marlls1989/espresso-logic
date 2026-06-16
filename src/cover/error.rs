@@ -1,5 +1,6 @@
 //! Error types for cover operations
 
+use super::cubes::Cube;
 use std::fmt;
 use std::io;
 use std::sync::Arc;
@@ -27,6 +28,13 @@ pub enum CoverError {
         /// The maximum valid index (number of outputs - 1)
         max: usize,
     },
+    /// Invalid cover
+    InvalidCover {
+        /// The cube that caused the invalid cover
+        cube: Cube,
+        /// The output index that caused the invalid cover
+        output_index: usize,
+    },
 }
 
 impl fmt::Display for CoverError {
@@ -42,6 +50,11 @@ impl fmt::Display for CoverError {
                 f,
                 "Output index {} out of bounds (valid range: 0..={})",
                 index, max
+            ),
+            CoverError::InvalidCover { cube, output_index } => write!(
+                f,
+                "Invalid cover: conflicting cube types for same input pattern at output {}: cube={:?}",
+                output_index, cube
             ),
         }
     }

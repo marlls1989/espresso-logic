@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::io;
+use crate::cover::error::CoverError;
 
 /// Errors related to Espresso instance management
 ///
@@ -105,8 +106,16 @@ pub enum MinimizationError {
     Instance(InstanceError),
     /// Cube validation error
     Cube(CubeError),
+    /// Cover operation error
+    Cover(CoverError),
     /// IO error during minimization
     Io(io::Error),
+}
+
+impl From<CoverError> for MinimizationError {
+    fn from(err: CoverError) -> Self {
+        MinimizationError::Cover(err)
+    }
 }
 
 impl fmt::Display for MinimizationError {
@@ -115,6 +124,7 @@ impl fmt::Display for MinimizationError {
             MinimizationError::Instance(e) => write!(f, "Instance error: {}", e),
             MinimizationError::Cube(e) => write!(f, "Cube error: {}", e),
             MinimizationError::Io(e) => write!(f, "IO error: {}", e),
+            MinimizationError::Cover(e) => write!(f, "Cover error: {}", e),
         }
     }
 }
@@ -125,6 +135,7 @@ impl std::error::Error for MinimizationError {
             MinimizationError::Instance(e) => Some(e),
             MinimizationError::Cube(e) => Some(e),
             MinimizationError::Io(e) => Some(e),
+            MinimizationError::Cover(e) => Some(e),
         }
     }
 }
@@ -155,6 +166,7 @@ impl From<MinimizationError> for io::Error {
             // Otherwise, wrap it as Other
             MinimizationError::Instance(e) => io::Error::other(e),
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+            MinimizationError::Cover(e) => io::Error::new(io::ErrorKind::InvalidData, e),
         }
     }
 }

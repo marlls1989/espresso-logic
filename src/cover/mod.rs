@@ -99,7 +99,9 @@ mod expressions;
 mod iterators;
 mod labels;
 mod minimisation;
+mod minterm;
 pub mod pla;
+
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeData, CubeType};
@@ -107,6 +109,7 @@ pub use dnf::Dnf;
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
+pub use minterm::Minterm;
 
 // Import internal types for Cover implementation
 use labels::LabelManager;
@@ -349,15 +352,7 @@ impl Cover {
 
     /// Get the number of cubes (for F/FD types, only counts F cubes; for FR/FDR, counts all)
     pub fn num_cubes(&self) -> usize {
-        if self.cover_type.has_r() {
-            self.cubes.len()
-        } else {
-            // F/FD: only count F cubes
-            self.cubes
-                .iter()
-                .filter(|cube| cube.cube_type() == CubeType::F)
-                .count()
-        }
+        self.cubes().count()
     }
 
     /// Get the cover type (F, FD, FR, or FDR)
@@ -411,46 +406,33 @@ impl Cover {
         }
     }
 
+    #[deprecated(
+        since = "3.1.3",
+        note = "Use try_cubes_iter instead, this function panics on invalid cover."
+    )]
+    pub fn cubes_iter(&self) -> CubesIter<'_, CubeData> {
+        self.try_cubes_iter().expect("Invalid cover")
+    }
+
     /// Iterate over cubes (inputs, outputs)
     ///
     /// Returns cubes in a format compatible with add_cube (owned vecs for easy use).
     /// Groups cubes by input pattern and merges outputs based on cube types.
-    pub fn cubes_iter(&self) -> CubesIter<'_, CubeData> {
-        let cover_type = self.cover_type;
+    pub fn try_cubes_iter(&self) -> Result<CubesIter<'_, CubeData>, CoverError> {
         let num_outputs = self.num_outputs;
 
-        // Helper function to map output bit based on cover_type and cube_type
-        let map_output_bit =
-            |cover_type: CoverType, cube_type: CubeType, output_bit: bool| -> Option<bool> {
-                match (cover_type, cube_type, output_bit) {
-                    // F Covers (only F cubes)
-                    (CoverType::F, CubeType::F, true) => Some(true),
-                    (CoverType::F, CubeType::F, false) => Some(false),
+        // Helper function to map output bit based on cube_type
+        fn map_output_bit(cube_type: CubeType, output_bit: bool) -> Option<bool> {
+            match (cube_type, output_bit) {
+                (CubeType::F, true) => Some(true),
+                (CubeType::F, false) => None,
+                (CubeType::R, true) => Some(false),
+                (CubeType::R, false) => None,
 
-                    // FR Covers (F and R cubes)
-                    (CoverType::FR, CubeType::F, true) => Some(true),
-                    (CoverType::FR, CubeType::F, false) => None,
-                    (CoverType::FR, CubeType::R, true) => Some(false),
-                    (CoverType::FR, CubeType::R, false) => None,
-
-                    // FD Covers (F and D cubes)
-                    (CoverType::FD, CubeType::F, true) => Some(true),
-                    (CoverType::FD, CubeType::F, false) => Some(false),
-                    (CoverType::FD, CubeType::D, true) => None,
-                    (CoverType::FD, CubeType::D, false) => Some(false),
-
-                    // FDR Covers (F, D, and R cubes)
-                    (CoverType::FDR, CubeType::F, true) => Some(true),
-                    (CoverType::FDR, CubeType::F, false) => None,
-                    (CoverType::FDR, CubeType::D, true) => None,
-                    (CoverType::FDR, CubeType::D, false) => Some(false),
-                    (CoverType::FDR, CubeType::R, true) => Some(false),
-                    (CoverType::FDR, CubeType::R, false) => None,
-
-                    // Catch-all for invalid combinations (shouldn't happen due to filtering)
-                    _ => None,
-                }
-            };
+                // Catch-all for invalid combinations (shouldn't happen due to filtering)
+                _ => None,
+            }
+        }
 
         // Collect cubes into BTreeMap, grouping by input pattern
         // Track both the output value and whether it was SET (from true bit) or ASSUMED (from false bit)
@@ -468,7 +450,7 @@ impl Cover {
 
             // Apply mapping for each output bit
             for (i, &output_bit) in cube.outputs().iter().enumerate() {
-                let mapped = map_output_bit(cover_type, cube.cube_type(), output_bit);
+                let mapped = map_output_bit(cube.cube_type(), output_bit);
 
                 if output_bit {
                     // Source cube has TRUE for this bit - this is a SET value (not assumed)
@@ -476,10 +458,10 @@ impl Cover {
                         // We already have a SET value from another true bit - check for conflict
                         if outputs[i] != mapped {
                             // Different cube types both have true for same output bit
-                            panic!(
-                                "Invalid cover: conflicting cube types for same input pattern at output {}",
-                                i
-                            );
+                            return Err(CoverError::InvalidCover {
+                                cube: cube.clone(),
+                                output_index: i,
+                            });
                         }
                         // Same mapping, no conflict - keep existing value
                     } else {
@@ -501,13 +483,21 @@ impl Cover {
 
         // Create iterator from BTreeMap, extracting only the output values
         // and discarding the is_set_from_true tracking
-        CubesIter {
+        Ok(CubesIter {
             iter: Box::new(
                 grouped
                     .into_iter()
                     .map(|(inputs, (outputs, _is_set_from_true))| (inputs, outputs)),
             ),
-        }
+        })
+    }
+
+    #[deprecated(
+        since = "3.1.3",
+        note = "Use try_add_cube instead, this function panics on invalid cube."
+    )]
+    pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
+        self.try_add_cube(inputs, outputs).expect("Invalid cube");
     }
 
     /// Add a cube to the cover
@@ -532,7 +522,7 @@ impl Cover {
     /// cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
-    pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
+    pub fn try_add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) -> Result<(), CoverError> {
         // Grow dimensions if needed
         self.grow_to_fit(inputs.len(), outputs.len());
 
@@ -597,6 +587,8 @@ impl Cover {
             self.cubes
                 .push(Cube::new(&padded_inputs, &r_outputs, CubeType::R));
         }
+
+        Ok(())
     }
 
     /// Grow the cover to fit at least the specified dimensions
