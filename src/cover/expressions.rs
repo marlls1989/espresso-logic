@@ -4,23 +4,18 @@
 //! allowing seamless integration with the expression API.
 
 use super::cubes::{Cube, CubeType};
-use super::dnf::Dnf;
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
 use super::minterm::Minterm;
 use super::Cover;
 use crate::expression::BoolExpr;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 impl Cover {
     /// Add a boolean function to a named output
     ///
-    /// This generic method accepts any type that can be converted to DNF:
-    /// - `&BoolExpr` - Boolean expressions
-    /// - `&Dnf` - Direct DNF representation
-    ///
-    /// Input variables are matched by name with existing variables,
+    /// The expression's product terms (extracted from its internal BDD) become F cubes
+    /// asserting `output_name`. Input variables are matched by name with existing variables,
     /// and new variables are appended in alphabetical order.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
@@ -44,13 +39,7 @@ impl Cover {
     /// let expr2 = b.or(&a);
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
-    pub fn add_expr<T>(&mut self, expr: &T, output_name: &str) -> Result<(), AddExprError>
-    where
-        for<'a> &'a T: Into<Dnf>,
-    {
-        // Convert to DNF (goes through BDD for canonical form and optimizations)
-        let dnf: Dnf = expr.into();
-
+    pub fn add_expr(&mut self, expr: &BoolExpr, output_name: &str) -> Result<(), AddExprError> {
         // Check if output already exists (fail fast before doing any work). Even an unlabeled cover
         // with outputs has implicit `y0, y1, …` names (its header), which a named output collides
         // with — matching the pre-existing backfill-then-check behaviour.
@@ -61,19 +50,13 @@ impl Cover {
             .into());
         }
 
-        // Extract cubes from DNF
-        let cubes = dnf.cubes();
+        // Extract the expression's product terms as input minterms (goes through the BDD for
+        // canonical form). Every minterm shares one header: the expression's variables, sorted.
+        let cubes = expr.to_cubes();
+        let expr_vars: &[Arc<str>] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
 
-        // Collect all variables from cubes (in sorted order for consistency)
-        let mut dnf_variables = BTreeSet::new();
-        for product_term in cubes {
-            for var in product_term.keys() {
-                dnf_variables.insert(Arc::clone(var));
-            }
-        }
-
-        // Determine which DNF variables are new to the cover's input header.
-        let new_inputs: Vec<Arc<str>> = dnf_variables
+        // Determine which of the expression's variables are new to the cover's input header.
+        let new_inputs: Vec<Arc<str>> = expr_vars
             .iter()
             .filter(|v| !self.input_vars.iter().any(|x| x.as_ref() == v.as_ref()))
             .cloned()
@@ -89,7 +72,7 @@ impl Cover {
             }
             self.input_vars = header;
         }
-        if !dnf_variables.is_empty() {
+        if !expr_vars.is_empty() {
             self.input_labeled = true;
         }
 
@@ -106,16 +89,19 @@ impl Cover {
         self.output_vars = out_header;
         self.output_labeled = true;
 
-        // Add an F cube per product term, asserting only the new output.
-        for product_term in cubes {
+        // Add an F cube per product term, asserting only the new output. Each product-term minterm
+        // carries its own variable names, so map them onto the cover's input header by name.
+        for product_term in &cubes {
             let mut inputs = vec![None; self.num_inputs()];
-            for (var, &polarity) in product_term {
-                if let Some(idx) = self
-                    .input_vars
-                    .iter()
-                    .position(|x| x.as_ref() == var.as_ref())
-                {
-                    inputs[idx] = Some(polarity);
+            for (var, polarity) in product_term.vars().iter().zip(product_term.iter()) {
+                if let Some(value) = polarity {
+                    if let Some(idx) = self
+                        .input_vars
+                        .iter()
+                        .position(|x| x.as_ref() == var.as_ref())
+                    {
+                        inputs[idx] = Some(value);
+                    }
                 }
             }
 

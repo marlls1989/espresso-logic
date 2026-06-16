@@ -158,7 +158,7 @@ impl BoolExpr {
         BoolExpr {
             manager,
             root: result,
-            dnf_cache: OnceLock::new(),
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
     }
@@ -177,7 +177,7 @@ impl BoolExpr {
         BoolExpr {
             manager,
             root: result,
-            dnf_cache: OnceLock::new(),
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
     }
@@ -196,7 +196,7 @@ impl BoolExpr {
         BoolExpr {
             manager,
             root: result,
-            dnf_cache: OnceLock::new(),
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
     }

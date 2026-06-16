@@ -600,7 +600,7 @@ When you minimise a `BoolExpr`, the library:
 
 **Caching Architecture (v3.1.1+):**
 - **BDD Representation**: Every expression has a canonical BDD (core representation)
-- **DNF Cache**: Lazily cached Arc-wrapped Dnf for cube extraction
+- **Cube Cache**: Lazily cached product-term cubes (minterms) for cube extraction
 - **AST Cache**: Lazily cached factored AST for beautiful display
 - All caches are local per-expression with cheap Arc cloning
 
@@ -836,7 +836,7 @@ fn main() -> std::io::Result<()> {
   - OR operations: efficient in BDD representation (polynomial time)
   - AND operations: efficient in BDD representation (polynomial time)
   - NOT operations: efficient in BDD representation (just flip terminal nodes)
-- **Implementation:** All conversions go through BDD: `BoolExpr -> Bdd -> Dnf` (avoids exponential complexity)
+- **Implementation:** All conversions go through BDD: `BoolExpr -> Bdd -> cubes` (avoids exponential complexity)
 
 **Why Both BDD and Espresso?**
 - **BDD minimization is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)

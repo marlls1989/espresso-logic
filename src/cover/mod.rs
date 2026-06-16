@@ -93,7 +93,6 @@
 // Module declarations
 mod conversions;
 mod cubes;
-mod dnf;
 pub mod error;
 mod expressions;
 mod iterators;
@@ -103,7 +102,6 @@ pub mod pla;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
-pub use dnf::Dnf;
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
@@ -453,6 +451,18 @@ impl Cover {
                     }),
             ),
         }
+    }
+
+    /// Input minterms of the F cubes that assert `output_idx`.
+    ///
+    /// These are the product terms of a single output (the sum-of-products for that output).
+    /// Each minterm carries the cover's shared input header.
+    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Vec<Minterm> {
+        self.cubes
+            .iter()
+            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
+            .map(|cube| cube.inputs().clone())
+            .collect()
     }
 
     /// Add a cube to the cover

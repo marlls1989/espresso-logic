@@ -5,7 +5,8 @@
 
 use super::manager::{BddNode, NodeId, VarId, FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use crate::cover::Minterm;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 impl BoolExpr {
@@ -26,7 +27,27 @@ impl BoolExpr {
     }
 
     /// Collect all variable IDs reachable from a node
+    ///
+    /// Deduplicates on visited *nodes* (not variables): a variable can label several distinct
+    /// nodes, so stopping at the first occurrence of a variable would miss variables that only
+    /// appear deeper in other branches. Tracking visited nodes keeps the walk both complete and
+    /// linear in the BDD size.
     fn collect_var_ids(&self, node: NodeId, vars: &mut std::collections::HashSet<VarId>) {
+        let mut visited = std::collections::HashSet::new();
+        self.collect_var_ids_inner(node, vars, &mut visited);
+    }
+
+    /// Recursive helper for [`collect_var_ids`] that tracks already-visited nodes.
+    fn collect_var_ids_inner(
+        &self,
+        node: NodeId,
+        vars: &mut std::collections::HashSet<VarId>,
+        visited: &mut std::collections::HashSet<NodeId>,
+    ) {
+        if !visited.insert(node) {
+            return;
+        }
+
         // Acquire lock, extract needed data, then release before recursing.
         // This is safe because NodeIds are stable (nodes are never removed/reordered).
         let node_info = {
@@ -41,34 +62,46 @@ impl BoolExpr {
         }; // Lock released here
 
         if let Some((var, low, high)) = node_info {
-            if vars.insert(var) {
-                self.collect_var_ids(low, vars);
-                self.collect_var_ids(high, vars);
-            }
+            vars.insert(var);
+            self.collect_var_ids_inner(low, vars, visited);
+            self.collect_var_ids_inner(high, vars, visited);
         }
     }
 
-    /// Extract cubes (product terms) from the BDD using cached DNF
+    /// Extract cubes (product terms) from the BDD as [`Minterm`]s
     ///
-    /// Returns a vector of cubes, where each cube is a map from variable name to
-    /// its literal value (true for positive literal, false for negative literal).
+    /// Returns a vector of input minterms, each carrying the full (alphabetically sorted)
+    /// variable header of the expression. A variable on a cube's path is fixed to `Some(true)`
+    /// / `Some(false)`; variables off the path are don't-care (`None`).
     ///
-    /// Each cube represents one path from the root to the TRUE terminal.
+    /// Each minterm represents one path from the root to the TRUE terminal.
     ///
-    /// This method uses the DNF cache to avoid expensive BDD traversal.
-    pub fn to_cubes(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
-        let dnf = self.get_or_create_dnf();
-        dnf.cubes().to_vec()
+    /// This method caches the extracted minterms to avoid repeated BDD traversal.
+    pub fn to_cubes(&self) -> Vec<Minterm> {
+        self.get_or_create_cubes().to_vec()
     }
 
     /// Extract cubes directly from BDD via traversal (bypasses cache)
     ///
     /// This is the internal method that actually traverses the BDD structure.
     /// Most code should use `to_cubes()` instead, which uses caching.
-    pub(super) fn extract_cubes_from_bdd(&self) -> Vec<BTreeMap<Arc<str>, bool>> {
+    ///
+    /// Every returned minterm shares one canonical header `Arc`, so cubes of the same
+    /// expression stay on the [`Minterm`] fast-comparison path.
+    pub(super) fn extract_cubes_from_bdd(&self) -> Vec<Minterm> {
+        // Canonical, alphabetically sorted variable header shared by every extracted minterm.
+        let vars: Arc<[Arc<str>]> = self.collect_variables().into_iter().collect();
+        let index: HashMap<Arc<str>, usize> = vars
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, v)| (v, i))
+            .collect();
+
         let mut results = Vec::new();
-        let mut current_path = BTreeMap::new();
-        self.extract_cubes(self.root, &mut current_path, &mut results);
+        // Scratch path indexed by header position; `None` = variable not yet fixed (don't-care).
+        let mut path: Vec<Option<bool>> = vec![None; vars.len()];
+        self.extract_cubes(self.root, &vars, &index, &mut path, &mut results);
         results
     }
 
@@ -76,8 +109,10 @@ impl BoolExpr {
     fn extract_cubes(
         &self,
         node: NodeId,
-        current_path: &mut BTreeMap<Arc<str>, bool>,
-        results: &mut Vec<BTreeMap<Arc<str>, bool>>,
+        vars: &Arc<[Arc<str>]>,
+        index: &HashMap<Arc<str>, usize>,
+        path: &mut [Option<bool>],
+        results: &mut Vec<Minterm>,
     ) {
         // Acquire lock, extract needed data, then release before recursing.
         // This is safe because NodeIds are stable (nodes are never removed/reordered).
@@ -99,22 +134,25 @@ impl BoolExpr {
 
         match node_info {
             Some((true, None)) => {
-                // Reached TRUE terminal - add current path as a cube
-                results.push(current_path.clone());
+                // Reached TRUE terminal - materialise the current path as a minterm.
+                results.push(Minterm::from_values(Arc::clone(vars), path.iter().copied()));
             }
             Some((false, None)) => {
                 // Reached FALSE terminal - this path doesn't contribute
             }
             Some((false, Some((var_name, low, high)))) => {
+                let i = index[&var_name];
+
                 // Traverse low edge (var = false)
-                current_path.insert(Arc::clone(&var_name), false);
-                self.extract_cubes(low, current_path, results);
-                current_path.remove(&var_name);
+                path[i] = Some(false);
+                self.extract_cubes(low, vars, index, path, results);
 
                 // Traverse high edge (var = true)
-                current_path.insert(Arc::clone(&var_name), true);
-                self.extract_cubes(high, current_path, results);
-                current_path.remove(&var_name);
+                path[i] = Some(true);
+                self.extract_cubes(high, vars, index, path, results);
+
+                // Restore don't-care on backtrack.
+                path[i] = None;
             }
             _ => unreachable!(),
         }

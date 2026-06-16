@@ -90,7 +90,7 @@ fn discover_pla_files() -> Vec<PLATestFile> {
     }
 
     // Sort by category and then by number of cubes
-    files.sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
+    files.sort_by_key(|f| (f.category as u32, f.num_cubes));
 
     files
 }
@@ -126,8 +126,7 @@ fn select_balanced_files(files: Vec<PLATestFile>, per_category: usize) -> Vec<PL
     }
 
     // Sort by category and size for consistent benchmark ordering
-    selected
-        .sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
+    selected.sort_by_key(|f| (f.category as u32, f.num_cubes));
 
     selected
 }

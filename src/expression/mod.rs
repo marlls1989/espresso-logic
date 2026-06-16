@@ -110,7 +110,6 @@
 // Submodules
 mod ast;
 mod bdd;
-mod conversions;
 mod display;
 pub mod error;
 mod eval;
@@ -159,7 +158,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// Each `BoolExpr` contains:
 /// - **Node ID** - Reference to BDD structure in global manager
 /// - **Manager Reference** - Shared access to global singleton BDD manager
-/// - **DNF Cache** - Lazily cached cubes for Espresso minimisation
+/// - **Cube Cache** - Lazily cached cubes for Espresso minimisation
 /// - **AST Cache** - Lazily cached syntax tree for display
 ///
 /// The BDD manager is a global singleton (protected by `RwLock`) shared by all
@@ -219,10 +218,10 @@ pub struct BoolExpr {
     manager: Arc<RwLock<BddManager>>,
     /// Root node ID in the BDD
     root: NodeId,
-    /// Cached DNF (cubes) for this BDD
-    /// This avoids expensive BDD traversal when converting to DNF
-    /// OnceLock's Clone copies the content, so clones share cached data via Arc
-    dnf_cache: OnceLock<crate::cover::Dnf>,
+    /// Cached product-term cubes (input minterms) for this BDD.
+    /// This avoids expensive BDD traversal when extracting cubes or minimising.
+    /// OnceLock's Clone copies the content, so clones share cached data via Arc.
+    cube_cache: OnceLock<Arc<[crate::cover::Minterm]>>,
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
     /// OnceLock's Clone copies the content, so clones share cached data via Arc
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
@@ -239,7 +238,7 @@ impl BoolExpr {
         BoolExpr {
             manager,
             root: node,
-            dnf_cache: OnceLock::new(),
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
     }
@@ -250,7 +249,7 @@ impl BoolExpr {
         BoolExpr {
             manager,
             root: if value { TRUE_NODE } else { FALSE_NODE },
-            dnf_cache: OnceLock::new(),
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
     }
@@ -303,24 +302,74 @@ impl BoolExpr {
         self.clone()
     }
 
-    /// Get or create the DNF representation with local caching
+    /// Get or create the cached product-term cubes with local caching.
     ///
-    /// Extracts cubes from BDD on first access and caches for subsequent calls.
-    fn get_or_create_dnf(&self) -> crate::cover::Dnf {
+    /// Extracts cubes (input [`Minterm`](crate::cover::Minterm)s) from the BDD on first
+    /// access and caches them for subsequent calls.
+    pub(crate) fn get_or_create_cubes(&self) -> Arc<[crate::cover::Minterm]> {
         // Check local cache
-        if let Some(dnf) = self.dnf_cache.get() {
-            return dnf.clone(); // Cheap Arc clone
+        if let Some(cubes) = self.cube_cache.get() {
+            return Arc::clone(cubes); // Cheap Arc clone
         }
 
         // Not cached - extract from BDD
-        let cubes = self.extract_cubes_from_bdd();
-        let dnf = crate::cover::Dnf::from_cubes(&cubes);
+        let cubes: Arc<[crate::cover::Minterm]> = self.extract_cubes_from_bdd().into();
 
         // Cache it locally
-        let _ = self.dnf_cache.set(dnf.clone());
+        let _ = self.cube_cache.set(Arc::clone(&cubes));
 
-        dnf
+        cubes
     }
+
+    /// Build a `BoolExpr` from a set of product-term cubes (sum of products).
+    ///
+    /// Each [`Minterm`](crate::cover::Minterm) becomes an AND of its fixed literals; the
+    /// expression is their OR. An empty cube is a tautology (`true`); an empty cube set is
+    /// `false`. The supplied cubes are cached on the result so later cube extraction /
+    /// minimisation reporting reflects exactly these terms (e.g. an Espresso-minimised set).
+    pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm]>) -> BoolExpr {
+        if cubes.is_empty() {
+            return BoolExpr::constant(false);
+        }
+
+        let mut terms = Vec::with_capacity(cubes.len());
+        for cube in cubes.iter() {
+            let factors = cube
+                .vars()
+                .iter()
+                .zip(cube.iter())
+                .filter_map(|(name, val)| match val {
+                    Some(true) => Some(BoolExpr::variable(name)),
+                    Some(false) => Some(BoolExpr::variable(name).not()),
+                    None => None,
+                });
+            let term = factors
+                .reduce(|acc, f| acc.and(&f))
+                .unwrap_or_else(|| BoolExpr::constant(true)); // empty cube = tautology
+            terms.push(term);
+        }
+
+        let expr = terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap();
+
+        // Cache the source cubes (typically minimised from Espresso).
+        let _ = expr.cube_cache.set(cubes);
+
+        expr
+    }
+}
+
+/// Collect a minterm's fixed literals as a `name -> polarity` map (don't-cares omitted).
+///
+/// This is the scratch format consumed by the algebraic factoriser; don't-care variables
+/// (`None`) are simply absent from the map.
+pub(crate) fn minterm_literals(
+    cube: &crate::cover::Minterm,
+) -> std::collections::BTreeMap<Arc<str>, bool> {
+    cube.vars()
+        .iter()
+        .zip(cube.iter())
+        .filter_map(|(name, val)| val.map(|polarity| (Arc::clone(name), polarity)))
+        .collect()
 }
 
 /// PartialEq implementation that compares BDDs for canonical equality

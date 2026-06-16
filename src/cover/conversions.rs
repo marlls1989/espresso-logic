@@ -7,7 +7,6 @@ use super::cubes::{Cube, CubeType};
 use super::minterm::Minterm;
 use super::CoverType;
 use super::{extend_header, Cover};
-use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -136,35 +135,10 @@ impl From<crate::expression::BoolExpr> for Cover {
 /// ```
 impl From<&crate::expression::BoolExpr> for Cover {
     fn from(expr: &crate::expression::BoolExpr) -> Self {
-        // Convert to DNF
-        let dnf = crate::cover::dnf::Dnf::from(expr);
-        let cubes = dnf.cubes();
-
-        // Collect all variables from the DNF cubes
-        let mut all_vars = BTreeSet::new();
-        for product_term in cubes {
-            for var in product_term.keys() {
-                all_vars.insert(Arc::clone(var));
-            }
-        }
-
-        // Create cover with proper dimensions
-        let var_vec: Vec<Arc<str>> = all_vars.into_iter().collect();
-        let var_refs: Vec<&str> = var_vec.iter().map(|s| s.as_ref()).collect();
-        let mut cover = Cover::with_labels(CoverType::F, &var_refs, &["out"]);
-
-        // Add cubes to cover
-        for product_term in cubes {
-            let mut inputs = vec![None; cover.num_inputs()];
-            for (var, &polarity) in product_term {
-                if let Some(idx) = var_vec.iter().position(|v| v == var) {
-                    inputs[idx] = Some(polarity);
-                }
-            }
-
-            cover.add_cube(&inputs, &[Some(true)]);
-        }
-
+        let mut cover = Cover::new(CoverType::F);
+        cover
+            .add_expr(expr, "out")
+            .expect("Adding expression to new cover should not fail");
         cover
     }
 }

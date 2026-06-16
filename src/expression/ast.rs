@@ -87,14 +87,13 @@ impl BoolExpr {
             return Arc::clone(ast);
         }
 
-        // AST not cached, get DNF and factorise
-        let dnf = self.get_or_create_dnf();
+        // AST not cached, get cubes and factorise
+        let cubes = self.get_or_create_cubes();
 
-        // Convert DNF cubes to the format expected by factorisation
-        let cube_terms: Vec<(std::collections::BTreeMap<Arc<str>, bool>, bool)> = dnf
-            .cubes()
+        // Convert cubes to the (literals, include) format expected by factorisation
+        let cube_terms: Vec<(std::collections::BTreeMap<Arc<str>, bool>, bool)> = cubes
             .iter()
-            .map(|cube| (cube.clone(), true))
+            .map(|cube| (super::minterm_literals(cube), true))
             .collect();
 
         // Use factorisation to build a nice AST

@@ -555,26 +555,24 @@ fn main() {
 ### BDD Properties and Inspection
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd, Dnf};
+use espresso_logic::BoolExpr;
 
 fn main() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let expr = a.and(&b).or(&a.not());
     
-    let bdd = expr.to_bdd();
-    
     // Check BDD properties
-    println!("Is terminal: {}", bdd.is_terminal());
-    println!("Is true: {}", bdd.is_true());
-    println!("Is false: {}", bdd.is_false());
-    println!("Node count: {}", bdd.node_count());
-    println!("Variable count: {}", bdd.var_count());
+    println!("Is terminal: {}", expr.is_terminal());
+    println!("Is true: {}", expr.is_true());
+    println!("Is false: {}", expr.is_false());
+    println!("Node count: {}", expr.node_count());
+    println!("Variable count: {}", expr.var_count());
     
-    // Extract cubes (paths to TRUE)
-    let dnf = Dnf::from(&bdd);
-    println!("Number of cubes: {}", dnf.len());
-    for cube in dnf.cubes() {
+    // Extract cubes (paths to TRUE) as minterms
+    let cubes = expr.to_cubes();
+    println!("Number of cubes: {}", cubes.len());
+    for cube in &cubes {
         println!("  Cube: {:?}", cube);
     }
 }
@@ -583,7 +581,7 @@ fn main() {
 ### BDD Automatic Optimization
 
 ```rust
-use espresso_logic::{BoolExpr, Dnf};
+use espresso_logic::BoolExpr;
 
 fn main() {
     let a = BoolExpr::variable("a");
@@ -597,15 +595,13 @@ fn main() {
     println!("Original expression: {}", expr);
     
     // BDD automatically recognizes redundancy
-    let bdd = expr.to_bdd();
-    let dnf = Dnf::from(&bdd);
+    let cubes = expr.to_cubes();
     
-    println!("BDD has {} cubes (redundancy eliminated)", dnf.len());
+    println!("BDD has {} cubes (redundancy eliminated)", cubes.len());
     // Outputs: 2 cubes (b*c was redundant and eliminated)
     
-    // Convert back to see simplified form
-    let simplified = bdd.to_expr();
-    println!("Simplified: {}", simplified);
+    // The factored display already shows the simplified form
+    println!("Simplified: {}", expr);
 }
 ```
 

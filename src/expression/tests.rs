@@ -672,8 +672,8 @@ fn test_to_cubes_simple() {
     let ab = a.and(&b);
     let cubes = ab.to_cubes();
     assert_eq!(cubes.len(), 1);
-    assert_eq!(cubes[0].get(&Arc::from("a")), Some(&true));
-    assert_eq!(cubes[0].get(&Arc::from("b")), Some(&true));
+    assert_eq!(cubes[0].value_of("a"), Some(true));
+    assert_eq!(cubes[0].value_of("b"), Some(true));
 }
 
 #[test]
@@ -692,10 +692,10 @@ fn test_to_cubes_constant() {
     let t = BoolExpr::constant(true);
     let f = BoolExpr::constant(false);
 
-    // TRUE should produce one empty cube (tautology)
+    // TRUE should produce one empty cube (tautology): a minterm with no variables.
     let cubes = t.to_cubes();
     assert_eq!(cubes.len(), 1);
-    assert!(cubes[0].is_empty());
+    assert_eq!(cubes[0].num_vars(), 0);
 
     // FALSE should produce no cubes
     let cubes = f.to_cubes();

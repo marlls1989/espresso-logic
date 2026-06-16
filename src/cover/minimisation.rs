@@ -2,15 +2,14 @@
 //!
 //! This module provides the [`Minimizable`] trait which defines a uniform interface
 //! for minimizing Boolean functions using the Espresso algorithm, along with implementations
-//! for [`Cover`] and a blanket implementation for types convertible to/from [`Dnf`].
+//! for [`Cover`] and [`BoolExpr`].
 
 use super::cubes::{Cube, CubeType};
-use super::dnf::Dnf;
 use super::minterm::Minterm;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
+use crate::expression::BoolExpr;
 use crate::EspressoConfig;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Public trait for types that can be minimized using Espresso
@@ -60,10 +59,9 @@ use std::sync::Arc;
 /// # Implementations
 ///
 /// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
-/// - **Blanket implementation** (v3.1+): For `T where &T: Into<Dnf>, T: From<Dnf>`
-///   - Automatically covers [`BoolExpr`] (v3.1.1+)
-///   - Workflow: Expression → Dnf (from internal BDD representation) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
-///   - DNF is extracted from the internal BDD representation, minimized, then used to create a new expression
+/// - **[`BoolExpr`]**: Extracts the expression's product terms (from its internal BDD) into a
+///   single-output [`Cover`], minimizes it with Espresso, then rebuilds an expression from the
+///   minimized product terms. Workflow: Expression → Cover → Espresso → minimized Cover → Expression
 ///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
@@ -284,116 +282,48 @@ impl Minimizable for Cover {
     }
 }
 
-/// Helper function to minimize via Cover conversion
+/// Minimize a `BoolExpr` by round-tripping through a single-output [`Cover`].
 ///
-/// Used by Minimizable implementations to convert DNF → Cover → minimize → DNF
-pub(crate) fn minimize_via_cover<F>(
-    dnf: &Dnf,
+/// Workflow: `BoolExpr` → single-output `Cover` (product terms extracted from the internal
+/// BDD) → Espresso minimisation → rebuild a `BoolExpr` from the minimised product terms. The
+/// minimised cubes are cached on the result so subsequent cube extraction reflects them.
+fn minimize_expr_with<F>(
+    expr: &BoolExpr,
     config: &EspressoConfig,
     minimize_fn: F,
-) -> Result<Dnf, MinimizationError>
+) -> Result<BoolExpr, MinimizationError>
 where
     F: FnOnce(&Cover, &EspressoConfig) -> Result<Cover, MinimizationError>,
 {
-    // Use cached variables (already sorted alphabetically)
-    let var_list = dnf.variables();
-    let var_refs: Vec<&str> = var_list.iter().map(|s| s.as_ref()).collect();
+    // Build a single-output cover from the expression (canonical via the BDD).
+    let cover: Cover = expr.into();
 
-    // Create cover with proper dimensions and labels
-    let mut cover = crate::Cover::with_labels(crate::CoverType::F, &var_refs, &["out"]);
+    // Minimise it with the provided (heuristic or exact) algorithm.
+    let minimized = minimize_fn(&cover, config)?;
 
-    // Add cubes to cover
-    for cube in dnf.cubes() {
-        let mut inputs = vec![None; var_list.len()];
-        for (i, var) in var_list.iter().enumerate() {
-            if let Some(&polarity) = cube.get(var) {
-                inputs[i] = Some(polarity);
-            }
-        }
-        cover.add_cube(&inputs, &[Some(true)]);
-    }
-
-    // Minimize the cover using the provided function
-    let minimized_cover = minimize_fn(&cover, config)?;
-
-    // Convert back to Dnf
-    Ok(cover_to_dnf(&minimized_cover))
+    // Rebuild a BoolExpr from the minimised product terms of the single output.
+    let terms: Arc<[Minterm]> = minimized.output_product_terms(0).into();
+    Ok(BoolExpr::from_cubes(terms))
 }
 
-/// Helper function to convert a Cover back to Dnf
-pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
-    let mut cubes = Vec::new();
-
-    let input_vars = cover.input_vars();
-
-    for cube in cover.cubes() {
-        // Only F-set cubes contribute product terms to the DNF.
-        if cube.cube_type() != CubeType::F {
-            continue;
-        }
-        let mut product = BTreeMap::new();
-
-        for (i, literal) in cube.inputs().iter().enumerate() {
-            if let Some(polarity) = literal {
-                let var_name = if i < input_vars.len() {
-                    Arc::clone(&input_vars[i])
-                } else {
-                    Arc::from(format!("x{}", i).as_str())
-                };
-                product.insert(var_name, polarity);
-            }
-        }
-
-        cubes.push(product);
-    }
-
-    Dnf::from_cubes(&cubes)
-}
-
-/// Blanket implementation of Minimizable for types convertible to/from Dnf
+/// Implement the public [`Minimizable`] trait for [`BoolExpr`].
 ///
-/// This provides automatic minimization support for any type that can convert
-/// to and from [`Dnf`]. The implementation follows this workflow:
-///
-/// 1. Convert `&T` to `Dnf` (via `Into<Dnf>`)
-/// 2. Convert Dnf to Cover with labeled variables
-/// 3. Minimize Cover using Espresso
-/// 4. Convert minimized Cover back to Dnf
-/// 5. Convert Dnf back to original type (via `From<Dnf>`)
-///
-/// The DNF serves as the intermediary representation between boolean expressions
-/// and covers, ensuring all conversions go through the efficient BDD path.
-impl<T> Minimizable for T
-where
-    for<'a> &'a T: Into<Dnf>,
-    T: From<Dnf>,
-{
+/// Boolean expressions minimise by extracting their product terms (from the internal BDD) into a
+/// single-output [`Cover`], running Espresso, and reconstructing an expression from the result.
+impl Minimizable for BoolExpr {
     fn minimize_with_config(
         &self,
         config: &crate::EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the heuristic algorithm
-        let minimized_dnf =
-            minimize_via_cover(&dnf, config, |cover, cfg| cover.minimize_with_config(cfg))?;
-
-        Ok(T::from(minimized_dnf))
+        minimize_expr_with(self, config, |cover, cfg| cover.minimize_with_config(cfg))
     }
 
     fn minimize_exact_with_config(
         &self,
         config: &crate::EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the exact algorithm
-        let minimized_dnf = minimize_via_cover(&dnf, config, |cover, cfg| {
+        minimize_expr_with(self, config, |cover, cfg| {
             cover.minimize_exact_with_config(cfg)
-        })?;
-
-        Ok(T::from(minimized_dnf))
+        })
     }
 }
