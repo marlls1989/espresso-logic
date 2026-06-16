@@ -3,24 +3,28 @@
 //! This module provides conversions and trait implementations for [`Cover`],
 //! including PLA I/O, Debug formatting, and conversions from expressions.
 
-use super::cubes::{Cube, CubeType};
-use super::labels::LabelManager;
-use super::Cover;
+use super::cubes::{Cube, OutputSet};
+use super::minterm::Minterm;
+use super::{extend_header, Cover};
 use super::CoverType;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
+
+/// Raw parsed cube data handed to [`PLASerialisable::create_from_pla_parts`]:
+/// `(input pattern, output-membership mask, set)`.
+pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, OutputSet);
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
 impl super::pla::PLASerialisable for Cover {
     type CubesIter<'a> = std::slice::Iter<'a, Cube>;
 
     fn num_inputs(&self) -> usize {
-        self.num_inputs
+        self.input_vars().len()
     }
 
     fn num_outputs(&self) -> usize {
-        self.num_outputs
+        self.output_vars().len()
     }
 
     fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
@@ -28,18 +32,20 @@ impl super::pla::PLASerialisable for Cover {
     }
 
     fn get_input_labels(&self) -> Option<&[Arc<str>]> {
-        if self.input_labels.is_empty() {
+        let labels = self.input_labels();
+        if labels.is_empty() {
             None
         } else {
-            Some(self.input_labels.as_slice())
+            Some(labels)
         }
     }
 
     fn get_output_labels(&self) -> Option<&[Arc<str>]> {
-        if self.output_labels.is_empty() {
+        let labels = self.output_labels();
+        if labels.is_empty() {
             None
         } else {
-            Some(self.output_labels.as_slice())
+            Some(labels)
         }
     }
 
@@ -48,14 +54,38 @@ impl super::pla::PLASerialisable for Cover {
         num_outputs: usize,
         input_labels: Vec<Arc<str>>,
         output_labels: Vec<Arc<str>>,
-        cubes: Vec<Cube>,
+        cubes: Vec<RawCube>,
         cover_type: CoverType,
     ) -> Self {
+        let input_labeled = !input_labels.is_empty();
+        let output_labeled = !output_labels.is_empty();
+        let input_vars: Arc<[Arc<str>]> = if input_labeled {
+            input_labels.into()
+        } else {
+            extend_header(&[], num_inputs, 'x')
+        };
+        let output_vars: Arc<[Arc<str>]> = if output_labeled {
+            output_labels.into()
+        } else {
+            extend_header(&[], num_outputs, 'y')
+        };
+
+        let cubes = cubes
+            .into_iter()
+            .map(|(mut inputs, mask, set)| {
+                inputs.resize(num_inputs, None);
+                let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
+                let om =
+                    Minterm::from_values(Arc::clone(&output_vars), mask.iter().map(|&b| Some(b)));
+                Cube::new(im, om, set)
+            })
+            .collect();
+
         Cover {
-            num_inputs,
-            num_outputs,
-            input_labels: LabelManager::from_labels(input_labels),
-            output_labels: LabelManager::from_labels(output_labels),
+            input_vars,
+            output_vars,
+            input_labeled,
+            output_labeled,
             cubes,
             cover_type,
         }
@@ -127,13 +157,12 @@ impl From<&crate::expression::BoolExpr> for Cover {
         for product_term in cubes {
             let mut inputs = vec![None; cover.num_inputs()];
             for (var, &polarity) in product_term {
-                if let Some(idx) = cover.input_labels.find_position(var) {
+                if let Some(idx) = var_vec.iter().position(|v| v == var) {
                     inputs[idx] = Some(polarity);
                 }
             }
 
-            let outputs = vec![true; cover.num_outputs()];
-            cover.cubes.push(Cube::new(&inputs, &outputs, CubeType::F));
+            cover.add_cube(&inputs, &[Some(true)]);
         }
 
         cover
@@ -143,12 +172,12 @@ impl From<&crate::expression::BoolExpr> for Cover {
 impl fmt::Debug for Cover {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cover")
-            .field("num_inputs", &self.num_inputs)
-            .field("num_outputs", &self.num_outputs)
+            .field("num_inputs", &self.num_inputs())
+            .field("num_outputs", &self.num_outputs())
             .field("cover_type", &self.cover_type)
             .field("num_cubes", &self.num_cubes())
-            .field("input_labels", &self.input_labels)
-            .field("output_labels", &self.output_labels)
+            .field("input_labels", &self.input_labels())
+            .field("output_labels", &self.output_labels())
             .finish()
     }
 }

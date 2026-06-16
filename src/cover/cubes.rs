@@ -1,64 +1,76 @@
-//! Cube types and definitions for Boolean function minimization
+//! The [`Cube`] product term: input pattern + output-membership, both [`Minterm`]s.
 //!
-//! This module provides the core cube-related types used in PLA covers:
-//! - [`CubeType`]: Distinguishes between ON-set, don't-care, and OFF-set cubes
-//! - [`Cube`]: Represents a single cube (product term) in a cover
-//! - [`CubeData`]: Type alias for cube input/output data
+//! A cube is one product term of a cover. It belongs to exactly one of the cover's three sets
+//! (ON/`F`, don't-care/`D`, OFF/`R`) — recorded by an internal [`OutputSet`] tag — and stores:
+//!
+//! - `inputs`: the input pattern minterm (`Some(true)`/`Some(false)`/`None` per input variable);
+//! - `outputs`: a membership minterm where `Some(true)` means "this output is asserted by this
+//!   cube (in its set)" and `Some(false)` means "not asserted".
+//!
+//! Keeping the per-cube `set` tag (rather than merging all three into one tri-state output) is what
+//! makes the representation **lossless**: the PLA `~` ("not asserted") state stays distinct from the
+//! `-` (don't-care) state, so multi-output FD/FDR covers round-trip and minimise byte-identically to
+//! the C library. The merged tri-state view is offered separately via
+//! [`Cover::cubes_iter`](crate::Cover::cubes_iter).
 
-use std::sync::Arc;
+use super::minterm::Minterm;
 
-/// Type alias for cube data as owned vectors (inputs, outputs)
+/// Owned `(inputs, outputs)` data in the merged tri-state form yielded by
+/// [`Cover::cubes_iter`](crate::Cover::cubes_iter).
+///
+/// Outputs are merged: `Some(true)` = 1 (ON), `Some(false)` = 0 (OFF), `None` = don't-care.
 pub type CubeData = (Vec<Option<bool>>, Vec<Option<bool>>);
 
-/// Type of a cube (ON-set, DC-set, or OFF-set)
+/// Which of a cover's three sets a cube belongs to.
+///
+/// Internal: derived from / paired with cube storage when talking to the C library or writing PLA;
+/// not part of the public API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CubeType {
-    /// ON-set cube (where the function is 1)
+pub(crate) enum OutputSet {
+    /// ON-set (the function is 1).
     F,
-    /// Don't-care set cube (can be either 0 or 1)
+    /// Don't-care set (the function is `-`).
     D,
-    /// OFF-set cube (where the function is 0)
+    /// OFF-set (the function is 0).
     R,
 }
 
-/// A cube in a PLA cover
+/// A cube (product term) in a cover.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cube {
-    pub(crate) inputs: Arc<[Option<bool>]>,
-    pub(crate) outputs: Arc<[bool]>, // Simplified: true = bit set, false = bit not set
-    pub(crate) cube_type: CubeType,
+    pub(crate) inputs: Minterm,
+    /// Membership mask: `Some(true)` where this cube asserts the output, `Some(false)` otherwise.
+    pub(crate) outputs: Minterm,
+    pub(crate) set: OutputSet,
 }
 
 impl Cube {
-    pub(crate) fn new(inputs: &[Option<bool>], outputs: &[bool], cube_type: CubeType) -> Self {
+    /// Build a cube from its input pattern, output-membership mask, and set tag.
+    pub(crate) fn new(inputs: Minterm, outputs: Minterm, set: OutputSet) -> Self {
         Cube {
-            inputs: inputs.into(),
-            outputs: outputs.into(),
-            cube_type,
+            inputs,
+            outputs,
+            set,
         }
     }
 
-    /// Get the inputs of this cube
-    ///
-    /// Returns a slice where each element represents an input variable:
-    /// - `Some(false)` - input must be 0
-    /// - `Some(true)` - input must be 1
-    /// - `None` - don't care (can be 0 or 1)
-    pub fn inputs(&self) -> &[Option<bool>] {
+    /// The input pattern of this cube.
+    pub fn inputs(&self) -> &Minterm {
         &self.inputs
     }
 
-    /// Get the outputs of this cube
-    ///
-    /// Returns a slice where each element represents an output variable:
-    /// - `true` - output is 1
-    /// - `false` - output is 0
-    pub fn outputs(&self) -> &[bool] {
+    /// The output-membership mask of this cube (`Some(true)` where the output is asserted).
+    pub fn outputs(&self) -> &Minterm {
         &self.outputs
     }
 
-    /// Get the type of this cube (F, D, or R)
-    pub fn cube_type(&self) -> CubeType {
-        self.cube_type
+    /// Which set (F/D/R) this cube belongs to.
+    pub(crate) fn set(&self) -> OutputSet {
+        self.set
+    }
+
+    /// Whether output `i` is asserted by this cube.
+    pub(crate) fn asserts(&self, i: usize) -> bool {
+        self.outputs.value_at(i) == Some(true)
     }
 }

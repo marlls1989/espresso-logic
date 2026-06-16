@@ -4,8 +4,9 @@
 //! for minimizing Boolean functions using the Espresso algorithm, along with implementations
 //! for [`Cover`] and a blanket implementation for types convertible to/from [`Dnf`].
 
-use super::cubes::CubeType;
+use super::cubes::{Cube, OutputSet};
 use super::dnf::Dnf;
+use super::minterm::Minterm;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::EspressoConfig;
@@ -171,25 +172,23 @@ where
         let input_vec: Vec<u8> = cube
             .inputs()
             .iter()
-            .map(|&opt| match opt {
+            .map(|opt| match opt {
                 Some(false) => 0,
                 Some(true) => 1,
                 None => 2,
             })
             .collect();
 
-        // Convert outputs: true → 1, false → 0
-        let output_vec: Vec<u8> = cube
-            .outputs()
-            .iter()
-            .map(|&b| if b { 1 } else { 0 })
+        // Output mask: 1 where this cube asserts the output, 0 otherwise.
+        let output_vec: Vec<u8> = (0..cover.num_outputs())
+            .map(|i| if cube.asserts(i) { 1 } else { 0 })
             .collect();
 
-        // Send to appropriate set based on cube type
-        match cube.cube_type() {
-            CubeType::F => f_cubes.push((input_vec, output_vec)),
-            CubeType::D => d_cubes.push((input_vec, output_vec)),
-            CubeType::R => r_cubes.push((input_vec, output_vec)),
+        // Send to appropriate set based on the cube's set.
+        match cube.set() {
+            OutputSet::F => f_cubes.push((input_vec, output_vec)),
+            OutputSet::D => d_cubes.push((input_vec, output_vec)),
+            OutputSet::R => r_cubes.push((input_vec, output_vec)),
         }
     }
 
@@ -235,18 +234,36 @@ where
     let (f_result, d_result, r_result) =
         minimize_fn(&esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
 
-    // Extract minimized cubes
-    let mut minimized_cubes = Vec::new();
-    minimized_cubes.extend(f_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::F));
-    minimized_cubes.extend(d_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::D));
-    minimized_cubes.extend(r_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::R));
+    // Extract minimized cubes back onto the cover's shared headers.
+    let ni = cover.num_inputs();
+    let no = cover.num_outputs();
+    let input_vars = Arc::clone(cover.input_vars());
+    let output_vars = Arc::clone(cover.output_vars());
+    let build = |raw: Vec<(Vec<Option<bool>>, Vec<bool>)>, set: OutputSet| -> Vec<Cube> {
+        raw.into_iter()
+            .map(|(mut inputs, mask)| {
+                inputs.resize(ni, None);
+                let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
+                let om = Minterm::from_values(
+                    Arc::clone(&output_vars),
+                    mask.iter().map(|&b| Some(b)),
+                );
+                Cube::new(im, om, set)
+            })
+            .collect::<Vec<_>>()
+    };
 
-    // Build new cover with minimized cubes - only clone labels (Arc, cheap)
+    let mut minimized_cubes = Vec::new();
+    minimized_cubes.extend(build(f_result.to_cubes(ni, no), OutputSet::F));
+    minimized_cubes.extend(build(d_result.to_cubes(ni, no), OutputSet::D));
+    minimized_cubes.extend(build(r_result.to_cubes(ni, no), OutputSet::R));
+
+    // Build new cover with minimized cubes - reuse the cover's headers (Arc, cheap)
     Ok(Cover {
-        num_inputs: cover.num_inputs,
-        num_outputs: cover.num_outputs,
-        input_labels: cover.input_labels.clone(),
-        output_labels: cover.output_labels.clone(),
+        input_vars: Arc::clone(cover.input_vars()),
+        output_vars: Arc::clone(cover.output_vars()),
+        input_labeled: cover.input_labeled,
+        output_labeled: cover.output_labeled,
         cubes: minimized_cubes,
         cover_type: cover.cover_type,
     })
@@ -292,7 +309,7 @@ where
                 inputs[i] = Some(polarity);
             }
         }
-        cover.try_add_cube(&inputs, &[Some(true)])?;
+        cover.add_cube(&inputs, &[Some(true)]);
     }
 
     // Minimize the cover using the provided function
@@ -306,16 +323,19 @@ where
 pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
     let mut cubes = Vec::new();
 
+    let input_vars = cover.input_vars();
+
     for cube in cover.cubes() {
+        // Only F-set cubes contribute product terms to the DNF.
+        if cube.set() != OutputSet::F {
+            continue;
+        }
         let mut product = BTreeMap::new();
 
-        // Get input labels
-        let input_labels = cover.input_labels();
-
-        for (i, &literal) in cube.inputs().iter().enumerate() {
+        for (i, literal) in cube.inputs().iter().enumerate() {
             if let Some(polarity) = literal {
-                let var_name = if i < input_labels.len() {
-                    Arc::clone(&input_labels[i])
+                let var_name = if i < input_vars.len() {
+                    Arc::clone(&input_vars[i])
                 } else {
                     Arc::from(format!("x{}", i).as_str())
                 };

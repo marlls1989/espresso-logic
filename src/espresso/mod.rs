@@ -160,7 +160,7 @@
 //! Each thread has completely independent state:
 //!
 //! ```rust
-//! use espresso_logic::espresso::{EspressoCover, CubeType};
+//! use espresso_logic::espresso::EspressoCover;
 //! use std::thread;
 //!
 //! # fn main() {
@@ -170,7 +170,7 @@
 //!     let cover = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 //!     let (result, _, _) = cover.minimize(None, None);
 //!     // Extract the data before returning (covers are !Send)
-//!     result.to_cubes(2, 1, CubeType::F).len()
+//!     result.to_cubes(2, 1).len()
 //! });
 //!
 //! let handle2 = thread::spawn(|| {
@@ -179,7 +179,7 @@
 //!     let cover = EspressoCover::from_cubes(&cubes, 3, 1).unwrap();
 //!     let (result, _, _) = cover.minimize(None, None);
 //!     // Extract the data before returning (covers are !Send)
-//!     result.to_cubes(3, 1, CubeType::F).len()
+//!     result.to_cubes(3, 1).len()
 //! });
 //!
 //! let count1 = handle1.join().unwrap();
@@ -283,7 +283,7 @@
 //! let (minimized, _d, _r) = f.minimize(None, None);
 //!
 //! // Extract results
-//! let result_cubes = minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+//! let result_cubes = minimized.to_cubes(2, 1);
 //! println!("Minimized to {} cubes", result_cubes.len());
 //! # Ok(())
 //! # }
@@ -316,7 +316,7 @@
 //! Each thread automatically gets its own Espresso instance. No manual management needed:
 //!
 //! ```
-//! use espresso_logic::espresso::{EspressoCover, CubeType};
+//! use espresso_logic::espresso::EspressoCover;
 //! use std::thread;
 //!
 //! # fn main() {
@@ -328,7 +328,7 @@
 //!         
 //!         // Thread-safe: independent global state per thread
 //!         let (result, _, _) = f.minimize(None, None);
-//!         result.to_cubes(2, 1, CubeType::F).len()
+//!         result.to_cubes(2, 1).len()
 //!     })
 //! }).collect();
 //!
@@ -344,7 +344,7 @@
 //! Use functions to automatically clean up covers:
 //!
 //! ```
-//! use espresso_logic::espresso::{EspressoCover, CubeType};
+//! use espresso_logic::espresso::EspressoCover;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! fn minimize_and_report(
@@ -354,7 +354,7 @@
 //! ) -> Result<usize, Box<dyn std::error::Error>> {
 //!     let cover = EspressoCover::from_cubes(cubes, num_inputs, num_outputs)?;
 //!     let (result, _, _) = cover.minimize(None, None);
-//!     Ok(result.to_cubes(num_inputs, num_outputs, CubeType::F).len())
+//!     Ok(result.to_cubes(num_inputs, num_outputs).len())
 //!     // All covers dropped here
 //! }
 //!
@@ -381,7 +381,6 @@ use std::ptr;
 use std::rc::Rc;
 
 // Re-export for convenience when using the espresso module directly
-pub use crate::cover::{Cube, CubeType};
 
 /// Cover with direct access to C library representation
 ///
@@ -721,7 +720,7 @@ impl EspressoCover {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::espresso::{EspressoCover, CubeType};
+    /// use espresso_logic::espresso::EspressoCover;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let cubes = [
@@ -731,7 +730,7 @@ impl EspressoCover {
     /// let cover = EspressoCover::from_cubes(&cubes, 2, 1)?;
     ///
     /// // Extract cubes as Rust types
-    /// let extracted = cover.to_cubes(2, 1, CubeType::F);
+    /// let extracted = cover.to_cubes(2, 1);
     ///
     /// for cube in &extracted {
     ///     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
@@ -745,8 +744,7 @@ impl EspressoCover {
         &self,
         num_inputs: usize,
         num_outputs: usize,
-        cube_type: CubeType,
-    ) -> Vec<Cube> {
+    ) -> Vec<(Vec<Option<bool>>, Vec<bool>)> {
         unsafe {
             let count = (*self.ptr).count as usize;
             let wsize = (*self.ptr).wsize as usize;
@@ -804,7 +802,7 @@ impl EspressoCover {
                     outputs.push(val);
                 }
 
-                result.push(Cube::new(&inputs, &outputs, cube_type));
+                result.push((inputs, outputs));
             }
 
             result
@@ -836,7 +834,7 @@ impl EspressoCover {
     /// ## Basic Usage
     ///
     /// ```
-    /// use espresso_logic::espresso::{EspressoCover, CubeType};
+    /// use espresso_logic::espresso::EspressoCover;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Create a cover for XOR function
@@ -846,9 +844,9 @@ impl EspressoCover {
     /// // Minimize it directly
     /// let (minimized, d, r) = f.minimize(None, None);
     ///
-    /// println!("Minimized: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
-    /// println!("Don't-care: {} cubes", d.to_cubes(2, 1, CubeType::F).len());
-    /// println!("OFF-set: {} cubes", r.to_cubes(2, 1, CubeType::F).len());
+    /// println!("Minimized: {} cubes", minimized.to_cubes(2, 1).len());
+    /// println!("Don't-care: {} cubes", d.to_cubes(2, 1).len());
+    /// println!("OFF-set: {} cubes", r.to_cubes(2, 1).len());
     /// # Ok(())
     /// # }
     /// ```
@@ -903,7 +901,7 @@ impl EspressoCover {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::espresso::{EspressoCover, CubeType};
+    /// use espresso_logic::espresso::EspressoCover;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
@@ -912,7 +910,7 @@ impl EspressoCover {
     /// // Use exact minimization for guaranteed minimal result
     /// let (minimized, d, r) = f.minimize_exact(None, None);
     ///
-    /// println!("Exact: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
+    /// println!("Exact: {} cubes", minimized.to_cubes(2, 1).len());
     /// # Ok(())
     /// # }
     /// ```
@@ -1372,7 +1370,7 @@ impl Espresso {
     /// ## Basic Minimization
     ///
     /// ```
-    /// use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
     /// use espresso_logic::EspressoConfig;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1381,7 +1379,7 @@ impl Espresso {
     /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
     ///
     /// let (minimized, d, r) = esp.minimize(&f, None, None);
-    /// println!("Result: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
+    /// println!("Result: {} cubes", minimized.to_cubes(2, 1).len());
     /// # Ok(())
     /// # }
     /// ```
@@ -1389,7 +1387,7 @@ impl Espresso {
     /// ## With Don't-Cares
     ///
     /// ```
-    /// use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
     /// use espresso_logic::EspressoConfig;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1409,7 +1407,7 @@ impl Espresso {
     /// let (minimized, _, _) = esp.minimize(&f, Some(&d), None);
     /// // Don't-care allows better minimization
     /// println!("With don't-cares: {} cubes",
-    ///          minimized.to_cubes(2, 1, CubeType::F).len());
+    ///          minimized.to_cubes(2, 1).len());
     /// # Ok(())
     /// # }
     /// ```
@@ -1460,7 +1458,7 @@ impl Espresso {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
     /// use espresso_logic::EspressoConfig;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1470,7 +1468,7 @@ impl Espresso {
     ///
     /// // Use exact minimization for guaranteed minimal result
     /// let (minimized, d, r) = esp.minimize_exact(&f, None, None);
-    /// println!("Exact result: {} cubes", minimized.to_cubes(2, 1, CubeType::F).len());
+    /// println!("Exact result: {} cubes", minimized.to_cubes(2, 1).len());
     /// # Ok(())
     /// # }
     /// ```
@@ -1581,7 +1579,7 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result has correct structure
-                        let cubes = result.to_cubes(2, 1, CubeType::F);
+                        let cubes = result.to_cubes(2, 1);
                         assert!(
                             cubes.len() >= 2,
                             "Thread {} op {} got {} cubes, expected >= 2",
@@ -1644,7 +1642,7 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result structure
-                        let cubes = result.to_cubes(num_inputs, num_outputs, CubeType::F);
+                        let cubes = result.to_cubes(num_inputs, num_outputs);
                         assert!(!cubes.is_empty(), "Thread {} got empty result", thread_id);
                     }
                 })
@@ -1913,7 +1911,7 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result
-                        let result_cubes = result.to_cubes(3, 1, CubeType::F);
+                        let result_cubes = result.to_cubes(3, 1);
                         assert!(
                             !result_cubes.is_empty(),
                             "Thread {} op {} got empty result",
@@ -1984,8 +1982,8 @@ mod tests {
         let (result2, _, _) = f2.minimize(None, None);
 
         // Verify they worked
-        assert!(!result1.to_cubes(2, 1, CubeType::F).is_empty());
-        assert!(!result2.to_cubes(2, 1, CubeType::F).is_empty());
+        assert!(!result1.to_cubes(2, 1).is_empty());
+        assert!(!result2.to_cubes(2, 1).is_empty());
 
         // Can also explicitly create an Espresso handle with same dimensions
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
@@ -2067,7 +2065,7 @@ mod tests {
                     let (result, _, _) = esp.minimize(&f_clone, None, None);
 
                     // Basic validation
-                    let result_cubes = result.to_cubes(num_inputs, num_outputs, CubeType::F);
+                    let result_cubes = result.to_cubes(num_inputs, num_outputs);
                     assert!(
                         !result_cubes.is_empty(),
                         "Got empty result for problem {}",
@@ -2117,7 +2115,7 @@ mod tests {
         let (result, d, r) = f.minimize(None, None);
 
         // Verify the result cover has expected structure
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes = result.to_cubes(2, 1);
         assert_eq!(
             result_cubes.len(),
             1,
@@ -2127,15 +2125,15 @@ mod tests {
         // Verify the cube content is correct
         let cube = &result_cubes[0];
         assert_eq!(
-            cube.inputs(),
-            &[Some(false), Some(true)],
+            cube.0,
+            [Some(false), Some(true)],
             "Input should be [0, 1]"
         );
-        assert_eq!(cube.outputs(), &[true], "Output should be [1]");
+        assert_eq!(cube.1, [true], "Output should be [1]");
 
         // Verify D and R covers are accessible
-        let d_cubes = d.to_cubes(2, 1, CubeType::F);
-        let r_cubes = r.to_cubes(2, 1, CubeType::F);
+        let d_cubes = d.to_cubes(2, 1);
+        let r_cubes = r.to_cubes(2, 1);
         assert!(
             d_cubes.is_empty() || !d_cubes.is_empty(),
             "D cover should be valid"
@@ -2149,7 +2147,7 @@ mod tests {
         let cubes_f2 = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
         let f2 = EspressoCover::from_cubes(&cubes_f2, 2, 1).unwrap();
         let (result2, _, _) = f2.minimize(None, None);
-        let result2_cubes = result2.to_cubes(2, 1, CubeType::F);
+        let result2_cubes = result2.to_cubes(2, 1);
         assert_eq!(
             result2_cubes.len(),
             2,
@@ -2232,11 +2230,11 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
         // Verify input has 3 cubes
-        let input_cubes = f.to_cubes(2, 1, CubeType::F);
+        let input_cubes = f.to_cubes(2, 1);
         assert_eq!(input_cubes.len(), 3, "Should start with 3 cubes");
 
         let (result, _, _) = esp.minimize(&f, None, None);
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes = result.to_cubes(2, 1);
 
         // This should minimize to fewer cubes (0- or -0 or -1)
         assert!(
@@ -2264,7 +2262,7 @@ mod tests {
         let (result, _, _) = esp.minimize(&f, None, None);
 
         // XOR cannot be minimized, should still have 2 cubes
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes = result.to_cubes(2, 1);
         assert_eq!(result_cubes.len(), 2, "XOR should maintain 2 cubes");
     }
 
@@ -2279,13 +2277,13 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 3, 1).unwrap();
         let (result, _, _) = esp.minimize(&f, None, None);
 
-        let result_cubes = result.to_cubes(3, 1, CubeType::F);
+        let result_cubes = result.to_cubes(3, 1);
         assert_eq!(result_cubes.len(), 1, "Single cube should remain as 1");
 
         // Verify the cube is correct
         let cube = &result_cubes[0];
-        assert_eq!(cube.inputs(), &[Some(false), Some(true), Some(true)]);
-        assert_eq!(cube.outputs(), &[true]);
+        assert_eq!(cube.0, [Some(false), Some(true), Some(true)]);
+        assert_eq!(cube.1, [true]);
     }
 
     #[test]
@@ -2297,12 +2295,12 @@ mod tests {
         let cover = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
         // Verify the cover was created correctly
-        let result_cubes = cover.to_cubes(2, 1, CubeType::F);
+        let result_cubes = cover.to_cubes(2, 1);
         assert_eq!(result_cubes.len(), 2, "Should have 2 input cubes");
 
         // Verify minimization works
         let (minimized, _, _) = cover.minimize(None, None);
-        let min_cubes = minimized.to_cubes(2, 1, CubeType::F);
+        let min_cubes = minimized.to_cubes(2, 1);
         assert_eq!(min_cubes.len(), 2, "XOR cannot be minimized");
     }
 
@@ -2319,8 +2317,8 @@ mod tests {
         let cubes2 = [(&[1, 0, 1][..], &[1][..]), (&[1, 1, 1][..], &[1][..])];
         let cover2 = EspressoCover::from_cubes(&cubes2, 3, 1).unwrap();
 
-        let cubes1 = cover1.to_cubes(3, 1, CubeType::F);
-        let cubes2 = cover2.to_cubes(3, 1, CubeType::F);
+        let cubes1 = cover1.to_cubes(3, 1);
+        let cubes2 = cover2.to_cubes(3, 1);
 
         assert_eq!(cubes1.len(), 2);
         assert_eq!(cubes2.len(), 2);
@@ -2335,7 +2333,7 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, d, r) = esp.minimize(&f, None, None);
 
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes = result.to_cubes(2, 1);
         assert_eq!(
             result_cubes.len(),
             2,
@@ -2343,8 +2341,8 @@ mod tests {
         );
 
         // Verify D and R covers are also valid (they exist even if empty)
-        let _d_cubes = d.to_cubes(2, 1, CubeType::F);
-        let _r_cubes = r.to_cubes(2, 1, CubeType::F);
+        let _d_cubes = d.to_cubes(2, 1);
+        let _r_cubes = r.to_cubes(2, 1);
         // D and R covers are successfully retrieved
     }
 }

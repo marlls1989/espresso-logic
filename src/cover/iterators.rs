@@ -37,14 +37,14 @@ impl<'a> Iterator for ToExprs<'a> {
     type Item = (Arc<str>, BoolExpr);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_idx >= self.cover.num_outputs {
+        if self.current_idx >= self.cover.num_outputs() {
             return None;
         }
         let idx = self.current_idx;
         self.current_idx += 1;
 
         // Use provided label or generate default
-        let name = if let Some(label) = self.cover.output_labels.get(idx) {
+        let name = if let Some(label) = self.cover.output_labels().get(idx) {
             Arc::clone(label)
         } else {
             Arc::from(format!("y{}", idx).as_str())

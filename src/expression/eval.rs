@@ -118,7 +118,7 @@ impl BoolExpr {
         // will have the same value for both outputs (both 0 or both 1)
         for cube in cover.cubes() {
             let outputs = cube.outputs();
-            if outputs.len() >= 2 && outputs[0] != outputs[1] {
+            if outputs.num_vars() >= 2 && outputs.value_at(0) != outputs.value_at(1) {
                 return false;
             }
         }

@@ -82,8 +82,8 @@ fn test_dynamic_growth_inputs_only() {
 
     // Verify all cubes have consistent dimensions
     for cube in cover.cubes() {
-        assert_eq!(cube.inputs().len(), 5);
-        assert_eq!(cube.outputs().len(), 1);
+        assert_eq!(cube.inputs().num_vars(), 5);
+        assert_eq!(cube.outputs().num_vars(), 1);
     }
 }
 
@@ -103,8 +103,8 @@ fn test_dynamic_growth_outputs_only() {
 
     // Verify all cubes have consistent dimensions
     for cube in cover.cubes() {
-        assert_eq!(cube.inputs().len(), 2);
-        assert_eq!(cube.outputs().len(), 3);
+        assert_eq!(cube.inputs().num_vars(), 2);
+        assert_eq!(cube.outputs().num_vars(), 3);
     }
 }
 
@@ -133,8 +133,8 @@ fn test_dynamic_growth_both_dimensions() {
     // All cubes should have been padded
     assert_eq!(cover.num_cubes(), 3);
     for cube in cover.cubes() {
-        assert_eq!(cube.inputs().len(), 4);
-        assert_eq!(cube.outputs().len(), 3);
+        assert_eq!(cube.inputs().num_vars(), 4);
+        assert_eq!(cube.outputs().num_vars(), 3);
     }
 }
 
@@ -146,14 +146,14 @@ fn test_dynamic_growth_preserves_existing_cubes() {
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
     // Get the first cube's data before growth
-    let first_cube_inputs: Vec<_> = cover.cubes().next().unwrap().inputs().to_vec();
+    let first_cube_inputs: Vec<_> = cover.cubes().next().unwrap().inputs().iter().collect::<Vec<_>>();
     assert_eq!(first_cube_inputs, vec![Some(true), Some(false)]);
 
     // Grow dimensions
     cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
 
     // First cube should be padded with None
-    let first_cube_after: Vec<_> = cover.cubes().next().unwrap().inputs().to_vec();
+    let first_cube_after: Vec<_> = cover.cubes().next().unwrap().inputs().iter().collect::<Vec<_>>();
     assert_eq!(first_cube_after, vec![Some(true), Some(false), None]);
 }
 

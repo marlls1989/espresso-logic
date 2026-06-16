@@ -3,13 +3,14 @@
 //! This module provides methods for converting between covers and boolean expressions,
 //! allowing seamless integration with the expression API.
 
-use super::cubes::{Cube, CubeType};
+use super::cubes::{Cube, OutputSet};
 use super::dnf::Dnf;
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
+use super::minterm::Minterm;
 use super::Cover;
 use crate::expression::BoolExpr;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 impl Cover {
@@ -50,24 +51,14 @@ impl Cover {
         // Convert to DNF (goes through BDD for canonical form and optimizations)
         let dnf: Dnf = expr.into();
 
-        // Backfill output labels if needed to check for conflicts
-        let output_was_unlabeled = self.output_labels.is_empty();
-        if output_was_unlabeled && self.num_outputs > 0 {
-            self.output_labels.backfill_to(self.num_outputs);
-        }
-
-        // Check if output already exists (fail fast before doing any work)
-        if self.output_labels.contains(output_name) {
+        // Check if output already exists (fail fast before doing any work). Even an unlabeled cover
+        // with outputs has implicit `y0, y1, …` names (its header), which a named output collides
+        // with — matching the pre-existing backfill-then-check behaviour.
+        if self.output_vars.iter().any(|v| v.as_ref() == output_name) {
             return Err(CoverError::OutputAlreadyExists {
                 name: Arc::from(output_name),
             }
             .into());
-        }
-
-        // Backfill input labels if we're transitioning from unlabeled to labeled inputs
-        let input_was_unlabeled = self.input_labels.is_empty();
-        if input_was_unlabeled && self.num_inputs > 0 {
-            self.input_labels.backfill_to(self.num_inputs);
         }
 
         // Extract cubes from DNF
@@ -81,61 +72,56 @@ impl Cover {
             }
         }
 
-        // Build variable mapping: dnf variable -> cover input index
-        let mut var_to_index: BTreeMap<Arc<str>, usize> = BTreeMap::new();
-        let mut num_new_variables = 0;
+        // Determine which DNF variables are new to the cover's input header.
+        let new_inputs: Vec<Arc<str>> = dnf_variables
+            .iter()
+            .filter(|v| !self.input_vars.iter().any(|x| x.as_ref() == v.as_ref()))
+            .cloned()
+            .collect();
 
-        for dnf_var in &dnf_variables {
-            // Check if variable already exists in cover (using HashMap for O(1) lookup)
-            if let Some(pos) = self.input_labels.find_position(dnf_var.as_ref()) {
-                var_to_index.insert(Arc::clone(dnf_var), pos);
-            } else {
-                // New variable - add to cover
-                let new_index = self.num_inputs + num_new_variables;
-                let label = Arc::clone(dnf_var);
-                self.input_labels.add(label, new_index);
-                var_to_index.insert(Arc::clone(dnf_var), new_index);
-                num_new_variables += 1;
-            }
-        }
-
-        // Pad all existing cubes once with all new variables
-        if num_new_variables > 0 {
+        // Extend the input header with new variables and re-point existing cubes (new = don't-care).
+        if !new_inputs.is_empty() {
+            let mut header: Vec<Arc<str>> = self.input_vars.to_vec();
+            header.extend(new_inputs.iter().cloned());
+            let header: Arc<[Arc<str>]> = header.into();
             for cube in &mut self.cubes {
-                let mut new_inputs = cube.inputs.to_vec();
-                new_inputs.resize(new_inputs.len() + num_new_variables, None);
-                cube.inputs = new_inputs.into();
+                cube.inputs = cube.inputs.project_onto(&header);
             }
-            self.num_inputs += num_new_variables;
+            self.input_vars = header;
+        }
+        if !dnf_variables.is_empty() {
+            self.input_labeled = true;
         }
 
-        // Add new output
-        let output_index = self.num_outputs;
-        self.output_labels.add(Arc::from(output_name), output_index);
-        self.num_outputs += 1;
-
-        // Extend all existing cubes with false for new output
+        // Add the new output to the output header; existing cubes don't assert it.
+        let output_index = self.num_outputs();
+        let mut out_header: Vec<Arc<str>> = self.output_vars.to_vec();
+        out_header.push(Arc::from(output_name));
+        let out_header: Arc<[Arc<str>]> = out_header.into();
         for cube in &mut self.cubes {
-            let mut new_outputs = cube.outputs.to_vec();
-            new_outputs.push(false);
-            cube.outputs = new_outputs.into();
+            let mut mask: Vec<Option<bool>> = cube.outputs.iter().collect();
+            mask.resize(out_header.len(), Some(false));
+            cube.outputs = Minterm::from_values(Arc::clone(&out_header), mask);
         }
+        self.output_vars = out_header;
+        self.output_labeled = true;
 
-        // Convert cubes to cover format and add to cover
+        // Add an F cube per product term, asserting only the new output.
         for product_term in cubes {
-            // Build input vector based on variable mapping
-            let mut inputs = vec![None; self.num_inputs];
+            let mut inputs = vec![None; self.num_inputs()];
             for (var, &polarity) in product_term {
-                if let Some(&idx) = var_to_index.get(var) {
+                if let Some(idx) = self.input_vars.iter().position(|x| x.as_ref() == var.as_ref()) {
                     inputs[idx] = Some(polarity);
                 }
             }
 
-            // Build output vector with only this output set
-            let mut outputs = vec![false; self.num_outputs];
-            outputs[output_index] = true;
+            let mut mask = vec![false; self.num_outputs()];
+            mask[output_index] = true;
 
-            self.cubes.push(Cube::new(&inputs, &outputs, CubeType::F));
+            let im = self.input_minterm(&inputs);
+            let om =
+                Minterm::from_values(Arc::clone(&self.output_vars), mask.iter().map(|&b| Some(b)));
+            self.cubes.push(Cube::new(im, om, OutputSet::F));
         }
 
         Ok(())
@@ -185,10 +171,10 @@ impl Cover {
     /// println!("result: {}", expr);
     /// ```
     pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
-        // Use HashMap for O(1) lookup
         let output_idx = self
-            .output_labels
-            .find_position(output_name)
+            .output_labels()
+            .iter()
+            .position(|v| v.as_ref() == output_name)
             .ok_or_else(|| CoverError::OutputNotFound {
                 name: Arc::from(output_name),
             })?;
@@ -213,34 +199,25 @@ impl Cover {
     /// println!("Output 0: {}", expr);
     /// ```
     pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, ToExprError> {
-        if output_idx >= self.num_outputs {
+        if output_idx >= self.num_outputs() {
             return Err(CoverError::OutputIndexOutOfBounds {
                 index: output_idx,
-                max: if self.num_outputs > 0 {
-                    self.num_outputs - 1
-                } else {
-                    0
-                },
+                max: self.num_outputs().saturating_sub(1),
             }
             .into());
         }
 
-        // Filter cubes for this output (check if output bit is set)
+        // Only F cubes that assert this output contribute to the expression.
         let relevant_cubes: Vec<&Cube> = self
             .cubes
             .iter()
-            .filter(|cube| {
-                // Only F cubes contribute to the expression
-                cube.cube_type() == CubeType::F
-                    && output_idx < cube.outputs().len()
-                    && cube.outputs()[output_idx]
-            })
+            .filter(|cube| cube.set() == OutputSet::F && cube.asserts(output_idx))
             .collect();
 
         Ok(cubes_to_expr(
             &relevant_cubes,
-            self.input_labels.as_slice(),
-            self.num_inputs,
+            self.input_vars(),
+            self.num_inputs(),
         ))
     }
 }
@@ -274,16 +251,16 @@ pub(super) fn cubes_to_expr(
                 Arc::from(format!("x{}", i).as_str())
             };
 
-            match cube.inputs().get(i) {
-                Some(Some(true)) => {
+            match cube.inputs().value_at(i) {
+                Some(true) => {
                     // Positive literal
                     literals.insert(var_name, true);
                 }
-                Some(Some(false)) => {
+                Some(false) => {
                     // Negative literal
                     literals.insert(var_name, false);
                 }
-                Some(None) | None => {
+                None => {
                     // Don't care - skip this variable
                 }
             }

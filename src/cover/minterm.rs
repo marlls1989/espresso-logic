@@ -142,19 +142,20 @@ impl Minterm {
         &self.vars
     }
 
-    /// The shared header `Arc`, for building sibling minterms on the same fast-path header.
-    pub(crate) fn vars_arc(&self) -> &Arc<[Arc<str>]> {
-        &self.vars
-    }
-
-    /// Raw packed words, for the Espresso/PLA boundary.
-    pub(crate) fn words(&self) -> &[u64] {
-        &self.values
-    }
-
     /// The number of variables defined in this minterm.
     pub fn num_vars(&self) -> usize {
         self.vars.len()
+    }
+
+    /// The value at positional index `i` in this minterm's own variable order.
+    ///
+    /// Returns `None` (don't-care) for indices beyond the minterm's width.
+    pub fn value_at(&self, i: usize) -> Option<bool> {
+        if i < self.num_vars() {
+            decode(field_at(&self.values, i))
+        } else {
+            None
+        }
     }
 
     /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).

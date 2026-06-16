@@ -97,24 +97,46 @@ mod dnf;
 pub mod error;
 mod expressions;
 mod iterators;
-mod labels;
 mod minimisation;
 mod minterm;
 pub mod pla;
 
-
 // Public re-exports - core types
-pub use cubes::{Cube, CubeData, CubeType};
+pub use cubes::{Cube, CubeData};
 pub use dnf::Dnf;
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 
-// Import internal types for Cover implementation
-use labels::LabelManager;
+// Internal helpers used across the cover module.
+pub(crate) use cubes::OutputSet;
+
+use minterm::Minterm as InternalMinterm;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// Build a variable header of length `target_len`, extending `current` with auto-generated
+/// `{prefix}{n}` names that avoid colliding with names already present.
+pub(crate) fn extend_header(
+    current: &[Arc<str>],
+    target_len: usize,
+    prefix: char,
+) -> Arc<[Arc<str>]> {
+    let mut names: Vec<Arc<str>> = current.to_vec();
+    while names.len() < target_len {
+        let mut n = names.len();
+        let label = loop {
+            let candidate = format!("{prefix}{n}");
+            if !names.iter().any(|existing| existing.as_ref() == candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        names.push(Arc::from(label.as_str()));
+    }
+    names.into()
+}
 
 /// Represents the type of cover (F, FD, FR, or FDR)
 ///
@@ -263,18 +285,21 @@ impl CoverType {
 /// ```
 #[derive(Clone)]
 pub struct Cover {
-    /// Number of input variables
-    num_inputs: usize,
-    /// Number of output variables
-    num_outputs: usize,
-    /// Input label manager (prefix: 'x')
-    input_labels: LabelManager<'x'>,
-    /// Output label manager (prefix: 'y')
-    output_labels: LabelManager<'y'>,
-    /// Cubes with their type (F/D/R) and data
-    cubes: Vec<Cube>,
+    /// Canonical input variable header, shared by every cube's input minterm.
+    ///
+    /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
+    /// can serve as the shared `Arc` for the minterm fast-comparison path.
+    input_vars: Arc<[Arc<str>]>,
+    /// Canonical output variable header, shared by every cube's output minterm.
+    output_vars: Arc<[Arc<str>]>,
+    /// Whether input names were explicitly supplied (vs. auto-generated); controls PLA `.ilb`.
+    input_labeled: bool,
+    /// Whether output names were explicitly supplied; controls PLA `.ob`.
+    output_labeled: bool,
+    /// Cubes (merged tri-state product terms).
+    pub(crate) cubes: Vec<Cube>,
     /// Cover type (F, FD, FR, or FDR)
-    cover_type: CoverType,
+    pub(crate) cover_type: CoverType,
 }
 
 impl Cover {
@@ -291,10 +316,10 @@ impl Cover {
     /// ```
     pub fn new(cover_type: CoverType) -> Self {
         Cover {
-            num_inputs: 0,
-            num_outputs: 0,
-            input_labels: LabelManager::new(),
-            output_labels: LabelManager::new(),
+            input_vars: Vec::new().into(),
+            output_vars: Vec::new().into(),
+            input_labeled: false,
+            output_labeled: false,
             cubes: Vec::new(),
             cover_type,
         }
@@ -323,18 +348,18 @@ impl Cover {
         input_labels: &[S],
         output_labels: &[S],
     ) -> Self {
-        let input_label_vec: Vec<Arc<str>> =
+        let input_vars: Arc<[Arc<str>]> =
             input_labels.iter().map(|s| Arc::from(s.as_ref())).collect();
-        let output_label_vec: Vec<Arc<str>> = output_labels
+        let output_vars: Arc<[Arc<str>]> = output_labels
             .iter()
             .map(|s| Arc::from(s.as_ref()))
             .collect();
 
         Cover {
-            num_inputs: input_label_vec.len(),
-            num_outputs: output_label_vec.len(),
-            input_labels: LabelManager::from_labels(input_label_vec),
-            output_labels: LabelManager::from_labels(output_label_vec),
+            input_labeled: !input_vars.is_empty(),
+            output_labeled: !output_vars.is_empty(),
+            input_vars,
+            output_vars,
             cubes: Vec::new(),
             cover_type,
         }
@@ -342,17 +367,25 @@ impl Cover {
 
     /// Get the number of inputs
     pub fn num_inputs(&self) -> usize {
-        self.num_inputs
+        self.input_vars.len()
     }
 
     /// Get the number of outputs
     pub fn num_outputs(&self) -> usize {
-        self.num_outputs
+        self.output_vars.len()
     }
 
     /// Get the number of cubes (for F/FD types, only counts F cubes; for FR/FDR, counts all)
     pub fn num_cubes(&self) -> usize {
-        self.cubes().count()
+        if self.cover_type.has_r() {
+            self.cubes.len()
+        } else {
+            // F/FD: only count F cubes.
+            self.cubes
+                .iter()
+                .filter(|cube| cube.set() == OutputSet::F)
+                .count()
+        }
     }
 
     /// Get the cover type (F, FD, FR, or FDR)
@@ -362,16 +395,36 @@ impl Cover {
 
     /// Get input variable labels
     ///
-    /// Returns a slice of `Arc<str>` for efficient access to variable names.
+    /// Returns a slice of `Arc<str>` for efficient access to variable names. The slice is empty
+    /// for an unlabeled cover (even though inputs are internally named `x0, x1, …`).
     pub fn input_labels(&self) -> &[Arc<str>] {
-        self.input_labels.as_slice()
+        if self.input_labeled {
+            &self.input_vars
+        } else {
+            &[]
+        }
     }
 
     /// Get output variable labels
     ///
-    /// Returns a slice of `Arc<str>` for efficient access to variable names.
+    /// Returns a slice of `Arc<str>` for efficient access to variable names. The slice is empty
+    /// for an unlabeled cover.
     pub fn output_labels(&self) -> &[Arc<str>] {
-        self.output_labels.as_slice()
+        if self.output_labeled {
+            &self.output_vars
+        } else {
+            &[]
+        }
+    }
+
+    /// The shared input variable header (one name per input, auto-generated when unlabeled).
+    pub(crate) fn input_vars(&self) -> &Arc<[Arc<str>]> {
+        &self.input_vars
+    }
+
+    /// The shared output variable header.
+    pub(crate) fn output_vars(&self) -> &Arc<[Arc<str>]> {
+        &self.output_vars
     }
 
     /// Iterate over cubes as `Cube` references
@@ -394,95 +447,68 @@ impl Cover {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
         CubesIter {
-            iter: Box::new(
-                self.cubes
-                    .iter()
-                    .filter(move |cube| match cube.cube_type() {
-                        CubeType::D => cover_type.has_d(),
-                        CubeType::R => cover_type.has_r(),
-                        CubeType::F => cover_type.has_f(),
-                    }),
-            ),
+            iter: Box::new(self.cubes.iter().filter(move |cube| match cube.set() {
+                OutputSet::D => cover_type.has_d(),
+                OutputSet::R => cover_type.has_r(),
+                OutputSet::F => cover_type.has_f(),
+            })),
         }
     }
 
-    #[deprecated(
-        since = "3.1.3",
-        note = "Use try_cubes_iter instead, this function panics on invalid cover."
-    )]
-    pub fn cubes_iter(&self) -> CubesIter<'_, CubeData> {
-        self.try_cubes_iter().expect("Invalid cover")
-    }
-
-    /// Iterate over cubes (inputs, outputs)
+    /// Iterate over cubes as merged `(inputs, outputs)` tuples ([`CubeData`](crate::Cube)).
     ///
-    /// Returns cubes in a format compatible with add_cube (owned vecs for easy use).
-    /// Groups cubes by input pattern and merges outputs based on cube types.
-    pub fn try_cubes_iter(&self) -> Result<CubesIter<'_, CubeData>, CoverError> {
-        let num_outputs = self.num_outputs;
+    /// Returns cubes in a format compatible with [`add_cube`](Self::add_cube) (owned vecs).
+    /// Groups cubes by input pattern and merges the per-set cubes into one tri-state output row.
+    /// Returns [`CoverError::InvalidCover`] if two cubes assign conflicting values to the same
+    /// `(input pattern, output)`.
+    pub fn cubes_iter(&self) -> Result<CubesIter<'_, CubeData>, CoverError> {
+        let num_outputs = self.num_outputs();
 
-        // Helper function to map output bit based on cube_type
-        fn map_output_bit(cube_type: CubeType, output_bit: bool) -> Option<bool> {
-            match (cube_type, output_bit) {
-                (CubeType::F, true) => Some(true),
-                (CubeType::F, false) => None,
-                (CubeType::R, true) => Some(false),
-                (CubeType::R, false) => None,
-
-                // Catch-all for invalid combinations (shouldn't happen due to filtering)
+        // Map a cube's set membership at one output position to its merged tri-state value.
+        fn map_output_bit(set: OutputSet, asserted: bool) -> Option<bool> {
+            match (set, asserted) {
+                (OutputSet::F, true) => Some(true),
+                (OutputSet::R, true) => Some(false),
+                // D cubes, and any unasserted bit, are don't-care in the merged view.
                 _ => None,
             }
         }
 
-        // Collect cubes into BTreeMap, grouping by input pattern
-        // Track both the output value and whether it was SET (from true bit) or ASSUMED (from false bit)
-        // Type alias to reduce complexity
+        // Group by input pattern, tracking the merged value and whether it was SET (asserted) or
+        // merely ASSUMED (unasserted) so SET values win and conflicts are detected.
         type GroupedCubes = BTreeMap<Vec<Option<bool>>, (Vec<Option<bool>>, Vec<bool>)>;
         let mut grouped: GroupedCubes = GroupedCubes::new();
 
         for cube in self.cubes() {
-            let inputs = cube.inputs().to_vec();
+            let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
             let entry = grouped
                 .entry(inputs)
                 .or_insert_with(|| (vec![None; num_outputs], vec![false; num_outputs]));
 
             let (ref mut outputs, ref mut is_set_from_true) = entry;
 
-            // Apply mapping for each output bit
-            for (i, &output_bit) in cube.outputs().iter().enumerate() {
-                let mapped = map_output_bit(cube.cube_type(), output_bit);
+            for i in 0..num_outputs {
+                let asserted = cube.asserts(i);
+                let mapped = map_output_bit(cube.set(), asserted);
 
-                if output_bit {
-                    // Source cube has TRUE for this bit - this is a SET value (not assumed)
+                if asserted {
                     if is_set_from_true[i] {
-                        // We already have a SET value from another true bit - check for conflict
                         if outputs[i] != mapped {
-                            // Different cube types both have true for same output bit
                             return Err(CoverError::InvalidCover {
                                 cube: cube.clone(),
                                 output_index: i,
                             });
                         }
-                        // Same mapping, no conflict - keep existing value
                     } else {
-                        // First SET value - override any ASSUMED value from false bits
                         outputs[i] = mapped;
                         is_set_from_true[i] = true;
                     }
-                } else {
-                    // Source cube has FALSE for this bit - this is an ASSUMED value
-                    if !is_set_from_true[i] {
-                        // No SET value exists yet, so we can update with this ASSUMED value
-                        outputs[i] = mapped;
-                        // Keep is_set_from_true[i] = false (this is still an assumed value)
-                    }
-                    // If is_set_from_true[i] is true, ignore this ASSUMED value (SET wins)
+                } else if !is_set_from_true[i] {
+                    outputs[i] = mapped;
                 }
             }
         }
 
-        // Create iterator from BTreeMap, extracting only the output values
-        // and discarding the is_set_from_true tracking
         Ok(CubesIter {
             iter: Box::new(
                 grouped
@@ -490,14 +516,6 @@ impl Cover {
                     .map(|(inputs, (outputs, _is_set_from_true))| (inputs, outputs)),
             ),
         })
-    }
-
-    #[deprecated(
-        since = "3.1.3",
-        note = "Use try_add_cube instead, this function panics on invalid cube."
-    )]
-    pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
-        self.try_add_cube(inputs, outputs).expect("Invalid cube");
     }
 
     /// Add a cube to the cover
@@ -522,22 +540,19 @@ impl Cover {
     /// cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
-    pub fn try_add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) -> Result<(), CoverError> {
+    pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
         // Grow dimensions if needed
         self.grow_to_fit(inputs.len(), outputs.len());
 
-        // Pad inputs/outputs if they're smaller than current dimensions
-        let mut padded_inputs = inputs.to_vec();
-        padded_inputs.resize(self.num_inputs, None);
-
+        // Pad outputs to current dimensions.
         let mut padded_outputs = outputs.to_vec();
-        padded_outputs.resize(self.num_outputs, None);
+        padded_outputs.resize(self.num_outputs(), None);
 
-        // Parse outputs following Espresso C convention
-        // Create separate F, D, R cubes from a single line based on output values
-        let mut f_outputs = Vec::with_capacity(self.num_outputs);
-        let mut d_outputs = Vec::with_capacity(self.num_outputs);
-        let mut r_outputs = Vec::with_capacity(self.num_outputs);
+        // Parse outputs following the Espresso C convention: split a single line into separate
+        // F, D, R cubes based on the per-output values.
+        let mut f_outputs = Vec::with_capacity(self.num_outputs());
+        let mut d_outputs = Vec::with_capacity(self.num_outputs());
+        let mut r_outputs = Vec::with_capacity(self.num_outputs());
         let mut has_f = false;
         let mut has_d = false;
         let mut has_r = false;
@@ -545,28 +560,24 @@ impl Cover {
         for &out in padded_outputs.iter() {
             match out {
                 Some(true) if self.cover_type.has_f() => {
-                    // '1' → bit set in F cube
                     f_outputs.push(true);
                     d_outputs.push(false);
                     r_outputs.push(false);
                     has_f = true;
                 }
                 Some(false) if self.cover_type.has_r() => {
-                    // '0' → bit set in R cube
                     f_outputs.push(false);
                     d_outputs.push(false);
                     r_outputs.push(true);
                     has_r = true;
                 }
                 None if self.cover_type.has_d() => {
-                    // None/'-' → bit set in D cube
                     f_outputs.push(false);
                     d_outputs.push(true);
                     r_outputs.push(false);
                     has_d = true;
                 }
                 _ => {
-                    // Type not supported or unset bit
                     f_outputs.push(false);
                     d_outputs.push(false);
                     r_outputs.push(false);
@@ -574,61 +585,68 @@ impl Cover {
             }
         }
 
-        // Add cubes only if they have meaningful outputs
+        let inputs_minterm = self.input_minterm(inputs);
         if has_f {
-            self.cubes
-                .push(Cube::new(&padded_inputs, &f_outputs, CubeType::F));
+            let cube = Cube::new(
+                inputs_minterm.clone(),
+                self.membership_minterm(&f_outputs),
+                OutputSet::F,
+            );
+            self.cubes.push(cube);
         }
         if has_d {
-            self.cubes
-                .push(Cube::new(&padded_inputs, &d_outputs, CubeType::D));
+            let cube = Cube::new(
+                inputs_minterm.clone(),
+                self.membership_minterm(&d_outputs),
+                OutputSet::D,
+            );
+            self.cubes.push(cube);
         }
         if has_r {
-            self.cubes
-                .push(Cube::new(&padded_inputs, &r_outputs, CubeType::R));
+            let cube = Cube::new(
+                inputs_minterm,
+                self.membership_minterm(&r_outputs),
+                OutputSet::R,
+            );
+            self.cubes.push(cube);
         }
-
-        Ok(())
     }
 
-    /// Grow the cover to fit at least the specified dimensions
+    /// Build an input minterm (padded to the current input dimension) on the shared input header.
+    pub(crate) fn input_minterm(&self, raw: &[Option<bool>]) -> InternalMinterm {
+        let mut values = raw.to_vec();
+        values.resize(self.num_inputs(), None);
+        InternalMinterm::from_values(Arc::clone(&self.input_vars), values)
+    }
+
+    /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output header.
+    fn membership_minterm(&self, mask: &[bool]) -> InternalMinterm {
+        InternalMinterm::from_values(Arc::clone(&self.output_vars), mask.iter().map(|&b| Some(b)))
+    }
+
+    /// Grow the cover to fit at least the specified dimensions.
     ///
-    /// This extends all existing cubes. If the cover already has labels (from expressions
-    /// or from `with_labels`), new labels are auto-generated to maintain consistency.
-    /// If the cover has no labels, it remains unlabeled.
+    /// Extends the shared headers (auto-generating labels that avoid collisions) and re-points every
+    /// existing cube's minterms onto the new headers. New inputs become don't-care; new outputs are
+    /// unasserted.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
-        // Grow inputs if needed
-        if min_inputs > self.num_inputs {
-            self.num_inputs = min_inputs;
-
-            // Extend all existing cubes
+        if min_inputs > self.num_inputs() {
+            let new_vars = extend_header(&self.input_vars, min_inputs, 'x');
             for cube in &mut self.cubes {
-                let mut new_inputs = cube.inputs.to_vec();
-                new_inputs.resize(self.num_inputs, None);
-                cube.inputs = new_inputs.into();
+                cube.inputs = cube.inputs.project_onto(&new_vars);
             }
-
-            // If the cover already has labels, extend them to maintain consistency
-            if !self.input_labels.is_empty() {
-                self.input_labels.backfill_to(self.num_inputs);
-            }
+            self.input_vars = new_vars;
         }
 
-        // Grow outputs if needed
-        if min_outputs > self.num_outputs {
-            self.num_outputs = min_outputs;
-
-            // Extend all existing cubes
+        if min_outputs > self.num_outputs() {
+            let new_vars = extend_header(&self.output_vars, min_outputs, 'y');
             for cube in &mut self.cubes {
-                let mut new_outputs = cube.outputs.to_vec();
-                new_outputs.resize(self.num_outputs, false);
-                cube.outputs = new_outputs.into();
+                // Membership grows with `Some(false)` (unasserted), not don't-care.
+                let mut mask: Vec<Option<bool>> = cube.outputs.iter().collect();
+                mask.resize(new_vars.len(), Some(false));
+                cube.outputs = InternalMinterm::from_values(Arc::clone(&new_vars), mask);
             }
-
-            // If the cover already has labels, extend them to maintain consistency
-            if !self.output_labels.is_empty() {
-                self.output_labels.backfill_to(self.num_outputs);
-            }
+            self.output_vars = new_vars;
         }
     }
 }
