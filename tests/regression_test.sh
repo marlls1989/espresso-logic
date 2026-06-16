@@ -126,6 +126,11 @@ if [ -d "tlex" ]; then
 	for file in tlex/*.pla; do
 		if [ -f "$file" ]; then
 			basename=$(basename "$file" .pla)
+			# The reference C binary crashes/times out on these inputs, so it cannot serve as
+			# an oracle — exclude them rather than counting perpetual skips.
+			case "$basename" in
+			o64) continue ;;
+			esac
 			run_test "$file" "pla_${basename}" ""
 		fi
 	done
@@ -139,6 +144,10 @@ if [ -d "tlex" ]; then
 	for file in tlex/*.pla; do
 		if [ -f "$file" ]; then
 			basename=$(basename "$file" .pla)
+			# Excluded: the reference C binary crashes/times out on these inputs (no oracle).
+			case "$basename" in
+			o64) continue ;;
+			esac
 			run_test "$file" "pla_${basename}_f" "-o f"
 			run_test "$file" "pla_${basename}_fd" "-o fd"
 			run_test "$file" "pla_${basename}_fr" "-o fr"

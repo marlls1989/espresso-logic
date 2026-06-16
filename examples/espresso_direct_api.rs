@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
 
     println!("Minimized cover ({} cubes):", result_cubes.len());
-    for cube in &result_cubes {
+    for cube in result_cubes.iter() {
         print!("  ");
         for input in cube.inputs().iter() {
             match input {

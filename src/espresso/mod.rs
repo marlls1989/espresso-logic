@@ -381,6 +381,7 @@ use std::marker::PhantomData;
 use std::os::raw::c_int;
 use std::ptr;
 use std::rc::Rc;
+use std::sync::Arc;
 
 // Re-export for convenience when using the espresso module directly
 
@@ -734,7 +735,7 @@ impl EspressoCover {
     /// // Extract cubes as Rust types
     /// let extracted = cover.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
     ///
-    /// for cube in &extracted {
+    /// for cube in extracted.iter() {
     ///     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
     /// }
     /// // Cube: [Some(false), Some(true)] -> [true]
@@ -747,7 +748,7 @@ impl EspressoCover {
         num_inputs: usize,
         num_outputs: usize,
         cube_type: CubeType,
-    ) -> Vec<Cube> {
+    ) -> Arc<[Cube]> {
         // The low-level layer has no variable names, so cubes get anonymous `x*/y*` headers.
         let input_vars = extend_header(&[], num_inputs, 'x');
         let output_vars = extend_header(&[], num_outputs, 'y');
@@ -755,66 +756,37 @@ impl EspressoCover {
             let count = (*self.ptr).count as usize;
             let wsize = (*self.ptr).wsize as usize;
             let data = (*self.ptr).data;
+            let output_start = num_inputs * 2;
 
-            let mut result = Vec::with_capacity(count);
+            // Read a single bit from a cube's word array (out-of-range words read as 0).
+            let bit_at = |cube_ptr: *const u32, bit: usize| -> bool {
+                let word = (bit >> 5) + 1;
+                word < wsize && (*cube_ptr.add(word) & (1 << (bit & 31))) != 0
+            };
 
-            for i in 0..count {
-                let cube_ptr = data.add(i * wsize);
+            (0..count)
+                .map(|i| {
+                    let cube_ptr = data.add(i * wsize);
 
-                // Decode inputs (binary variables - 2 bits each)
-                let mut inputs = Vec::with_capacity(num_inputs);
-                for var in 0..num_inputs {
-                    let bit0 = var * 2;
-                    let bit1 = var * 2 + 1;
-
-                    let word0 = (bit0 >> 5) + 1;
-                    let b0 = bit0 & 31;
-                    let word1 = (bit1 >> 5) + 1;
-                    let b1 = bit1 & 31;
-
-                    let has_bit0 = if word0 < wsize {
-                        (*cube_ptr.add(word0) & (1 << b0)) != 0
-                    } else {
-                        false
-                    };
-                    let has_bit1 = if word1 < wsize {
-                        (*cube_ptr.add(word1) & (1 << b1)) != 0
-                    } else {
-                        false
-                    };
-
-                    inputs.push(match (has_bit0, has_bit1) {
-                        (false, false) => None,
-                        (true, false) => Some(false),
-                        (false, true) => Some(true),
-                        (true, true) => None, // don't care
+                    // Decode inputs (binary variables - 2 bits each).
+                    let inputs = (0..num_inputs).map(|var| {
+                        match (bit_at(cube_ptr, var * 2), bit_at(cube_ptr, var * 2 + 1)) {
+                            (false, false) => None,
+                            (true, false) => Some(false),
+                            (false, true) => Some(true),
+                            (true, true) => None, // don't care
+                        }
                     });
-                }
+                    let im = Minterm::from_values(input_vars.clone(), inputs);
 
-                // Decode outputs (multi-valued variable - 1 bit per value)
-                let mut outputs = Vec::with_capacity(num_outputs);
-                let output_start = num_inputs * 2;
-                for out in 0..num_outputs {
-                    let bit = output_start + out;
-                    let word = (bit >> 5) + 1;
-                    let b = bit & 31;
+                    // Decode outputs (multi-valued variable - 1 bit per value).
+                    let outputs =
+                        (0..num_outputs).map(|out| Some(bit_at(cube_ptr, output_start + out)));
+                    let om = Minterm::from_values(output_vars.clone(), outputs);
 
-                    let val = if word < wsize {
-                        (*cube_ptr.add(word) & (1 << b)) != 0
-                    } else {
-                        false
-                    };
-
-                    outputs.push(val);
-                }
-
-                let im = Minterm::from_values(input_vars.clone(), inputs);
-                let om =
-                    Minterm::from_values(output_vars.clone(), outputs.iter().map(|&b| Some(b)));
-                result.push(Cube::new(im, om, cube_type));
-            }
-
-            result
+                    Cube::new(im, om, cube_type)
+                })
+                .collect()
         }
     }
 

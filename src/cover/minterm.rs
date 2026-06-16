@@ -41,10 +41,8 @@ const FIELD_TRUE: u8 = 0b10;
 const FIELD_DC: u8 = 0b11;
 
 #[inline]
-// `usize::div_ceil` is only stable since Rust 1.73; keep the manual form for the 1.70 MSRV.
-#[allow(clippy::manual_div_ceil)]
 fn words_for(num_vars: usize) -> usize {
-    (num_vars + VARS_PER_WORD - 1) / VARS_PER_WORD
+    num_vars.div_ceil(VARS_PER_WORD)
 }
 
 #[inline]
@@ -71,15 +69,17 @@ fn field_at(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
-fn pack<I>(values: I, num_vars: usize) -> Vec<u64>
+fn pack<I>(values: I, num_vars: usize) -> Arc<[u64]>
 where
     I: IntoIterator<Item = Option<bool>>,
 {
+    // Bit-scatter needs a fixed buffer (each value sets 2 bits at an arbitrary offset); freeze
+    // it into the minterm's write-once `Arc<[u64]>` storage.
     let mut words = vec![0u64; words_for(num_vars)];
     for (i, value) in values.into_iter().enumerate() {
         words[i / VARS_PER_WORD] |= (encode(value) as u64) << ((i % VARS_PER_WORD) * 2);
     }
-    words
+    words.into()
 }
 
 /// Even-bit (`allows-0`) mask covering exactly the valid fields of word `word_idx`.
@@ -112,10 +112,9 @@ impl Minterm {
         I: IntoIterator<Item = Option<bool>>,
     {
         let num_vars = vars.len();
-        let words = pack(values, num_vars);
         Minterm {
+            values: pack(values, num_vars),
             vars,
-            values: words.into(),
         }
     }
 
@@ -189,6 +188,9 @@ impl Minterm {
     }
 
     /// Pack `self`'s values, reordered onto `target` (absent → don't-care).
+    ///
+    /// Returns the bare word buffer: callers either freeze it into storage (`project_onto`) or use
+    /// it as a throwaway for an aligned set operation (`aligned`).
     fn project_words(&self, target: &[Arc<str>]) -> Vec<u64> {
         let index: HashMap<&str, usize> = self
             .vars

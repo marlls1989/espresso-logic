@@ -313,7 +313,7 @@ impl BoolExpr {
         }
 
         // Not cached - extract from BDD
-        let cubes: Arc<[crate::cover::Minterm]> = self.extract_cubes_from_bdd().into();
+        let cubes: Arc<[crate::cover::Minterm]> = self.extract_cubes_from_bdd();
 
         // Cache it locally
         let _ = self.cube_cache.set(Arc::clone(&cubes));
@@ -332,24 +332,23 @@ impl BoolExpr {
             return BoolExpr::constant(false);
         }
 
-        let mut terms = Vec::with_capacity(cubes.len());
-        for cube in cubes.iter() {
-            let factors = cube
-                .vars()
-                .iter()
-                .zip(cube.iter())
-                .filter_map(|(name, val)| match val {
-                    Some(true) => Some(BoolExpr::variable(name)),
-                    Some(false) => Some(BoolExpr::variable(name).not()),
-                    None => None,
-                });
-            let term = factors
-                .reduce(|acc, f| acc.and(&f))
-                .unwrap_or_else(|| BoolExpr::constant(true)); // empty cube = tautology
-            terms.push(term);
-        }
-
-        let expr = terms.into_iter().reduce(|acc, t| acc.or(&t)).unwrap();
+        // OR the product terms, each an AND of its fixed literals (empty cube = tautology).
+        let expr = cubes
+            .iter()
+            .map(|cube| {
+                cube.vars()
+                    .iter()
+                    .zip(cube.iter())
+                    .filter_map(|(name, val)| match val {
+                        Some(true) => Some(BoolExpr::variable(name)),
+                        Some(false) => Some(BoolExpr::variable(name).not()),
+                        None => None,
+                    })
+                    .reduce(|acc, f| acc.and(&f))
+                    .unwrap_or_else(|| BoolExpr::constant(true))
+            })
+            .reduce(|acc, t| acc.or(&t))
+            .unwrap();
 
         // Cache the source cubes (typically minimised from Espresso).
         let _ = expr.cube_cache.set(cubes);

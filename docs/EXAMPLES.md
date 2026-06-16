@@ -572,7 +572,7 @@ fn main() {
     // Extract cubes (paths to TRUE) as minterms
     let cubes = expr.to_cubes();
     println!("Number of cubes: {}", cubes.len());
-    for cube in &cubes {
+    for cube in cubes.iter() {
         println!("  Cube: {:?}", cube);
     }
 }

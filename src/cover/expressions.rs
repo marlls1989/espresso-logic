@@ -55,18 +55,16 @@ impl Cover {
         let cubes = expr.to_cubes();
         let expr_vars: &[Arc<str>] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
 
-        // Determine which of the expression's variables are new to the cover's input header.
-        let new_inputs: Vec<Arc<str>> = expr_vars
-            .iter()
-            .filter(|v| !self.input_vars.iter().any(|x| x.as_ref() == v.as_ref()))
-            .cloned()
-            .collect();
-
-        // Extend the input header with new variables and re-point existing cubes (new = don't-care).
-        if !new_inputs.is_empty() {
-            let mut header: Vec<Arc<str>> = self.input_vars.to_vec();
-            header.extend(new_inputs.iter().cloned());
-            let header: Arc<[Arc<str>]> = header.into();
+        // Extend the input header with any variables new to the cover, re-pointing existing cubes
+        // (new inputs = don't-care). Build the grown header as one chained iterator.
+        let is_new = |v: &Arc<str>| !self.input_vars.iter().any(|x| x.as_ref() == v.as_ref());
+        if expr_vars.iter().any(is_new) {
+            let header: Arc<[Arc<str>]> = self
+                .input_vars
+                .iter()
+                .cloned()
+                .chain(expr_vars.iter().filter(|v| is_new(v)).cloned())
+                .collect();
             for cube in &mut self.cubes {
                 cube.inputs = cube.inputs.project_onto(&header);
             }
@@ -76,43 +74,39 @@ impl Cover {
             self.input_labeled = true;
         }
 
-        // Add the new output to the output header; existing cubes don't assert it.
+        // Append the new output to the output header; existing cubes gain an unasserted column.
         let output_index = self.num_outputs();
-        let mut out_header: Vec<Arc<str>> = self.output_vars.to_vec();
-        out_header.push(Arc::from(output_name));
-        let out_header: Arc<[Arc<str>]> = out_header.into();
+        let out_header: Arc<[Arc<str>]> = self
+            .output_vars
+            .iter()
+            .cloned()
+            .chain(std::iter::once(Arc::from(output_name)))
+            .collect();
         for cube in &mut self.cubes {
-            let mut mask: Vec<Option<bool>> = cube.outputs.iter().collect();
-            mask.resize(out_header.len(), Some(false));
-            cube.outputs = Minterm::from_values(Arc::clone(&out_header), mask);
+            cube.outputs = Minterm::from_values(
+                Arc::clone(&out_header),
+                cube.outputs.iter().chain(std::iter::once(Some(false))),
+            );
         }
         self.output_vars = out_header;
         self.output_labeled = true;
 
         // Add an F cube per product term, asserting only the new output. Each product-term minterm
-        // carries its own variable names, so map them onto the cover's input header by name.
-        for product_term in &cubes {
-            let mut inputs = vec![None; self.num_inputs()];
-            for (var, polarity) in product_term.vars().iter().zip(product_term.iter()) {
-                if let Some(value) = polarity {
-                    if let Some(idx) = self
-                        .input_vars
-                        .iter()
-                        .position(|x| x.as_ref() == var.as_ref())
-                    {
-                        inputs[idx] = Some(value);
-                    }
-                }
-            }
-
-            let mut mask = vec![false; self.num_outputs()];
-            mask[output_index] = true;
-
-            let im = self.input_minterm(&inputs);
-            let om =
-                Minterm::from_values(Arc::clone(&self.output_vars), mask.iter().map(|&b| Some(b)));
-            self.cubes.push(Cube::new(im, om, CubeType::F));
-        }
+        // carries its own names, so read the input pattern positionally off the cover header by name.
+        let input_vars = Arc::clone(&self.input_vars);
+        let output_vars = Arc::clone(&self.output_vars);
+        let no = self.num_outputs();
+        self.cubes.extend(cubes.iter().map(|product_term| {
+            let im = Minterm::from_values(
+                Arc::clone(&input_vars),
+                input_vars.iter().map(|name| product_term.value_of(name)),
+            );
+            let om = Minterm::from_values(
+                Arc::clone(&output_vars),
+                (0..no).map(|i| Some(i == output_index)),
+            );
+            Cube::new(im, om, CubeType::F)
+        }));
 
         Ok(())
     }
@@ -198,66 +192,53 @@ impl Cover {
         }
 
         // Only F cubes that assert this output contribute to the expression.
-        let relevant_cubes: Vec<&Cube> = self
+        let relevant_cubes = self
             .cubes
             .iter()
-            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
-            .collect();
+            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx));
 
         Ok(cubes_to_expr(
-            &relevant_cubes,
+            relevant_cubes,
             self.input_vars(),
             self.num_inputs(),
         ))
     }
 }
 
-/// Convert cube references back to a boolean expression
+/// Convert cubes back to a boolean expression.
 ///
 /// If `variables` is empty or shorter than `num_inputs`, generates default variable names (x0, x1, ...).
-pub(super) fn cubes_to_expr(
-    cubes: &[&Cube],
+pub(super) fn cubes_to_expr<'a>(
+    cubes: impl IntoIterator<Item = &'a Cube>,
     variables: &[Arc<str>],
     num_inputs: usize,
 ) -> BoolExpr {
     use std::collections::BTreeMap;
 
-    if cubes.is_empty() {
+    // Each cube becomes a product term (a `name -> polarity` literal map) for the factoriser, which
+    // requires an owned collection it can scan repeatedly.
+    let var_name = |i: usize| -> Arc<str> {
+        variables
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| Arc::from(format!("x{i}").as_str()))
+    };
+    let product_terms: Vec<(BTreeMap<Arc<str>, bool>, bool)> = cubes
+        .into_iter()
+        .map(|cube| {
+            let literals = (0..num_inputs)
+                .filter_map(|i| {
+                    cube.inputs()
+                        .value_at(i)
+                        .map(|polarity| (var_name(i), polarity))
+                })
+                .collect();
+            (literals, true)
+        })
+        .collect();
+
+    if product_terms.is_empty() {
         return BoolExpr::constant(false);
-    }
-
-    // Build product terms directly for factorization
-    let mut product_terms = Vec::new();
-
-    for cube in cubes.iter() {
-        // Build product term as a map of literals
-        let mut literals = BTreeMap::new();
-
-        for i in 0..num_inputs {
-            // Get variable name - use provided label or generate default
-            let var_name: Arc<str> = if i < variables.len() {
-                Arc::clone(&variables[i])
-            } else {
-                Arc::from(format!("x{}", i).as_str())
-            };
-
-            match cube.inputs().value_at(i) {
-                Some(true) => {
-                    // Positive literal
-                    literals.insert(var_name, true);
-                }
-                Some(false) => {
-                    // Negative literal
-                    literals.insert(var_name, false);
-                }
-                None => {
-                    // Don't care - skip this variable
-                }
-            }
-        }
-
-        // Add this product term (include=true for all cubes we process)
-        product_terms.push((literals, true));
     }
 
     // Apply algebraic factorization to produce more compact multi-level logic

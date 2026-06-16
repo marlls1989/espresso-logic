@@ -237,25 +237,20 @@ where
     let no = cover.num_outputs();
     let input_vars = Arc::clone(cover.input_vars());
     let output_vars = Arc::clone(cover.output_vars());
-    // Espresso returns cubes on anonymous headers; re-point them onto the cover's real headers
+    // Espresso returns cubes on anonymous headers; re-point each onto the cover's real headers
     // (positionally — the variable order is preserved across the boundary).
-    let rehome = |cubes: Vec<Cube>| -> Vec<Cube> {
-        cubes
-            .into_iter()
-            .map(|cube| {
-                let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
-                let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
-                let outputs = (0..no).map(|i| cube.outputs().value_at(i));
-                let om = Minterm::from_values(Arc::clone(&output_vars), outputs);
-                Cube::new(im, om, cube.cube_type())
-            })
-            .collect::<Vec<_>>()
+    let rehome = |cube: &Cube| -> Cube {
+        let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
+        let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
+        let outputs = (0..no).map(|i| cube.outputs().value_at(i));
+        let om = Minterm::from_values(Arc::clone(&output_vars), outputs);
+        Cube::new(im, om, cube.cube_type())
     };
 
-    let mut minimized_cubes = Vec::new();
-    minimized_cubes.extend(rehome(f_result.to_cubes(ni, no, CubeType::F)));
-    minimized_cubes.extend(rehome(d_result.to_cubes(ni, no, CubeType::D)));
-    minimized_cubes.extend(rehome(r_result.to_cubes(ni, no, CubeType::R)));
+    // Bind the three decoded sets so their cubes outlive the chained iterator below.
+    let f_cubes = f_result.to_cubes(ni, no, CubeType::F);
+    let d_cubes = d_result.to_cubes(ni, no, CubeType::D);
+    let r_cubes = r_result.to_cubes(ni, no, CubeType::R);
 
     // Build new cover with minimized cubes - reuse the cover's headers (Arc, cheap)
     Ok(Cover {
@@ -263,7 +258,12 @@ where
         output_vars: Arc::clone(cover.output_vars()),
         input_labeled: cover.input_labeled,
         output_labeled: cover.output_labeled,
-        cubes: minimized_cubes,
+        cubes: f_cubes
+            .iter()
+            .chain(d_cubes.iter())
+            .chain(r_cubes.iter())
+            .map(rehome)
+            .collect(),
         cover_type: cover.cover_type,
     })
 }
@@ -302,7 +302,7 @@ where
     let minimized = minimize_fn(&cover, config)?;
 
     // Rebuild a BoolExpr from the minimised product terms of the single output.
-    let terms: Arc<[Minterm]> = minimized.output_product_terms(0).into();
+    let terms = minimized.output_product_terms(0);
     Ok(BoolExpr::from_cubes(terms))
 }
 

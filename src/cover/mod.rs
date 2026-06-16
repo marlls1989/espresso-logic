@@ -457,7 +457,7 @@ impl Cover {
     ///
     /// These are the product terms of a single output (the sum-of-products for that output).
     /// Each minterm carries the cover's shared input header.
-    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Vec<Minterm> {
+    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm]> {
         self.cubes
             .iter()
             .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
@@ -491,84 +491,45 @@ impl Cover {
         // Grow dimensions if needed
         self.grow_to_fit(inputs.len(), outputs.len());
 
-        // Pad outputs to current dimensions.
-        let mut padded_outputs = outputs.to_vec();
-        padded_outputs.resize(self.num_outputs(), None);
+        let no = self.num_outputs();
+        // Per-output value padded to the current output dimension (beyond-length = don't-care).
+        let padded = |i: usize| outputs.get(i).copied().flatten();
 
-        // Parse outputs following the Espresso C convention: split a single line into separate
-        // F, D, R cubes based on the per-output values.
-        let mut f_outputs = Vec::with_capacity(self.num_outputs());
-        let mut d_outputs = Vec::with_capacity(self.num_outputs());
-        let mut r_outputs = Vec::with_capacity(self.num_outputs());
-        let mut has_f = false;
-        let mut has_d = false;
-        let mut has_r = false;
-
-        for &out in padded_outputs.iter() {
-            match out {
-                Some(true) if self.cover_type.has_f() => {
-                    f_outputs.push(true);
-                    d_outputs.push(false);
-                    r_outputs.push(false);
-                    has_f = true;
-                }
-                Some(false) if self.cover_type.has_r() => {
-                    f_outputs.push(false);
-                    d_outputs.push(false);
-                    r_outputs.push(true);
-                    has_r = true;
-                }
-                None if self.cover_type.has_d() => {
-                    f_outputs.push(false);
-                    d_outputs.push(true);
-                    r_outputs.push(false);
-                    has_d = true;
-                }
-                _ => {
-                    f_outputs.push(false);
-                    d_outputs.push(false);
-                    r_outputs.push(false);
-                }
-            }
-        }
+        // Espresso C convention: split one input line into separate F/D/R cubes by per-output value.
+        // A cube for a set exists only if the cover carries that set and some output selects it.
+        let has_f = self.cover_type.has_f() && (0..no).any(|i| padded(i) == Some(true));
+        let has_r = self.cover_type.has_r() && (0..no).any(|i| padded(i) == Some(false));
+        let has_d = self.cover_type.has_d() && (0..no).any(|i| padded(i).is_none());
 
         let inputs_minterm = self.input_minterm(inputs);
         if has_f {
-            let cube = Cube::new(
-                inputs_minterm.clone(),
-                self.membership_minterm(&f_outputs),
-                CubeType::F,
-            );
-            self.cubes.push(cube);
+            let om = self.membership_minterm((0..no).map(|i| padded(i) == Some(true)));
+            self.cubes
+                .push(Cube::new(inputs_minterm.clone(), om, CubeType::F));
         }
         if has_d {
-            let cube = Cube::new(
-                inputs_minterm.clone(),
-                self.membership_minterm(&d_outputs),
-                CubeType::D,
-            );
-            self.cubes.push(cube);
+            let om = self.membership_minterm((0..no).map(|i| padded(i).is_none()));
+            self.cubes
+                .push(Cube::new(inputs_minterm.clone(), om, CubeType::D));
         }
         if has_r {
-            let cube = Cube::new(
-                inputs_minterm,
-                self.membership_minterm(&r_outputs),
-                CubeType::R,
-            );
-            self.cubes.push(cube);
+            let om = self.membership_minterm((0..no).map(|i| padded(i) == Some(false)));
+            self.cubes.push(Cube::new(inputs_minterm, om, CubeType::R));
         }
     }
 
     /// Build an input minterm (padded to the current input dimension) on the shared input header.
     pub(crate) fn input_minterm(&self, raw: &[Option<bool>]) -> InternalMinterm {
-        let mut values = raw.to_vec();
-        values.resize(self.num_inputs(), None);
-        InternalMinterm::from_values(Arc::clone(&self.input_vars), values)
+        let ni = self.num_inputs();
+        InternalMinterm::from_values(
+            Arc::clone(&self.input_vars),
+            (0..ni).map(|i| raw.get(i).copied().flatten()),
+        )
     }
 
     /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output header.
-    fn membership_minterm(&self, mask: &[bool]) -> InternalMinterm {
-        InternalMinterm::from_values(Arc::clone(&self.output_vars), mask.iter().map(|&b| Some(b)))
+    fn membership_minterm(&self, mask: impl IntoIterator<Item = bool>) -> InternalMinterm {
+        InternalMinterm::from_values(Arc::clone(&self.output_vars), mask.into_iter().map(Some))
     }
 
     /// Grow the cover to fit at least the specified dimensions.
@@ -587,11 +548,16 @@ impl Cover {
 
         if min_outputs > self.num_outputs() {
             let new_vars = extend_header(&self.output_vars, min_outputs, 'y');
+            let new_len = new_vars.len();
             for cube in &mut self.cubes {
                 // Membership grows with `Some(false)` (unasserted), not don't-care.
-                let mut mask: Vec<Option<bool>> = cube.outputs.iter().collect();
-                mask.resize(new_vars.len(), Some(false));
-                cube.outputs = InternalMinterm::from_values(Arc::clone(&new_vars), mask);
+                let extra = new_len - cube.outputs.num_vars();
+                cube.outputs = InternalMinterm::from_values(
+                    Arc::clone(&new_vars),
+                    cube.outputs
+                        .iter()
+                        .chain(std::iter::repeat_n(Some(false), extra)),
+                );
             }
             self.output_vars = new_vars;
         }

@@ -70,15 +70,16 @@ impl BoolExpr {
 
     /// Extract cubes (product terms) from the BDD as [`Minterm`]s
     ///
-    /// Returns a vector of input minterms, each carrying the full (alphabetically sorted)
+    /// Returns a shared slice of input minterms, each carrying the full (alphabetically sorted)
     /// variable header of the expression. A variable on a cube's path is fixed to `Some(true)`
     /// / `Some(false)`; variables off the path are don't-care (`None`).
     ///
     /// Each minterm represents one path from the root to the TRUE terminal.
     ///
-    /// This method caches the extracted minterms to avoid repeated BDD traversal.
-    pub fn to_cubes(&self) -> Vec<Minterm> {
-        self.get_or_create_cubes().to_vec()
+    /// The result is `Arc<[Minterm]>`: extracted minterms are cached, so this is a cheap
+    /// reference-count clone of the shared cache rather than a fresh allocation per call.
+    pub fn to_cubes(&self) -> Arc<[Minterm]> {
+        self.get_or_create_cubes()
     }
 
     /// Extract cubes directly from BDD via traversal (bypasses cache)
@@ -88,7 +89,7 @@ impl BoolExpr {
     ///
     /// Every returned minterm shares one canonical header `Arc`, so cubes of the same
     /// expression stay on the [`Minterm`] fast-comparison path.
-    pub(super) fn extract_cubes_from_bdd(&self) -> Vec<Minterm> {
+    pub(super) fn extract_cubes_from_bdd(&self) -> Arc<[Minterm]> {
         // Canonical, alphabetically sorted variable header shared by every extracted minterm.
         let vars: Arc<[Arc<str>]> = self.collect_variables().into_iter().collect();
         let index: HashMap<Arc<str>, usize> = vars
@@ -98,11 +99,12 @@ impl BoolExpr {
             .map(|(i, v)| (v, i))
             .collect();
 
+        // The DFS accumulates into a Vec (legit tree-traversal scratch), then freezes into Arc<[]>.
         let mut results = Vec::new();
         // Scratch path indexed by header position; `None` = variable not yet fixed (don't-care).
         let mut path: Vec<Option<bool>> = vec![None; vars.len()];
         self.extract_cubes(self.root, &vars, &index, &mut path, &mut results);
-        results
+        results.into()
     }
 
     /// Extract cubes recursively by traversing the BDD
