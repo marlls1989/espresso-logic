@@ -56,7 +56,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::conversions::RawCube;
-use super::{CoverType, Cube, OutputSet};
+use super::{CoverType, Cube, CubeType};
 
 /// Internal trait for types that can be serialized to and deserialized from PLA format
 ///
@@ -180,9 +180,9 @@ impl<T: PLASerialisable> PLAWriter for T {
         let filtered_cubes: Vec<_> = self
             .internal_cubes_iter()
             .filter(|cube| match pla_type {
-                CoverType::F => cube.set == OutputSet::F,
-                CoverType::FD => cube.set == OutputSet::F || cube.set == OutputSet::D,
-                CoverType::FR => cube.set == OutputSet::F || cube.set == OutputSet::R,
+                CoverType::F => cube.set == CubeType::F,
+                CoverType::FD => cube.set == CubeType::F || cube.set == CubeType::D,
+                CoverType::FR => cube.set == CubeType::F || cube.set == CubeType::R,
                 CoverType::FDR => true, // All cubes
             })
             .collect();
@@ -218,9 +218,9 @@ impl<T: PLASerialisable> PLAWriter for T {
                 CoverType::FD | CoverType::FDR | CoverType::FR => {
                     // The cube's set determines the character for asserted bits; '~' otherwise.
                     let set_char = match cube.set {
-                        OutputSet::F => '1', // ON
-                        OutputSet::D => '2', // DC
-                        OutputSet::R => '0', // OFF
+                        CubeType::F => '1', // ON
+                        CubeType::D => '2', // DC
+                        CubeType::R => '0', // OFF
                     };
 
                     for out in cube.outputs.iter() {
@@ -573,13 +573,13 @@ impl<T: PLASerialisable> PLAReader for T {
 
             // Add cubes only if they have meaningful outputs
             if has_f {
-                cubes.push((inputs.clone(), f_outputs, OutputSet::F));
+                cubes.push((inputs.clone(), f_outputs, CubeType::F));
             }
             if has_d {
-                cubes.push((inputs.clone(), d_outputs, OutputSet::D));
+                cubes.push((inputs.clone(), d_outputs, CubeType::D));
             }
             if has_r {
-                cubes.push((inputs, r_outputs, OutputSet::R));
+                cubes.push((inputs, r_outputs, CubeType::R));
             }
         }
 

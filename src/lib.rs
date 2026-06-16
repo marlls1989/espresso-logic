@@ -151,8 +151,8 @@
 //! cover = cover.minimize()?;
 //!
 //! // Iterate over minimized cubes
-//! for (inputs, outputs) in cover.cubes_iter() {
-//!     println!("Cube: {:?} -> {:?}", inputs, outputs);
+//! for cube in cover.cubes() {
+//!     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
 //! }
 //! # Ok(())
 //! # }
@@ -264,7 +264,7 @@
 //! For maximum performance and fine-grained control, use the [`espresso`] module directly:
 //!
 //! ```
-//! use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+//! use espresso_logic::espresso::{Espresso, EspressoCover};
 //! use espresso_logic::EspressoConfig;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -283,9 +283,9 @@
 //! // Minimize and get all three covers (F, D, R)
 //! let (f_result, d_result, r_result) = cover.minimize(None, None);
 //!
-//! println!("ON-set: {} cubes", f_result.to_cubes(2, 1, CubeType::F).len());
-//! println!("Don't-care: {} cubes", d_result.to_cubes(2, 1, CubeType::F).len());
-//! println!("OFF-set: {} cubes", r_result.to_cubes(2, 1, CubeType::F).len());
+//! println!("ON-set: {} cubes", f_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
+//! println!("Don't-care: {} cubes", d_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
+//! println!("OFF-set: {} cubes", r_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
 //! # Ok(())
 //! # }
 //! ```
@@ -337,7 +337,7 @@ pub mod examples;
 
 // Re-export high-level public API
 pub use cover::pla::{PLAReader, PLAWriter};
-pub use cover::{Cover, CoverType, Cube, CubeData, Dnf, Minimizable, Minterm};
+pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable, Minterm};
 pub use espresso::EspressoConfig;
 #[allow(deprecated)]
 pub use expression::Bdd;

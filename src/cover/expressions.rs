@@ -3,7 +3,7 @@
 //! This module provides methods for converting between covers and boolean expressions,
 //! allowing seamless integration with the expression API.
 
-use super::cubes::{Cube, OutputSet};
+use super::cubes::{Cube, CubeType};
 use super::dnf::Dnf;
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
@@ -110,7 +110,11 @@ impl Cover {
         for product_term in cubes {
             let mut inputs = vec![None; self.num_inputs()];
             for (var, &polarity) in product_term {
-                if let Some(idx) = self.input_vars.iter().position(|x| x.as_ref() == var.as_ref()) {
+                if let Some(idx) = self
+                    .input_vars
+                    .iter()
+                    .position(|x| x.as_ref() == var.as_ref())
+                {
                     inputs[idx] = Some(polarity);
                 }
             }
@@ -121,7 +125,7 @@ impl Cover {
             let im = self.input_minterm(&inputs);
             let om =
                 Minterm::from_values(Arc::clone(&self.output_vars), mask.iter().map(|&b| Some(b)));
-            self.cubes.push(Cube::new(im, om, OutputSet::F));
+            self.cubes.push(Cube::new(im, om, CubeType::F));
         }
 
         Ok(())
@@ -211,7 +215,7 @@ impl Cover {
         let relevant_cubes: Vec<&Cube> = self
             .cubes
             .iter()
-            .filter(|cube| cube.set() == OutputSet::F && cube.asserts(output_idx))
+            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
             .collect();
 
         Ok(cubes_to_expr(

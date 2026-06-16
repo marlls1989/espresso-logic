@@ -1,8 +1,8 @@
 //! Error types for Espresso instance management and cube operations
 
+use crate::cover::error::CoverError;
 use std::fmt;
 use std::io;
-use crate::cover::error::CoverError;
 
 /// Errors related to Espresso instance management
 ///

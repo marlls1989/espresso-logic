@@ -346,7 +346,10 @@ fn main() -> std::io::Result<()> {
     // Count cubes per output after BDD conversion
     let mut bdd_counts = Vec::new();
     for (i, name) in output_names.iter().enumerate() {
-        let count = cover.cubes().filter(|c| c.outputs()[i]).count();
+        let count = cover
+            .cubes()
+            .filter(|c| c.outputs().value_at(i) == Some(true))
+            .count();
         bdd_counts.push(count);
         println!("  {:<15} {:>10} cubes", name, count);
     }
@@ -368,7 +371,10 @@ fn main() -> std::io::Result<()> {
     // Count cubes per output after Espresso minimization
     let mut esp_counts = Vec::new();
     for (i, name) in output_names.iter().enumerate() {
-        let count = minimized.cubes().filter(|c| c.outputs()[i]).count();
+        let count = minimized
+            .cubes()
+            .filter(|c| c.outputs().value_at(i) == Some(true))
+            .count();
         esp_counts.push(count);
         println!("  {:<15} {:>10} cubes", name, count);
     }

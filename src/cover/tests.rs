@@ -146,14 +146,26 @@ fn test_dynamic_growth_preserves_existing_cubes() {
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 
     // Get the first cube's data before growth
-    let first_cube_inputs: Vec<_> = cover.cubes().next().unwrap().inputs().iter().collect::<Vec<_>>();
+    let first_cube_inputs: Vec<_> = cover
+        .cubes()
+        .next()
+        .unwrap()
+        .inputs()
+        .iter()
+        .collect::<Vec<_>>();
     assert_eq!(first_cube_inputs, vec![Some(true), Some(false)]);
 
     // Grow dimensions
     cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
 
     // First cube should be padded with None
-    let first_cube_after: Vec<_> = cover.cubes().next().unwrap().inputs().iter().collect::<Vec<_>>();
+    let first_cube_after: Vec<_> = cover
+        .cubes()
+        .next()
+        .unwrap()
+        .inputs()
+        .iter()
+        .collect::<Vec<_>>();
     assert_eq!(first_cube_after, vec![Some(true), Some(false), None]);
 }
 

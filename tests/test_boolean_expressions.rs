@@ -195,17 +195,20 @@ fn test_cube_iteration() {
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
-    let cubes: Vec<_> = cover.cubes_iter().collect();
+    let cubes: Vec<_> = cover.cubes().collect();
 
     // a*b should produce exactly 1 cube
     assert_eq!(cubes.len(), 1);
 
     // Verify the cube represents a=1, b=1, out=1
-    let (inputs, outputs) = &cubes[0];
-    assert_eq!(inputs.len(), 2);
-    assert_eq!(outputs.len(), 1);
-    assert_eq!(inputs, &vec![Some(true), Some(true)]);
-    assert_eq!(outputs, &vec![Some(true)]);
+    let cube = &cubes[0];
+    assert_eq!(cube.inputs().num_vars(), 2);
+    assert_eq!(cube.outputs().num_vars(), 1);
+    assert_eq!(
+        cube.inputs().iter().collect::<Vec<_>>(),
+        vec![Some(true), Some(true)]
+    );
+    assert_eq!(cube.outputs().iter().collect::<Vec<_>>(), vec![Some(true)]);
 }
 
 #[test]

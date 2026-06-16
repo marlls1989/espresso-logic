@@ -102,18 +102,14 @@ mod minterm;
 pub mod pla;
 
 // Public re-exports - core types
-pub use cubes::{Cube, CubeData};
+pub use cubes::{Cube, CubeType};
 pub use dnf::Dnf;
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 
-// Internal helpers used across the cover module.
-pub(crate) use cubes::OutputSet;
-
 use minterm::Minterm as InternalMinterm;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Build a variable header of length `target_len`, extending `current` with auto-generated
@@ -383,7 +379,7 @@ impl Cover {
             // F/FD: only count F cubes.
             self.cubes
                 .iter()
-                .filter(|cube| cube.set() == OutputSet::F)
+                .filter(|cube| cube.cube_type() == CubeType::F)
                 .count()
         }
     }
@@ -447,75 +443,16 @@ impl Cover {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
         CubesIter {
-            iter: Box::new(self.cubes.iter().filter(move |cube| match cube.set() {
-                OutputSet::D => cover_type.has_d(),
-                OutputSet::R => cover_type.has_r(),
-                OutputSet::F => cover_type.has_f(),
-            })),
-        }
-    }
-
-    /// Iterate over cubes as merged `(inputs, outputs)` tuples ([`CubeData`](crate::Cube)).
-    ///
-    /// Returns cubes in a format compatible with [`add_cube`](Self::add_cube) (owned vecs).
-    /// Groups cubes by input pattern and merges the per-set cubes into one tri-state output row.
-    /// Returns [`CoverError::InvalidCover`] if two cubes assign conflicting values to the same
-    /// `(input pattern, output)`.
-    pub fn cubes_iter(&self) -> Result<CubesIter<'_, CubeData>, CoverError> {
-        let num_outputs = self.num_outputs();
-
-        // Map a cube's set membership at one output position to its merged tri-state value.
-        fn map_output_bit(set: OutputSet, asserted: bool) -> Option<bool> {
-            match (set, asserted) {
-                (OutputSet::F, true) => Some(true),
-                (OutputSet::R, true) => Some(false),
-                // D cubes, and any unasserted bit, are don't-care in the merged view.
-                _ => None,
-            }
-        }
-
-        // Group by input pattern, tracking the merged value and whether it was SET (asserted) or
-        // merely ASSUMED (unasserted) so SET values win and conflicts are detected.
-        type GroupedCubes = BTreeMap<Vec<Option<bool>>, (Vec<Option<bool>>, Vec<bool>)>;
-        let mut grouped: GroupedCubes = GroupedCubes::new();
-
-        for cube in self.cubes() {
-            let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
-            let entry = grouped
-                .entry(inputs)
-                .or_insert_with(|| (vec![None; num_outputs], vec![false; num_outputs]));
-
-            let (ref mut outputs, ref mut is_set_from_true) = entry;
-
-            for i in 0..num_outputs {
-                let asserted = cube.asserts(i);
-                let mapped = map_output_bit(cube.set(), asserted);
-
-                if asserted {
-                    if is_set_from_true[i] {
-                        if outputs[i] != mapped {
-                            return Err(CoverError::InvalidCover {
-                                cube: cube.clone(),
-                                output_index: i,
-                            });
-                        }
-                    } else {
-                        outputs[i] = mapped;
-                        is_set_from_true[i] = true;
-                    }
-                } else if !is_set_from_true[i] {
-                    outputs[i] = mapped;
-                }
-            }
-        }
-
-        Ok(CubesIter {
             iter: Box::new(
-                grouped
-                    .into_iter()
-                    .map(|(inputs, (outputs, _is_set_from_true))| (inputs, outputs)),
+                self.cubes
+                    .iter()
+                    .filter(move |cube| match cube.cube_type() {
+                        CubeType::D => cover_type.has_d(),
+                        CubeType::R => cover_type.has_r(),
+                        CubeType::F => cover_type.has_f(),
+                    }),
             ),
-        })
+        }
     }
 
     /// Add a cube to the cover
@@ -590,7 +527,7 @@ impl Cover {
             let cube = Cube::new(
                 inputs_minterm.clone(),
                 self.membership_minterm(&f_outputs),
-                OutputSet::F,
+                CubeType::F,
             );
             self.cubes.push(cube);
         }
@@ -598,7 +535,7 @@ impl Cover {
             let cube = Cube::new(
                 inputs_minterm.clone(),
                 self.membership_minterm(&d_outputs),
-                OutputSet::D,
+                CubeType::D,
             );
             self.cubes.push(cube);
         }
@@ -606,7 +543,7 @@ impl Cover {
             let cube = Cube::new(
                 inputs_minterm,
                 self.membership_minterm(&r_outputs),
-                OutputSet::R,
+                CubeType::R,
             );
             self.cubes.push(cube);
         }

@@ -4,7 +4,7 @@
 //! for minimizing Boolean functions using the Espresso algorithm, along with implementations
 //! for [`Cover`] and a blanket implementation for types convertible to/from [`Dnf`].
 
-use super::cubes::{Cube, OutputSet};
+use super::cubes::{Cube, CubeType};
 use super::dnf::Dnf;
 use super::minterm::Minterm;
 use super::Cover;
@@ -185,10 +185,10 @@ where
             .collect();
 
         // Send to appropriate set based on the cube's set.
-        match cube.set() {
-            OutputSet::F => f_cubes.push((input_vec, output_vec)),
-            OutputSet::D => d_cubes.push((input_vec, output_vec)),
-            OutputSet::R => r_cubes.push((input_vec, output_vec)),
+        match cube.cube_type() {
+            CubeType::F => f_cubes.push((input_vec, output_vec)),
+            CubeType::D => d_cubes.push((input_vec, output_vec)),
+            CubeType::R => r_cubes.push((input_vec, output_vec)),
         }
     }
 
@@ -239,24 +239,25 @@ where
     let no = cover.num_outputs();
     let input_vars = Arc::clone(cover.input_vars());
     let output_vars = Arc::clone(cover.output_vars());
-    let build = |raw: Vec<(Vec<Option<bool>>, Vec<bool>)>, set: OutputSet| -> Vec<Cube> {
-        raw.into_iter()
-            .map(|(mut inputs, mask)| {
-                inputs.resize(ni, None);
+    // Espresso returns cubes on anonymous headers; re-point them onto the cover's real headers
+    // (positionally — the variable order is preserved across the boundary).
+    let rehome = |cubes: Vec<Cube>| -> Vec<Cube> {
+        cubes
+            .into_iter()
+            .map(|cube| {
+                let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
                 let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
-                let om = Minterm::from_values(
-                    Arc::clone(&output_vars),
-                    mask.iter().map(|&b| Some(b)),
-                );
-                Cube::new(im, om, set)
+                let outputs = (0..no).map(|i| cube.outputs().value_at(i));
+                let om = Minterm::from_values(Arc::clone(&output_vars), outputs);
+                Cube::new(im, om, cube.cube_type())
             })
             .collect::<Vec<_>>()
     };
 
     let mut minimized_cubes = Vec::new();
-    minimized_cubes.extend(build(f_result.to_cubes(ni, no), OutputSet::F));
-    minimized_cubes.extend(build(d_result.to_cubes(ni, no), OutputSet::D));
-    minimized_cubes.extend(build(r_result.to_cubes(ni, no), OutputSet::R));
+    minimized_cubes.extend(rehome(f_result.to_cubes(ni, no, CubeType::F)));
+    minimized_cubes.extend(rehome(d_result.to_cubes(ni, no, CubeType::D)));
+    minimized_cubes.extend(rehome(r_result.to_cubes(ni, no, CubeType::R)));
 
     // Build new cover with minimized cubes - reuse the cover's headers (Arc, cheap)
     Ok(Cover {
@@ -327,7 +328,7 @@ pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
 
     for cube in cover.cubes() {
         // Only F-set cubes contribute product terms to the DNF.
-        if cube.set() != OutputSet::F {
+        if cube.cube_type() != CubeType::F {
             continue;
         }
         let mut product = BTreeMap::new();

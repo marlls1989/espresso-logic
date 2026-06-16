@@ -318,7 +318,7 @@ fn bench_cube_iteration(c: &mut Criterion) {
         group.bench_function("iterate_cubes", |b| {
             b.iter(|| {
                 let mut count = 0;
-                for cube in cover.cubes_iter() {
+                for cube in cover.cubes() {
                     black_box(cube);
                     count += 1;
                 }

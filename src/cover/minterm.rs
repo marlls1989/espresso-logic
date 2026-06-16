@@ -41,6 +41,8 @@ const FIELD_TRUE: u8 = 0b10;
 const FIELD_DC: u8 = 0b11;
 
 #[inline]
+// `usize::div_ceil` is only stable since Rust 1.73; keep the manual form for the 1.70 MSRV.
+#[allow(clippy::manual_div_ceil)]
 fn words_for(num_vars: usize) -> usize {
     (num_vars + VARS_PER_WORD - 1) / VARS_PER_WORD
 }
@@ -388,10 +390,7 @@ mod tests {
 
     #[test]
     fn value_of_by_name() {
-        let m = Minterm::from_values(
-            arc_vars(&["a", "b", "c"]),
-            [Some(true), None, Some(false)],
-        );
+        let m = Minterm::from_values(arc_vars(&["a", "b", "c"]), [Some(true), None, Some(false)]);
         assert_eq!(m.value_of("a"), Some(true));
         assert_eq!(m.value_of("b"), None);
         assert_eq!(m.value_of("c"), Some(false));
@@ -441,7 +440,9 @@ mod tests {
             })
         }
         fn ref_disjoint(a: &[Option<bool>], b: &[Option<bool>]) -> bool {
-            a.iter().zip(b).any(|(x, y)| matches!((x, y), (Some(p), Some(q)) if p != q))
+            a.iter()
+                .zip(b)
+                .any(|(x, y)| matches!((x, y), (Some(p), Some(q)) if p != q))
         }
 
         let opts = [Some(false), Some(true), None];

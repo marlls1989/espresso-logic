@@ -3,17 +3,17 @@
 //! This module provides conversions and trait implementations for [`Cover`],
 //! including PLA I/O, Debug formatting, and conversions from expressions.
 
-use super::cubes::{Cube, OutputSet};
+use super::cubes::{Cube, CubeType};
 use super::minterm::Minterm;
-use super::{extend_header, Cover};
 use super::CoverType;
+use super::{extend_header, Cover};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
 /// Raw parsed cube data handed to [`PLASerialisable::create_from_pla_parts`]:
 /// `(input pattern, output-membership mask, set)`.
-pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, OutputSet);
+pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, CubeType);
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
 impl super::pla::PLASerialisable for Cover {

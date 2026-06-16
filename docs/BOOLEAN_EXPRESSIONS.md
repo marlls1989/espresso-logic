@@ -701,8 +701,8 @@ fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&expr, "out")?;
     
-    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
-        println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
+    for (i, cube) in cover.cubes().enumerate() {
+        println!("Cube {}: inputs={:?}, outputs={:?}", i, cube.inputs(), cube.outputs());
     }
     
     Ok(())
