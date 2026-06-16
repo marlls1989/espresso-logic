@@ -11,7 +11,7 @@ Rust bindings to the UC Berkeley Espresso heuristic logic minimiser. A `build.rs
 ```bash
 cargo build                      # builds C + bindgen + Rust
 cargo build --features cli       # also builds the `espresso` CLI binary (needs clap)
-cargo test                       # unit + integration + ~322 doctests
+cargo test                       # unit + integration + ~239 doctests
 cargo test --test test_integration         # single integration test file
 cargo test --test test_memory_safety -- --nocapture --test-threads=1
 cargo test name_of_test          # single test by name substring
@@ -41,7 +41,7 @@ Two API levels sit over the C FFI. Re-exports at the crate root are defined in `
 
 **High-level layer (the recommended/default API)**
 - `src/expression/` — `BoolExpr`, the `expr!` macro (from the `espresso-logic-macros` proc-macro crate), and string parsing via a lalrpop grammar (`parser`). Backed internally by BDDs (`bdd.rs`, `manager.rs`) for canonical form and cheap AND/OR/NOT; `factorization.rs`, `eval.rs`, `operators.rs`, `display.rs` round it out. Single-output, expression-oriented.
-- `src/cover/` — `Cover`, `Cube`, `Minterm`, `Dnf`, `CoverType` (F / FD / FR / FDR). Sum-of-products / truth-table representation with **automatic dynamic dimension management** (hides the low-level dimension constraint). Multi-output capable. `minimisation.rs` implements the `Minimizable` trait (`minimize`, `minimize_exact`, `minimize_with_config`); `pla/` handles Berkeley PLA file I/O (`PLAReader`/`PLAWriter`).
+- `src/cover/` — `Cover`, `Cube`, `Minterm`, `CoverType` (F / FD / FR / FDR). Sum-of-products / truth-table representation with **automatic dynamic dimension management** (hides the low-level dimension constraint). Multi-output capable. `minimisation.rs` implements the `Minimizable` trait (`minimize`, `minimize_exact`, `minimize_with_config`); `pla/` handles Berkeley PLA file I/O (`PLAReader`/`PLAWriter`).
 
 **CLI**
 - `src/bin/espresso.rs` — clap-based CLI behind the `cli` feature; mirrors the C tool's behaviour (this is what regression tests validate).
@@ -56,4 +56,4 @@ Two crates: the root `espresso-logic` and `espresso-logic-macros/` (proc-macro p
 ## Conventions
 
 - British spelling ("minimise", "optimisation") is used in prose and docs throughout; match it in new documentation.
-- Doctests are part of the suite (~322 of them) — code examples in `//!`/`///` comments must compile and pass.
+- Doctests are part of the suite (~239 of them) — code examples in `//!`/`///` comments must compile and pass.

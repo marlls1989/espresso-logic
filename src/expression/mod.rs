@@ -327,6 +327,11 @@ impl BoolExpr {
     /// expression is their OR. An empty cube is a tautology (`true`); an empty cube set is
     /// `false`. The supplied cubes are cached on the result so later cube extraction /
     /// minimisation reporting reflects exactly these terms (e.g. an Espresso-minimised set).
+    ///
+    /// **Precondition:** the cubes must describe the same function as the built expression — i.e.
+    /// the cubes must fix every variable the function depends on. This holds for the only caller
+    /// (a single-output `Cover` derived from the same variable namespace); passing an unrelated cube
+    /// set would desync [`to_cubes`](Self::to_cubes) from the BDD. Checked with a `debug_assert!`.
     pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm]>) -> BoolExpr {
         if cubes.is_empty() {
             return BoolExpr::constant(false);
@@ -349,6 +354,19 @@ impl BoolExpr {
             })
             .reduce(|acc, t| acc.or(&t))
             .unwrap();
+
+        // The cached cubes must cover every variable the resulting function depends on, otherwise
+        // `to_cubes()` would report a SOP inconsistent with the BDD.
+        debug_assert!(
+            {
+                let cube_vars: std::collections::BTreeSet<&str> =
+                    cubes[0].vars().iter().map(|s| s.as_ref()).collect();
+                expr.collect_variables()
+                    .iter()
+                    .all(|v| cube_vars.contains(v.as_ref()))
+            },
+            "from_cubes: cached cubes omit a variable the BDD depends on"
+        );
 
         // Cache the source cubes (typically minimised from Espresso).
         let _ = expr.cube_cache.set(cubes);

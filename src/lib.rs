@@ -24,6 +24,9 @@
 //!
 //! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, and the `expr!` macro
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
+//! - **[`Cube`]** / **[`Minterm`]** - A `Cover`'s product terms: a [`Cube`] pairs two
+//!   [`Minterm`]s (a [`Minterm`] is a label-carrying row of tri-state values, `1`/`0`/`-`).
+//!   [`Cube::inputs`] and [`Cube::outputs`] return `&Minterm`.
 //!
 //! **Benefits:**
 //! - ✅ Automatic memory management

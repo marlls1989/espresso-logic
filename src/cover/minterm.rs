@@ -28,6 +28,7 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 use std::sync::Arc;
 
 /// Mask selecting the "allows-0" bit of every variable field in a word.
@@ -94,11 +95,28 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
 }
 
 /// A label-carrying row of tri-state values. See the [module docs](self) for the representation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Minterm {
     vars: Arc<[Arc<str>]>,
     /// Packed 2-bit value-set fields, 32 variables per word.
     values: Arc<[u64]>,
+}
+
+impl fmt::Debug for Minterm {
+    /// Renders values by name — e.g. `Minterm { a: 1, b: -, c: 0 }` where `1`/`0`/`-` are
+    /// true/false/don't-care — rather than exposing the internal packed words.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Minterm {{")?;
+        for (i, (name, value)) in self.vars.iter().zip(self.iter()).enumerate() {
+            let sym = match value {
+                Some(true) => '1',
+                Some(false) => '0',
+                None => '-',
+            };
+            write!(f, "{} {name}: {sym}", if i == 0 { "" } else { "," })?;
+        }
+        write!(f, " }}")
+    }
 }
 
 impl Minterm {

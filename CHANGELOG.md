@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-06-16
+
+Unifies the crate's four parallel product-term representations onto a single, label-carrying
+`Minterm` type, and modernises the internal style (write-once data returned as `Arc<[T]>`,
+computation expressed with iterators). This is a breaking release.
+
+### Breaking
+
+- **Removed `Dnf`.** A disjunctive normal form is now just a single-output `Cover`; the
+  `BTreeMap<Arc<str>, bool>` cube representation and the `BoolExpr ↔ Dnf` conversions are gone.
+  Minimise a `BoolExpr` directly (`expr.minimize()`), or go through `Cover`.
+- **Removed `Cover::cubes_iter()` and the `CubeData` tuple alias.** Use `Cover::cubes()`, which
+  yields `&Cube`; read its set with `Cube::cube_type()`.
+- **`Cube::inputs()` / `Cube::outputs()` now return `&Minterm`** (were `&[Option<bool>]` and
+  `&[bool]`). Read individual values with `Minterm::value_at(i)` / `value_of(name)` or `iter()`.
+- **`Cover::add_expr` now takes `&BoolExpr`** instead of a generic `&T: Into<Dnf>`.
+- **`Minimizable` is implemented concretely for `Cover` and `BoolExpr`** instead of via a blanket
+  `impl<T> where &T: Into<Dnf>, T: From<Dnf>`.
+- **`BoolExpr::to_cubes()` now returns `Arc<[Minterm]>`** (was `Vec<BTreeMap<Arc<str>, bool>>`).
+- **`EspressoCover::to_cubes()` now returns `Arc<[Cube]>`** (was `Vec<Cube>`).
+- **Removed the `LabelManager` type;** `Cover` owns its canonical input/output headers directly.
+- **Minimum supported Rust version is now 1.82.**
+
+### Added
+
+- **Unified `Minterm` type** (`src/cover/minterm.rs`): a label-carrying row of tri-state values
+  (`Some(true)`/`Some(false)`/`None`), bit-packed two bits per variable. Carries its variable header
+  so comparisons align by variable identity, with a pointer-equality fast path for same-cover cubes.
+  Public set operations: `is_subset_of`, `is_superset_of`, `is_disjoint_with`, plus `Ord`/`Eq`.
+- **`Cube` and `CubeType` are public**, each cube being a pair of `Minterm`s plus an F/D/R set tag.
+
+### Changed
+
+- Write-once collections are returned as `Arc<[T]>` rather than `Vec<T>`; internal construction uses
+  iterator pipelines instead of intermediate `Vec` buffers.
+- `Minterm` has a readable `Debug` (e.g. `Minterm { a: 1, b: -, c: 0 }`) instead of exposing the
+  packed words.
+
+### Fixed
+
+- BDD variable collection (`collect_variables` / `var_count`) now deduplicates by **node** rather
+  than by variable, so it no longer misses variables that appear only in some branches.
+
 ## [3.1.2] - 2025-11-12
 
 ### Documentation

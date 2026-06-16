@@ -50,6 +50,11 @@ impl Cube {
     }
 
     /// The output-membership mask of this cube (`Some(true)` where the output is asserted).
+    ///
+    /// This is a per-cube, per-set membership mask, **not** a merged tri-state output: `Some(true)`
+    /// means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))" and
+    /// `Some(false)` means "it does not". For an FR/FDR cover, a given input pattern can therefore
+    /// appear in more than one cube (e.g. an F cube and an R cube), each with its own mask.
     pub fn outputs(&self) -> &Minterm {
         &self.outputs
     }
