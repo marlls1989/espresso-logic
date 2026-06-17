@@ -332,6 +332,7 @@ pub mod cover;
 pub mod error;
 pub mod espresso;
 pub mod expression;
+pub mod symbol;
 pub mod sys;
 
 // Documentation-only module
@@ -347,6 +348,7 @@ pub use espresso::EspressoConfig;
 #[allow(deprecated)]
 pub use expression::Bdd;
 pub use expression::{BoolExpr, ExprNode};
+pub use symbol::Symbol;
 
 // Re-export procedural macro
 pub use espresso_logic_macros::expr;
