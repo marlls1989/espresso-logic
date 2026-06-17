@@ -5,6 +5,7 @@
 
 use super::cubes::{Cube, CubeType};
 use super::minterm::Minterm;
+use super::symbols::Symbols;
 use super::CoverType;
 use super::{extend_header, Cover};
 use std::fmt;
@@ -19,11 +20,11 @@ impl super::pla::PLASerialisable for Cover {
     type CubesIter<'a> = std::slice::Iter<'a, Cube>;
 
     fn num_inputs(&self) -> usize {
-        self.input_vars().len()
+        self.input_symbols().arity()
     }
 
     fn num_outputs(&self) -> usize {
-        self.output_vars().len()
+        self.output_symbols().arity()
     }
 
     fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
@@ -68,21 +69,25 @@ impl super::pla::PLASerialisable for Cover {
         } else {
             extend_header(&[], num_outputs, 'y')
         };
+        let input_symbols = Symbols::new(input_vars);
+        let output_symbols = Symbols::new(output_vars);
 
         let cubes = cubes
             .into_iter()
             .map(|(mut inputs, mask, set)| {
                 inputs.resize(num_inputs, None);
-                let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
-                let om =
-                    Minterm::from_values(Arc::clone(&output_vars), mask.iter().map(|&b| Some(b)));
+                let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
+                let om = Minterm::from_symbols(
+                    Arc::clone(&output_symbols),
+                    mask.iter().map(|&b| Some(b)),
+                );
                 Cube::new(im, om, set)
             })
             .collect();
 
         Cover {
-            input_vars,
-            output_vars,
+            input_symbols,
+            output_symbols,
             input_labeled,
             output_labeled,
             cubes,

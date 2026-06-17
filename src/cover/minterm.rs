@@ -2,17 +2,17 @@
 //!
 //! A `Minterm` models one row of a Boolean cover — a value per variable, where each value is
 //! `Some(true)` (1), `Some(false)` (0), or `None` (don't-care). Unlike a bare positional slice, a
-//! `Minterm` **carries its variable names**, so comparisons align by variable identity rather than
-//! by raw position. This makes it safe to compare minterms that came from different orderings, and
-//! lets the same type serve as both the input pattern and the (merged, tri-state) output pattern of
-//! a cube.
+//! `Minterm` **carries its variable names** (via a shared [`Symbols`] table), so comparisons align
+//! by variable identity rather than by raw position. This makes it safe to compare minterms that
+//! came from different orderings, and lets the same type serve as both the input pattern and the
+//! (membership) output pattern of a cube.
 //!
 //! # Representation
 //!
-//! Names live in a shared `Arc<[Arc<str>]>` header (every cube of a cover shares one `Arc`, so
-//! same-cover comparisons take a pointer-equality fast path). Values are packed two bits per
-//! variable using Espresso's value-set encoding — for each variable, one bit means "0 is allowed"
-//! and one means "1 is allowed":
+//! Names live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols>`, so
+//! same-cover comparisons take a pointer-equality fast path and label lookup is O(1)). Values are
+//! packed two bits per variable using Espresso's value-set encoding — for each variable, one bit
+//! means "0 is allowed" and one means "1 is allowed":
 //!
 //! | value         | allows-0 | allows-1 | 2-bit field |
 //! |---------------|----------|----------|-------------|
@@ -25,9 +25,10 @@
 //! C library's cube layout, which makes set operations cheap (word-wise bit ops) and the Espresso
 //! boundary close to a bit-repack.
 
+use super::symbols::{self, Symbols};
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -97,7 +98,7 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
 /// A label-carrying row of tri-state values. See the [module docs](self) for the representation.
 #[derive(Clone)]
 pub struct Minterm {
-    vars: Arc<[Arc<str>]>,
+    symbols: Arc<Symbols>,
     /// Packed 2-bit value-set fields, 32 variables per word.
     values: Arc<[u64]>,
 }
@@ -107,7 +108,7 @@ impl fmt::Debug for Minterm {
     /// true/false/don't-care — rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Minterm {{")?;
-        for (i, (name, value)) in self.vars.iter().zip(self.iter()).enumerate() {
+        for (i, (name, value)) in self.symbols.labels().iter().zip(self.iter()).enumerate() {
             let sym = match value {
                 Some(true) => '1',
                 Some(false) => '0',
@@ -120,25 +121,24 @@ impl fmt::Debug for Minterm {
 }
 
 impl Minterm {
-    /// Build a minterm from values against an explicit shared variable header.
+    /// Build a minterm from values against a shared [`Symbols`] table.
     ///
-    /// `values` is read positionally against `vars`; both must describe the same number of
-    /// variables. Cubes built from the *same* `vars` `Arc` compare via the pointer-equality fast
-    /// path.
-    pub fn from_values<I>(vars: Arc<[Arc<str>]>, values: I) -> Self
+    /// `values` is read positionally against `symbols`; both describe the same number of variables.
+    /// Minterms built from the *same* `Arc<Symbols>` compare via the pointer-equality fast path.
+    pub fn from_symbols<I>(symbols: Arc<Symbols>, values: I) -> Self
     where
         I: IntoIterator<Item = Option<bool>>,
     {
-        let num_vars = vars.len();
+        let num_vars = symbols.arity();
         Minterm {
             values: pack(values, num_vars),
-            vars,
+            symbols,
         }
     }
 
     /// Build a standalone minterm from a slice of values, generating anonymous `x0, x1, …` names.
     ///
-    /// Convenient for tests and ad-hoc use. Minterms built this way share no header `Arc`, so they
+    /// Convenient for tests and ad-hoc use. Minterms built this way share no symbol table, so they
     /// compare via the (correct, slightly slower) name-aligned path.
     ///
     /// # Examples
@@ -150,20 +150,25 @@ impl Minterm {
     /// assert_eq!(m.num_vars(), 3);
     /// ```
     pub fn new(values: &[Option<bool>]) -> Self {
-        let vars: Arc<[Arc<str>]> = (0..values.len())
+        let labels: Arc<[Arc<str>]> = (0..values.len())
             .map(|i| Arc::from(format!("x{i}").as_str()))
             .collect();
-        Self::from_values(vars, values.iter().copied())
+        Self::from_symbols(Symbols::new(labels), values.iter().copied())
+    }
+
+    /// The shared symbol table this minterm is defined over.
+    pub fn symbols(&self) -> &Arc<Symbols> {
+        &self.symbols
     }
 
     /// The variable names this minterm is defined over (its shared header).
     pub fn vars(&self) -> &[Arc<str>] {
-        &self.vars
+        self.symbols.labels()
     }
 
     /// The number of variables defined in this minterm.
     pub fn num_vars(&self) -> usize {
-        self.vars.len()
+        self.symbols.arity()
     }
 
     /// The value at positional index `i` in this minterm's own variable order.
@@ -179,11 +184,10 @@ impl Minterm {
 
     /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
     pub fn value_of(&self, name: &str) -> Option<bool> {
-        self.vars
-            .iter()
-            .position(|v| v.as_ref() == name)
-            .map(|i| decode(field_at(&self.values, i)))
-            .unwrap_or(None)
+        match self.symbols.index_of(name) {
+            Some(i) => decode(field_at(&self.values, i as usize)),
+            None => None,
+        }
     }
 
     /// Iterate over the values in this minterm's own variable order.
@@ -191,17 +195,17 @@ impl Minterm {
         (0..self.num_vars()).map(move |i| decode(field_at(&self.values, i)))
     }
 
-    /// Re-express this minterm over `target` variables (the union-extend primitive).
+    /// Re-express this minterm over a `target` symbol table (the union-extend primitive).
     ///
     /// Variables of `target` absent from `self` become don't-care; variables of `self` absent from
-    /// `target` are dropped. The result shares `target` as its header.
-    pub fn project_onto(&self, target: &Arc<[Arc<str>]>) -> Minterm {
-        if Arc::ptr_eq(&self.vars, target) {
+    /// `target` are dropped. The result shares `target` as its symbol table.
+    pub fn project_onto(&self, target: &Arc<Symbols>) -> Minterm {
+        if Arc::ptr_eq(&self.symbols, target) {
             return self.clone();
         }
         Minterm {
-            vars: Arc::clone(target),
             values: self.project_words(target).into(),
+            symbols: Arc::clone(target),
         }
     }
 
@@ -209,18 +213,13 @@ impl Minterm {
     ///
     /// Returns the bare word buffer: callers either freeze it into storage (`project_onto`) or use
     /// it as a throwaway for an aligned set operation (`aligned`).
-    fn project_words(&self, target: &[Arc<str>]) -> Vec<u64> {
-        let index: HashMap<&str, usize> = self
-            .vars
-            .iter()
-            .enumerate()
-            .map(|(i, name)| (name.as_ref(), i))
-            .collect();
-        let mut words = vec![0u64; words_for(target.len())];
-        for (i, name) in target.iter().enumerate() {
-            let field = index
-                .get(name.as_ref())
-                .map(|&j| field_at(&self.values, j))
+    fn project_words(&self, target: &Symbols) -> Vec<u64> {
+        let mut words = vec![0u64; words_for(target.arity())];
+        for (i, name) in target.labels().iter().enumerate() {
+            let field = self
+                .symbols
+                .index_of(name)
+                .map(|j| field_at(&self.values, j as usize))
                 .unwrap_or(FIELD_DC);
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
@@ -229,20 +228,20 @@ impl Minterm {
 
     /// Align two minterms to a common word layout for per-field set operations.
     ///
-    /// Fast path: shared header `Arc` → borrow both word slices directly. Slow path: project both
+    /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
     /// onto the sorted union of their variables.
     fn aligned<'a>(&'a self, other: &'a Self) -> (Cow<'a, [u64]>, Cow<'a, [u64]>, usize) {
-        if Arc::ptr_eq(&self.vars, &other.vars) {
+        if Arc::ptr_eq(&self.symbols, &other.symbols) {
             (
                 Cow::Borrowed(&self.values[..]),
                 Cow::Borrowed(&other.values[..]),
                 self.num_vars(),
             )
         } else {
-            let union = union_vars(&self.vars, &other.vars);
+            let union = symbols::union(&self.symbols, &other.symbols);
             let a = self.project_words(&union);
             let b = other.project_words(&union);
-            (Cow::Owned(a), Cow::Owned(b), union.len())
+            (Cow::Owned(a), Cow::Owned(b), union.arity())
         }
     }
 
@@ -319,15 +318,6 @@ impl Minterm {
     }
 }
 
-/// Sorted union of two variable headers (deduplicated by name).
-fn union_vars(a: &[Arc<str>], b: &[Arc<str>]) -> Arc<[Arc<str>]> {
-    let mut set: BTreeSet<Arc<str>> = BTreeSet::new();
-    for name in a.iter().chain(b.iter()) {
-        set.insert(Arc::clone(name));
-    }
-    set.into_iter().collect()
-}
-
 /// Order rank for a value, smallest first: don't-care < false < true.
 #[inline]
 fn rank(value: Option<bool>) -> u8 {
@@ -358,8 +348,8 @@ fn rank(value: Option<bool>) -> u8 {
 impl Ord for Minterm {
     fn cmp(&self, other: &Self) -> Ordering {
         let mut names: BTreeSet<&str> = BTreeSet::new();
-        names.extend(self.vars.iter().map(|n| n.as_ref()));
-        names.extend(other.vars.iter().map(|n| n.as_ref()));
+        names.extend(self.vars().iter().map(|n| n.as_ref()));
+        names.extend(other.vars().iter().map(|n| n.as_ref()));
         for name in names {
             let a = rank(self.value_of(name));
             let b = rank(other.value_of(name));
@@ -390,8 +380,8 @@ impl Eq for Minterm {}
 mod tests {
     use super::*;
 
-    fn arc_vars(names: &[&str]) -> Arc<[Arc<str>]> {
-        names.iter().map(|s| Arc::from(*s)).collect()
+    fn syms(names: &[&str]) -> Arc<Symbols> {
+        Symbols::new(names.iter().map(|s| Arc::from(*s)).collect())
     }
 
     /// Round-trip every value through the packed encoding.
@@ -410,7 +400,7 @@ mod tests {
 
     #[test]
     fn value_of_by_name() {
-        let m = Minterm::from_values(arc_vars(&["a", "b", "c"]), [Some(true), None, Some(false)]);
+        let m = Minterm::from_symbols(syms(&["a", "b", "c"]), [Some(true), None, Some(false)]);
         assert_eq!(m.value_of("a"), Some(true));
         assert_eq!(m.value_of("b"), None);
         assert_eq!(m.value_of("c"), Some(false));
@@ -420,16 +410,16 @@ mod tests {
     #[test]
     fn comparison_aligns_by_name_not_position() {
         // Same variables, different header orderings, must compare equal.
-        let m1 = Minterm::from_values(arc_vars(&["a", "b"]), [Some(true), Some(false)]);
-        let m2 = Minterm::from_values(arc_vars(&["b", "a"]), [Some(false), Some(true)]);
+        let m1 = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), Some(false)]);
+        let m2 = Minterm::from_symbols(syms(&["b", "a"]), [Some(false), Some(true)]);
         assert_eq!(m1, m2);
         assert!(m1.is_subset_of(&m2) && m2.is_subset_of(&m1));
     }
 
     #[test]
     fn absent_variable_equals_dont_care() {
-        let short = Minterm::from_values(arc_vars(&["a"]), [Some(true)]);
-        let long = Minterm::from_values(arc_vars(&["a", "b"]), [Some(true), None]);
+        let short = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
+        let long = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), None]);
         assert_eq!(short, long);
         assert!(short.is_subset_of(&long));
         assert!(long.is_subset_of(&short));
@@ -437,11 +427,11 @@ mod tests {
 
     #[test]
     fn fast_path_matches_slow_path() {
-        let vars = arc_vars(&["a", "b", "c"]);
-        // Shared header (fast path).
-        let a = Minterm::from_values(Arc::clone(&vars), [Some(true), None, Some(false)]);
-        let b = Minterm::from_values(Arc::clone(&vars), [Some(true), Some(false), Some(false)]);
-        // Same values, independent headers (slow path).
+        let s = syms(&["a", "b", "c"]);
+        // Shared symbol table (fast path).
+        let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), None, Some(false)]);
+        let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(false)]);
+        // Same values, independent symbol tables (slow path).
         let a2 = Minterm::new(&[Some(true), None, Some(false)]);
         let b2 = Minterm::new(&[Some(true), Some(false), Some(false)]);
         assert_eq!(a.is_subset_of(&b), a2.is_subset_of(&b2));

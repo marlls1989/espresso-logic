@@ -7,6 +7,7 @@ use super::cubes::{Cube, CubeType};
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
 use super::minterm::Minterm;
+use super::symbols::Symbols;
 use super::Cover;
 use crate::expression::BoolExpr;
 use std::sync::Arc;
@@ -43,7 +44,12 @@ impl Cover {
         // Check if output already exists (fail fast before doing any work). Even an unlabeled cover
         // with outputs has implicit `y0, y1, …` names (its header), which a named output collides
         // with — matching the pre-existing backfill-then-check behaviour.
-        if self.output_vars.iter().any(|v| v.as_ref() == output_name) {
+        if self
+            .output_symbols
+            .labels()
+            .iter()
+            .any(|v| v.as_ref() == output_name)
+        {
             return Err(CoverError::OutputAlreadyExists {
                 name: Arc::from(output_name),
             }
@@ -55,54 +61,67 @@ impl Cover {
         let cubes = expr.to_cubes();
         let expr_vars: &[Arc<str>] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
 
-        // Extend the input header with any variables new to the cover, re-pointing existing cubes
+        // Extend the input table with any variables new to the cover, re-pointing existing cubes
         // (new inputs = don't-care). Build the grown header as one chained iterator.
-        let is_new = |v: &Arc<str>| !self.input_vars.iter().any(|x| x.as_ref() == v.as_ref());
+        let is_new = |v: &Arc<str>| {
+            !self
+                .input_symbols
+                .labels()
+                .iter()
+                .any(|x| x.as_ref() == v.as_ref())
+        };
         if expr_vars.iter().any(is_new) {
             let header: Arc<[Arc<str>]> = self
-                .input_vars
+                .input_symbols
+                .labels()
                 .iter()
                 .cloned()
                 .chain(expr_vars.iter().filter(|v| is_new(v)).cloned())
                 .collect();
+            let new_syms = Symbols::new(header);
             for cube in &mut self.cubes {
-                cube.inputs = cube.inputs.project_onto(&header);
+                cube.inputs = cube.inputs.project_onto(&new_syms);
             }
-            self.input_vars = header;
+            self.input_symbols = new_syms;
         }
         if !expr_vars.is_empty() {
             self.input_labeled = true;
         }
 
-        // Append the new output to the output header; existing cubes gain an unasserted column.
+        // Append the new output to the output table; existing cubes gain an unasserted column.
         let output_index = self.num_outputs();
         let out_header: Arc<[Arc<str>]> = self
-            .output_vars
+            .output_symbols
+            .labels()
             .iter()
             .cloned()
             .chain(std::iter::once(Arc::from(output_name)))
             .collect();
+        let out_syms = Symbols::new(out_header);
         for cube in &mut self.cubes {
-            cube.outputs = Minterm::from_values(
-                Arc::clone(&out_header),
+            cube.outputs = Minterm::from_symbols(
+                Arc::clone(&out_syms),
                 cube.outputs.iter().chain(std::iter::once(Some(false))),
             );
         }
-        self.output_vars = out_header;
+        self.output_symbols = out_syms;
         self.output_labeled = true;
 
         // Add an F cube per product term, asserting only the new output. Each product-term minterm
-        // carries its own names, so read the input pattern positionally off the cover header by name.
-        let input_vars = Arc::clone(&self.input_vars);
-        let output_vars = Arc::clone(&self.output_vars);
+        // carries its own names, so read the input pattern positionally off the cover table by name.
+        let input_symbols = Arc::clone(&self.input_symbols);
+        let output_symbols = Arc::clone(&self.output_symbols);
         let no = self.num_outputs();
         self.cubes.extend(cubes.iter().map(|product_term| {
-            let im = Minterm::from_values(
-                Arc::clone(&input_vars),
-                input_vars.iter().map(|name| product_term.value_of(name)),
+            let im = Minterm::from_symbols(
+                Arc::clone(&input_symbols),
+                input_symbols
+                    .labels()
+                    .iter()
+                    .map(|name| product_term.value_of(name)),
             );
-            let om = Minterm::from_values(
-                Arc::clone(&output_vars),
+            let om = Minterm::from_symbols(
+                Arc::clone(&output_symbols),
                 (0..no).map(|i| Some(i == output_index)),
             );
             Cube::new(im, om, CubeType::F)
@@ -199,7 +218,7 @@ impl Cover {
 
         Ok(cubes_to_expr(
             relevant_cubes,
-            self.input_vars(),
+            self.input_symbols().labels(),
             self.num_inputs(),
         ))
     }

@@ -5,7 +5,7 @@
 
 use super::manager::{BddNode, NodeId, VarId, FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
-use crate::cover::Minterm;
+use crate::cover::{Minterm, Symbols};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -98,12 +98,13 @@ impl BoolExpr {
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
+        let symbols = Symbols::new(vars);
 
         // The DFS accumulates into a Vec (legit tree-traversal scratch), then freezes into Arc<[]>.
         let mut results = Vec::new();
         // Scratch path indexed by header position; `None` = variable not yet fixed (don't-care).
-        let mut path: Vec<Option<bool>> = vec![None; vars.len()];
-        self.extract_cubes(self.root, &vars, &index, &mut path, &mut results);
+        let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
+        self.extract_cubes(self.root, &symbols, &index, &mut path, &mut results);
         results.into()
     }
 
@@ -111,7 +112,7 @@ impl BoolExpr {
     fn extract_cubes(
         &self,
         node: NodeId,
-        vars: &Arc<[Arc<str>]>,
+        symbols: &Arc<Symbols>,
         index: &HashMap<Arc<str>, usize>,
         path: &mut [Option<bool>],
         results: &mut Vec<Minterm>,
@@ -137,7 +138,10 @@ impl BoolExpr {
         match node_info {
             Some((true, None)) => {
                 // Reached TRUE terminal - materialise the current path as a minterm.
-                results.push(Minterm::from_values(Arc::clone(vars), path.iter().copied()));
+                results.push(Minterm::from_symbols(
+                    Arc::clone(symbols),
+                    path.iter().copied(),
+                ));
             }
             Some((false, None)) => {
                 // Reached FALSE terminal - this path doesn't contribute
@@ -147,11 +151,11 @@ impl BoolExpr {
 
                 // Traverse low edge (var = false)
                 path[i] = Some(false);
-                self.extract_cubes(low, vars, index, path, results);
+                self.extract_cubes(low, symbols, index, path, results);
 
                 // Traverse high edge (var = true)
                 path[i] = Some(true);
-                self.extract_cubes(high, vars, index, path, results);
+                self.extract_cubes(high, symbols, index, path, results);
 
                 // Restore don't-care on backtrack.
                 path[i] = None;

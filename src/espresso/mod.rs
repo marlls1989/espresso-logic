@@ -373,7 +373,7 @@
 
 pub mod error;
 
-use crate::cover::{extend_header, Minterm};
+use crate::cover::{extend_header, Minterm, Symbols};
 pub use crate::cover::{Cube, CubeType};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
@@ -750,8 +750,8 @@ impl EspressoCover {
         cube_type: CubeType,
     ) -> Arc<[Cube]> {
         // The low-level layer has no variable names, so cubes get anonymous `x*/y*` headers.
-        let input_vars = extend_header(&[], num_inputs, 'x');
-        let output_vars = extend_header(&[], num_outputs, 'y');
+        let input_syms = Symbols::new(extend_header(&[], num_inputs, 'x'));
+        let output_syms = Symbols::new(extend_header(&[], num_outputs, 'y'));
         unsafe {
             let count = (*self.ptr).count as usize;
             let wsize = (*self.ptr).wsize as usize;
@@ -777,12 +777,12 @@ impl EspressoCover {
                             (true, true) => None, // don't care
                         }
                     });
-                    let im = Minterm::from_values(input_vars.clone(), inputs);
+                    let im = Minterm::from_symbols(Arc::clone(&input_syms), inputs);
 
                     // Decode outputs (multi-valued variable - 1 bit per value).
                     let outputs =
                         (0..num_outputs).map(|out| Some(bit_at(cube_ptr, output_start + out)));
-                    let om = Minterm::from_values(output_vars.clone(), outputs);
+                    let om = Minterm::from_symbols(Arc::clone(&output_syms), outputs);
 
                     Cube::new(im, om, cube_type)
                 })

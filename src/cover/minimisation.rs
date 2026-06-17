@@ -232,18 +232,18 @@ where
     let (f_result, d_result, r_result) =
         minimize_fn(&esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
 
-    // Extract minimized cubes back onto the cover's shared headers.
+    // Extract minimized cubes back onto the cover's shared symbol tables.
     let ni = cover.num_inputs();
     let no = cover.num_outputs();
-    let input_vars = Arc::clone(cover.input_vars());
-    let output_vars = Arc::clone(cover.output_vars());
-    // Espresso returns cubes on anonymous headers; re-point each onto the cover's real headers
+    let input_symbols = Arc::clone(cover.input_symbols());
+    let output_symbols = Arc::clone(cover.output_symbols());
+    // Espresso returns cubes on anonymous headers; re-point each onto the cover's real tables
     // (positionally — the variable order is preserved across the boundary).
     let rehome = |cube: &Cube| -> Cube {
         let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
-        let im = Minterm::from_values(Arc::clone(&input_vars), inputs);
+        let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
         let outputs = (0..no).map(|i| cube.outputs().value_at(i));
-        let om = Minterm::from_values(Arc::clone(&output_vars), outputs);
+        let om = Minterm::from_symbols(Arc::clone(&output_symbols), outputs);
         Cube::new(im, om, cube.cube_type())
     };
 
@@ -252,10 +252,10 @@ where
     let d_cubes = d_result.to_cubes(ni, no, CubeType::D);
     let r_cubes = r_result.to_cubes(ni, no, CubeType::R);
 
-    // Build new cover with minimized cubes - reuse the cover's headers (Arc, cheap)
+    // Build new cover with minimized cubes - reuse the cover's symbol tables (Arc, cheap)
     Ok(Cover {
-        input_vars: Arc::clone(cover.input_vars()),
-        output_vars: Arc::clone(cover.output_vars()),
+        input_symbols: Arc::clone(cover.input_symbols()),
+        output_symbols: Arc::clone(cover.output_symbols()),
         input_labeled: cover.input_labeled,
         output_labeled: cover.output_labeled,
         cubes: f_cubes

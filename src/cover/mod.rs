@@ -99,6 +99,7 @@ mod iterators;
 mod minimisation;
 mod minterm;
 pub mod pla;
+mod symbols;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
@@ -106,6 +107,7 @@ pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use minimisation::Minimizable;
 pub use minterm::Minterm;
+pub use symbols::Symbols;
 
 use minterm::Minterm as InternalMinterm;
 use std::sync::Arc;
@@ -279,13 +281,13 @@ impl CoverType {
 /// ```
 #[derive(Clone)]
 pub struct Cover {
-    /// Canonical input variable header, shared by every cube's input minterm.
+    /// Canonical input symbol table, shared by every cube's input minterm.
     ///
     /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
     /// can serve as the shared `Arc` for the minterm fast-comparison path.
-    input_vars: Arc<[Arc<str>]>,
-    /// Canonical output variable header, shared by every cube's output minterm.
-    output_vars: Arc<[Arc<str>]>,
+    input_symbols: Arc<Symbols>,
+    /// Canonical output symbol table, shared by every cube's output minterm.
+    output_symbols: Arc<Symbols>,
     /// Whether input names were explicitly supplied (vs. auto-generated); controls PLA `.ilb`.
     input_labeled: bool,
     /// Whether output names were explicitly supplied; controls PLA `.ob`.
@@ -310,8 +312,8 @@ impl Cover {
     /// ```
     pub fn new(cover_type: CoverType) -> Self {
         Cover {
-            input_vars: Vec::new().into(),
-            output_vars: Vec::new().into(),
+            input_symbols: Symbols::empty(),
+            output_symbols: Symbols::empty(),
             input_labeled: false,
             output_labeled: false,
             cubes: Vec::new(),
@@ -352,8 +354,8 @@ impl Cover {
         Cover {
             input_labeled: !input_vars.is_empty(),
             output_labeled: !output_vars.is_empty(),
-            input_vars,
-            output_vars,
+            input_symbols: Symbols::new(input_vars),
+            output_symbols: Symbols::new(output_vars),
             cubes: Vec::new(),
             cover_type,
         }
@@ -361,12 +363,12 @@ impl Cover {
 
     /// Get the number of inputs
     pub fn num_inputs(&self) -> usize {
-        self.input_vars.len()
+        self.input_symbols.arity()
     }
 
     /// Get the number of outputs
     pub fn num_outputs(&self) -> usize {
-        self.output_vars.len()
+        self.output_symbols.arity()
     }
 
     /// Get the number of cubes (for F/FD types, only counts F cubes; for FR/FDR, counts all)
@@ -393,7 +395,7 @@ impl Cover {
     /// for an unlabeled cover (even though inputs are internally named `x0, x1, …`).
     pub fn input_labels(&self) -> &[Arc<str>] {
         if self.input_labeled {
-            &self.input_vars
+            self.input_symbols.labels()
         } else {
             &[]
         }
@@ -405,20 +407,20 @@ impl Cover {
     /// for an unlabeled cover.
     pub fn output_labels(&self) -> &[Arc<str>] {
         if self.output_labeled {
-            &self.output_vars
+            self.output_symbols.labels()
         } else {
             &[]
         }
     }
 
-    /// The shared input variable header (one name per input, auto-generated when unlabeled).
-    pub(crate) fn input_vars(&self) -> &Arc<[Arc<str>]> {
-        &self.input_vars
+    /// The shared input symbol table (one name per input, auto-generated when unlabeled).
+    pub(crate) fn input_symbols(&self) -> &Arc<Symbols> {
+        &self.input_symbols
     }
 
-    /// The shared output variable header.
-    pub(crate) fn output_vars(&self) -> &Arc<[Arc<str>]> {
-        &self.output_vars
+    /// The shared output symbol table.
+    pub(crate) fn output_symbols(&self) -> &Arc<Symbols> {
+        &self.output_symbols
     }
 
     /// Iterate over cubes as `Cube` references
@@ -518,48 +520,53 @@ impl Cover {
         }
     }
 
-    /// Build an input minterm (padded to the current input dimension) on the shared input header.
+    /// Build an input minterm (padded to the current input dimension) on the shared input table.
     pub(crate) fn input_minterm(&self, raw: &[Option<bool>]) -> InternalMinterm {
         let ni = self.num_inputs();
-        InternalMinterm::from_values(
-            Arc::clone(&self.input_vars),
+        InternalMinterm::from_symbols(
+            Arc::clone(&self.input_symbols),
             (0..ni).map(|i| raw.get(i).copied().flatten()),
         )
     }
 
-    /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output header.
+    /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output table.
     fn membership_minterm(&self, mask: impl IntoIterator<Item = bool>) -> InternalMinterm {
-        InternalMinterm::from_values(Arc::clone(&self.output_vars), mask.into_iter().map(Some))
+        InternalMinterm::from_symbols(Arc::clone(&self.output_symbols), mask.into_iter().map(Some))
     }
 
     /// Grow the cover to fit at least the specified dimensions.
     ///
-    /// Extends the shared headers (auto-generating labels that avoid collisions) and re-points every
-    /// existing cube's minterms onto the new headers. New inputs become don't-care; new outputs are
-    /// unasserted.
+    /// Extends the shared symbol tables (auto-generating labels that avoid collisions) and re-points
+    /// every existing cube's minterms onto the new tables. New inputs become don't-care; new outputs
+    /// are unasserted.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         if min_inputs > self.num_inputs() {
-            let new_vars = extend_header(&self.input_vars, min_inputs, 'x');
+            let new_syms =
+                Symbols::new(extend_header(self.input_symbols.labels(), min_inputs, 'x'));
             for cube in &mut self.cubes {
-                cube.inputs = cube.inputs.project_onto(&new_vars);
+                cube.inputs = cube.inputs.project_onto(&new_syms);
             }
-            self.input_vars = new_vars;
+            self.input_symbols = new_syms;
         }
 
         if min_outputs > self.num_outputs() {
-            let new_vars = extend_header(&self.output_vars, min_outputs, 'y');
-            let new_len = new_vars.len();
+            let new_syms = Symbols::new(extend_header(
+                self.output_symbols.labels(),
+                min_outputs,
+                'y',
+            ));
+            let new_len = new_syms.arity();
             for cube in &mut self.cubes {
                 // Membership grows with `Some(false)` (unasserted), not don't-care.
                 let extra = new_len - cube.outputs.num_vars();
-                cube.outputs = InternalMinterm::from_values(
-                    Arc::clone(&new_vars),
+                cube.outputs = InternalMinterm::from_symbols(
+                    Arc::clone(&new_syms),
                     cube.outputs
                         .iter()
                         .chain(std::iter::repeat_n(Some(false), extra)),
                 );
             }
-            self.output_vars = new_vars;
+            self.output_symbols = new_syms;
         }
     }
 }
