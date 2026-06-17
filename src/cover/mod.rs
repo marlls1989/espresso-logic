@@ -408,7 +408,7 @@ impl<I, O> Cover<I, O> {
     /// never happen implicitly. The new symbol tables must have the same arities as this cover.
     /// To change only one side, use [`relabel_inputs`](Self::relabel_inputs) /
     /// [`relabel_outputs`](Self::relabel_outputs).
-    pub fn relabel<I2, O2>(
+    pub fn relabel<I2: Label, O2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
         output_symbols: Arc<Symbols<O2>>,
@@ -449,7 +449,7 @@ impl<I, O> Cover<I, O> {
     /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
     ///
     /// The new input table must have the same input arity as this cover.
-    pub fn relabel_inputs<I2>(self, input_symbols: Arc<Symbols<I2>>) -> Cover<I2, O> {
+    pub fn relabel_inputs<I2: Label>(self, input_symbols: Arc<Symbols<I2>>) -> Cover<I2, O> {
         assert_eq!(
             input_symbols.arity(),
             self.num_inputs(),
@@ -480,7 +480,7 @@ impl<I, O> Cover<I, O> {
     /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
     ///
     /// The new output table must have the same output arity as this cover.
-    pub fn relabel_outputs<O2>(self, output_symbols: Arc<Symbols<O2>>) -> Cover<I, O2> {
+    pub fn relabel_outputs<O2: Label>(self, output_symbols: Arc<Symbols<O2>>) -> Cover<I, O2> {
         assert_eq!(
             output_symbols.arity(),
             self.num_outputs(),
@@ -511,7 +511,10 @@ impl<I, O> Cover<I, O> {
     /// Drop all labels, yielding a positional [`Cover<Anonymous, Anonymous>`](Cover) (explicit anonymisation).
     pub fn anonymize(self) -> Cover<Anonymous, Anonymous> {
         let (ni, no) = (self.num_inputs(), self.num_outputs());
-        self.relabel(Symbols::anonymous(ni), Symbols::anonymous(no))
+        self.relabel(
+            Symbols::<Anonymous>::anonymous(ni),
+            Symbols::<Anonymous>::anonymous(no),
+        )
     }
 
     /// Get the number of inputs
@@ -652,8 +655,8 @@ impl Cover<Anonymous, Anonymous> {
             .map(|c| c.outputs().num_vars())
             .max()
             .unwrap_or(0);
-        let input_symbols = Symbols::anonymous(ni);
-        let output_symbols = Symbols::anonymous(no);
+        let input_symbols = Symbols::<Anonymous>::anonymous(ni);
+        let output_symbols = Symbols::<Anonymous>::anonymous(no);
         let cubes = cubes
             .iter()
             .map(|cube| repoint_anonymous(cube, &input_symbols, &output_symbols))
@@ -695,7 +698,7 @@ impl Cover<Anonymous, Anonymous> {
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         if min_inputs > self.num_inputs() {
             // A `Cover<Anonymous, Anonymous>` is always anonymous, so widening is just a wider anonymous table.
-            let new_syms = Symbols::anonymous(min_inputs);
+            let new_syms = Symbols::<Anonymous>::anonymous(min_inputs);
             for cube in &mut self.cubes {
                 cube.inputs = Minterm::from_symbols(
                     Arc::clone(&new_syms),
@@ -706,7 +709,7 @@ impl Cover<Anonymous, Anonymous> {
         }
 
         if min_outputs > self.num_outputs() {
-            let new_syms = Symbols::anonymous(min_outputs);
+            let new_syms = Symbols::<Anonymous>::anonymous(min_outputs);
             for cube in &mut self.cubes {
                 let old = cube.outputs.num_vars();
                 cube.outputs = Minterm::from_symbols(
@@ -752,74 +755,57 @@ fn rebuild_output<I, O>(
     Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
 }
 
-/// The union input header of two covers, aligned by identity: anonymous → a wider anonymous table
-/// (`max` arity, positions pad don't-care on projection); labelled → `a`'s labels followed by `b`'s
-/// labels of a new identity.
-fn union_inputs<I: Label>(a: &Arc<Symbols<I>>, b: &Arc<Symbols<I>>) -> Arc<Symbols<I>> {
-    if !a.is_labeled() && !b.is_labeled() {
-        return Symbols::anonymous(a.arity().max(b.arity()));
+/// Append `b`'s label of a new identity to `header`, returning the position `b`'s position `j` maps to
+/// (whether found among the existing labels or freshly appended). `offset` shifts `b`'s position before
+/// taking its identity — used by `extend` to give `b`'s **anonymous** labels fresh identities (a no-op
+/// for named labels, whose identity ignores position).
+fn map_into<L: Label>(header: &mut Vec<L>, j: usize, lb: &L, offset: usize) -> usize {
+    let id = lb.identity(j + offset);
+    match header
+        .iter()
+        .enumerate()
+        .position(|(k, la)| la.identity(k) == id)
+    {
+        Some(p) => p,
+        None => {
+            header.push(lb.clone());
+            header.len() - 1
+        }
     }
+}
+
+/// The union input header of two covers, aligned by identity: `a`'s labels followed by `b`'s labels of
+/// a new identity. By name when labelled, by position when anonymous (`Anonymous`'s identity is its
+/// index, so this grows to the wider arity and positions pad don't-care on projection).
+fn union_inputs<I: Label>(a: &Arc<Symbols<I>>, b: &Arc<Symbols<I>>) -> Arc<Symbols<I>> {
     let mut header: Vec<I> = a.labels().to_vec();
     for (i, lb) in b.labels().iter().enumerate() {
-        let id = lb.identity(i);
-        if !header
-            .iter()
-            .enumerate()
-            .any(|(j, la)| la.identity(j) == id)
-        {
-            header.push(lb.clone());
-        }
+        map_into(&mut header, i, lb, 0);
     }
     Symbols::new(header.into())
 }
 
 /// The union output header of two covers plus each side's old-index → new-index map.
 ///
-/// - **Labelled** outputs union by identity (name); `append` is irrelevant because distinct names are
-///   distinct identities, so `extend` and `merge` coincide.
-/// - **Anonymous** outputs align by position: `append` (extend) shifts `b`'s columns past `a`'s, while
-///   overlay (merge) keeps them at the same positions.
+/// `merge` overlays `b`'s outputs onto `a`'s by identity; `extend` first offsets `b`'s positions by
+/// `a`'s arity. For **named** outputs the offset is irrelevant (identity is the name, not the position)
+/// so `extend` and `merge` coincide; for **anonymous** outputs the offset makes `extend` append `b`'s
+/// columns after `a`'s while `merge` overlays them at the same positions.
 fn combine_outputs<O: Label>(
     a: &Arc<Symbols<O>>,
     b: &Arc<Symbols<O>>,
     append: bool,
 ) -> (Arc<Symbols<O>>, Vec<usize>, Vec<usize>) {
-    let (a_no, b_no) = (a.arity(), b.arity());
-    if a.is_labeled() || b.is_labeled() {
-        let mut header: Vec<O> = a.labels().to_vec();
-        let b_map = b
-            .labels()
-            .iter()
-            .enumerate()
-            .map(|(j, lb)| {
-                let id = lb.identity(j);
-                match header
-                    .iter()
-                    .enumerate()
-                    .position(|(k, la)| la.identity(k) == id)
-                {
-                    Some(p) => p,
-                    None => {
-                        header.push(lb.clone());
-                        header.len() - 1
-                    }
-                }
-            })
-            .collect();
-        (Symbols::new(header.into()), (0..a_no).collect(), b_map)
-    } else if append {
-        (
-            Symbols::anonymous(a_no + b_no),
-            (0..a_no).collect(),
-            (0..b_no).map(|j| a_no + j).collect(),
-        )
-    } else {
-        (
-            Symbols::anonymous(a_no.max(b_no)),
-            (0..a_no).collect(),
-            (0..b_no).collect(),
-        )
-    }
+    let a_no = a.arity();
+    let offset = if append { a_no } else { 0 };
+    let mut header: Vec<O> = a.labels().to_vec();
+    let b_map = b
+        .labels()
+        .iter()
+        .enumerate()
+        .map(|(j, lb)| map_into(&mut header, j, lb, offset))
+        .collect();
+    (Symbols::new(header.into()), (0..a_no).collect(), b_map)
 }
 
 /// Combine `b` into `a` (re-pointed onto common headers). Inputs union by identity; outputs follow

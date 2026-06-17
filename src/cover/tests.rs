@@ -889,15 +889,18 @@ fn relabel_outputs_keeps_inputs() {
 
     // Drop only the output label, keeping the named inputs.
     let anon_out: Cover<std::sync::Arc<str>, Anonymous> =
-        named.clone().relabel_outputs(Symbols::anonymous(1));
+        named
+            .clone()
+            .relabel_outputs(Symbols::<Anonymous>::anonymous(1));
     assert_eq!(anon_out.input_labels(), named.input_labels());
     assert_eq!(anon_out.num_outputs(), 1);
     assert_eq!(io_rows(&anon_out), io_rows(&named));
 
     // Dual: relabel only the inputs, keeping the named output.
-    let anon_in: Cover<Anonymous, std::sync::Arc<str>> = named
-        .clone()
-        .relabel_inputs(Symbols::anonymous(named.num_inputs()));
+    let anon_in: Cover<Anonymous, std::sync::Arc<str>> =
+        named
+            .clone()
+            .relabel_inputs(Symbols::<Anonymous>::anonymous(named.num_inputs()));
     assert_eq!(anon_in.output_labels(), named.output_labels());
     assert_eq!(anon_in.num_inputs(), named.num_inputs());
 }

@@ -108,9 +108,9 @@ pub struct Minterm<L = Arc<str>> {
     values: Arc<[u64]>,
 }
 
-impl<L: fmt::Debug> fmt::Debug for Minterm<L> {
-    /// Renders values by variable — e.g. `Minterm { "a": 1, "b": - }` for labelled minterms, or
-    /// `Minterm { 0: 1, 1: - }` for anonymous (unlabelled) positions — where `1`/`0`/`-` are
+impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
+    /// Renders values by variable — e.g. `Minterm { "a": 1, "b": - }` for named minterms, or
+    /// `Minterm { 0: 1, 1: - }` for anonymous (positional) ones — where `1`/`0`/`-` are
     /// true/false/don't-care, rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Minterm {{")?;
@@ -122,9 +122,10 @@ impl<L: fmt::Debug> fmt::Debug for Minterm<L> {
                 None => '-',
             };
             let sep = if i == 0 { "" } else { "," };
-            match labels.get(i) {
-                Some(label) => write!(f, "{sep} {label:?}: {sym}")?,
-                None => write!(f, "{sep} {i}: {sym}")?,
+            if L::NAMED {
+                write!(f, "{sep} {:?}: {sym}", labels[i])?;
+            } else {
+                write!(f, "{sep} {i}: {sym}")?;
             }
         }
         write!(f, " }}")
@@ -240,24 +241,19 @@ impl<L: Label> Minterm<L> {
 
     /// Pack `self`'s values, reordered onto `target` (absent → don't-care).
     ///
-    /// For a labelled `target` each position pulls `self`'s field for the variable of the same
-    /// identity (absent → don't-care); for an anonymous `target` alignment is positional (positions
-    /// beyond `self`'s width pad don't-care). `self` and `target` are always the same kind (both
-    /// labelled or both anonymous), since a cover's headers share one label type.
+    /// Each `target` position pulls `self`'s field for the variable of the same
+    /// [`identity`](Label::identity) (absent → don't-care) — one uniform path: by name for a named
+    /// header, by position for an anonymous one (`Anonymous`'s identity is its index, so positions
+    /// beyond `self`'s width pad don't-care).
     fn project_words(&self, target: &Symbols<L>) -> Vec<u64> {
         let mut words = vec![0u64; words_for(target.arity())];
         for i in 0..target.arity() {
-            let field = if target.is_labeled() {
-                let id = target.labels()[i].identity(i);
-                self.symbols
-                    .position_of_identity(&id)
-                    .map(|j| field_at(&self.values, j as usize))
-                    .unwrap_or(FIELD_DC)
-            } else if i < self.num_vars() {
-                field_at(&self.values, i)
-            } else {
-                FIELD_DC
-            };
+            let id = target.labels()[i].identity(i);
+            let field = self
+                .symbols
+                .position_of_identity(&id)
+                .map(|j| field_at(&self.values, j as usize))
+                .unwrap_or(FIELD_DC);
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
         words

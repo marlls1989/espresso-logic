@@ -12,7 +12,7 @@
 //! from the `-` (don't-care) state, so multi-output FD/FDR covers round-trip and minimise
 //! byte-identically to the C library.
 
-use super::label::Anonymous;
+use super::label::{Anonymous, Label};
 use super::minterm::Minterm;
 use super::symbols::Symbols;
 use std::fmt;
@@ -41,7 +41,7 @@ pub struct Cube<I = Arc<str>, O = Arc<str>> {
     pub(crate) set: CubeType,
 }
 
-impl<I: fmt::Debug, O: fmt::Debug> fmt::Debug for Cube<I, O> {
+impl<I: Label + fmt::Debug, O: Label + fmt::Debug> fmt::Debug for Cube<I, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cube")
             .field("inputs", &self.inputs)
@@ -112,9 +112,12 @@ impl Cube<Anonymous, Anonymous> {
         membership: &[bool],
         set: CubeType,
     ) -> Cube<Anonymous, Anonymous> {
-        let im = Minterm::from_symbols(Symbols::anonymous(inputs.len()), inputs.iter().copied());
+        let im = Minterm::from_symbols(
+            Symbols::<Anonymous>::anonymous(inputs.len()),
+            inputs.iter().copied(),
+        );
         let om = Minterm::from_symbols(
-            Symbols::anonymous(membership.len()),
+            Symbols::<Anonymous>::anonymous(membership.len()),
             membership.iter().map(|&b| Some(b)),
         );
         Cube::new(im, om, set)

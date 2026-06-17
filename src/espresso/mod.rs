@@ -752,8 +752,8 @@ impl EspressoCover {
     ) -> Arc<[Cube<Anonymous, Anonymous>]> {
         // The low-level layer has no variable names, so cubes are anonymous (`I = O = Anonymous`):
         // positional only. Callers that need names re-point the cubes onto a real symbol table.
-        let input_syms = Symbols::anonymous(num_inputs);
-        let output_syms = Symbols::anonymous(num_outputs);
+        let input_syms = Symbols::<Anonymous>::anonymous(num_inputs);
+        let output_syms = Symbols::<Anonymous>::anonymous(num_outputs);
         unsafe {
             let count = (*self.ptr).count as usize;
             let wsize = (*self.ptr).wsize as usize;

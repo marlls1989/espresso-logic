@@ -21,6 +21,11 @@ pub trait Label: Clone {
     /// headers, `Hash` drives the O(1) reverse lookup, `Clone` lets the caches own a copy.
     type Identity: Ord + Hash + Clone;
 
+    /// Whether this label type carries real **names** (`true`) or is purely positional (`false`, like
+    /// [`Anonymous`]). A `Symbols<L>` always stores one label per position; this distinguishes a real
+    /// name table from a placeholder `[Anonymous; n]` one, so the latter renders/exposes no names.
+    const NAMED: bool = true;
+
     /// Form the alignment identity of *this* label sitting at `position`.
     ///
     /// The position is supplied by the symbol table so the label type never has to store it: real
@@ -52,6 +57,7 @@ pub struct Anonymous;
 
 impl Label for Anonymous {
     type Identity = usize;
+    const NAMED: bool = false;
 
     #[inline]
     fn identity(&self, position: usize) -> usize {

@@ -67,10 +67,11 @@ fn test_pla_roundtrip() {
         CubeType::F,
     )); // 10 -> 1
 
-    // PLA serialisation is string-labelled; relabel the anonymous cover (unlabelled `Arc<str>`).
+    // PLA serialisation is string-labelled; give the anonymous cover real input/output names.
+    use std::sync::Arc;
     let cover = cover.relabel(
-        Symbols::<std::sync::Arc<str>>::anonymous(2),
-        Symbols::anonymous(1),
+        Symbols::new(vec![Arc::<str>::from("x0"), Arc::from("x1")].into()),
+        Symbols::new(vec![Arc::<str>::from("y0")].into()),
     );
 
     // Convert to PLA format using the trait
