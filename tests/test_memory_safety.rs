@@ -7,6 +7,7 @@
 //! - Linux: Use valgrind or heaptrack (see docs/MEMORY_SAFETY.md)
 
 use espresso_logic::espresso::{Cube, CubeType, Espresso, EspressoCover};
+use espresso_logic::Anonymous;
 use espresso_logic::{EspressoConfig, Minimizable};
 
 /// Helper to get current memory usage on macOS
@@ -202,7 +203,7 @@ fn test_coverbuilder_memory_management() {
     use espresso_logic::{Cover, CoverType};
 
     for _ in 0..100 {
-        let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover.push(Cube::anonymous(
             &[Some(false), Some(true)],
             &[true],
@@ -235,7 +236,7 @@ fn test_dimension_changes_no_leak() {
     for i in 0..100 {
         match i % 3 {
             0 => {
-                let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
                 cover.push(Cube::anonymous(
                     &[Some(false), Some(true)],
                     &[true],
@@ -244,7 +245,7 @@ fn test_dimension_changes_no_leak() {
                 let _ = cover.minimize().unwrap();
             }
             1 => {
-                let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
                 cover.push(Cube::anonymous(
                     &[Some(false), Some(true), Some(false)],
                     &[true],
@@ -253,7 +254,7 @@ fn test_dimension_changes_no_leak() {
                 let _ = cover.minimize().unwrap();
             }
             2 => {
-                let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
                 cover.push(Cube::anonymous(
                     &[Some(false), Some(true), Some(false), Some(true)],
                     &[true],
@@ -285,7 +286,7 @@ fn test_large_cover_allocations() {
 
     // Create and minimize large covers repeatedly
     for _ in 0..50 {
-        let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
         // Add many cubes
         for i in 0..64 {

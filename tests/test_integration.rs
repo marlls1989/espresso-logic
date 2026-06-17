@@ -3,6 +3,7 @@
 //! These tests verify end-to-end functionality including file I/O,
 //! PLA format handling, and complete minimization workflows.
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Minimizable, *};
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -54,7 +55,7 @@ fn test_create_cover_from_pla() {
 #[test]
 fn test_pla_roundtrip() {
     // Create a cover programmatically
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],

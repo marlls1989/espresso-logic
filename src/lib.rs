@@ -140,11 +140,11 @@
 //! Build covers by manually adding cubes (dimensions grow automatically):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Create a cover (dimensions grow automatically)
-//! let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+//! let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //!
 //! // Build the ON-set (truth table)
 //! cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
@@ -207,15 +207,15 @@
 //! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Cube, CubeType};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // F type (ON-set only)
-//! let mut f_cover = Cover::<(), ()>::anonymous(CoverType::F);
+//! let mut f_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //! f_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));
 //!
 //! // FD type (ON-set + Don't-cares)
-//! let mut fd_cover = Cover::<(), ()>::anonymous(CoverType::FD);
+//! let mut fd_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FD);
 //! fd_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));  // ON
 //! fd_cover.push(Cube::anonymous(&[Some(false), Some(false)], &[true], CubeType::D));  // Don't-care
 //! # Ok(())
@@ -231,14 +231,14 @@
 //! `.minimize()` is called, the thread-local Espresso instance is created for that thread.
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Covers can be freely moved between threads
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
-//!         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+//!         let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //!         cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
 //!         cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
 //!         

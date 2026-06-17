@@ -3,6 +3,7 @@
 //! This demonstrates the modern API where ALL C code
 //! runs in isolated processes - nothing in the parent process.
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a cover for 2 inputs, 1 output - NO C code executed!
     println!("1. Creating Cover (no C code yet)");
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     println!("   ✓ Cover created (pure Rust data structure)\n");
 
     // Add cubes (XOR function)

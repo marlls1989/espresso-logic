@@ -30,7 +30,7 @@ pub struct Symbols<L = Arc<str>> {
 /// state (`Labeled` with `labels.len() != arity`) is unrepresentable outside this module, and
 /// `Labeled` is only ever built with `labels.len() == arity`.
 enum Repr<L> {
-    /// Positional, unlabelled: just a width. Used by `Cover<(), ()>` and by `Arc<str>` covers that
+    /// Positional, unlabelled: just a width. Used by `Cover<Anonymous, Anonymous>` and by `Arc<str>` covers that
     /// have no `.ilb`/`.ob` names (names, if ever needed, are synthesised at serialisation time).
     Anonymous { arity: usize },
     /// Fully labelled: one label per position (`arity == labels.len()`), with lazily-built

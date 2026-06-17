@@ -1,5 +1,6 @@
 //! Basic minimization example
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("(output is 1 when an odd number of inputs are 1)\n");
 
     // Build the ON-set (truth table where output is 1)
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // A'B'C (001)
     cover.push(Cube::anonymous(

@@ -159,10 +159,10 @@ fn main() -> std::io::Result<()> {
 ### Building from Truth Tables
 
 ```rust
-use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // XOR function: a XOR b (ON-set only)
     // Inputs: [a, b], Output: [f]
@@ -179,10 +179,10 @@ fn main() -> std::io::Result<()> {
 ### Using Don't Cares
 
 ```rust
-use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     
     // Use None for don't care values
     cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -> 1

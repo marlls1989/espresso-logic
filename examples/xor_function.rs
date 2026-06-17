@@ -1,12 +1,13 @@
 //! XOR function minimization example
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("XOR Function Minimization\n");
 
     // Create a cover (dimensions grow automatically)
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Add XOR truth table
     cover.push(Cube::anonymous(

@@ -140,15 +140,15 @@
 //! dimension changes safely:
 //!
 //! ```rust
-//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Cover handles dimension changes automatically
-//! let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
+//! let mut cover1 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //! cover1.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
 //! cover1 = cover1.minimize()?;
 //!
 //! // Different dimensions - no problem!
-//! let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
+//! let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //! cover2.push(Cube::anonymous(&[Some(false), Some(true), Some(false)], &[true], CubeType::F));
 //! cover2 = cover2.minimize()?;
 //! # Ok(())
@@ -373,8 +373,8 @@
 
 pub mod error;
 
+use crate::cover::{Anonymous, Minterm, Symbols};
 pub use crate::cover::{Cube, CubeType};
-use crate::cover::{Minterm, Symbols};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
 use std::marker::PhantomData;
@@ -749,8 +749,8 @@ impl EspressoCover {
         num_inputs: usize,
         num_outputs: usize,
         cube_type: CubeType,
-    ) -> Arc<[Cube<(), ()>]> {
-        // The low-level layer has no variable names, so cubes are anonymous (`I = O = ()`):
+    ) -> Arc<[Cube<Anonymous, Anonymous>]> {
+        // The low-level layer has no variable names, so cubes are anonymous (`I = O = Anonymous`):
         // positional only. Callers that need names re-point the cubes onto a real symbol table.
         let input_syms = Symbols::anonymous(num_inputs);
         let output_syms = Symbols::anonymous(num_outputs);
@@ -2072,7 +2072,7 @@ mod tests {
 
         // Test with explicit scope-based drop to ensure cleanup works correctly
         {
-            let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
+            let mut cover1 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
             cover1.push(Cube::anonymous(
                 &[Some(true), Some(false)],
                 &[true],
@@ -2083,7 +2083,7 @@ mod tests {
         } // cover1 is dropped here, Espresso instance should be cleaned up
 
         // Now try with different dimensions - should work without conflicts
-        let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover2.push(Cube::anonymous(
             &[Some(false), Some(true), Some(false), Some(true)],
             &[true],
@@ -2155,7 +2155,7 @@ mod tests {
         // because it properly manages Espresso instance lifecycle
 
         // Create and minimize first cover with 2 inputs, 1 output
-        let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover1 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover1.push(Cube::anonymous(
             &[Some(true), Some(false)],
             &[true],
@@ -2175,7 +2175,7 @@ mod tests {
         );
 
         // Cover can handle different dimensions (3x2) without conflicts
-        let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover2.push(Cube::anonymous(
             &[Some(false), Some(true), Some(false)],
             &[true, false],
@@ -2369,10 +2369,10 @@ mod tests {
 /// Use with [`Cover::minimize_with_config()`](crate::cover::Minimizable::minimize_with_config):
 ///
 /// ```
-/// use espresso_logic::{Cover, CoverType, Cube, CubeType, EspressoConfig, Minimizable};
+/// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, EspressoConfig, Minimizable};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+/// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 /// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
 ///
 /// // Use custom configuration

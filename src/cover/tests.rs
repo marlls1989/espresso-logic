@@ -24,7 +24,7 @@ fn test_cover_with_labels() {
 
 #[test]
 fn test_push() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -44,7 +44,7 @@ fn test_from_cubes_matches_push() {
     ];
     let built = Cover::from_cubes(CoverType::F, cubes.iter().cloned());
 
-    let mut pushed = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut pushed = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     for cube in cubes.iter().cloned() {
         pushed.push(cube);
     }
@@ -74,7 +74,7 @@ fn io_rows<I, O>(c: &Cover<I, O>) -> Vec<CubeRow> {
 
 #[test]
 fn test_minimize() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -94,7 +94,7 @@ fn test_minimize() {
 
 #[test]
 fn test_dynamic_growth_inputs_only() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Start with 2 inputs
     cover.push(Cube::anonymous(
@@ -123,7 +123,7 @@ fn test_dynamic_growth_inputs_only() {
 
 #[test]
 fn test_dynamic_growth_outputs_only() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Start with 1 output
     cover.push(Cube::anonymous(
@@ -152,7 +152,7 @@ fn test_dynamic_growth_outputs_only() {
 
 #[test]
 fn test_dynamic_growth_both_dimensions() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Start small
     cover.push(Cube::anonymous(&[Some(true)], &[true], CubeType::F));
@@ -187,7 +187,7 @@ fn test_dynamic_growth_both_dimensions() {
 
 #[test]
 fn test_dynamic_growth_preserves_existing_cubes() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Add first cube
     cover.push(Cube::anonymous(
@@ -472,7 +472,7 @@ fn test_to_exprs_after_minimization() {
 
 #[test]
 fn test_f_type_cover() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // F type only accepts Some(true) for outputs
     cover.push(Cube::anonymous(
@@ -500,7 +500,7 @@ fn test_f_type_cover() {
 
 #[test]
 fn test_fd_type_cover() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::FD);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FD);
 
     // FD type accepts Some(true) and None
     cover.push(Cube::anonymous(
@@ -523,7 +523,7 @@ fn test_fd_type_cover() {
 
 #[test]
 fn test_fr_type_cover() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::FR);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FR);
 
     // FR type accepts Some(true) and Some(false)
     cover.push(Cube::anonymous(
@@ -543,7 +543,7 @@ fn test_fr_type_cover() {
 
 #[test]
 fn test_fdr_type_cover() {
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::FDR);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FDR);
 
     // FDR type accepts all: Some(true), Some(false), None
     cover.push(Cube::anonymous(
@@ -676,8 +676,8 @@ fn test_minimize_preserves_structure() {
 
 #[test]
 fn anonymous_cover_minimizes() {
-    // Pure positional cover, no labels (L = ()).
-    let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
+    // Pure positional cover, no labels (L = Anonymous).
+    let mut cover: Cover<Anonymous, Anonymous> = Cover::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -697,7 +697,7 @@ fn anonymous_cover_minimizes() {
 
 #[test]
 fn custom_u32_labels_via_relabel() {
-    let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
+    let mut cover: Cover<Anonymous, Anonymous> = Cover::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(true), None, Some(false)],
         &[true],
@@ -721,7 +721,7 @@ fn custom_u32_labels_via_relabel() {
 fn anonymize_drops_labels_preserving_values() {
     use std::sync::Arc;
     // Build positionally, label explicitly, then anonymise back — values preserved throughout.
-    let mut anon = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut anon = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     anon.push(Cube::anonymous(
         &[Some(true), Some(false)],
         &[true],
@@ -733,7 +733,7 @@ fn anonymize_drops_labels_preserving_values() {
     );
     assert_eq!(labeled.num_inputs(), 2);
 
-    let back: Cover<(), ()> = labeled.anonymize();
+    let back: Cover<Anonymous, Anonymous> = labeled.anonymize();
     assert_eq!(back.num_cubes(), 1);
     let cube = back.cubes().next().unwrap();
     assert_eq!(cube.inputs().value_at(0), Some(true));
@@ -743,7 +743,7 @@ fn anonymize_drops_labels_preserving_values() {
 #[test]
 fn cover_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Cover<(), ()>>();
+    assert_send_sync::<Cover<Anonymous, Anonymous>>();
     assert_send_sync::<Cover<u32, u32>>();
     assert_send_sync::<Cover<std::sync::Arc<str>>>();
 }
@@ -862,7 +862,7 @@ fn extend_equals_merge_for_named_covers() {
     assert_eq!(by_extend.num_inputs(), 2); // union {x, y}
 }
 
-// ===== BoolExpr -> Cover<Arc<str>, ()> and per-side relabel =====
+// ===== BoolExpr -> Cover<Arc<str>, Anonymous> and per-side relabel =====
 
 #[test]
 fn expr_into_anonymous_output_cover_roundtrips() {
@@ -871,7 +871,7 @@ fn expr_into_anonymous_output_cover_roundtrips() {
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
 
     // From<&BoolExpr> yields a labelled-input, anonymous-output cover (via the BDD).
-    let cover: Cover<std::sync::Arc<str>, ()> = (&expr).into();
+    let cover: Cover<std::sync::Arc<str>, Anonymous> = (&expr).into();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
@@ -888,14 +888,14 @@ fn relabel_outputs_keeps_inputs() {
         .unwrap();
 
     // Drop only the output label, keeping the named inputs.
-    let anon_out: Cover<std::sync::Arc<str>, ()> =
+    let anon_out: Cover<std::sync::Arc<str>, Anonymous> =
         named.clone().relabel_outputs(Symbols::anonymous(1));
     assert_eq!(anon_out.input_labels(), named.input_labels());
     assert_eq!(anon_out.num_outputs(), 1);
     assert_eq!(io_rows(&anon_out), io_rows(&named));
 
     // Dual: relabel only the inputs, keeping the named output.
-    let anon_in: Cover<(), std::sync::Arc<str>> = named
+    let anon_in: Cover<Anonymous, std::sync::Arc<str>> = named
         .clone()
         .relabel_inputs(Symbols::anonymous(named.num_inputs()));
     assert_eq!(anon_in.output_labels(), named.output_labels());

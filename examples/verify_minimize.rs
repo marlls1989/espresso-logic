@@ -1,8 +1,9 @@
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test case from test_cover_many_cubes
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     println!("Adding 4 cubes:");
     cover.push(Cube::anonymous(

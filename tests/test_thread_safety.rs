@@ -4,6 +4,7 @@
 //! storage for global state. Multiple threads can safely use the library
 //! concurrently without synchronization.
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 use std::thread;
 use std::time::Duration;
@@ -11,7 +12,7 @@ use std::time::Duration;
 #[test]
 fn test_basic_thread_safety() {
     // Create a cover and add cubes (XOR pattern)
-    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -40,7 +41,7 @@ fn test_concurrent_execution() {
     let handles: Vec<_> = (0..4)
         .map(|i| {
             thread::spawn(move || {
-                let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
                 cover.push(Cube::anonymous(
                     &[Some(false), Some(true)],
                     &[true],
@@ -80,7 +81,7 @@ fn test_consistent_results() {
     // Test that multiple executions produce consistent results
 
     // First execution
-    let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover1 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover1.push(Cube::anonymous(
         &[Some(false), Some(false), Some(true)],
         &[true],
@@ -99,7 +100,7 @@ fn test_consistent_results() {
     cover1.minimize().unwrap();
 
     // Second execution
-    let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover2.push(Cube::anonymous(
         &[Some(false), Some(false), Some(true)],
         &[true],
@@ -131,7 +132,7 @@ fn test_multiple_sizes() {
     // (unlike EspressoCover which has dimension restrictions)
 
     // Create first cover with 2 inputs, 1 output
-    let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover1 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover1.push(Cube::anonymous(
         &[Some(true), Some(false)],
         &[true],
@@ -141,7 +142,7 @@ fn test_multiple_sizes() {
     assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
 
     // Cover should handle different dimensions thanks to automatic cleanup
-    let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover2.push(Cube::anonymous(
         &[Some(false), Some(true), Some(false)],
         &[true],
@@ -161,7 +162,7 @@ fn test_different_sizes_in_different_threads() {
     use std::thread;
 
     let handle1 = thread::spawn(|| {
-        let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover.push(Cube::anonymous(
             &[Some(true), Some(false)],
             &[true],
@@ -172,7 +173,7 @@ fn test_different_sizes_in_different_threads() {
     });
 
     let handle2 = thread::spawn(|| {
-        let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
         cover.push(Cube::anonymous(
             &[Some(true), Some(false), Some(true)],
             &[true, false],
@@ -194,7 +195,7 @@ fn test_stress_concurrent() {
             thread::spawn(move || {
                 // Each thread performs multiple operations
                 for j in 0..3 {
-                    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
+                    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
                     cover.push(Cube::anonymous(
                         &[Some(false), Some(true)],
                         &[true],

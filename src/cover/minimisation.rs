@@ -5,6 +5,7 @@
 //! for [`Cover`] and [`BoolExpr`].
 
 use super::cubes::{Cube, CubeType};
+use super::label::Anonymous;
 use super::minterm::Minterm;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
@@ -237,10 +238,10 @@ where
     let no = cover.num_outputs();
     let input_symbols = Arc::clone(cover.input_symbols());
     let output_symbols = Arc::clone(cover.output_symbols());
-    // Espresso returns anonymous positional cubes (`Cube<(), ()>`); re-point each onto the cover's
+    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the cover's
     // real `Symbols<L>` table by reading values positionally (variable order is preserved across
     // the boundary).
-    let rehome = |cube: &Cube<(), ()>| -> Cube<I, O> {
+    let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
         let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
         let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
         let outputs = (0..no).map(|i| cube.outputs().value_at(i));
@@ -295,12 +296,12 @@ fn minimize_expr_with<F>(
 ) -> Result<BoolExpr, MinimizationError>
 where
     F: FnOnce(
-        &Cover<Arc<str>, ()>,
+        &Cover<Arc<str>, Anonymous>,
         &EspressoConfig,
-    ) -> Result<Cover<Arc<str>, ()>, MinimizationError>,
+    ) -> Result<Cover<Arc<str>, Anonymous>, MinimizationError>,
 {
     // Build a single-output, anonymous-output cover from the expression (canonical via the BDD).
-    let cover: Cover<Arc<str>, ()> = expr.into();
+    let cover: Cover<Arc<str>, Anonymous> = expr.into();
 
     // Minimise it with the provided (heuristic or exact) algorithm.
     let minimized = minimize_fn(&cover, config)?;

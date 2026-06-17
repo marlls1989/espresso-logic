@@ -1,5 +1,6 @@
 //! Example: Using different cover types with Cover
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -7,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // FD type (default) - ON-set + Don't-care
     println!("1. FD Type (ON-set + Don't-care):");
-    let mut fd_cover = Cover::<(), ()>::anonymous(CoverType::FD);
+    let mut fd_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FD);
     fd_cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -24,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // F type - ON-set only
     println!("2. F Type (ON-set only):");
-    let mut f_cover = Cover::<(), ()>::anonymous(CoverType::F);
+    let mut f_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     f_cover.push(Cube::anonymous(
         &[Some(false), Some(true)],
         &[true],
@@ -42,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // FR type - ON-set + OFF-set
     println!("3. FR Type (ON-set + OFF-set):");
-    let mut fr_cover = Cover::<(), ()>::anonymous(CoverType::FR);
+    let mut fr_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FR);
     fr_cover.push(Cube::anonymous(
         &[Some(false), Some(false)],
         &[true],
@@ -69,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // FDR type - ON-set + Don't-care + OFF-set
     println!("4. FDR Type (ON-set + Don't-care + OFF-set):");
-    let mut fdr_cover = Cover::<(), ()>::anonymous(CoverType::FDR);
+    let mut fdr_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FDR);
     fdr_cover.push(Cube::anonymous(
         &[Some(false), Some(false)],
         &[true],

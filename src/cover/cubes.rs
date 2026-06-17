@@ -12,6 +12,7 @@
 //! from the `-` (don't-care) state, so multi-output FD/FDR covers round-trip and minimise
 //! byte-identically to the C library.
 
+use super::label::Anonymous;
 use super::minterm::Minterm;
 use super::symbols::Symbols;
 use std::fmt;
@@ -86,7 +87,7 @@ impl<I, O> Cube<I, O> {
     }
 }
 
-impl Cube<(), ()> {
+impl Cube<Anonymous, Anonymous> {
     /// Build an **anonymous** (positional) cube from an input pattern and an output-membership mask.
     ///
     /// - `inputs[i]` is the value of input `i`: `Some(true)`/`Some(false)`, or `None` for don't-care.
@@ -106,7 +107,11 @@ impl Cube<(), ()> {
     /// let cube = Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F);
     /// assert_eq!(cube.cube_type(), CubeType::F);
     /// ```
-    pub fn anonymous(inputs: &[Option<bool>], membership: &[bool], set: CubeType) -> Cube<(), ()> {
+    pub fn anonymous(
+        inputs: &[Option<bool>],
+        membership: &[bool],
+        set: CubeType,
+    ) -> Cube<Anonymous, Anonymous> {
         let im = Minterm::from_symbols(Symbols::anonymous(inputs.len()), inputs.iter().copied());
         let om = Minterm::from_symbols(
             Symbols::anonymous(membership.len()),

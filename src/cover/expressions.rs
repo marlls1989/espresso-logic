@@ -42,7 +42,7 @@ impl Cover {
     /// ```
     pub fn add_expr(&mut self, expr: &BoolExpr, output_name: &str) -> Result<(), AddExprError> {
         // `add_expr` is a *labelled* operation, intended for empty or fully-labelled covers. Build
-        // positional covers as `Cover<(), ()>` and convert explicitly (`relabel`) rather than naming
+        // positional covers as `Cover<Anonymous, Anonymous>` and convert explicitly (`relabel`) rather than naming
         // anonymous positions here.
 
         // Check if output already exists (fail fast before doing any work).
@@ -189,7 +189,7 @@ impl Cover {
 }
 
 /// Rebuilding an expression depends only on the **input** variable names, so it works whatever the
-/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Arc<str>, ()>`).
+/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Arc<str>, Anonymous>`).
 impl<O> Cover<Arc<str>, O> {
     /// Convert a specific output index to a boolean expression
     ///
