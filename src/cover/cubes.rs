@@ -38,7 +38,7 @@ pub struct Cube<L = Arc<str>> {
     pub(crate) set: CubeType,
 }
 
-impl<L: fmt::Display> fmt::Debug for Cube<L> {
+impl<L: fmt::Debug> fmt::Debug for Cube<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cube")
             .field("inputs", &self.inputs)

@@ -143,12 +143,12 @@
 //! use espresso_logic::{Cover, CoverType, Minimizable};
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Cover handles dimension changes automatically
-//! let mut cover1 = Cover::new(CoverType::F);
+//! let mut cover1 = Cover::<()>::anonymous(CoverType::F);
 //! cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //! cover1 = cover1.minimize()?;
 //!
 //! // Different dimensions - no problem!
-//! let mut cover2 = Cover::new(CoverType::F);
+//! let mut cover2 = Cover::<()>::anonymous(CoverType::F);
 //! cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
 //! cover2 = cover2.minimize()?;
 //! # Ok(())
@@ -2070,14 +2070,14 @@ mod tests {
 
         // Test with explicit scope-based drop to ensure cleanup works correctly
         {
-            let mut cover1 = Cover::new(CoverType::F);
+            let mut cover1 = Cover::<()>::anonymous(CoverType::F);
             cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
             cover1 = cover1.minimize().unwrap();
             assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
         } // cover1 is dropped here, Espresso instance should be cleaned up
 
         // Now try with different dimensions - should work without conflicts
-        let mut cover2 = Cover::new(CoverType::F);
+        let mut cover2 = Cover::<()>::anonymous(CoverType::F);
         cover2.add_cube(
             &[Some(false), Some(true), Some(false), Some(true)],
             &[Some(true)],
@@ -2148,7 +2148,7 @@ mod tests {
         // because it properly manages Espresso instance lifecycle
 
         // Create and minimize first cover with 2 inputs, 1 output
-        let mut cover1 = Cover::new(CoverType::F);
+        let mut cover1 = Cover::<()>::anonymous(CoverType::F);
         cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
         assert_eq!(
             cover1.num_cubes(),
@@ -2164,7 +2164,7 @@ mod tests {
         );
 
         // Cover can handle different dimensions (3x2) without conflicts
-        let mut cover2 = Cover::new(CoverType::F);
+        let mut cover2 = Cover::<()>::anonymous(CoverType::F);
         cover2.add_cube(
             &[Some(false), Some(true), Some(false)],
             &[Some(true), Some(false)],
@@ -2360,7 +2360,7 @@ mod tests {
 /// use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut cover = Cover::new(CoverType::F);
+/// let mut cover = Cover::<()>::anonymous(CoverType::F);
 /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 ///
 /// // Use custom configuration

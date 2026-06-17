@@ -41,9 +41,11 @@ impl Cover {
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
     pub fn add_expr(&mut self, expr: &BoolExpr, output_name: &str) -> Result<(), AddExprError> {
-        // Check if output already exists (fail fast before doing any work). Even an unlabeled cover
-        // with outputs has implicit `y0, y1, …` names (its header), which a named output collides
-        // with — matching the pre-existing backfill-then-check behaviour.
+        // `add_expr` is a *labelled* operation, intended for empty or fully-labelled covers. Build
+        // positional covers as `Cover<()>` and convert explicitly (`relabel`) rather than naming
+        // anonymous positions here.
+
+        // Check if output already exists (fail fast before doing any work).
         if self
             .output_symbols
             .labels()

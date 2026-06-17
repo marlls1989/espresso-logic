@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("(output is 1 when an odd number of inputs are 1)\n");
 
     // Build the ON-set (truth table where output is 1)
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // A'B'C (001)
     cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);

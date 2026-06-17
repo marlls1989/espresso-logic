@@ -107,18 +107,24 @@ pub struct Minterm<L = Arc<str>> {
     values: Arc<[u64]>,
 }
 
-impl<L: fmt::Display> fmt::Debug for Minterm<L> {
-    /// Renders values by name — e.g. `Minterm { a: 1, b: -, c: 0 }` where `1`/`0`/`-` are
-    /// true/false/don't-care — rather than exposing the internal packed words.
+impl<L: fmt::Debug> fmt::Debug for Minterm<L> {
+    /// Renders values by variable — e.g. `Minterm { "a": 1, "b": - }` for labelled minterms, or
+    /// `Minterm { 0: 1, 1: - }` for anonymous (unlabelled) positions — where `1`/`0`/`-` are
+    /// true/false/don't-care, rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Minterm {{")?;
-        for (i, (name, value)) in self.symbols.labels().iter().zip(self.iter()).enumerate() {
+        let labels = self.symbols.labels();
+        for (i, value) in self.iter().enumerate() {
             let sym = match value {
                 Some(true) => '1',
                 Some(false) => '0',
                 None => '-',
             };
-            write!(f, "{} {name}: {sym}", if i == 0 { "" } else { "," })?;
+            let sep = if i == 0 { "" } else { "," };
+            match labels.get(i) {
+                Some(label) => write!(f, "{sep} {label:?}: {sym}")?,
+                None => write!(f, "{sep} {i}: {sym}")?,
+            }
         }
         write!(f, " }}")
     }

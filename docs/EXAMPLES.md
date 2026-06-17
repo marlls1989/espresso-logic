@@ -162,7 +162,7 @@ fn main() -> std::io::Result<()> {
 use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     
     // XOR function: a XOR b
     // Inputs: [a, b], Output: [f]
@@ -184,7 +184,7 @@ fn main() -> std::io::Result<()> {
 use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     
     // Use None for don't care values
     cover.add_cube(&[Some(true), None], &[Some(true)]);  // 1- -> 1

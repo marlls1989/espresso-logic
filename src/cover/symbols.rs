@@ -17,12 +17,16 @@ use std::sync::{Arc, OnceLock};
 ///
 /// Construct via [`Symbols::new`]; the table is immutable once built and shared behind an `Arc`.
 pub struct Symbols<L = Arc<str>> {
-    /// index → label. Its length is the arity.
+    /// index → label for the *labeled prefix* (positions `0..labels.len()`). Positions
+    /// `labels.len()..arity` are anonymous (no label); their names, if ever needed, are synthesised
+    /// at serialisation time rather than stored.
     labels: Arc<[L]>,
+    /// Total number of positions. Always `>= labels.len()`.
+    arity: usize,
     /// label → index, built on first [`index_of`](Symbols::index_of).
     index: OnceLock<HashMap<L, u32>>,
-    /// positions sorted by label, built on first [`sorted_order`](Symbols::sorted_order); used by
-    /// the merge-join that aligns minterms of different headers.
+    /// labeled positions sorted by label, built on first [`sorted_order`](Symbols::sorted_order);
+    /// used by the merge-join that aligns minterms of different (fully-labeled) headers.
     sorted: OnceLock<Box<[u32]>>,
 }
 
@@ -34,17 +38,29 @@ pub struct Symbols<L = Arc<str>> {
 /// comparison — which is still far cheaper than re-projecting a minterm onto a union.
 impl<L: PartialEq> PartialEq for Symbols<L> {
     fn eq(&self, other: &Self) -> bool {
-        self.labels == other.labels
+        self.arity == other.arity && self.labels == other.labels
     }
 }
 
 impl<L: Eq> Eq for Symbols<L> {}
 
 impl<L> Symbols<L> {
-    /// Build a symbol table from an ordered list of labels.
+    /// Build a fully-labeled symbol table from an ordered list of labels (arity = `labels.len()`).
     pub fn new(labels: Arc<[L]>) -> Arc<Symbols<L>> {
+        let arity = labels.len();
         Arc::new(Symbols {
             labels,
+            arity,
+            index: OnceLock::new(),
+            sorted: OnceLock::new(),
+        })
+    }
+
+    /// An anonymous symbol table of the given width — all positions unlabeled.
+    pub fn anonymous(arity: usize) -> Arc<Symbols<L>> {
+        Arc::new(Symbols {
+            labels: Vec::new().into(),
+            arity,
             index: OnceLock::new(),
             sorted: OnceLock::new(),
         })
@@ -52,17 +68,35 @@ impl<L> Symbols<L> {
 
     /// An empty symbol table (arity 0).
     pub fn empty() -> Arc<Symbols<L>> {
-        Symbols::new(Vec::new().into())
+        Symbols::anonymous(0)
+    }
+
+    /// A copy of this table widened to `new_arity` positions; the added tail positions are
+    /// anonymous. The labeled prefix is shared cheaply. `new_arity` must be `>= self.arity`.
+    pub fn widen(&self, new_arity: usize) -> Arc<Symbols<L>> {
+        debug_assert!(new_arity >= self.arity);
+        Arc::new(Symbols {
+            labels: Arc::clone(&self.labels),
+            arity: new_arity,
+            index: OnceLock::new(),
+            sorted: OnceLock::new(),
+        })
     }
 
     /// The number of variables (positions) this table describes.
     pub fn arity(&self) -> usize {
-        self.labels.len()
+        self.arity
     }
 
-    /// The labels, in index order.
+    /// The labels of the labeled prefix, in index order. May be shorter than [`arity`](Self::arity)
+    /// when the table has anonymous tail positions.
     pub fn labels(&self) -> &[L] {
         &self.labels
+    }
+
+    /// Whether every position carries a label.
+    pub fn is_fully_labeled(&self) -> bool {
+        self.labels.len() == self.arity
     }
 }
 

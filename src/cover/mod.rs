@@ -50,7 +50,7 @@
 //! use espresso_logic::{Cover, CoverType, Minimizable};
 //!
 //! // Create a cover for XOR function
-//! let mut cover = Cover::new(CoverType::F);
+//! let mut cover = Cover::<()>::anonymous(CoverType::F);
 //! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 //! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 //!
@@ -109,7 +109,6 @@ pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 pub use symbols::Symbols;
 
-use minterm::Minterm as InternalMinterm;
 use std::sync::Arc;
 
 /// Build a variable header of length `target_len`, extending `current` with auto-generated
@@ -239,7 +238,7 @@ impl CoverType {
 /// use espresso_logic::{Cover, CoverType, Minimizable};
 ///
 /// // XOR function
-/// let mut cover = Cover::new(CoverType::F);
+/// let mut cover = Cover::<()>::anonymous(CoverType::F);
 /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 ///
@@ -360,6 +359,72 @@ impl Cover<Arc<str>> {
             cover_type,
         }
     }
+}
+
+impl<L> Cover<L> {
+    /// Create a new empty **anonymous** cover (no variable labels) of the given type.
+    ///
+    /// Positions are purely positional; dimensions grow as cubes are added. This is the generic
+    /// constructor for any label type `L` (e.g. `Cover::<()>::anonymous(CoverType::F)`); for named
+    /// `Arc<str>` covers use [`Cover::new`] / [`Cover::with_labels`].
+    pub fn anonymous(cover_type: CoverType) -> Self {
+        Cover {
+            input_symbols: Symbols::empty(),
+            output_symbols: Symbols::empty(),
+            input_labeled: false,
+            output_labeled: false,
+            cubes: Vec::new(),
+            cover_type,
+        }
+    }
+
+    /// Re-express this cover over a different label type `M`, position-for-position.
+    ///
+    /// This is the **explicit** way to relabel or anonymise a cover — labelling and anonymisation
+    /// never happen implicitly. The new symbol tables must have the same arities as this cover.
+    pub fn relabel<M>(
+        self,
+        input_symbols: Arc<Symbols<M>>,
+        output_symbols: Arc<Symbols<M>>,
+    ) -> Cover<M> {
+        assert_eq!(
+            input_symbols.arity(),
+            self.num_inputs(),
+            "relabel: input arity mismatch"
+        );
+        assert_eq!(
+            output_symbols.arity(),
+            self.num_outputs(),
+            "relabel: output arity mismatch"
+        );
+        let input_labeled = input_symbols.is_fully_labeled() && input_symbols.arity() > 0;
+        let output_labeled = output_symbols.is_fully_labeled() && output_symbols.arity() > 0;
+        let cubes = self
+            .cubes
+            .into_iter()
+            .map(|cube| {
+                Cube::new(
+                    Minterm::from_symbols(Arc::clone(&input_symbols), cube.inputs.iter()),
+                    Minterm::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
+                    cube.cube_type(),
+                )
+            })
+            .collect();
+        Cover {
+            input_symbols,
+            output_symbols,
+            input_labeled,
+            output_labeled,
+            cubes,
+            cover_type: self.cover_type,
+        }
+    }
+
+    /// Drop all labels, yielding a positional [`Cover<()>`](Cover) (explicit anonymisation).
+    pub fn anonymize(self) -> Cover<()> {
+        let (ni, no) = (self.num_inputs(), self.num_outputs());
+        self.relabel(Symbols::anonymous(ni), Symbols::anonymous(no))
+    }
 
     /// Get the number of inputs
     pub fn num_inputs(&self) -> usize {
@@ -389,37 +454,13 @@ impl Cover<Arc<str>> {
         self.cover_type
     }
 
-    /// Get input variable labels
-    ///
-    /// Returns a slice of `Arc<str>` for efficient access to variable names. The slice is empty
-    /// for an unlabeled cover (even though inputs are internally named `x0, x1, …`).
-    pub fn input_labels(&self) -> &[Arc<str>] {
-        if self.input_labeled {
-            self.input_symbols.labels()
-        } else {
-            &[]
-        }
-    }
-
-    /// Get output variable labels
-    ///
-    /// Returns a slice of `Arc<str>` for efficient access to variable names. The slice is empty
-    /// for an unlabeled cover.
-    pub fn output_labels(&self) -> &[Arc<str>] {
-        if self.output_labeled {
-            self.output_symbols.labels()
-        } else {
-            &[]
-        }
-    }
-
-    /// The shared input symbol table (one name per input, auto-generated when unlabeled).
-    pub(crate) fn input_symbols(&self) -> &Arc<Symbols> {
+    /// The shared input symbol table.
+    pub(crate) fn input_symbols(&self) -> &Arc<Symbols<L>> {
         &self.input_symbols
     }
 
     /// The shared output symbol table.
-    pub(crate) fn output_symbols(&self) -> &Arc<Symbols> {
+    pub(crate) fn output_symbols(&self) -> &Arc<Symbols<L>> {
         &self.output_symbols
     }
 
@@ -432,14 +473,14 @@ impl Cover<Arc<str>> {
     /// ```
     /// use espresso_logic::{Cover, CoverType};
     ///
-    /// let mut cover = Cover::new(CoverType::F);
+    /// let mut cover = Cover::<()>::anonymous(CoverType::F);
     /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     ///
     /// for cube in cover.cubes() {
     ///     println!("Inputs: {:?}, Outputs: {:?}", cube.inputs(), cube.outputs());
     /// }
     /// ```
-    pub fn cubes(&self) -> CubesIter<'_, &Cube> {
+    pub fn cubes(&self) -> CubesIter<'_, &Cube<L>> {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
         CubesIter {
@@ -454,43 +495,45 @@ impl Cover<Arc<str>> {
             ),
         }
     }
+}
 
-    /// Input minterms of the F cubes that assert `output_idx`.
-    ///
-    /// These are the product terms of a single output (the sum-of-products for that output).
-    /// Each minterm carries the cover's shared input header.
-    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm]> {
+impl<L: Clone> Cover<L> {
+    /// Input minterms of the F cubes that assert `output_idx` (the product terms of that output).
+    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm<L>]> {
         self.cubes
             .iter()
             .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
             .map(|cube| cube.inputs().clone())
             .collect()
     }
+}
 
-    /// Add a cube to the cover
+impl Cover<()> {
+    /// Add a positional cube to this anonymous cover, growing its dimensions to fit.
     ///
-    /// The cover dimensions grow automatically if the cube is larger.
-    /// Outputs use PLA-style notation:
-    /// - `Some(true)` or `'1'` → bit set in F cube (ON-set)
-    /// - `Some(false)` or `'0'` → bit set in R cube (OFF-set, only if cover type includes R)
-    /// - `None` or `'-'` → bit set in D cube (Don't-care, only if cover type includes D)
+    /// `add_cube` is the *positional* builder and lives only on anonymous `Cover<()>` — a labelled
+    /// cover is never grown into unnamed positions (build one from labels/expressions, or `relabel`
+    /// an anonymous cover). A shorter cube is padded with don't-cares; a longer one extends every
+    /// existing cube position-wise. Outputs use PLA-style notation:
+    /// - `Some(true)` → bit set in F cube (ON-set)
+    /// - `Some(false)` → bit set in R cube (OFF-set, only if cover type includes R)
+    /// - `None` → bit set in D cube (Don't-care, only if cover type includes D)
     ///
     /// # Examples
     ///
     /// ```
     /// use espresso_logic::{Cover, CoverType};
     ///
-    /// let mut cover = Cover::new(CoverType::F);
+    /// let mut cover = Cover::<()>::anonymous(CoverType::F);
     /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     /// assert_eq!(cover.num_inputs(), 2);
-    /// assert_eq!(cover.num_outputs(), 1);
     ///
-    /// // Add a larger cube - dimensions grow automatically
+    /// // A larger cube extends the dimensions position-wise.
     /// cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
     pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
-        // Grow dimensions if needed
+        // Grow dimensions positionally if needed.
         self.grow_to_fit(inputs.len(), outputs.len());
 
         let no = self.num_outputs();
@@ -521,52 +564,73 @@ impl Cover<Arc<str>> {
     }
 
     /// Build an input minterm (padded to the current input dimension) on the shared input table.
-    pub(crate) fn input_minterm(&self, raw: &[Option<bool>]) -> InternalMinterm {
+    fn input_minterm(&self, raw: &[Option<bool>]) -> Minterm<()> {
         let ni = self.num_inputs();
-        InternalMinterm::from_symbols(
+        Minterm::from_symbols(
             Arc::clone(&self.input_symbols),
             (0..ni).map(|i| raw.get(i).copied().flatten()),
         )
     }
 
     /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output table.
-    fn membership_minterm(&self, mask: impl IntoIterator<Item = bool>) -> InternalMinterm {
-        InternalMinterm::from_symbols(Arc::clone(&self.output_symbols), mask.into_iter().map(Some))
+    fn membership_minterm(&self, mask: impl IntoIterator<Item = bool>) -> Minterm<()> {
+        Minterm::from_symbols(Arc::clone(&self.output_symbols), mask.into_iter().map(Some))
     }
 
-    /// Grow the cover to fit at least the specified dimensions.
-    ///
-    /// Extends the shared symbol tables (auto-generating labels that avoid collisions) and re-points
-    /// every existing cube's minterms onto the new tables. New inputs become don't-care; new outputs
-    /// are unasserted.
+    /// Positionally widen this anonymous cover to at least the given dimensions (new input positions
+    /// are don't-care, new output positions unasserted). No labels are synthesised.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         if min_inputs > self.num_inputs() {
-            let new_syms =
-                Symbols::new(extend_header(self.input_symbols.labels(), min_inputs, 'x'));
+            let new_syms = self.input_symbols.widen(min_inputs);
             for cube in &mut self.cubes {
-                cube.inputs = cube.inputs.project_onto(&new_syms);
+                cube.inputs = Minterm::from_symbols(
+                    Arc::clone(&new_syms),
+                    (0..min_inputs).map(|i| cube.inputs.value_at(i)),
+                );
             }
             self.input_symbols = new_syms;
         }
 
         if min_outputs > self.num_outputs() {
-            let new_syms = Symbols::new(extend_header(
-                self.output_symbols.labels(),
-                min_outputs,
-                'y',
-            ));
-            let new_len = new_syms.arity();
+            let new_syms = self.output_symbols.widen(min_outputs);
             for cube in &mut self.cubes {
-                // Membership grows with `Some(false)` (unasserted), not don't-care.
-                let extra = new_len - cube.outputs.num_vars();
-                cube.outputs = InternalMinterm::from_symbols(
+                let old = cube.outputs.num_vars();
+                cube.outputs = Minterm::from_symbols(
                     Arc::clone(&new_syms),
-                    cube.outputs
-                        .iter()
-                        .chain(std::iter::repeat_n(Some(false), extra)),
+                    (0..min_outputs).map(|i| {
+                        if i < old {
+                            cube.outputs.value_at(i)
+                        } else {
+                            Some(false)
+                        }
+                    }),
                 );
             }
             self.output_symbols = new_syms;
+        }
+    }
+}
+
+impl Cover<Arc<str>> {
+    /// Get input variable labels.
+    ///
+    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover.
+    pub fn input_labels(&self) -> &[Arc<str>] {
+        if self.input_labeled {
+            self.input_symbols.labels()
+        } else {
+            &[]
+        }
+    }
+
+    /// Get output variable labels.
+    ///
+    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover.
+    pub fn output_labels(&self) -> &[Arc<str>] {
+        if self.output_labeled {
+            self.output_symbols.labels()
+        } else {
+            &[]
         }
     }
 }

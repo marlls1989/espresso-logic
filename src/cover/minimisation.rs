@@ -142,11 +142,11 @@ pub trait Minimizable {
 }
 
 /// Private helper function to minimize a Cover using either heuristic or exact algorithm
-fn minimize_cover_with<F>(
-    cover: &Cover,
+fn minimize_cover_with<F, L>(
+    cover: &Cover<L>,
     config: &EspressoConfig,
     minimize_fn: F,
-) -> Result<Cover, MinimizationError>
+) -> Result<Cover<L>, MinimizationError>
 where
     F: FnOnce(
         &crate::espresso::Espresso,
@@ -239,7 +239,9 @@ where
     let output_symbols = Arc::clone(cover.output_symbols());
     // Espresso returns cubes on anonymous headers; re-point each onto the cover's real tables
     // (positionally — the variable order is preserved across the boundary).
-    let rehome = |cube: &Cube| -> Cube {
+    // Espresso returns positional cubes (anonymous `Arc<str>` headers); re-point each onto the
+    // cover's real `Symbols<L>` table by reading values positionally.
+    let rehome = |cube: &Cube<Arc<str>>| -> Cube<L> {
         let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
         let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
         let outputs = (0..no).map(|i| cube.outputs().value_at(i));
@@ -268,8 +270,8 @@ where
     })
 }
 
-// Implement public Minimizable trait for Cover
-impl Minimizable for Cover {
+// Implement public Minimizable trait for Cover (any label type — minimisation is positional).
+impl<L> Minimizable for Cover<L> {
     fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
         minimize_cover_with(self, config, |esp, f, d, r| esp.minimize(f, d, r))
     }

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a cover for 2 inputs, 1 output - NO C code executed!
     println!("1. Creating Cover (no C code yet)");
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     println!("   ✓ Cover created (pure Rust data structure)\n");
 
     // Add cubes (XOR function)

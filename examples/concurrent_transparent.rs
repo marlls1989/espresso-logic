@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|i| {
             thread::spawn(move || {
                 // Each thread creates its own cover
-                let mut cover = Cover::new(CoverType::F);
+                let mut cover = Cover::<()>::anonymous(CoverType::F);
                 cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
                 cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 

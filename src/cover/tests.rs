@@ -24,7 +24,7 @@ fn test_cover_with_labels() {
 
 #[test]
 fn test_add_cube() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
@@ -32,28 +32,8 @@ fn test_add_cube() {
 }
 
 #[test]
-fn test_dynamic_growth() {
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.num_outputs(), 1);
-
-    // Add larger cube
-    cover.add_cube(
-        &[Some(true), Some(false), Some(true)],
-        &[Some(true), Some(false)],
-    );
-    assert_eq!(cover.num_inputs(), 3);
-    assert_eq!(cover.num_outputs(), 2);
-
-    // Labels should NOT be auto-generated
-    assert_eq!(cover.input_labels().len(), 0);
-    assert_eq!(cover.output_labels().len(), 0);
-}
-
-#[test]
 fn test_minimize() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
     cover = cover.minimize().unwrap();
@@ -65,7 +45,7 @@ fn test_minimize() {
 
 #[test]
 fn test_dynamic_growth_inputs_only() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // Start with 2 inputs
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -89,7 +69,7 @@ fn test_dynamic_growth_inputs_only() {
 
 #[test]
 fn test_dynamic_growth_outputs_only() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // Start with 1 output
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -110,7 +90,7 @@ fn test_dynamic_growth_outputs_only() {
 
 #[test]
 fn test_dynamic_growth_both_dimensions() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // Start small
     cover.add_cube(&[Some(true)], &[Some(true)]);
@@ -140,7 +120,7 @@ fn test_dynamic_growth_both_dimensions() {
 
 #[test]
 fn test_dynamic_growth_preserves_existing_cubes() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // Add first cube
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -170,109 +150,6 @@ fn test_dynamic_growth_preserves_existing_cubes() {
 }
 
 // ===== Auto-Generated Label Tests =====
-
-#[test]
-fn test_auto_generated_input_labels() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add cube with 5 inputs
-    cover.add_cube(
-        &[Some(true), Some(false), None, Some(true), Some(false)],
-        &[Some(true)],
-    );
-
-    // Labels should NOT be auto-generated when adding cubes
-    assert_eq!(cover.input_labels().len(), 0);
-
-    // But when converting to expressions, default labels should be used
-    let expr = cover.to_expr_by_index(0).unwrap();
-    let vars = expr.collect_variables();
-    assert_eq!(vars.len(), 4); // 4 non-don't-care inputs
-
-    // Variable names should be x0, x1, x3, x4 (x2 is don't care so not in expr)
-    let var_names: Vec<&str> = vars.iter().map(|v| v.as_ref()).collect();
-    assert!(var_names.contains(&"x0"));
-    assert!(var_names.contains(&"x1"));
-    assert!(var_names.contains(&"x3"));
-    assert!(var_names.contains(&"x4"));
-}
-
-#[test]
-fn test_auto_generated_output_labels() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add cube with 4 outputs
-    cover.add_cube(
-        &[Some(true), Some(false)],
-        &[Some(true), Some(false), Some(true), Some(false)],
-    );
-
-    // Labels should NOT be auto-generated when adding cubes
-    assert_eq!(cover.output_labels().len(), 0);
-
-    // But when using to_exprs iterator, default output names should be generated
-    let exprs: Vec<_> = cover.to_exprs().collect();
-    assert_eq!(exprs.len(), 4);
-    assert_eq!(exprs[0].0.as_ref(), "y0");
-    assert_eq!(exprs[1].0.as_ref(), "y1");
-    assert_eq!(exprs[2].0.as_ref(), "y2");
-    assert_eq!(exprs[3].0.as_ref(), "y3");
-}
-
-#[test]
-fn test_label_uniqueness_on_growth() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add cubes causing growth
-    cover.add_cube(&[Some(true)], &[Some(true)]);
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    cover.add_cube(&[Some(true), Some(false), None], &[Some(true)]);
-
-    // Labels should NOT be auto-generated
-    assert_eq!(cover.input_labels().len(), 0);
-
-    // When converting to expression, default labels should be used
-    let expr = cover.to_expr_by_index(0).unwrap();
-    let vars = expr.collect_variables();
-    // BDD canonicalises: x0=1, x0=1∧x1=0, x0=1∧x1=0∧x2=- → x0 (absorption law)
-    assert_eq!(vars.len(), 1); // Only x0 after BDD optimisation
-}
-
-#[test]
-fn test_mixed_labels_and_growth() {
-    // Start with labeled cover
-    let mut cover = Cover::with_labels(CoverType::F, &["a", "b"], &["out1"]);
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.num_outputs(), 1);
-
-    // Grow inputs - labels SHOULD be auto-added since cover is already labeled
-    cover.add_cube(&[Some(true), Some(false), None, Some(true)], &[Some(true)]);
-    assert_eq!(cover.num_inputs(), 4);
-    // All 4 input labels should exist: a, b, x2, x3
-    assert_eq!(cover.input_labels().len(), 4);
-    assert_eq!(cover.input_labels()[0].as_ref(), "a");
-    assert_eq!(cover.input_labels()[1].as_ref(), "b");
-    assert_eq!(cover.input_labels()[2].as_ref(), "x2"); // Auto-generated
-    assert_eq!(cover.input_labels()[3].as_ref(), "x3"); // Auto-generated
-
-    // Grow outputs - labels SHOULD be auto-added since cover is already labeled
-    cover.add_cube(
-        &[Some(true), Some(false)],
-        &[Some(true), Some(false), Some(true)],
-    );
-    assert_eq!(cover.num_outputs(), 3);
-    // All 3 output labels should exist: out1, y1, y2
-    assert_eq!(cover.output_labels().len(), 3);
-    assert_eq!(cover.output_labels()[0].as_ref(), "out1");
-    assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // Auto-generated
-    assert_eq!(cover.output_labels()[2].as_ref(), "y2"); // Auto-generated
-
-    // Verify labels are properly used in expressions
-    let expr = cover.to_expr_by_index(0).unwrap();
-    let vars = expr.collect_variables();
-    // Should have some variables from the cover
-    assert!(!vars.is_empty());
-}
 
 // ===== Expression Addition Tests =====
 
@@ -404,35 +281,6 @@ fn test_add_expr_variable_ordering_preserved() {
     assert_eq!(cover.input_labels()[2].as_ref(), "z");
 }
 
-#[test]
-fn test_add_expr_with_existing_cubes() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add a manual cube first - no labels are generated
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.num_outputs(), 1);
-    assert_eq!(cover.input_labels().len(), 0); // No labels yet
-    assert_eq!(cover.output_labels().len(), 0); // No labels yet
-    let initial_cubes = cover.num_cubes();
-
-    // Add an expression with variables x0, x1 - this backfills labels
-    let x0 = crate::BoolExpr::variable("x0");
-    let x1 = crate::BoolExpr::variable("x1");
-
-    // Try to add to output y0 - should FAIL because y0 was backfilled
-    let result = cover.add_expr(&x0.or(&x1), "y0");
-    assert!(result.is_err()); // y0 already exists after backfilling
-
-    // Add to a different output name - should succeed
-    cover.add_expr(&x0.and(&x1), "y1").unwrap();
-    assert_eq!(cover.num_outputs(), 2);
-    assert_eq!(cover.output_labels().len(), 2);
-    assert_eq!(cover.output_labels()[0].as_ref(), "y0"); // Backfilled
-    assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // New
-    assert!(cover.num_cubes() > initial_cubes);
-}
-
 // ===== Expression Conversion Tests =====
 
 #[test]
@@ -549,7 +397,7 @@ fn test_to_exprs_after_minimization() {
 
 #[test]
 fn test_f_type_cover() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
 
     // F type only accepts Some(true) for outputs
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -565,7 +413,7 @@ fn test_f_type_cover() {
 
 #[test]
 fn test_fd_type_cover() {
-    let mut cover = Cover::new(CoverType::FD);
+    let mut cover = Cover::<()>::anonymous(CoverType::FD);
 
     // FD type accepts Some(true) and None
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -580,7 +428,7 @@ fn test_fd_type_cover() {
 
 #[test]
 fn test_fr_type_cover() {
-    let mut cover = Cover::new(CoverType::FR);
+    let mut cover = Cover::<()>::anonymous(CoverType::FR);
 
     // FR type accepts Some(true) and Some(false)
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -592,7 +440,7 @@ fn test_fr_type_cover() {
 
 #[test]
 fn test_fdr_type_cover() {
-    let mut cover = Cover::new(CoverType::FDR);
+    let mut cover = Cover::<()>::anonymous(CoverType::FDR);
 
     // FDR type accepts all: Some(true), Some(false), None
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -604,73 +452,6 @@ fn test_fdr_type_cover() {
 }
 
 // ===== Mixed Operations Tests =====
-
-#[test]
-fn test_add_cubes_then_expressions() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add manual cubes first - no labels generated
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.input_labels().len(), 0); // No labels yet
-    assert_eq!(cover.output_labels().len(), 0); // No labels yet
-
-    // Now add expression with named variables - this backfills labels for existing dimensions
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-
-    cover.add_expr(&a.and(&b), "y1").unwrap();
-
-    // Should have 4 inputs now: 2 from cube (x0, x1) + 2 from expression (a, b)
-    assert_eq!(cover.num_inputs(), 4);
-    // All 4 should have labels: x0, x1 (backfilled), a, b (from expression)
-    assert_eq!(cover.input_labels().len(), 4);
-    assert_eq!(cover.input_labels()[0].as_ref(), "x0");
-    assert_eq!(cover.input_labels()[1].as_ref(), "x1");
-    assert_eq!(cover.input_labels()[2].as_ref(), "a");
-    assert_eq!(cover.input_labels()[3].as_ref(), "b");
-
-    // Should have 2 outputs with labels
-    assert_eq!(cover.num_outputs(), 2);
-    assert_eq!(cover.output_labels().len(), 2);
-    assert_eq!(cover.output_labels()[0].as_ref(), "y0"); // Backfilled
-    assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // From expression
-}
-
-#[test]
-fn test_add_expressions_then_cubes() {
-    let mut cover = Cover::new(CoverType::F);
-
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-
-    // Add expression first - no backfilling needed since cover is empty
-    cover.add_expr(&a.and(&b), "result").unwrap();
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.input_labels()[0].as_ref(), "a");
-    assert_eq!(cover.input_labels()[1].as_ref(), "b");
-
-    // Add manual cube with more inputs - should auto-extend labels since cover is in labeled mode
-    cover.add_cube(
-        &[Some(true), Some(false), Some(true)],
-        &[Some(true), Some(false)],
-    );
-
-    // Should grow to 3 inputs, 2 outputs
-    assert_eq!(cover.num_inputs(), 3);
-    assert_eq!(cover.num_outputs(), 2);
-
-    // Original labels preserved, and new labels auto-generated
-    assert_eq!(cover.input_labels().len(), 3);
-    assert_eq!(cover.input_labels()[0].as_ref(), "a");
-    assert_eq!(cover.input_labels()[1].as_ref(), "b");
-    assert_eq!(cover.input_labels()[2].as_ref(), "x2"); // Auto-generated
-
-    // Output labels should also be extended
-    assert_eq!(cover.output_labels().len(), 2);
-    assert_eq!(cover.output_labels()[0].as_ref(), "result");
-    assert_eq!(cover.output_labels()[1].as_ref(), "y1"); // Auto-generated
-}
 
 #[test]
 fn test_complex_expression_with_minimization() {
@@ -721,34 +502,6 @@ fn test_expression_with_constants() {
     // Should have one variable
     assert_eq!(cover.num_inputs(), 1);
     assert_eq!(cover.input_labels()[0].as_ref(), "a");
-}
-
-#[test]
-fn test_dynamic_naming_no_collision() {
-    let mut cover = Cover::new(CoverType::F);
-
-    // Add cubes - no labels are auto-generated
-    cover.add_cube(&[Some(true), Some(false), None], &[Some(true)]);
-    assert_eq!(cover.num_inputs(), 3);
-    assert_eq!(cover.input_labels().len(), 0); // No labels yet
-
-    // Now add expression with variables "x1" and "other"
-    // This backfills x0, x1, x2 for existing dimensions, then x1 matches existing x1
-    let x1 = crate::BoolExpr::variable("x1");
-    let other = crate::BoolExpr::variable("other");
-
-    cover.add_expr(&x1.and(&other), "y1").unwrap();
-
-    // Should have 4 inputs: 3 from cube (x0, x1, x2) + 1 new (other)
-    // x1 from expression matches the backfilled x1
-    assert_eq!(cover.num_inputs(), 4);
-
-    // All 4 should have labels: x0, x1, x2 (backfilled), other (from expression)
-    assert_eq!(cover.input_labels().len(), 4);
-    assert_eq!(cover.input_labels()[0].as_ref(), "x0");
-    assert_eq!(cover.input_labels()[1].as_ref(), "x1");
-    assert_eq!(cover.input_labels()[2].as_ref(), "x2");
-    assert_eq!(cover.input_labels()[3].as_ref(), "other");
 }
 
 #[test]
@@ -804,19 +557,62 @@ fn test_minimize_preserves_structure() {
     assert!(expr2.collect_variables().len() <= 2);
 }
 
+// ===== Generic label type / anonymous covers (M3) =====
+
 #[test]
-fn test_unlabeled_cover_to_expr_uses_auto_names() {
-    let mut cover = Cover::new(CoverType::F);
+fn anonymous_cover_minimizes() {
+    // Pure positional cover, no labels (L = ()).
+    let mut cover: Cover<()> = Cover::anonymous(CoverType::F);
+    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
+    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_cubes(), 2);
+    let min = cover.minimize().unwrap();
+    assert_eq!(min.num_inputs(), 2);
+    assert!(min.num_cubes() >= 1);
+}
 
-    // Add cube without any labels
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+#[test]
+fn custom_u32_labels_via_relabel() {
+    let mut cover: Cover<()> = Cover::anonymous(CoverType::F);
+    cover.add_cube(&[Some(true), None, Some(false)], &[Some(true)]);
+    // Explicitly relabel to a u32-labelled cover, position-for-position.
+    let labeled: Cover<u32> = cover.relabel(
+        Symbols::new(vec![10u32, 20, 30].into()),
+        Symbols::new(vec![1u32].into()),
+    );
+    assert_eq!(labeled.num_inputs(), 3);
+    let first = labeled.cubes().next().unwrap();
+    assert_eq!(first.inputs().value_of(&10u32), Some(true));
+    assert_eq!(first.inputs().value_of(&20u32), None);
+    assert_eq!(first.inputs().value_of(&30u32), Some(false));
+    assert_eq!(first.inputs().value_of(&99u32), None); // absent variable
+    let _ = labeled.minimize().unwrap();
+}
 
-    // Convert to expression
-    let expr = cover.to_expr_by_index(0).unwrap();
+#[test]
+fn anonymize_drops_labels_preserving_values() {
+    use std::sync::Arc;
+    // Build positionally, label explicitly, then anonymise back — values preserved throughout.
+    let mut anon = Cover::<()>::anonymous(CoverType::F);
+    anon.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    let labeled = anon.relabel(
+        Symbols::new(vec![Arc::<str>::from("a"), Arc::from("b")].into()),
+        Symbols::new(vec![Arc::<str>::from("out")].into()),
+    );
+    assert_eq!(labeled.num_inputs(), 2);
 
-    // Expression should use auto-generated names x0, x1
-    let vars = expr.collect_variables();
-    assert_eq!(vars.len(), 2);
-    assert!(vars.contains(&std::sync::Arc::from("x0")));
-    assert!(vars.contains(&std::sync::Arc::from("x1")));
+    let back: Cover<()> = labeled.anonymize();
+    assert_eq!(back.num_cubes(), 1);
+    let cube = back.cubes().next().unwrap();
+    assert_eq!(cube.inputs().value_at(0), Some(true));
+    assert_eq!(cube.inputs().value_at(1), Some(false));
+}
+
+#[test]
+fn cover_is_send_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Cover<()>>();
+    assert_send_sync::<Cover<u32>>();
+    assert_send_sync::<Cover<std::sync::Arc<str>>>();
 }

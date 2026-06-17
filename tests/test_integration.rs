@@ -54,13 +54,20 @@ fn test_create_cover_from_pla() {
 #[test]
 fn test_pla_roundtrip() {
     // Create a cover programmatically
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 
+    // PLA serialisation is string-labelled; relabel the anonymous cover (unlabelled `Arc<str>`).
+    let cover = cover.relabel(
+        Symbols::<std::sync::Arc<str>>::anonymous(2),
+        Symbols::anonymous(1),
+    );
+
     // Convert to PLA format using the trait
-    let pla_str =
-        <Cover as PLAWriter>::to_pla_string(&cover, CoverType::F).expect("Failed to serialize");
+    let pla_str = cover
+        .to_pla_string(CoverType::F)
+        .expect("Failed to serialize");
 
     // Parse it back using Cover
     let parsed_cover = Cover::from_pla_string(&pla_str).expect("Failed to parse");
