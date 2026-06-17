@@ -32,7 +32,6 @@
 use super::symbols::{self, Symbols};
 use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -215,8 +214,12 @@ impl<L: Eq + Hash + Clone> Minterm<L> {
     /// Variables of `target` absent from `self` become don't-care; variables of `self` absent from
     /// `target` are dropped. The result shares `target` as its symbol table.
     pub fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
-        if Arc::ptr_eq(&self.symbols, target) {
-            return self.clone();
+        // Same index space (pointer-equal, or structurally-equal labels) → reuse values as-is.
+        if &self.symbols == target {
+            return Minterm {
+                values: Arc::clone(&self.values),
+                symbols: Arc::clone(target),
+            };
         }
         Minterm {
             values: self.project_words(target).into(),
@@ -248,7 +251,8 @@ impl<L: Ord + Hash + Clone> Minterm<L> {
     /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
     /// onto the sorted union of their variables.
     fn aligned<'a>(&'a self, other: &'a Self) -> (Cow<'a, [u64]>, Cow<'a, [u64]>, usize) {
-        if Arc::ptr_eq(&self.symbols, &other.symbols) {
+        // Same index space (pointer-equal, or structurally-equal labels) → no projection needed.
+        if self.symbols == other.symbols {
             (
                 Cow::Borrowed(&self.values[..]),
                 Cow::Borrowed(&other.values[..]),
@@ -345,11 +349,15 @@ fn rank(value: Option<bool>) -> u8 {
     }
 }
 
-/// Compare two minterms by value, aligned by variable identity over their sorted union.
+/// Compare two minterms by value, aligned by variable identity.
 ///
-/// The order is total and independent of header ordering: variables are visited in label order, an
-/// absent variable counts as don't-care, and at each variable don't-care < false < true. This makes
-/// `Minterm` usable as a `BTreeSet`/`BTreeMap` key for deduplication.
+/// Both share one symbol space → compared field-by-field in index order; different spaces → both are
+/// projected onto the sorted union of their variables (an absent variable counts as don't-care), and
+/// at each variable don't-care < false < true. Equality is independent of header ordering, so
+/// `Minterm` can be used as a `BTreeSet`/`BTreeMap` key for deduplication.
+///
+/// This reuses [`aligned`](Self::aligned): same-space comparisons touch only the packed value words
+/// (no per-comparison allocation), and the sorted union is built only when the headers truly differ.
 ///
 /// # Examples
 ///
@@ -364,13 +372,9 @@ fn rank(value: Option<bool>) -> u8 {
 /// ```
 impl<L: Ord + Hash + Clone> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let mut names: BTreeSet<&L> = BTreeSet::new();
-        names.extend(self.vars().iter());
-        names.extend(other.vars().iter());
-        for name in names {
-            let a = rank(self.value_of(name));
-            let b = rank(other.value_of(name));
-            match a.cmp(&b) {
+        let (a, b, num_vars) = self.aligned(other);
+        for i in 0..num_vars {
+            match rank(decode(field_at(&a, i))).cmp(&rank(decode(field_at(&b, i)))) {
                 Ordering::Equal => continue,
                 non_eq => return non_eq,
             }
@@ -387,7 +391,9 @@ impl<L: Ord + Hash + Clone> PartialOrd for Minterm<L> {
 
 impl<L: Ord + Hash + Clone> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
+        // Equal value-sets pack to identical words under a shared layout, so compare words directly.
+        let (a, b, _) = self.aligned(other);
+        a == b
     }
 }
 
@@ -500,6 +506,23 @@ mod tests {
         vb[40] = Some(true);
         let b = Minterm::new(&vb);
         assert!(!a.is_disjoint_with(&b));
+    }
+
+    #[test]
+    fn structurally_equal_tables_are_same_space() {
+        // Two independent symbol tables with identical labels (no shared Arc, no interning).
+        let s1 = syms(&["a", "b"]);
+        let s2 = syms(&["a", "b"]);
+        assert!(!Arc::ptr_eq(&s1, &s2));
+        assert!(s1 == s2); // structural equality (cheaper than re-projecting)
+
+        let m1 = Minterm::from_symbols(Arc::clone(&s1), [Some(true), None]);
+        // Projecting onto the equal-but-distinct table reuses the values and re-homes onto it.
+        let m2 = m1.project_onto(&s2);
+        assert!(Arc::ptr_eq(m2.symbols(), &s2));
+        assert_eq!(m1, m2);
+        assert_eq!(m2.value_of("a"), Some(true));
+        assert_eq!(m2.value_of("b"), None);
     }
 
     #[test]

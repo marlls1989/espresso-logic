@@ -23,6 +23,20 @@ pub struct Symbols<L = Arc<str>> {
     index: OnceLock<HashMap<L, u32>>,
 }
 
+/// Two symbol tables are equal when they describe the same labels in the same order — i.e. the same
+/// index space. The lazily-built reverse index is a derived cache and is ignored.
+///
+/// Because tables are shared behind an `Arc`, comparing `Arc<Symbols>` short-circuits on pointer
+/// equality (the std `Arc: PartialEq` fast path for `T: Eq`) before falling back to this O(n) label
+/// comparison — which is still far cheaper than re-projecting a minterm onto a union.
+impl<L: PartialEq> PartialEq for Symbols<L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.labels == other.labels
+    }
+}
+
+impl<L: Eq> Eq for Symbols<L> {}
+
 impl<L> Symbols<L> {
     /// Build a symbol table from an ordered list of labels.
     pub fn new(labels: Arc<[L]>) -> Arc<Symbols<L>> {
