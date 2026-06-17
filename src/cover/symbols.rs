@@ -10,6 +10,7 @@
 //! The label type is generic and defaults to `Arc<str>`. The table itself imposes no bounds on `L`;
 //! only the label→index lookup needs `L: Eq + Hash + Clone`.
 
+use super::label::Label;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -45,20 +46,33 @@ enum Repr<L> {
     },
 }
 
-/// Two symbol tables are equal when they describe the same variables in the same order — same
-/// width and same labels (an anonymous table only equals another table with no labels of the same
-/// width). The lazily-built reverse lookups are derived caches and are ignored.
+/// Two symbol tables are equal when they describe the same variables in the same order — i.e. same
+/// width and, position by position, the same variable [`identity`](Label::identity). For real labels
+/// that is the label itself; two anonymous tables of equal width are equal (they have no labels), and
+/// a labelled table never equals an anonymous one. The lazily-built reverse lookups are derived caches
+/// and are ignored.
 ///
 /// Because tables are shared behind an `Arc`, comparing `Arc<Symbols>` short-circuits on pointer
-/// equality (the std `Arc: PartialEq` fast path for `T: Eq`) before falling back to this O(n) label
+/// equality (the std `Arc: PartialEq` fast path for `T: Eq`) before falling back to this O(n) identity
 /// comparison — which is still far cheaper than re-projecting a minterm onto a union.
-impl<L: PartialEq> PartialEq for Symbols<L> {
+impl<L: Label> PartialEq for Symbols<L> {
     fn eq(&self, other: &Self) -> bool {
-        self.arity() == other.arity() && self.labels() == other.labels()
+        if self.arity() != other.arity() {
+            return false;
+        }
+        match (&self.repr, &other.repr) {
+            (Repr::Anonymous { .. }, Repr::Anonymous { .. }) => true,
+            (Repr::Labeled { labels: a, .. }, Repr::Labeled { labels: b, .. }) => a
+                .iter()
+                .enumerate()
+                .all(|(i, la)| la.identity(i) == b[i].identity(i)),
+            // Same width but one labelled and one anonymous: different alignment semantics, never equal.
+            _ => false,
+        }
     }
 }
 
-impl<L: Eq> Eq for Symbols<L> {}
+impl<L: Label> Eq for Symbols<L> {}
 
 impl<L> Symbols<L> {
     /// Build a fully-labelled symbol table from an ordered list of labels (arity = `labels.len()`).
@@ -138,10 +152,11 @@ impl<L: Eq + Hash + Clone> Symbols<L> {
     }
 }
 
-impl<L: Ord> Symbols<L> {
-    /// Positions `0..arity` sorted by label, built once and cached (empty for an anonymous table).
+impl<L: Label> Symbols<L> {
+    /// Positions `0..arity` sorted by variable [`identity`](Label::identity), built once and cached
+    /// (empty for an anonymous table).
     ///
-    /// Lets minterms of different headers be aligned by a linear merge of their two sorted label
+    /// Lets minterms of different headers be aligned by a linear merge of their two sorted identity
     /// sequences (O(n+m)) rather than by building a union set and re-projecting.
     pub(crate) fn sorted_order(&self) -> &[u32] {
         let Repr::Labeled { labels, sorted, .. } = &self.repr else {
@@ -149,8 +164,30 @@ impl<L: Ord> Symbols<L> {
         };
         sorted.get_or_init(|| {
             let mut order: Vec<u32> = (0..labels.len() as u32).collect();
-            order.sort_by(|&x, &y| labels[x as usize].cmp(&labels[y as usize]));
+            order.sort_by(|&x, &y| {
+                labels[x as usize]
+                    .identity(x as usize)
+                    .cmp(&labels[y as usize].identity(y as usize))
+            });
             order.into_boxed_slice()
         })
+    }
+
+    /// The index of the variable whose [`identity`](Label::identity) equals `id`, or `None` if absent
+    /// (always `None` for an anonymous table — anonymous variables are addressed by position, not
+    /// identity). O(log n) via a binary search over the cached [`sorted_order`](Self::sorted_order).
+    ///
+    /// This is the identity-keyed counterpart of [`index_of`](Self::index_of): `index_of` looks a
+    /// variable up by a borrowed label (`&str`) for any real label type, whereas this aligns by the
+    /// abstract `Identity` and so works uniformly for every `L: Label`.
+    pub(crate) fn position_of_identity(&self, id: &L::Identity) -> Option<u32> {
+        let Repr::Labeled { labels, .. } = &self.repr else {
+            return None;
+        };
+        let order = self.sorted_order();
+        order
+            .binary_search_by(|&pos| labels[pos as usize].identity(pos as usize).cmp(id))
+            .ok()
+            .map(|k| order[k])
     }
 }

@@ -29,6 +29,7 @@
 //! C library's cube layout, which makes set operations cheap (word-wise bit ops) and the Espresso
 //! boundary close to a bit-repack.
 
+use super::label::Label;
 use super::symbols::Symbols;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -214,13 +215,17 @@ impl<L: Eq + Hash + Clone> Minterm<L> {
             None => None,
         }
     }
+}
 
+impl<L: Label> Minterm<L> {
     /// Re-express this minterm over a `target` symbol table (the union-extend primitive).
     ///
     /// Variables of `target` absent from `self` become don't-care; variables of `self` absent from
-    /// `target` are dropped. The result shares `target` as its symbol table.
+    /// `target` are dropped. The result shares `target` as its symbol table. Alignment is by variable
+    /// [`identity`](Label::identity): by name for labelled headers, by position for anonymous ones —
+    /// one path for every `L: Label`.
     pub fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
-        // Same index space (pointer-equal, or structurally-equal labels) → reuse values as-is.
+        // Same index space (pointer-equal, or structurally-equal identities) → reuse values as-is.
         if &self.symbols == target {
             return Minterm {
                 values: Arc::clone(&self.values),
@@ -235,23 +240,31 @@ impl<L: Eq + Hash + Clone> Minterm<L> {
 
     /// Pack `self`'s values, reordered onto `target` (absent → don't-care).
     ///
-    /// Returns the bare word buffer: callers either freeze it into storage (`project_onto`) or use
-    /// it as a throwaway for an aligned set operation (`aligned`).
+    /// For a labelled `target` each position pulls `self`'s field for the variable of the same
+    /// identity (absent → don't-care); for an anonymous `target` alignment is positional (positions
+    /// beyond `self`'s width pad don't-care). `self` and `target` are always the same kind (both
+    /// labelled or both anonymous), since a cover's headers share one label type.
     fn project_words(&self, target: &Symbols<L>) -> Vec<u64> {
         let mut words = vec![0u64; words_for(target.arity())];
-        for (i, name) in target.labels().iter().enumerate() {
-            let field = self
-                .symbols
-                .index_of(name)
-                .map(|j| field_at(&self.values, j as usize))
-                .unwrap_or(FIELD_DC);
+        for i in 0..target.arity() {
+            let field = if target.is_labeled() {
+                let id = target.labels()[i].identity(i);
+                self.symbols
+                    .position_of_identity(&id)
+                    .map(|j| field_at(&self.values, j as usize))
+                    .unwrap_or(FIELD_DC)
+            } else if i < self.num_vars() {
+                field_at(&self.values, i)
+            } else {
+                FIELD_DC
+            };
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
         words
     }
 }
 
-impl<L: Ord + Hash + Clone> Minterm<L> {
+impl<L: Label> Minterm<L> {
     /// Align two minterms to a common word layout for per-field set operations.
     ///
     /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
@@ -367,14 +380,17 @@ struct MergedFields<'a, L> {
     j: usize,
 }
 
-impl<L: Ord> Iterator for MergedFields<'_, L> {
+impl<L: Label> Iterator for MergedFields<'_, L> {
     type Item = (u8, u8);
 
     fn next(&mut self) -> Option<(u8, u8)> {
         let la = self.a.symbols.labels();
         let lb = self.b.symbols.labels();
         match (self.sa.get(self.i), self.sb.get(self.j)) {
-            (Some(&ia), Some(&ib)) => match la[ia as usize].cmp(&lb[ib as usize]) {
+            (Some(&ia), Some(&ib)) => match la[ia as usize]
+                .identity(ia as usize)
+                .cmp(&lb[ib as usize].identity(ib as usize))
+            {
                 Ordering::Less => {
                     self.i += 1;
                     Some((field_at(&self.a.values, ia as usize), FIELD_DC))
@@ -433,7 +449,7 @@ fn rank(value: Option<bool>) -> u8 {
 /// assert!(minterm1 < minterm2);
 /// assert!(minterm2 > minterm1);
 /// ```
-impl<L: Ord + Hash + Clone> Ord for Minterm<L> {
+impl<L: Label> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
         for (sf, of) in self.merged_fields(other) {
             match rank(decode(sf)).cmp(&rank(decode(of))) {
@@ -445,13 +461,13 @@ impl<L: Ord + Hash + Clone> Ord for Minterm<L> {
     }
 }
 
-impl<L: Ord + Hash + Clone> PartialOrd for Minterm<L> {
+impl<L: Label> PartialOrd for Minterm<L> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<L: Ord + Hash + Clone> PartialEq for Minterm<L> {
+impl<L: Label> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
         if self.symbols == other.symbols {
             // Same layout: equal value-sets pack to identical words.
@@ -462,7 +478,7 @@ impl<L: Ord + Hash + Clone> PartialEq for Minterm<L> {
     }
 }
 
-impl<L: Ord + Hash + Clone> Eq for Minterm<L> {}
+impl<L: Label> Eq for Minterm<L> {}
 
 #[cfg(test)]
 mod tests {
