@@ -4,7 +4,7 @@
 //! storage for global state. Multiple threads can safely use the library
 //! concurrently without synchronization.
 
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 use std::thread;
 use std::time::Duration;
 
@@ -12,8 +12,16 @@ use std::time::Duration;
 fn test_basic_thread_safety() {
     // Create a cover and add cubes (XOR pattern)
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    )); // 01 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // 10 -> 1
 
     // Minimize using thread-safe C library
     cover = cover.minimize().expect("Minimization failed");
@@ -33,8 +41,16 @@ fn test_concurrent_execution() {
         .map(|i| {
             thread::spawn(move || {
                 let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-                cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-                cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+                cover.push(Cube::anonymous(
+                    &[Some(false), Some(true)],
+                    &[true],
+                    CubeType::F,
+                ));
+                cover.push(Cube::anonymous(
+                    &[Some(true), Some(false)],
+                    &[true],
+                    CubeType::F,
+                ));
 
                 // Thread-safe - each thread executes with independent global state
                 cover = cover.minimize().expect("Minimization failed");
@@ -65,16 +81,40 @@ fn test_consistent_results() {
 
     // First execution
     let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
-    cover1.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);
-    cover1.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
-    cover1.add_cube(&[Some(true), Some(false), Some(false)], &[Some(true)]);
+    cover1.push(Cube::anonymous(
+        &[Some(false), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+    cover1.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
+    cover1.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     cover1.minimize().unwrap();
 
     // Second execution
     let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
-    cover2.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);
-    cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
-    cover2.add_cube(&[Some(true), Some(false), Some(false)], &[Some(true)]);
+    cover2.push(Cube::anonymous(
+        &[Some(false), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+    cover2.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
+    cover2.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     cover2.minimize().unwrap();
 
     // Results should be consistent
@@ -92,13 +132,21 @@ fn test_multiple_sizes() {
 
     // Create first cover with 2 inputs, 1 output
     let mut cover1 = Cover::<(), ()>::anonymous(CoverType::F);
-    cover1.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover1.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     cover1.minimize().unwrap();
     assert_eq!(cover1.num_cubes(), 1, "Cover1 (2x1) should have 1 cube");
 
     // Cover should handle different dimensions thanks to automatic cleanup
     let mut cover2 = Cover::<(), ()>::anonymous(CoverType::F);
-    cover2.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
+    cover2.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     cover2.minimize().unwrap();
     assert_eq!(cover2.num_cubes(), 1, "Cover2 (3x1) should have 1 cube");
 
@@ -114,17 +162,22 @@ fn test_different_sizes_in_different_threads() {
 
     let handle1 = thread::spawn(|| {
         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+        cover.push(Cube::anonymous(
+            &[Some(true), Some(false)],
+            &[true],
+            CubeType::F,
+        ));
         cover = cover.minimize().unwrap();
         cover.num_cubes()
     });
 
     let handle2 = thread::spawn(|| {
         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-        cover.add_cube(
+        cover.push(Cube::anonymous(
             &[Some(true), Some(false), Some(true)],
-            &[Some(true), Some(false)],
-        );
+            &[true, false],
+            CubeType::F,
+        ));
         cover = cover.minimize().unwrap();
         cover.num_cubes()
     });
@@ -142,8 +195,16 @@ fn test_stress_concurrent() {
                 // Each thread performs multiple operations
                 for j in 0..3 {
                     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-                    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-                    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+                    cover.push(Cube::anonymous(
+                        &[Some(false), Some(true)],
+                        &[true],
+                        CubeType::F,
+                    ));
+                    cover.push(Cube::anonymous(
+                        &[Some(true), Some(false)],
+                        &[true],
+                        CubeType::F,
+                    ));
 
                     match cover.minimize() {
                         Ok(minimized) => {

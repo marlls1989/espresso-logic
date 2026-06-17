@@ -13,6 +13,7 @@
 //! byte-identically to the C library.
 
 use super::minterm::Minterm;
+use super::symbols::Symbols;
 use std::fmt;
 use std::sync::Arc;
 
@@ -82,5 +83,35 @@ impl<I, O> Cube<I, O> {
     /// Whether output `i` is asserted by this cube.
     pub(crate) fn asserts(&self, i: usize) -> bool {
         self.outputs.value_at(i) == Some(true)
+    }
+}
+
+impl Cube<(), ()> {
+    /// Build an **anonymous** (positional) cube from an input pattern and an output-membership mask.
+    ///
+    /// - `inputs[i]` is the value of input `i`: `Some(true)`/`Some(false)`, or `None` for don't-care.
+    /// - `membership[j]` is whether this cube asserts output `j` **in its own set** (`set`): an `F`
+    ///   cube asserts the ON-set outputs, a `D` cube the don't-care outputs, an `R` cube the OFF-set
+    ///   outputs.
+    ///
+    /// The cube carries its own anonymous symbol tables; [`Cover::from_cubes`](crate::Cover::from_cubes)
+    /// and [`Cover::push`](crate::Cover::push) re-point it onto the cover's shared tables.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType};
+    ///
+    /// // 01 -> output 0 asserted, in the ON-set.
+    /// let cube = Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F);
+    /// assert_eq!(cube.cube_type(), CubeType::F);
+    /// ```
+    pub fn anonymous(inputs: &[Option<bool>], membership: &[bool], set: CubeType) -> Cube<(), ()> {
+        let im = Minterm::from_symbols(Symbols::anonymous(inputs.len()), inputs.iter().copied());
+        let om = Minterm::from_symbols(
+            Symbols::anonymous(membership.len()),
+            membership.iter().map(|&b| Some(b)),
+        );
+        Cube::new(im, om, set)
     }
 }

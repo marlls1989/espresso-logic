@@ -43,8 +43,8 @@
 //! them fixed up front — but *how* it grows depends on the label type:
 //!
 //! - An **anonymous** [`Cover<(), ()>`](Cover) (built with [`Cover::<(), ()>::anonymous`]) grows
-//!   **positionally**: [`add_cube`](Cover::add_cube) widens the cover to the widest cube seen,
-//!   matching variables by index.
+//!   **positionally**: [`push`](Cover::push) / [`from_cubes`](Cover::from_cubes) widen the cover to
+//!   the widest cube seen, matching variables by index.
 //! - A **labelled** `Cover<I, O>` (e.g. the default `Cover<Arc<str>, Arc<str>>` built with
 //!   [`Cover::new`] + [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA
 //!   file) grows by **merging variable names**: new labels extend the header, shared labels line up
@@ -58,12 +58,12 @@
 //! ## Basic Usage
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable};
+//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 //!
 //! // Create a cover for XOR function
 //! let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
-//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
+//! cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));   // 01 -> 1
+//! cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));   // 10 -> 1
 //!
 //! println!("Before: {} cubes", cover.num_cubes());
 //!
@@ -216,7 +216,7 @@ impl CoverType {
 /// the cover widens. *How* it grows depends on the label type:
 ///
 /// - An **anonymous** [`Cover<(), ()>`](Cover) grows **positionally** via
-///   [`add_cube`](Cover::add_cube) (variables matched by index).
+///   [`push`](Cover::push) / [`from_cubes`](Cover::from_cubes) (variables matched by index).
 /// - A **labelled** `Cover<I, O>` grows by **merging variable names** via
 ///   [`add_expr`](Cover::add_expr) / [`with_labels`](Cover::with_labels) / PLA input.
 ///
@@ -257,12 +257,12 @@ impl CoverType {
 /// ## Basic Truth Table
 ///
 /// ```
-/// use espresso_logic::{Cover, CoverType, Minimizable};
+/// use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 ///
 /// // XOR function
 /// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-/// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
-/// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
+/// cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));   // 01 -> 1
+/// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));   // 10 -> 1
 ///
 /// println!("Before: {} cubes", cover.num_cubes());
 /// let minimised = cover.minimize().unwrap();
@@ -557,10 +557,10 @@ impl<I, O> Cover<I, O> {
     /// # Example
     ///
     /// ```
-    /// use espresso_logic::{Cover, CoverType};
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType};
     ///
     /// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    /// cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
     ///
     /// for cube in cover.cubes() {
     ///     println!("Inputs: {:?}, Outputs: {:?}", cube.inputs(), cube.outputs());
@@ -594,73 +594,98 @@ impl<I: Clone, O> Cover<I, O> {
     }
 }
 
+/// Re-point an anonymous cube positionally onto target symbol tables: inputs beyond the cube's own
+/// arity become don't-care, output membership beyond it becomes unasserted (`Some(false)`).
+fn repoint_anonymous(
+    cube: &Cube<(), ()>,
+    input_symbols: &Arc<Symbols<()>>,
+    output_symbols: &Arc<Symbols<()>>,
+) -> Cube<(), ()> {
+    let ni = input_symbols.arity();
+    let no = output_symbols.arity();
+    let im = Minterm::from_symbols(
+        Arc::clone(input_symbols),
+        (0..ni).map(|i| cube.inputs().value_at(i)),
+    );
+    let om = Minterm::from_symbols(
+        Arc::clone(output_symbols),
+        (0..no).map(|i| Some(cube.asserts(i))),
+    );
+    Cube::new(im, om, cube.cube_type())
+}
+
 impl Cover<(), ()> {
-    /// Add a positional cube to this anonymous cover, growing its dimensions to fit.
+    /// Build an **anonymous** cover from a collection of typed [`Cube<(), ()>`](Cube)s.
     ///
-    /// `add_cube` is the *positional* builder and lives only on anonymous `Cover<(), ()>` — a labelled
-    /// cover is never grown into unnamed positions (build one from labels/expressions, or `relabel`
-    /// an anonymous cover). A shorter cube is padded with don't-cares; a longer one extends every
-    /// existing cube position-wise. Outputs use PLA-style notation:
-    /// - `Some(true)` → bit set in F cube (ON-set)
-    /// - `Some(false)` → bit set in R cube (OFF-set, only if cover type includes R)
-    /// - `None` → bit set in D cube (Don't-care, only if cover type includes D)
+    /// The cover's dimensions are the widest input/output arity seen across `cubes`; each cube is
+    /// re-pointed positionally onto the shared anonymous tables (shorter inputs padded with
+    /// don't-cares, shorter membership masks padded unasserted). Each cube keeps its own
+    /// [`CubeType`] (F/D/R); build them with [`Cube::anonymous`].
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, CoverType};
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType};
+    ///
+    /// // XOR: 01 -> 1, 10 -> 1.
+    /// let cover = Cover::from_cubes(CoverType::F, [
+    ///     Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F),
+    ///     Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F),
+    /// ]);
+    /// assert_eq!(cover.num_inputs(), 2);
+    /// assert_eq!(cover.num_cubes(), 2);
+    /// ```
+    pub fn from_cubes(
+        cover_type: CoverType,
+        cubes: impl IntoIterator<Item = Cube<(), ()>>,
+    ) -> Cover<(), ()> {
+        let cubes: Vec<Cube<(), ()>> = cubes.into_iter().collect();
+        let ni = cubes
+            .iter()
+            .map(|c| c.inputs().num_vars())
+            .max()
+            .unwrap_or(0);
+        let no = cubes
+            .iter()
+            .map(|c| c.outputs().num_vars())
+            .max()
+            .unwrap_or(0);
+        let input_symbols = Symbols::anonymous(ni);
+        let output_symbols = Symbols::anonymous(no);
+        let cubes = cubes
+            .iter()
+            .map(|cube| repoint_anonymous(cube, &input_symbols, &output_symbols))
+            .collect();
+        Cover {
+            input_symbols,
+            output_symbols,
+            input_labeled: false,
+            output_labeled: false,
+            cubes,
+            cover_type,
+        }
+    }
+
+    /// Append a single typed [`Cube<(), ()>`](Cube) to this anonymous cover, growing its dimensions
+    /// to fit (shorter inputs become don't-care, new output columns unasserted).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType};
     ///
     /// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    /// cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
     /// assert_eq!(cover.num_inputs(), 2);
     ///
-    /// // A larger cube extends the dimensions position-wise.
-    /// cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
+    /// // A wider cube extends the dimensions position-wise.
+    /// cover.push(Cube::anonymous(&[Some(true), Some(false), Some(true)], &[true], CubeType::F));
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
-    pub fn add_cube(&mut self, inputs: &[Option<bool>], outputs: &[Option<bool>]) {
-        // Grow dimensions positionally if needed.
-        self.grow_to_fit(inputs.len(), outputs.len());
-
-        let no = self.num_outputs();
-        // Per-output value padded to the current output dimension (beyond-length = don't-care).
-        let padded = |i: usize| outputs.get(i).copied().flatten();
-
-        // Espresso C convention: split one input line into separate F/D/R cubes by per-output value.
-        // A cube for a set exists only if the cover carries that set and some output selects it.
-        let has_f = self.cover_type.has_f() && (0..no).any(|i| padded(i) == Some(true));
-        let has_r = self.cover_type.has_r() && (0..no).any(|i| padded(i) == Some(false));
-        let has_d = self.cover_type.has_d() && (0..no).any(|i| padded(i).is_none());
-
-        let inputs_minterm = self.input_minterm(inputs);
-        if has_f {
-            let om = self.membership_minterm((0..no).map(|i| padded(i) == Some(true)));
-            self.cubes
-                .push(Cube::new(inputs_minterm.clone(), om, CubeType::F));
-        }
-        if has_d {
-            let om = self.membership_minterm((0..no).map(|i| padded(i).is_none()));
-            self.cubes
-                .push(Cube::new(inputs_minterm.clone(), om, CubeType::D));
-        }
-        if has_r {
-            let om = self.membership_minterm((0..no).map(|i| padded(i) == Some(false)));
-            self.cubes.push(Cube::new(inputs_minterm, om, CubeType::R));
-        }
-    }
-
-    /// Build an input minterm (padded to the current input dimension) on the shared input table.
-    fn input_minterm(&self, raw: &[Option<bool>]) -> Minterm<()> {
-        let ni = self.num_inputs();
-        Minterm::from_symbols(
-            Arc::clone(&self.input_symbols),
-            (0..ni).map(|i| raw.get(i).copied().flatten()),
-        )
-    }
-
-    /// Build an output-membership minterm (`Some(true)`=asserted) on the shared output table.
-    fn membership_minterm(&self, mask: impl IntoIterator<Item = bool>) -> Minterm<()> {
-        Minterm::from_symbols(Arc::clone(&self.output_symbols), mask.into_iter().map(Some))
+    pub fn push(&mut self, cube: Cube<(), ()>) {
+        self.grow_to_fit(cube.inputs().num_vars(), cube.outputs().num_vars());
+        let repointed = repoint_anonymous(&cube, &self.input_symbols, &self.output_symbols);
+        self.cubes.push(repointed);
     }
 
     /// Positionally widen this anonymous cover to at least the given dimensions (new input positions

@@ -159,18 +159,16 @@ fn main() -> std::io::Result<()> {
 ### Building from Truth Tables
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    
-    // XOR function: a XOR b
+
+    // XOR function: a XOR b (ON-set only)
     // Inputs: [a, b], Output: [f]
-    cover.add_cube(&[Some(false), Some(false)], &[Some(false)]); // 00 -> 0
-    cover.add_cube(&[Some(false), Some(true)],  &[Some(true)]);  // 01 -> 1
-    cover.add_cube(&[Some(true),  Some(false)], &[Some(true)]);  // 10 -> 1
-    cover.add_cube(&[Some(true),  Some(true)],  &[Some(false)]); // 11 -> 0
-    
+    cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
+    cover.push(Cube::anonymous(&[Some(true),  Some(false)], &[true], CubeType::F));  // 10 -> 1
+
     cover = cover.minimize()?;
     println!("Minimized to {} cubes", cover.num_cubes());
     
@@ -181,14 +179,14 @@ fn main() -> std::io::Result<()> {
 ### Using Don't Cares
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     
     // Use None for don't care values
-    cover.add_cube(&[Some(true), None], &[Some(true)]);  // 1- -> 1
-    cover.add_cube(&[None, Some(true)], &[Some(true)]);  // -1 -> 1
+    cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -> 1
+    cover.push(Cube::anonymous(&[None, Some(true)], &[true], CubeType::F));  // -1 -> 1
     
     cover = cover.minimize()?;
     

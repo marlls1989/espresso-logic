@@ -6,7 +6,7 @@
 //! - macOS: `./scripts/check_memory_leaks.sh`
 //! - Linux: Use valgrind or heaptrack (see docs/MEMORY_SAFETY.md)
 
-use espresso_logic::espresso::{CubeType, Espresso, EspressoCover};
+use espresso_logic::espresso::{Cube, CubeType, Espresso, EspressoCover};
 use espresso_logic::{EspressoConfig, Minimizable};
 
 /// Helper to get current memory usage on macOS
@@ -203,8 +203,16 @@ fn test_coverbuilder_memory_management() {
 
     for _ in 0..100 {
         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+        cover.push(Cube::anonymous(
+            &[Some(false), Some(true)],
+            &[true],
+            CubeType::F,
+        ));
+        cover.push(Cube::anonymous(
+            &[Some(true), Some(false)],
+            &[true],
+            CubeType::F,
+        ));
 
         // minimize() internally creates EspressoCover and frees it
         cover = cover.minimize().unwrap();
@@ -228,20 +236,29 @@ fn test_dimension_changes_no_leak() {
         match i % 3 {
             0 => {
                 let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-                cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+                cover.push(Cube::anonymous(
+                    &[Some(false), Some(true)],
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             1 => {
                 let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-                cover.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
+                cover.push(Cube::anonymous(
+                    &[Some(false), Some(true), Some(false)],
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             2 => {
                 let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-                cover.add_cube(
+                cover.push(Cube::anonymous(
                     &[Some(false), Some(true), Some(false), Some(true)],
-                    &[Some(true)],
-                );
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             _ => unreachable!(),
@@ -278,8 +295,8 @@ fn test_large_cover_allocations() {
                 Some((i & 8) != 0),
                 Some((i & 4) != 0),
             ];
-            let outputs = [Some((i & 2) != 0), Some((i & 1) != 0)];
-            cover.add_cube(&inputs, &outputs);
+            let membership = [(i & 2) != 0, (i & 1) != 0];
+            cover.push(Cube::anonymous(&inputs, &membership, CubeType::F));
         }
 
         // This allocates significant C memory

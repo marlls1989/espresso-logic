@@ -1,6 +1,6 @@
 //! Basic minimization example
 
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Boolean Function Minimization Example\n");
@@ -13,16 +13,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // A'B'C (001)
-    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
 
     // A'BC (011)
-    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
 
     // AB'C (101)
-    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
 
     // ABC (111)
-    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
 
     // Minimize the function - all C code runs in isolated process
     println!("Minimizing using Espresso algorithm...");

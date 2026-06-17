@@ -55,8 +55,16 @@ fn test_create_cover_from_pla() {
 fn test_pla_roundtrip() {
     // Create a cover programmatically
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    )); // 01 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // 10 -> 1
 
     // PLA serialisation is string-labelled; relabel the anonymous cover (unlabelled `Arc<str>`).
     let cover = cover.relabel(

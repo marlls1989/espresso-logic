@@ -1,6 +1,6 @@
 //! Example: Inspect cubes after minimization
 
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Cube Inspection Example ===\n");
@@ -10,13 +10,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add 4 cubes that can be minimized
     println!("Adding 4 input cubes:");
-    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  001 -> 1");
-    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  011 -> 1");
-    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  101 -> 1");
-    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  111 -> 1");
 
     println!("\nBefore minimization:");

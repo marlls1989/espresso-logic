@@ -23,19 +23,63 @@ fn test_cover_with_labels() {
 }
 
 #[test]
-fn test_add_cube() {
+fn test_push() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
     assert_eq!(cover.num_cubes(), 1);
 }
 
 #[test]
+fn test_from_cubes_matches_push() {
+    // Cubes of differing widths: from_cubes grows to the widest, padding don't-care/unasserted.
+    let cubes = [
+        Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F),
+        Cube::anonymous(&[Some(true)], &[true, false], CubeType::F),
+    ];
+    let built = Cover::from_cubes(CoverType::F, cubes.iter().cloned());
+
+    let mut pushed = Cover::<(), ()>::anonymous(CoverType::F);
+    for cube in cubes.iter().cloned() {
+        pushed.push(cube);
+    }
+
+    assert_eq!(built.num_inputs(), 2);
+    assert_eq!(built.num_outputs(), 2);
+    assert_eq!(built.num_inputs(), pushed.num_inputs());
+    assert_eq!(built.num_outputs(), pushed.num_outputs());
+    // Same cube payloads in the same order.
+    let rows = |c: &Cover<(), ()>| -> Vec<(Vec<Option<bool>>, Vec<Option<bool>>)> {
+        c.cubes()
+            .map(|cube| {
+                (
+                    cube.inputs().iter().collect(),
+                    cube.outputs().iter().collect(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(rows(&built), rows(&pushed));
+}
+
+#[test]
 fn test_minimize() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     cover = cover.minimize().unwrap();
     // XOR cannot be minimized
     assert_eq!(cover.num_cubes(), 2);
@@ -48,15 +92,20 @@ fn test_dynamic_growth_inputs_only() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start with 2 inputs
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
 
     // Grow to 5 inputs
-    cover.add_cube(
+    cover.push(Cube::anonymous(
         &[Some(true), None, Some(false), None, Some(true)],
-        &[Some(true)],
-    );
+        &[true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 5);
     assert_eq!(cover.num_outputs(), 1);
 
@@ -72,12 +121,20 @@ fn test_dynamic_growth_outputs_only() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start with 1 output
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
 
     // Grow to 3 outputs
-    cover.add_cube(&[Some(true), None], &[Some(true), Some(false), Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), None],
+        &[true, false, true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 3);
 
@@ -93,20 +150,25 @@ fn test_dynamic_growth_both_dimensions() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start small
-    cover.add_cube(&[Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(&[Some(true)], &[true], CubeType::F));
     assert_eq!(cover.num_inputs(), 1);
     assert_eq!(cover.num_outputs(), 1);
 
     // Grow both dimensions
-    cover.add_cube(&[Some(true), Some(false), None], &[Some(true), Some(false)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false), None],
+        &[true, false],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 3);
     assert_eq!(cover.num_outputs(), 2);
 
     // Add another with even more dimensions
-    cover.add_cube(
+    cover.push(Cube::anonymous(
         &[Some(true), Some(false), None, Some(true)],
-        &[Some(true), Some(false), Some(true)],
-    );
+        &[true, false, true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_inputs(), 4);
     assert_eq!(cover.num_outputs(), 3);
 
@@ -123,7 +185,11 @@ fn test_dynamic_growth_preserves_existing_cubes() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Add first cube
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
 
     // Get the first cube's data before growth
     let first_cube_inputs: Vec<_> = cover
@@ -136,7 +202,11 @@ fn test_dynamic_growth_preserves_existing_cubes() {
     assert_eq!(first_cube_inputs, vec![Some(true), Some(false)]);
 
     // Grow dimensions
-    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
 
     // First cube should be padded with None
     let first_cube_after: Vec<_> = cover
@@ -400,12 +470,24 @@ fn test_f_type_cover() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // F type only accepts Some(true) for outputs
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     assert_eq!(cover.num_cubes(), 1);
 
-    // Some(false) and None are ignored for F type
-    cover.add_cube(&[Some(true), Some(true)], &[Some(false)]);
-    cover.add_cube(&[Some(false), Some(false)], &[None]);
+    // R and D cubes don't count toward an F-type cover's cube count.
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true)],
+        &[true],
+        CubeType::R,
+    ));
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(false)],
+        &[true],
+        CubeType::D,
+    ));
 
     // Should still have only 1 cube (F type)
     assert_eq!(cover.num_cubes(), 1);
@@ -416,8 +498,16 @@ fn test_fd_type_cover() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::FD);
 
     // FD type accepts Some(true) and None
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
-    cover.add_cube(&[Some(false), Some(true)], &[None]); // D cube
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // F cube
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::D,
+    )); // D cube
 
     // For FD type, num_cubes() only counts F cubes
     assert_eq!(cover.num_cubes(), 1);
@@ -431,8 +521,16 @@ fn test_fr_type_cover() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::FR);
 
     // FR type accepts Some(true) and Some(false)
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
-    cover.add_cube(&[Some(false), Some(true)], &[Some(false)]); // R cube
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // F cube
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::R,
+    )); // R cube
 
     // For FR type, num_cubes() counts all cubes
     assert_eq!(cover.num_cubes(), 2);
@@ -443,9 +541,21 @@ fn test_fdr_type_cover() {
     let mut cover = Cover::<(), ()>::anonymous(CoverType::FDR);
 
     // FDR type accepts all: Some(true), Some(false), None
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
-    cover.add_cube(&[Some(false), Some(true)], &[Some(false)]); // R cube
-    cover.add_cube(&[Some(true), Some(true)], &[None]); // D cube
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // F cube
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::R,
+    )); // R cube
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true)],
+        &[true],
+        CubeType::D,
+    )); // D cube
 
     // For FDR type, num_cubes() counts all cubes
     assert_eq!(cover.num_cubes(), 3);
@@ -563,8 +673,16 @@ fn test_minimize_preserves_structure() {
 fn anonymous_cover_minimizes() {
     // Pure positional cover, no labels (L = ()).
     let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    )); // 01 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // 10 -> 1
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_cubes(), 2);
     let min = cover.minimize().unwrap();
@@ -575,7 +693,11 @@ fn anonymous_cover_minimizes() {
 #[test]
 fn custom_u32_labels_via_relabel() {
     let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
-    cover.add_cube(&[Some(true), None, Some(false)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), None, Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     // Explicitly relabel to a u32-labelled cover, position-for-position.
     let labeled: Cover<u32, u32> = cover.relabel(
         Symbols::new(vec![10u32, 20, 30].into()),
@@ -595,7 +717,11 @@ fn anonymize_drops_labels_preserving_values() {
     use std::sync::Arc;
     // Build positionally, label explicitly, then anonymise back — values preserved throughout.
     let mut anon = Cover::<(), ()>::anonymous(CoverType::F);
-    anon.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+    anon.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
     let labeled = anon.relabel(
         Symbols::new(vec![Arc::<str>::from("a"), Arc::from("b")].into()),
         Symbols::new(vec![Arc::<str>::from("out")].into()),

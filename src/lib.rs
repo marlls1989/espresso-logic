@@ -140,15 +140,15 @@
 //! Build covers by manually adding cubes (dimensions grow automatically):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable};
+//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Create a cover (dimensions grow automatically)
 //! let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 //!
 //! // Build the ON-set (truth table)
-//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
-//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
+//! cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
+//! cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));  // 10 -> 1
 //!
 //! // Minimize (returns new instance)
 //! cover = cover.minimize()?;
@@ -207,17 +207,17 @@
 //! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType};
+//! use espresso_logic::{Cover, CoverType, Cube, CubeType};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // F type (ON-set only)
 //! let mut f_cover = Cover::<(), ()>::anonymous(CoverType::F);
-//! f_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);
+//! f_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));
 //!
 //! // FD type (ON-set + Don't-cares)
 //! let mut fd_cover = Cover::<(), ()>::anonymous(CoverType::FD);
-//! fd_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);  // ON
-//! fd_cover.add_cube(&[Some(false), Some(false)], &[None]);      // Don't-care
+//! fd_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));  // ON
+//! fd_cover.push(Cube::anonymous(&[Some(false), Some(false)], &[true], CubeType::D));  // Don't-care
 //! # Ok(())
 //! # }
 //! ```
@@ -231,7 +231,7 @@
 //! `.minimize()` is called, the thread-local Espresso instance is created for that thread.
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable};
+//! use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -239,8 +239,8 @@
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
 //!         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
-//!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-//!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+//!         cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
+//!         cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
 //!         
 //!         // Creates thread-local Espresso instance on first minimize()
 //!         cover = cover.minimize()?;
