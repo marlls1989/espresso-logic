@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Cube Inspection Example ===\n");
 
     // Create a cover with a simple function
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Add 4 cubes that can be minimized
     println!("Adding 4 input cubes:");

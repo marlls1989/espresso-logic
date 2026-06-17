@@ -42,12 +42,13 @@
 //! Unlike the low-level API, a [`Cover`] grows its dimensions automatically instead of needing
 //! them fixed up front — but *how* it grows depends on the label type:
 //!
-//! - An **anonymous** [`Cover<()>`](Cover) (built with [`Cover::<()>::anonymous`]) grows
+//! - An **anonymous** [`Cover<(), ()>`](Cover) (built with [`Cover::<(), ()>::anonymous`]) grows
 //!   **positionally**: [`add_cube`](Cover::add_cube) widens the cover to the widest cube seen,
 //!   matching variables by index.
-//! - A **labelled** `Cover<L>` (e.g. the default `Cover<Arc<str>>` built with [`Cover::new`] +
-//!   [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA file) grows by
-//!   **merging variable names**: new labels extend the header, shared labels line up by identity.
+//! - A **labelled** `Cover<I, O>` (e.g. the default `Cover<Arc<str>, Arc<str>>` built with
+//!   [`Cover::new`] + [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA
+//!   file) grows by **merging variable names**: new labels extend the header, shared labels line up
+//!   by identity.
 //!
 //! The two modes never mix implicitly — converting between them is the explicit
 //! [`relabel`](Cover::relabel) / [`anonymize`](Cover::anonymize).
@@ -60,7 +61,7 @@
 //! use espresso_logic::{Cover, CoverType, Minimizable};
 //!
 //! // Create a cover for XOR function
-//! let mut cover = Cover::<()>::anonymous(CoverType::F);
+//! let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 //! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 //! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 //!
@@ -198,12 +199,15 @@ impl CoverType {
 /// - **Cover Type** - Which sets are included (F, FD, FR, or FDR)
 /// - **Labels** - Optional variable names for inputs/outputs
 ///
-/// # Generic over the label type
+/// # Generic over the label types
 ///
-/// `Cover<L>` is generic over its variable-label type `L`, defaulting to `Arc<str>` (so plain
-/// `Cover` is the string-labelled form). The anonymous form [`Cover<()>`](Cover) carries no
-/// names and is purely positional. The two are kept apart by the type system — see
-/// [`relabel`](Cover::relabel) / [`anonymize`](Cover::anonymize) for explicit conversion.
+/// `Cover<I, O>` is generic over its **input** label type `I` and **output** label type `O`, both
+/// defaulting to `Arc<str>` (so plain `Cover` is the string-labelled form). The two are independent:
+/// a cover can have, e.g., labelled inputs and an anonymous output (`Cover<Arc<str>, ()>`). The
+/// anonymous form [`Cover<(), ()>`](Cover) carries no names and is purely positional. Label types are
+/// kept apart by the type system — see [`relabel`](Cover::relabel) /
+/// [`relabel_inputs`](Cover::relabel_inputs) / [`relabel_outputs`](Cover::relabel_outputs) /
+/// [`anonymize`](Cover::anonymize) for explicit conversion.
 ///
 /// # Dynamic Dimensions
 ///
@@ -211,9 +215,9 @@ impl CoverType {
 /// there is no need to pre-declare or track them; existing cubes are padded with don't-cares when
 /// the cover widens. *How* it grows depends on the label type:
 ///
-/// - An **anonymous** [`Cover<()>`](Cover) grows **positionally** via
+/// - An **anonymous** [`Cover<(), ()>`](Cover) grows **positionally** via
 ///   [`add_cube`](Cover::add_cube) (variables matched by index).
-/// - A **labelled** `Cover<L>` grows by **merging variable names** via
+/// - A **labelled** `Cover<I, O>` grows by **merging variable names** via
 ///   [`add_expr`](Cover::add_expr) / [`with_labels`](Cover::with_labels) / PLA input.
 ///
 /// This makes `Cover` much easier to use than the low-level [`crate::espresso::EspressoCover`].
@@ -256,7 +260,7 @@ impl CoverType {
 /// use espresso_logic::{Cover, CoverType, Minimizable};
 ///
 /// // XOR function
-/// let mut cover = Cover::<()>::anonymous(CoverType::F);
+/// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);   // 01 -> 1
 /// cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);   // 10 -> 1
 ///
@@ -297,25 +301,25 @@ impl CoverType {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Cover<L = Arc<str>> {
+pub struct Cover<I = Arc<str>, O = Arc<str>> {
     /// Canonical input symbol table, shared by every cube's input minterm.
     ///
     /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
     /// can serve as the shared `Arc` for the minterm fast-comparison path.
-    input_symbols: Arc<Symbols<L>>,
+    input_symbols: Arc<Symbols<I>>,
     /// Canonical output symbol table, shared by every cube's output minterm.
-    output_symbols: Arc<Symbols<L>>,
+    output_symbols: Arc<Symbols<O>>,
     /// Whether input names were explicitly supplied (vs. auto-generated); controls PLA `.ilb`.
     input_labeled: bool,
     /// Whether output names were explicitly supplied; controls PLA `.ob`.
     output_labeled: bool,
     /// Cubes (merged tri-state product terms).
-    pub(crate) cubes: Vec<Cube<L>>,
+    pub(crate) cubes: Vec<Cube<I, O>>,
     /// Cover type (F, FD, FR, or FDR)
     pub(crate) cover_type: CoverType,
 }
 
-impl Cover<Arc<str>> {
+impl Cover<Arc<str>, Arc<str>> {
     /// Create a new empty cover with the specified type
     ///
     /// # Examples
@@ -379,11 +383,11 @@ impl Cover<Arc<str>> {
     }
 }
 
-impl<L> Cover<L> {
+impl<I, O> Cover<I, O> {
     /// Create a new empty **anonymous** cover (no variable labels) of the given type.
     ///
     /// Positions are purely positional; dimensions grow as cubes are added. This is the generic
-    /// constructor for any label type `L` (e.g. `Cover::<()>::anonymous(CoverType::F)`); for named
+    /// constructor for any label types (e.g. `Cover::<(), ()>::anonymous(CoverType::F)`); for named
     /// `Arc<str>` covers use [`Cover::new`] / [`Cover::with_labels`].
     pub fn anonymous(cover_type: CoverType) -> Self {
         Cover {
@@ -396,15 +400,17 @@ impl<L> Cover<L> {
         }
     }
 
-    /// Re-express this cover over a different label type `M`, position-for-position.
+    /// Re-express this cover over different label types, position-for-position.
     ///
     /// This is the **explicit** way to relabel or anonymise a cover — labelling and anonymisation
     /// never happen implicitly. The new symbol tables must have the same arities as this cover.
-    pub fn relabel<M>(
+    /// To change only one side, use [`relabel_inputs`](Self::relabel_inputs) /
+    /// [`relabel_outputs`](Self::relabel_outputs).
+    pub fn relabel<I2, O2>(
         self,
-        input_symbols: Arc<Symbols<M>>,
-        output_symbols: Arc<Symbols<M>>,
-    ) -> Cover<M> {
+        input_symbols: Arc<Symbols<I2>>,
+        output_symbols: Arc<Symbols<O2>>,
+    ) -> Cover<I2, O2> {
         assert_eq!(
             input_symbols.arity(),
             self.num_inputs(),
@@ -438,8 +444,70 @@ impl<L> Cover<L> {
         }
     }
 
-    /// Drop all labels, yielding a positional [`Cover<()>`](Cover) (explicit anonymisation).
-    pub fn anonymize(self) -> Cover<()> {
+    /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
+    ///
+    /// The new input table must have the same input arity as this cover.
+    pub fn relabel_inputs<I2>(self, input_symbols: Arc<Symbols<I2>>) -> Cover<I2, O> {
+        assert_eq!(
+            input_symbols.arity(),
+            self.num_inputs(),
+            "relabel_inputs: input arity mismatch"
+        );
+        let input_labeled = input_symbols.is_labeled();
+        let cubes = self
+            .cubes
+            .into_iter()
+            .map(|cube| {
+                Cube::new(
+                    Minterm::from_symbols(Arc::clone(&input_symbols), cube.inputs.iter()),
+                    cube.outputs,
+                    cube.set,
+                )
+            })
+            .collect();
+        Cover {
+            input_symbols,
+            output_symbols: self.output_symbols,
+            input_labeled,
+            output_labeled: self.output_labeled,
+            cubes,
+            cover_type: self.cover_type,
+        }
+    }
+
+    /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
+    ///
+    /// The new output table must have the same output arity as this cover.
+    pub fn relabel_outputs<O2>(self, output_symbols: Arc<Symbols<O2>>) -> Cover<I, O2> {
+        assert_eq!(
+            output_symbols.arity(),
+            self.num_outputs(),
+            "relabel_outputs: output arity mismatch"
+        );
+        let output_labeled = output_symbols.is_labeled();
+        let cubes = self
+            .cubes
+            .into_iter()
+            .map(|cube| {
+                Cube::new(
+                    cube.inputs,
+                    Minterm::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
+                    cube.set,
+                )
+            })
+            .collect();
+        Cover {
+            input_symbols: self.input_symbols,
+            output_symbols,
+            input_labeled: self.input_labeled,
+            output_labeled,
+            cubes,
+            cover_type: self.cover_type,
+        }
+    }
+
+    /// Drop all labels, yielding a positional [`Cover<(), ()>`](Cover) (explicit anonymisation).
+    pub fn anonymize(self) -> Cover<(), ()> {
         let (ni, no) = (self.num_inputs(), self.num_outputs());
         self.relabel(Symbols::anonymous(ni), Symbols::anonymous(no))
     }
@@ -473,12 +541,12 @@ impl<L> Cover<L> {
     }
 
     /// The shared input symbol table.
-    pub(crate) fn input_symbols(&self) -> &Arc<Symbols<L>> {
+    pub(crate) fn input_symbols(&self) -> &Arc<Symbols<I>> {
         &self.input_symbols
     }
 
     /// The shared output symbol table.
-    pub(crate) fn output_symbols(&self) -> &Arc<Symbols<L>> {
+    pub(crate) fn output_symbols(&self) -> &Arc<Symbols<O>> {
         &self.output_symbols
     }
 
@@ -491,14 +559,14 @@ impl<L> Cover<L> {
     /// ```
     /// use espresso_logic::{Cover, CoverType};
     ///
-    /// let mut cover = Cover::<()>::anonymous(CoverType::F);
+    /// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     ///
     /// for cube in cover.cubes() {
     ///     println!("Inputs: {:?}, Outputs: {:?}", cube.inputs(), cube.outputs());
     /// }
     /// ```
-    pub fn cubes(&self) -> CubesIter<'_, &Cube<L>> {
+    pub fn cubes(&self) -> CubesIter<'_, &Cube<I, O>> {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
         CubesIter {
@@ -515,9 +583,9 @@ impl<L> Cover<L> {
     }
 }
 
-impl<L: Clone> Cover<L> {
+impl<I: Clone, O> Cover<I, O> {
     /// Input minterms of the F cubes that assert `output_idx` (the product terms of that output).
-    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm<L>]> {
+    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm<I>]> {
         self.cubes
             .iter()
             .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
@@ -526,10 +594,10 @@ impl<L: Clone> Cover<L> {
     }
 }
 
-impl Cover<()> {
+impl Cover<(), ()> {
     /// Add a positional cube to this anonymous cover, growing its dimensions to fit.
     ///
-    /// `add_cube` is the *positional* builder and lives only on anonymous `Cover<()>` — a labelled
+    /// `add_cube` is the *positional* builder and lives only on anonymous `Cover<(), ()>` — a labelled
     /// cover is never grown into unnamed positions (build one from labels/expressions, or `relabel`
     /// an anonymous cover). A shorter cube is padded with don't-cares; a longer one extends every
     /// existing cube position-wise. Outputs use PLA-style notation:
@@ -542,7 +610,7 @@ impl Cover<()> {
     /// ```
     /// use espresso_logic::{Cover, CoverType};
     ///
-    /// let mut cover = Cover::<()>::anonymous(CoverType::F);
+    /// let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     /// cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     /// assert_eq!(cover.num_inputs(), 2);
     ///
@@ -599,7 +667,7 @@ impl Cover<()> {
     /// are don't-care, new output positions unasserted). No labels are synthesised.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         if min_inputs > self.num_inputs() {
-            // A `Cover<()>` is always anonymous, so widening is just a wider anonymous table.
+            // A `Cover<(), ()>` is always anonymous, so widening is just a wider anonymous table.
             let new_syms = Symbols::anonymous(min_inputs);
             for cube in &mut self.cubes {
                 cube.inputs = Minterm::from_symbols(
@@ -630,10 +698,11 @@ impl Cover<()> {
     }
 }
 
-impl Cover<Arc<str>> {
+impl<O> Cover<Arc<str>, O> {
     /// Get input variable labels.
     ///
-    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover.
+    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover. Available whatever the
+    /// output label type is.
     pub fn input_labels(&self) -> &[Arc<str>] {
         if self.input_labeled {
             self.input_symbols.labels()
@@ -641,10 +710,13 @@ impl Cover<Arc<str>> {
             &[]
         }
     }
+}
 
+impl<I> Cover<I, Arc<str>> {
     /// Get output variable labels.
     ///
-    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover.
+    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover. Available whatever the
+    /// input label type is.
     pub fn output_labels(&self) -> &[Arc<str>] {
         if self.output_labeled {
             self.output_symbols.labels()
@@ -654,7 +726,7 @@ impl Cover<Arc<str>> {
     }
 }
 
-impl Default for Cover<Arc<str>> {
+impl Default for Cover<Arc<str>, Arc<str>> {
     fn default() -> Self {
         Self::new(CoverType::F)
     }

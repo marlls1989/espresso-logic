@@ -54,7 +54,7 @@ fn test_create_cover_from_pla() {
 #[test]
 fn test_pla_roundtrip() {
     // Create a cover programmatically
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
 

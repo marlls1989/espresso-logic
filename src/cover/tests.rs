@@ -24,7 +24,7 @@ fn test_cover_with_labels() {
 
 #[test]
 fn test_add_cube() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.num_outputs(), 1);
@@ -33,7 +33,7 @@ fn test_add_cube() {
 
 #[test]
 fn test_minimize() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
     cover = cover.minimize().unwrap();
@@ -45,7 +45,7 @@ fn test_minimize() {
 
 #[test]
 fn test_dynamic_growth_inputs_only() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start with 2 inputs
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -69,7 +69,7 @@ fn test_dynamic_growth_inputs_only() {
 
 #[test]
 fn test_dynamic_growth_outputs_only() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start with 1 output
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -90,7 +90,7 @@ fn test_dynamic_growth_outputs_only() {
 
 #[test]
 fn test_dynamic_growth_both_dimensions() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Start small
     cover.add_cube(&[Some(true)], &[Some(true)]);
@@ -120,7 +120,7 @@ fn test_dynamic_growth_both_dimensions() {
 
 #[test]
 fn test_dynamic_growth_preserves_existing_cubes() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Add first cube
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -397,7 +397,7 @@ fn test_to_exprs_after_minimization() {
 
 #[test]
 fn test_f_type_cover() {
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // F type only accepts Some(true) for outputs
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
@@ -413,7 +413,7 @@ fn test_f_type_cover() {
 
 #[test]
 fn test_fd_type_cover() {
-    let mut cover = Cover::<()>::anonymous(CoverType::FD);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::FD);
 
     // FD type accepts Some(true) and None
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -428,7 +428,7 @@ fn test_fd_type_cover() {
 
 #[test]
 fn test_fr_type_cover() {
-    let mut cover = Cover::<()>::anonymous(CoverType::FR);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::FR);
 
     // FR type accepts Some(true) and Some(false)
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -440,7 +440,7 @@ fn test_fr_type_cover() {
 
 #[test]
 fn test_fdr_type_cover() {
-    let mut cover = Cover::<()>::anonymous(CoverType::FDR);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::FDR);
 
     // FDR type accepts all: Some(true), Some(false), None
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // F cube
@@ -562,7 +562,7 @@ fn test_minimize_preserves_structure() {
 #[test]
 fn anonymous_cover_minimizes() {
     // Pure positional cover, no labels (L = ()).
-    let mut cover: Cover<()> = Cover::anonymous(CoverType::F);
+    let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
     cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
     assert_eq!(cover.num_inputs(), 2);
@@ -574,10 +574,10 @@ fn anonymous_cover_minimizes() {
 
 #[test]
 fn custom_u32_labels_via_relabel() {
-    let mut cover: Cover<()> = Cover::anonymous(CoverType::F);
+    let mut cover: Cover<(), ()> = Cover::anonymous(CoverType::F);
     cover.add_cube(&[Some(true), None, Some(false)], &[Some(true)]);
     // Explicitly relabel to a u32-labelled cover, position-for-position.
-    let labeled: Cover<u32> = cover.relabel(
+    let labeled: Cover<u32, u32> = cover.relabel(
         Symbols::new(vec![10u32, 20, 30].into()),
         Symbols::new(vec![1u32].into()),
     );
@@ -594,7 +594,7 @@ fn custom_u32_labels_via_relabel() {
 fn anonymize_drops_labels_preserving_values() {
     use std::sync::Arc;
     // Build positionally, label explicitly, then anonymise back — values preserved throughout.
-    let mut anon = Cover::<()>::anonymous(CoverType::F);
+    let mut anon = Cover::<(), ()>::anonymous(CoverType::F);
     anon.add_cube(&[Some(true), Some(false)], &[Some(true)]);
     let labeled = anon.relabel(
         Symbols::new(vec![Arc::<str>::from("a"), Arc::from("b")].into()),
@@ -602,7 +602,7 @@ fn anonymize_drops_labels_preserving_values() {
     );
     assert_eq!(labeled.num_inputs(), 2);
 
-    let back: Cover<()> = labeled.anonymize();
+    let back: Cover<(), ()> = labeled.anonymize();
     assert_eq!(back.num_cubes(), 1);
     let cube = back.cubes().next().unwrap();
     assert_eq!(cube.inputs().value_at(0), Some(true));
@@ -612,7 +612,7 @@ fn anonymize_drops_labels_preserving_values() {
 #[test]
 fn cover_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Cover<()>>();
-    assert_send_sync::<Cover<u32>>();
+    assert_send_sync::<Cover<(), ()>>();
+    assert_send_sync::<Cover<u32, u32>>();
     assert_send_sync::<Cover<std::sync::Arc<str>>>();
 }

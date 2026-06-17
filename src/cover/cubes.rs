@@ -29,16 +29,17 @@ pub enum CubeType {
 
 /// A cube (product term) in a cover: an input pattern, an output-membership mask, and a set tag.
 ///
-/// Generic over the variable label type `L` (defaults to `Arc<str>`).
+/// Generic over the input label type `I` and the output label type `O` (both default `Arc<str>`),
+/// so a cover can have, e.g., labelled inputs and an anonymous output.
 #[derive(Clone)]
-pub struct Cube<L = Arc<str>> {
-    pub(crate) inputs: Minterm<L>,
+pub struct Cube<I = Arc<str>, O = Arc<str>> {
+    pub(crate) inputs: Minterm<I>,
     /// Membership mask: `Some(true)` where this cube asserts the output, `Some(false)` otherwise.
-    pub(crate) outputs: Minterm<L>,
+    pub(crate) outputs: Minterm<O>,
     pub(crate) set: CubeType,
 }
 
-impl<L: fmt::Debug> fmt::Debug for Cube<L> {
+impl<I: fmt::Debug, O: fmt::Debug> fmt::Debug for Cube<I, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cube")
             .field("inputs", &self.inputs)
@@ -48,9 +49,9 @@ impl<L: fmt::Debug> fmt::Debug for Cube<L> {
     }
 }
 
-impl<L> Cube<L> {
+impl<I, O> Cube<I, O> {
     /// Build a cube from its input pattern, output-membership mask, and set tag.
-    pub(crate) fn new(inputs: Minterm<L>, outputs: Minterm<L>, set: CubeType) -> Self {
+    pub(crate) fn new(inputs: Minterm<I>, outputs: Minterm<O>, set: CubeType) -> Self {
         Cube {
             inputs,
             outputs,
@@ -59,7 +60,7 @@ impl<L> Cube<L> {
     }
 
     /// The input pattern of this cube.
-    pub fn inputs(&self) -> &Minterm<L> {
+    pub fn inputs(&self) -> &Minterm<I> {
         &self.inputs
     }
 
@@ -69,7 +70,7 @@ impl<L> Cube<L> {
     /// means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))" and
     /// `Some(false)` means "it does not". For an FR/FDR cover, a given input pattern can therefore
     /// appear in more than one cube (e.g. an F cube and an R cube), each with its own mask.
-    pub fn outputs(&self) -> &Minterm<L> {
+    pub fn outputs(&self) -> &Minterm<O> {
         &self.outputs
     }
 

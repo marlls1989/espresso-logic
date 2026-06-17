@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("XOR Function Minimization\n");
 
     // Create a cover (dimensions grow automatically)
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     // Add XOR truth table
     cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1

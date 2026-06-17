@@ -2,7 +2,7 @@ use espresso_logic::{Cover, CoverType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test case from test_cover_many_cubes
-    let mut cover = Cover::<()>::anonymous(CoverType::F);
+    let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 
     println!("Adding 4 cubes:");
     cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]); // 001 -> 1

@@ -144,7 +144,7 @@
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Create a cover (dimensions grow automatically)
-//! let mut cover = Cover::<()>::anonymous(CoverType::F);
+//! let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 //!
 //! // Build the ON-set (truth table)
 //! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
@@ -211,11 +211,11 @@
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // F type (ON-set only)
-//! let mut f_cover = Cover::<()>::anonymous(CoverType::F);
+//! let mut f_cover = Cover::<(), ()>::anonymous(CoverType::F);
 //! f_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);
 //!
 //! // FD type (ON-set + Don't-cares)
-//! let mut fd_cover = Cover::<()>::anonymous(CoverType::FD);
+//! let mut fd_cover = Cover::<(), ()>::anonymous(CoverType::FD);
 //! fd_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);  // ON
 //! fd_cover.add_cube(&[Some(false), Some(false)], &[None]);      // Don't-care
 //! # Ok(())
@@ -238,7 +238,7 @@
 //! // Covers can be freely moved between threads
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
-//!         let mut cover = Cover::<()>::anonymous(CoverType::F);
+//!         let mut cover = Cover::<(), ()>::anonymous(CoverType::F);
 //!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
 //!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
 //!         
