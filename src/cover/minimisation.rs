@@ -294,10 +294,13 @@ fn minimize_expr_with<F>(
     minimize_fn: F,
 ) -> Result<BoolExpr, MinimizationError>
 where
-    F: FnOnce(&Cover, &EspressoConfig) -> Result<Cover, MinimizationError>,
+    F: FnOnce(
+        &Cover<Arc<str>, ()>,
+        &EspressoConfig,
+    ) -> Result<Cover<Arc<str>, ()>, MinimizationError>,
 {
-    // Build a single-output cover from the expression (canonical via the BDD).
-    let cover: Cover = expr.into();
+    // Build a single-output, anonymous-output cover from the expression (canonical via the BDD).
+    let cover: Cover<Arc<str>, ()> = expr.into();
 
     // Minimise it with the provided (heuristic or exact) algorithm.
     let minimized = minimize_fn(&cover, config)?;

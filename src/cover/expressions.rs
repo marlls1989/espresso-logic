@@ -186,7 +186,11 @@ impl Cover {
 
         self.to_expr_by_index(output_idx)
     }
+}
 
+/// Rebuilding an expression depends only on the **input** variable names, so it works whatever the
+/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Arc<str>, ()>`).
+impl<O> Cover<Arc<str>, O> {
     /// Convert a specific output index to a boolean expression
     ///
     /// Returns an error if the index is out of bounds.
@@ -229,8 +233,8 @@ impl Cover {
 /// Convert cubes back to a boolean expression.
 ///
 /// If `variables` is empty or shorter than `num_inputs`, generates default variable names (x0, x1, ...).
-pub(super) fn cubes_to_expr<'a>(
-    cubes: impl IntoIterator<Item = &'a Cube>,
+pub(super) fn cubes_to_expr<'a, O: 'a>(
+    cubes: impl IntoIterator<Item = &'a Cube<Arc<str>, O>>,
     variables: &[Arc<str>],
     num_inputs: usize,
 ) -> BoolExpr {

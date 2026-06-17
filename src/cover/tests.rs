@@ -861,3 +861,43 @@ fn extend_equals_merge_for_named_covers() {
     assert_eq!(by_extend.num_outputs(), 2);
     assert_eq!(by_extend.num_inputs(), 2); // union {x, y}
 }
+
+// ===== BoolExpr -> Cover<Arc<str>, ()> and per-side relabel =====
+
+#[test]
+fn expr_into_anonymous_output_cover_roundtrips() {
+    let a = crate::BoolExpr::variable("a");
+    let b = crate::BoolExpr::variable("b");
+    let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
+
+    // From<&BoolExpr> yields a labelled-input, anonymous-output cover (via the BDD).
+    let cover: Cover<std::sync::Arc<str>, ()> = (&expr).into();
+    assert_eq!(cover.num_outputs(), 1);
+    assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
+
+    // Reconstruction is index-addressed (no output name needed) and recovers the function.
+    let back = cover.to_expr_by_index(0).unwrap();
+    assert!(back.equivalent_to(&expr));
+}
+
+#[test]
+fn relabel_outputs_keeps_inputs() {
+    let mut named = Cover::new(CoverType::F);
+    named
+        .add_expr(&crate::BoolExpr::variable("x"), "f")
+        .unwrap();
+
+    // Drop only the output label, keeping the named inputs.
+    let anon_out: Cover<std::sync::Arc<str>, ()> =
+        named.clone().relabel_outputs(Symbols::anonymous(1));
+    assert_eq!(anon_out.input_labels(), named.input_labels());
+    assert_eq!(anon_out.num_outputs(), 1);
+    assert_eq!(io_rows(&anon_out), io_rows(&named));
+
+    // Dual: relabel only the inputs, keeping the named output.
+    let anon_in: Cover<(), std::sync::Arc<str>> = named
+        .clone()
+        .relabel_inputs(Symbols::anonymous(named.num_inputs()));
+    assert_eq!(anon_in.output_labels(), named.output_labels());
+    assert_eq!(anon_in.num_inputs(), named.num_inputs());
+}
