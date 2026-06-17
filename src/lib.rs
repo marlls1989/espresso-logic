@@ -340,7 +340,9 @@ pub mod examples;
 
 // Re-export high-level public API
 pub use cover::pla::{PLAReader, PLAWriter};
-pub use cover::{Cover, CoverType, Cube, CubeType, Minimizable, Minterm, Symbols};
+pub use cover::{
+    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, Symbols,
+};
 pub use espresso::EspressoConfig;
 #[allow(deprecated)]
 pub use expression::Bdd;
