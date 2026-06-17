@@ -723,6 +723,206 @@ impl Cover<(), ()> {
     }
 }
 
+// ===== Cover combination (`extend` / `merge`) =====
+//
+// The by-name vs positional behaviour is keyed on the *concrete* label type: `()` inputs align by
+// position, `Arc<str>` inputs by name. A single generic `Eq + Hash` bound can't express this — `()`
+// is `Eq + Hash` yet must stay positional (all units compare equal) — so the strategies live in
+// separate concrete impls sharing the `combine_*` / `rebuild_output` helpers below.
+
+/// Build a cube's new output-membership minterm over `new_output`: for each old output position the
+/// cube asserts, set the mapped new position; everything else is unasserted (`Some(false)`).
+fn rebuild_output<I, O>(
+    cube: &Cube<I, O>,
+    new_output: &Arc<Symbols<O>>,
+    out_map: &[usize],
+    new_no: usize,
+) -> Minterm<O> {
+    let mut mask = vec![false; new_no];
+    for (old, &newp) in out_map.iter().enumerate() {
+        if cube.asserts(old) {
+            mask[newp] = true;
+        }
+    }
+    Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
+}
+
+/// `a`'s and `b`'s output index → new index for **append** (extend, anonymous outputs): `a` keeps its
+/// columns, `b`'s are appended after them.
+fn append_output_maps(a_no: usize, b_no: usize) -> (Vec<usize>, Vec<usize>) {
+    ((0..a_no).collect(), (0..b_no).map(|j| a_no + j).collect())
+}
+
+/// Output index maps for **overlay** (merge, anonymous outputs): same position ⇒ same output.
+fn overlay_output_maps(a_no: usize, b_no: usize) -> (Vec<usize>, Vec<usize>) {
+    ((0..a_no).collect(), (0..b_no).collect())
+}
+
+/// Combine two covers with **positional** input alignment (`I = ()`): inputs grow to the wider arity,
+/// padding don't-cares. Outputs are governed by the caller-supplied `new_output` table and index maps.
+fn combine_positional_inputs<O>(
+    a: &Cover<(), O>,
+    b: &Cover<(), O>,
+    new_output: Arc<Symbols<O>>,
+    a_out_map: &[usize],
+    b_out_map: &[usize],
+) -> Cover<(), O> {
+    let new_ni = a.num_inputs().max(b.num_inputs());
+    let new_input = Symbols::anonymous(new_ni);
+    let new_no = new_output.arity();
+    let rebuild_in = |m: &Minterm<()>| {
+        Minterm::from_symbols(Arc::clone(&new_input), (0..new_ni).map(|i| m.value_at(i)))
+    };
+    let cubes = a
+        .cubes
+        .iter()
+        .map(|c| {
+            Cube::new(
+                rebuild_in(c.inputs()),
+                rebuild_output(c, &new_output, a_out_map, new_no),
+                c.set,
+            )
+        })
+        .chain(b.cubes.iter().map(|c| {
+            Cube::new(
+                rebuild_in(c.inputs()),
+                rebuild_output(c, &new_output, b_out_map, new_no),
+                c.set,
+            )
+        }))
+        .collect();
+    Cover {
+        input_labeled: false,
+        output_labeled: new_output.is_labeled(),
+        input_symbols: new_input,
+        output_symbols: new_output,
+        cubes,
+        cover_type: a.cover_type,
+    }
+}
+
+/// Combine two covers with **by-name** input alignment (`I = Arc<str>`): the new input header is `a`'s
+/// names followed by `b`'s new ones; every cube is reprojected by variable identity (missing inputs
+/// become don't-care). Outputs are governed by the caller-supplied `new_output` table and index maps.
+fn combine_named_inputs<O>(
+    a: &Cover<Arc<str>, O>,
+    b: &Cover<Arc<str>, O>,
+    new_output: Arc<Symbols<O>>,
+    a_out_map: &[usize],
+    b_out_map: &[usize],
+) -> Cover<Arc<str>, O> {
+    let mut header: Vec<Arc<str>> = a.input_symbols.labels().to_vec();
+    for name in b.input_symbols.labels() {
+        if !header.iter().any(|n| n == name) {
+            header.push(Arc::clone(name));
+        }
+    }
+    let new_input = Symbols::new(header.into());
+    let new_no = new_output.arity();
+    let rebuild_in = |m: &Minterm<Arc<str>>| m.project_onto(&new_input);
+    let cubes = a
+        .cubes
+        .iter()
+        .map(|c| {
+            Cube::new(
+                rebuild_in(c.inputs()),
+                rebuild_output(c, &new_output, a_out_map, new_no),
+                c.set,
+            )
+        })
+        .chain(b.cubes.iter().map(|c| {
+            Cube::new(
+                rebuild_in(c.inputs()),
+                rebuild_output(c, &new_output, b_out_map, new_no),
+                c.set,
+            )
+        }))
+        .collect();
+    Cover {
+        input_labeled: new_input.is_labeled(),
+        output_labeled: new_output.is_labeled(),
+        input_symbols: new_input,
+        output_symbols: new_output,
+        cubes,
+        cover_type: a.cover_type,
+    }
+}
+
+impl Cover<(), ()> {
+    /// Combine `other` into this anonymous cover by **appending** its outputs after this cover's.
+    ///
+    /// Inputs are aligned positionally (grown to the wider arity, padded don't-care); the result has
+    /// `self.num_outputs() + other.num_outputs()` outputs. Use this to stack two functions into one
+    /// multi-output cover. (Contrast [`merge`](Self::merge), which overlays outputs by position.)
+    pub fn extend(&mut self, other: &Cover<(), ()>) {
+        let (a_map, b_map) = append_output_maps(self.num_outputs(), other.num_outputs());
+        let new_output = Symbols::anonymous(self.num_outputs() + other.num_outputs());
+        *self = combine_positional_inputs(self, other, new_output, &a_map, &b_map);
+    }
+
+    /// Combine `other` into this anonymous cover, **overlaying** outputs by position: output `i` of
+    /// `other` is the same output `i` of `self`. Inputs align positionally; the result has
+    /// `max(self.num_outputs(), other.num_outputs())` outputs.
+    pub fn merge(&mut self, other: &Cover<(), ()>) {
+        let (a_map, b_map) = overlay_output_maps(self.num_outputs(), other.num_outputs());
+        let new_output = Symbols::anonymous(self.num_outputs().max(other.num_outputs()));
+        *self = combine_positional_inputs(self, other, new_output, &a_map, &b_map);
+    }
+}
+
+impl Cover<Arc<str>, ()> {
+    /// Like [`Cover::<(), ()>::extend`](Cover::extend) but inputs align by **name**; outputs (anonymous)
+    /// are appended.
+    pub fn extend(&mut self, other: &Cover<Arc<str>, ()>) {
+        let (a_map, b_map) = append_output_maps(self.num_outputs(), other.num_outputs());
+        let new_output = Symbols::anonymous(self.num_outputs() + other.num_outputs());
+        *self = combine_named_inputs(self, other, new_output, &a_map, &b_map);
+    }
+
+    /// Like [`Cover::<(), ()>::merge`](Cover::merge) but inputs align by **name**; outputs (anonymous)
+    /// overlay by position.
+    pub fn merge(&mut self, other: &Cover<Arc<str>, ()>) {
+        let (a_map, b_map) = overlay_output_maps(self.num_outputs(), other.num_outputs());
+        let new_output = Symbols::anonymous(self.num_outputs().max(other.num_outputs()));
+        *self = combine_named_inputs(self, other, new_output, &a_map, &b_map);
+    }
+}
+
+impl Cover<Arc<str>, Arc<str>> {
+    /// Combine `other` into this fully-labelled cover by **variable name**: shared input/output names
+    /// line up, new ones are appended. With named outputs, appending and overlaying coincide, so
+    /// [`extend`](Self::extend) and [`merge`](Self::merge) are identical here.
+    fn combine_by_name(&mut self, other: &Cover<Arc<str>, Arc<str>>) {
+        let mut out_header: Vec<Arc<str>> = self.output_symbols.labels().to_vec();
+        for name in other.output_symbols.labels() {
+            if !out_header.iter().any(|n| n == name) {
+                out_header.push(Arc::clone(name));
+            }
+        }
+        let new_output = Symbols::new(out_header.into());
+        let a_map: Vec<usize> = (0..self.num_outputs()).collect();
+        let b_map: Vec<usize> = other
+            .output_symbols
+            .labels()
+            .iter()
+            .map(|name| new_output.index_of(name).expect("output name in union") as usize)
+            .collect();
+        *self = combine_named_inputs(self, other, new_output, &a_map, &b_map);
+    }
+
+    /// Combine `other` by variable name (shared names overlay, new names extend). Identical to
+    /// [`merge`](Self::merge) for fully-labelled covers.
+    pub fn extend(&mut self, other: &Cover<Arc<str>, Arc<str>>) {
+        self.combine_by_name(other);
+    }
+
+    /// Combine `other` by variable name (shared names overlay, new names extend). Identical to
+    /// [`extend`](Self::extend) for fully-labelled covers.
+    pub fn merge(&mut self, other: &Cover<Arc<str>, Arc<str>>) {
+        self.combine_by_name(other);
+    }
+}
+
 impl<O> Cover<Arc<str>, O> {
     /// Get input variable labels.
     ///

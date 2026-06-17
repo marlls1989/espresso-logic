@@ -54,17 +54,22 @@ fn test_from_cubes_matches_push() {
     assert_eq!(built.num_inputs(), pushed.num_inputs());
     assert_eq!(built.num_outputs(), pushed.num_outputs());
     // Same cube payloads in the same order.
-    let rows = |c: &Cover<(), ()>| -> Vec<(Vec<Option<bool>>, Vec<Option<bool>>)> {
-        c.cubes()
-            .map(|cube| {
-                (
-                    cube.inputs().iter().collect(),
-                    cube.outputs().iter().collect(),
-                )
-            })
-            .collect()
-    };
-    assert_eq!(rows(&built), rows(&pushed));
+    assert_eq!(io_rows(&built), io_rows(&pushed));
+}
+
+/// One cube's `(inputs, output-membership)` values.
+type CubeRow = (Vec<Option<bool>>, Vec<Option<bool>>);
+
+/// `(inputs, outputs)` rows of every cube, in order.
+fn io_rows<I, O>(c: &Cover<I, O>) -> Vec<CubeRow> {
+    c.cubes()
+        .map(|cube| {
+            (
+                cube.inputs().iter().collect(),
+                cube.outputs().iter().collect(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -741,4 +746,118 @@ fn cover_is_send_sync() {
     assert_send_sync::<Cover<(), ()>>();
     assert_send_sync::<Cover<u32, u32>>();
     assert_send_sync::<Cover<std::sync::Arc<str>>>();
+}
+
+// ===== extend / merge =====
+
+/// Membership rows (`Some(true)`=asserted) of every cube, in order.
+fn output_rows<I, O>(c: &Cover<I, O>) -> Vec<Vec<Option<bool>>> {
+    c.cubes()
+        .map(|cube| cube.outputs().iter().collect())
+        .collect()
+}
+
+#[test]
+fn extend_appends_anonymous_outputs() {
+    let mut a = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(
+            &[Some(true), Some(false)],
+            &[true],
+            CubeType::F,
+        )],
+    );
+    let b = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(
+            &[Some(false), Some(true)],
+            &[true],
+            CubeType::F,
+        )],
+    );
+    a.extend(&b);
+
+    assert_eq!(a.num_inputs(), 2);
+    assert_eq!(a.num_outputs(), 2); // appended: 1 + 1
+    assert_eq!(a.num_cubes(), 2);
+    // a's cube asserts output 0 only; b's cube asserts output 1 only.
+    assert_eq!(
+        output_rows(&a),
+        vec![vec![Some(true), Some(false)], vec![Some(false), Some(true)],]
+    );
+}
+
+#[test]
+fn merge_overlays_anonymous_outputs_by_position() {
+    let mut a = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(
+            &[Some(true), Some(false)],
+            &[true],
+            CubeType::F,
+        )],
+    );
+    let b = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(
+            &[Some(false), Some(true)],
+            &[true],
+            CubeType::F,
+        )],
+    );
+    a.merge(&b);
+
+    assert_eq!(a.num_inputs(), 2);
+    assert_eq!(a.num_outputs(), 1); // overlaid: max(1, 1)
+    assert_eq!(a.num_cubes(), 2);
+    // Both cubes assert the same (position-0) output.
+    assert_eq!(output_rows(&a), vec![vec![Some(true)], vec![Some(true)]]);
+}
+
+#[test]
+fn extend_aligns_named_inputs_anonymous_outputs() {
+    let arc = |s: &str| std::sync::Arc::from(s);
+    // Labelled inputs, anonymous output, built by relabelling the inputs of an anonymous cover.
+    let mut a = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
+    )
+    .relabel_inputs(Symbols::new(vec![arc("x")].into()));
+    let b = Cover::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
+    )
+    .relabel_inputs(Symbols::new(vec![arc("y")].into()));
+
+    a.extend(&b);
+    assert_eq!(a.num_inputs(), 2); // union {x, y}
+    assert_eq!(a.input_labels(), &[arc("x"), arc("y")]);
+    assert_eq!(a.num_outputs(), 2); // appended
+    assert_eq!(a.num_cubes(), 2);
+}
+
+#[test]
+fn extend_equals_merge_for_named_covers() {
+    let mut by_extend = Cover::new(CoverType::F);
+    by_extend
+        .add_expr(&crate::BoolExpr::variable("x"), "f")
+        .unwrap();
+    let mut other = Cover::new(CoverType::F);
+    other
+        .add_expr(&crate::BoolExpr::variable("y"), "g")
+        .unwrap();
+
+    let mut by_merge = by_extend.clone();
+    by_extend.extend(&other);
+    by_merge.merge(&other);
+
+    // Named outputs ⇒ extend and merge coincide.
+    assert_eq!(by_extend.num_inputs(), by_merge.num_inputs());
+    assert_eq!(by_extend.num_outputs(), by_merge.num_outputs());
+    assert_eq!(by_extend.input_labels(), by_merge.input_labels());
+    assert_eq!(by_extend.output_labels(), by_merge.output_labels());
+    assert_eq!(output_rows(&by_extend), output_rows(&by_merge));
+    // Two distinct named outputs from two single-output expressions.
+    assert_eq!(by_extend.num_outputs(), 2);
+    assert_eq!(by_extend.num_inputs(), 2); // union {x, y}
 }
