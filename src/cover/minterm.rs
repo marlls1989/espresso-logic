@@ -151,7 +151,7 @@ impl<L> Minterm<L> {
         &self.symbols
     }
 
-    /// The variable labels this minterm is defined over (its shared header).
+    /// The variables this minterm is defined over (its shared header), in index order.
     pub fn vars(&self) -> &[L] {
         self.symbols.labels()
     }

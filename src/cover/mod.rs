@@ -39,8 +39,18 @@
 //!
 //! # Dynamic Dimensions
 //!
-//! Unlike the low-level API, [`Cover`] has **dynamic dimensions** that grow automatically
-//! as cubes are added. This eliminates the need for manual dimension tracking.
+//! Unlike the low-level API, a [`Cover`] grows its dimensions automatically instead of needing
+//! them fixed up front — but *how* it grows depends on the label type:
+//!
+//! - An **anonymous** [`Cover<()>`](Cover) (built with [`Cover::<()>::anonymous`]) grows
+//!   **positionally**: [`add_cube`](Cover::add_cube) widens the cover to the widest cube seen,
+//!   matching variables by index.
+//! - A **labelled** `Cover<L>` (e.g. the default `Cover<Arc<str>>` built with [`Cover::new`] +
+//!   [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA file) grows by
+//!   **merging variable names**: new labels extend the header, shared labels line up by identity.
+//!
+//! The two modes never mix implicitly — converting between them is the explicit
+//! [`relabel`](Cover::relabel) / [`anonymize`](Cover::anonymize).
 //!
 //! # Examples
 //!
@@ -188,15 +198,23 @@ impl CoverType {
 /// - **Cover Type** - Which sets are included (F, FD, FR, or FDR)
 /// - **Labels** - Optional variable names for inputs/outputs
 ///
+/// # Generic over the label type
+///
+/// `Cover<L>` is generic over its variable-label type `L`, defaulting to `Arc<str>` (so plain
+/// `Cover` is the string-labelled form). The anonymous form [`Cover<()>`](Cover) carries no
+/// names and is purely positional. The two are kept apart by the type system — see
+/// [`relabel`](Cover::relabel) / [`anonymize`](Cover::anonymize) for explicit conversion.
+///
 /// # Dynamic Dimensions
 ///
-/// Unlike the low-level API, `Cover` has **dynamic dimensions** that automatically grow
-/// as cubes are added. This means:
+/// Unlike the low-level API, a `Cover` grows its dimensions automatically as cubes are added, so
+/// there is no need to pre-declare or track them; existing cubes are padded with don't-cares when
+/// the cover widens. *How* it grows depends on the label type:
 ///
-/// - Start with an empty cover (0 inputs, 0 outputs)
-/// - Add cubes of any size - dimensions expand automatically
-/// - No need to pre-declare or track dimensions
-/// - Existing cubes are padded with don't-cares when dimensions grow
+/// - An **anonymous** [`Cover<()>`](Cover) grows **positionally** via
+///   [`add_cube`](Cover::add_cube) (variables matched by index).
+/// - A **labelled** `Cover<L>` grows by **merging variable names** via
+///   [`add_expr`](Cover::add_expr) / [`with_labels`](Cover::with_labels) / PLA input.
 ///
 /// This makes `Cover` much easier to use than the low-level [`crate::espresso::EspressoCover`].
 ///
@@ -397,8 +415,8 @@ impl<L> Cover<L> {
             self.num_outputs(),
             "relabel: output arity mismatch"
         );
-        let input_labeled = input_symbols.is_fully_labeled() && input_symbols.arity() > 0;
-        let output_labeled = output_symbols.is_fully_labeled() && output_symbols.arity() > 0;
+        let input_labeled = input_symbols.is_labeled();
+        let output_labeled = output_symbols.is_labeled();
         let cubes = self
             .cubes
             .into_iter()
@@ -581,7 +599,8 @@ impl Cover<()> {
     /// are don't-care, new output positions unasserted). No labels are synthesised.
     fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
         if min_inputs > self.num_inputs() {
-            let new_syms = self.input_symbols.widen(min_inputs);
+            // A `Cover<()>` is always anonymous, so widening is just a wider anonymous table.
+            let new_syms = Symbols::anonymous(min_inputs);
             for cube in &mut self.cubes {
                 cube.inputs = Minterm::from_symbols(
                     Arc::clone(&new_syms),
@@ -592,7 +611,7 @@ impl Cover<()> {
         }
 
         if min_outputs > self.num_outputs() {
-            let new_syms = self.output_symbols.widen(min_outputs);
+            let new_syms = Symbols::anonymous(min_outputs);
             for cube in &mut self.cubes {
                 let old = cube.outputs.num_vars();
                 cube.outputs = Minterm::from_symbols(

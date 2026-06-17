@@ -237,11 +237,10 @@ where
     let no = cover.num_outputs();
     let input_symbols = Arc::clone(cover.input_symbols());
     let output_symbols = Arc::clone(cover.output_symbols());
-    // Espresso returns cubes on anonymous headers; re-point each onto the cover's real tables
-    // (positionally — the variable order is preserved across the boundary).
-    // Espresso returns positional cubes (anonymous `Arc<str>` headers); re-point each onto the
-    // cover's real `Symbols<L>` table by reading values positionally.
-    let rehome = |cube: &Cube<Arc<str>>| -> Cube<L> {
+    // Espresso returns anonymous positional cubes (`Cube<()>`); re-point each onto the cover's
+    // real `Symbols<L>` table by reading values positionally (variable order is preserved across
+    // the boundary).
+    let rehome = |cube: &Cube<()>| -> Cube<L> {
         let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
         let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
         let outputs = (0..no).map(|i| cube.outputs().value_at(i));

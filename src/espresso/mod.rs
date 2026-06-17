@@ -373,8 +373,8 @@
 
 pub mod error;
 
-use crate::cover::{extend_header, Minterm, Symbols};
 pub use crate::cover::{Cube, CubeType};
+use crate::cover::{Minterm, Symbols};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
 use std::marker::PhantomData;
@@ -738,8 +738,9 @@ impl EspressoCover {
     /// for cube in extracted.iter() {
     ///     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
     /// }
-    /// // Cube: [Some(false), Some(true)] -> [true]
-    /// // Cube: [Some(true), None] -> [true]
+    /// // Low-level cubes are anonymous (positional), so labels print by index:
+    /// // Cube: Minterm { 0: 0, 1: 1 } -> Minterm { 0: 1 }
+    /// // Cube: Minterm { 0: 1, 1: - } -> Minterm { 0: 1 }
     /// # Ok(())
     /// # }
     /// ```
@@ -748,10 +749,11 @@ impl EspressoCover {
         num_inputs: usize,
         num_outputs: usize,
         cube_type: CubeType,
-    ) -> Arc<[Cube]> {
-        // The low-level layer has no variable names, so cubes get anonymous `x*/y*` headers.
-        let input_syms = Symbols::new(extend_header(&[], num_inputs, 'x'));
-        let output_syms = Symbols::new(extend_header(&[], num_outputs, 'y'));
+    ) -> Arc<[Cube<()>]> {
+        // The low-level layer has no variable names, so cubes are anonymous (`L = ()`):
+        // positional only. Callers that need names re-point the cubes onto a real symbol table.
+        let input_syms = Symbols::anonymous(num_inputs);
+        let output_syms = Symbols::anonymous(num_outputs);
         unsafe {
             let count = (*self.ptr).count as usize;
             let wsize = (*self.ptr).wsize as usize;
