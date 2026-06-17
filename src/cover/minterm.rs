@@ -29,8 +29,8 @@
 //! C library's cube layout, which makes set operations cheap (word-wise bit ops) and the Espresso
 //! boundary close to a bit-repack.
 
-use super::symbols::{self, Symbols};
-use std::borrow::{Borrow, Cow};
+use super::symbols::Symbols;
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
@@ -250,19 +250,19 @@ impl<L: Ord + Hash + Clone> Minterm<L> {
     ///
     /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
     /// onto the sorted union of their variables.
-    fn aligned<'a>(&'a self, other: &'a Self) -> (Cow<'a, [u64]>, Cow<'a, [u64]>, usize) {
-        // Same index space (pointer-equal, or structurally-equal labels) → no projection needed.
-        if self.symbols == other.symbols {
-            (
-                Cow::Borrowed(&self.values[..]),
-                Cow::Borrowed(&other.values[..]),
-                self.num_vars(),
-            )
-        } else {
-            let union = symbols::union(&self.symbols, &other.symbols);
-            let a = self.project_words(&union);
-            let b = other.project_words(&union);
-            (Cow::Owned(a), Cow::Owned(b), union.arity())
+    /// Merge-join the two minterms' fields, aligned by variable identity in sorted-label order.
+    ///
+    /// Yields `(self_field, other_field)` per variable of the union; an absent variable reads as
+    /// don't-care. O(n+m) over the two cached sorted label sequences — no union set, no projection.
+    /// Callers on a shared symbol table use the faster word-wise path instead.
+    fn merged_fields<'a>(&'a self, other: &'a Self) -> MergedFields<'a, L> {
+        MergedFields {
+            a: self,
+            b: other,
+            sa: self.symbols.sorted_order(),
+            sb: other.symbols.sorted_order(),
+            i: 0,
+            j: 0,
         }
     }
 
@@ -284,9 +284,15 @@ impl<L: Ord + Hash + Clone> Minterm<L> {
     /// assert!(minterm2.is_subset_of(&minterm1));
     /// ```
     pub fn is_subset_of(&self, other: &Self) -> bool {
-        let (a, b, _) = self.aligned(other);
-        // self ⊆ other  ⟺  every allowed bit of self is allowed in other  ⟺  a & !b == 0.
-        a.iter().zip(b.iter()).all(|(&x, &y)| x & !y == 0)
+        // self ⊆ other  ⟺  every allowed bit of self is allowed in other  ⟺  self & !other == 0.
+        if self.symbols == other.symbols {
+            self.values
+                .iter()
+                .zip(other.values.iter())
+                .all(|(&x, &y)| x & !y == 0)
+        } else {
+            self.merged_fields(other).all(|(sf, of)| sf & !of == 0)
+        }
     }
 
     /// Whether `self` covers every position fixed in `other`. The dual of [`is_subset_of`](Self::is_subset_of).
@@ -323,19 +329,73 @@ impl<L: Ord + Hash + Clone> Minterm<L> {
     /// assert!(!minterm1.is_disjoint_with(&minterm3));
     /// ```
     pub fn is_disjoint_with(&self, other: &Self) -> bool {
-        let (a, b, num_vars) = self.aligned(other);
-        // Intersect the value-sets; a field becomes empty (00) exactly where the two disagree.
-        for (k, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
-            let inter = x & y;
-            let allows0 = inter & ALLOWS0_MASK;
-            let allows1 = (inter >> 1) & ALLOWS0_MASK;
-            let nonempty = allows0 | allows1;
-            let valid = valid_even_mask(k, num_vars);
-            if nonempty & valid != valid {
-                return true;
+        if self.symbols == other.symbols {
+            // Word-wise: a field's intersection is empty (00) exactly where the two disagree.
+            for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
+                let inter = x & y;
+                let allows0 = inter & ALLOWS0_MASK;
+                let allows1 = (inter >> 1) & ALLOWS0_MASK;
+                let nonempty = allows0 | allows1;
+                let valid = valid_even_mask(k, self.num_vars());
+                if nonempty & valid != valid {
+                    return true;
+                }
             }
+            false
+        } else {
+            // A field whose intersection is empty means the two fix that variable oppositely.
+            self.merged_fields(other).any(|(sf, of)| sf & of == 0)
         }
-        false
+    }
+}
+
+/// Merge-join iterator over two minterms' fields, aligned by variable identity in sorted-label
+/// order. Yields `(self_field, other_field)` per variable of the union; a variable absent from one
+/// side reads as don't-care (`FIELD_DC`). O(n+m) over the two sorted label sequences.
+struct MergedFields<'a, L> {
+    a: &'a Minterm<L>,
+    b: &'a Minterm<L>,
+    sa: &'a [u32],
+    sb: &'a [u32],
+    i: usize,
+    j: usize,
+}
+
+impl<L: Ord> Iterator for MergedFields<'_, L> {
+    type Item = (u8, u8);
+
+    fn next(&mut self) -> Option<(u8, u8)> {
+        let la = self.a.symbols.labels();
+        let lb = self.b.symbols.labels();
+        match (self.sa.get(self.i), self.sb.get(self.j)) {
+            (Some(&ia), Some(&ib)) => match la[ia as usize].cmp(&lb[ib as usize]) {
+                Ordering::Less => {
+                    self.i += 1;
+                    Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+                }
+                Ordering::Greater => {
+                    self.j += 1;
+                    Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+                }
+                Ordering::Equal => {
+                    self.i += 1;
+                    self.j += 1;
+                    Some((
+                        field_at(&self.a.values, ia as usize),
+                        field_at(&self.b.values, ib as usize),
+                    ))
+                }
+            },
+            (Some(&ia), None) => {
+                self.i += 1;
+                Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+            }
+            (None, Some(&ib)) => {
+                self.j += 1;
+                Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+            }
+            (None, None) => None,
+        }
     }
 }
 
@@ -349,15 +409,12 @@ fn rank(value: Option<bool>) -> u8 {
     }
 }
 
-/// Compare two minterms by value, aligned by variable identity.
+/// Compare two minterms by value, aligned by variable identity over the sorted union of their
+/// variables (an absent variable counts as don't-care; at each variable don't-care < false < true).
 ///
-/// Both share one symbol space → compared field-by-field in index order; different spaces → both are
-/// projected onto the sorted union of their variables (an absent variable counts as don't-care), and
-/// at each variable don't-care < false < true. Equality is independent of header ordering, so
-/// `Minterm` can be used as a `BTreeSet`/`BTreeMap` key for deduplication.
-///
-/// This reuses [`aligned`](Self::aligned): same-space comparisons touch only the packed value words
-/// (no per-comparison allocation), and the sorted union is built only when the headers truly differ.
+/// The order is total and independent of header ordering, so `Minterm` can be used as a
+/// `BTreeSet`/`BTreeMap` key for deduplication. It is computed by a single O(n+m) merge of the two
+/// minterms' sorted label sequences — no per-comparison set or projection is allocated.
 ///
 /// # Examples
 ///
@@ -372,9 +429,8 @@ fn rank(value: Option<bool>) -> u8 {
 /// ```
 impl<L: Ord + Hash + Clone> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let (a, b, num_vars) = self.aligned(other);
-        for i in 0..num_vars {
-            match rank(decode(field_at(&a, i))).cmp(&rank(decode(field_at(&b, i)))) {
+        for (sf, of) in self.merged_fields(other) {
+            match rank(decode(sf)).cmp(&rank(decode(of))) {
                 Ordering::Equal => continue,
                 non_eq => return non_eq,
             }
@@ -391,9 +447,12 @@ impl<L: Ord + Hash + Clone> PartialOrd for Minterm<L> {
 
 impl<L: Ord + Hash + Clone> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
-        // Equal value-sets pack to identical words under a shared layout, so compare words directly.
-        let (a, b, _) = self.aligned(other);
-        a == b
+        if self.symbols == other.symbols {
+            // Same layout: equal value-sets pack to identical words.
+            self.values == other.values
+        } else {
+            self.merged_fields(other).all(|(sf, of)| sf == of)
+        }
     }
 }
 
@@ -523,6 +582,34 @@ mod tests {
         assert_eq!(m1, m2);
         assert_eq!(m2.value_of("a"), Some(true));
         assert_eq!(m2.value_of("b"), None);
+    }
+
+    #[test]
+    fn merge_path_matches_shared_path() {
+        // Same two functions built (a) on one shared header → word path, and (b) on independent,
+        // differently-permuted headers → merge-join path. Set-ops and ordering must agree.
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(true), None, Some(false)]);
+        let b_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(false), None]);
+        // a = {a:1, b:-, c:0}; b = {a:1, b:0, c:-} expressed over permuted headers.
+        let a_perm = Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(false), Some(true), None]);
+        let b_perm = Minterm::from_symbols(syms(&["b", "c", "a"]), [Some(false), None, Some(true)]);
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+        assert_eq!(
+            a_shared.is_subset_of(&b_shared),
+            a_perm.is_subset_of(&b_perm)
+        );
+        assert_eq!(
+            b_shared.is_subset_of(&a_shared),
+            b_perm.is_subset_of(&a_perm)
+        );
+        assert_eq!(
+            a_shared.is_disjoint_with(&b_shared),
+            a_perm.is_disjoint_with(&b_perm)
+        );
+        assert_eq!(a_shared.cmp(&b_shared), a_perm.cmp(&b_perm));
     }
 
     #[test]

@@ -21,6 +21,9 @@ pub struct Symbols<L = Arc<str>> {
     labels: Arc<[L]>,
     /// label → index, built on first [`index_of`](Symbols::index_of).
     index: OnceLock<HashMap<L, u32>>,
+    /// positions sorted by label, built on first [`sorted_order`](Symbols::sorted_order); used by
+    /// the merge-join that aligns minterms of different headers.
+    sorted: OnceLock<Box<[u32]>>,
 }
 
 /// Two symbol tables are equal when they describe the same labels in the same order — i.e. the same
@@ -43,6 +46,7 @@ impl<L> Symbols<L> {
         Arc::new(Symbols {
             labels,
             index: OnceLock::new(),
+            sorted: OnceLock::new(),
         })
     }
 
@@ -84,11 +88,16 @@ impl<L: Eq + Hash + Clone> Symbols<L> {
     }
 }
 
-/// The sorted union of two symbol tables (labels deduplicated), as a fresh shared table.
-pub(crate) fn union<L: Ord + Clone>(a: &Symbols<L>, b: &Symbols<L>) -> Arc<Symbols<L>> {
-    let mut set: std::collections::BTreeSet<L> = std::collections::BTreeSet::new();
-    for name in a.labels.iter().chain(b.labels.iter()) {
-        set.insert(name.clone());
+impl<L: Ord> Symbols<L> {
+    /// Positions `0..arity` sorted by label, built once and cached.
+    ///
+    /// Lets minterms of different headers be aligned by a linear merge of their two sorted label
+    /// sequences (O(n+m)) rather than by building a union set and re-projecting.
+    pub(crate) fn sorted_order(&self) -> &[u32] {
+        self.sorted.get_or_init(|| {
+            let mut order: Vec<u32> = (0..self.labels.len() as u32).collect();
+            order.sort_by(|&x, &y| self.labels[x as usize].cmp(&self.labels[y as usize]));
+            order.into_boxed_slice()
+        })
     }
-    Symbols::new(set.into_iter().collect())
 }
