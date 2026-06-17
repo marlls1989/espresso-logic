@@ -2,14 +2,18 @@
 //!
 //! A `Minterm` models one row of a Boolean cover — a value per variable, where each value is
 //! `Some(true)` (1), `Some(false)` (0), or `None` (don't-care). Unlike a bare positional slice, a
-//! `Minterm` **carries its variable names** (via a shared [`Symbols`] table), so comparisons align
+//! `Minterm` **carries its variable labels** (via a shared [`Symbols`] table), so comparisons align
 //! by variable identity rather than by raw position. This makes it safe to compare minterms that
 //! came from different orderings, and lets the same type serve as both the input pattern and the
 //! (membership) output pattern of a cube.
 //!
+//! The label type is generic and defaults to `Arc<str>`. The core type imposes no bound on `L`;
+//! richer operations add bounds on their own `impl` blocks (label lookup needs `L: Eq + Hash`,
+//! ordering/set-ops need `L: Ord`, `Debug` needs `L: Display`).
+//!
 //! # Representation
 //!
-//! Names live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols>`, so
+//! Labels live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols<L>>`, so
 //! same-cover comparisons take a pointer-equality fast path and label lookup is O(1)). Values are
 //! packed two bits per variable using Espresso's value-set encoding — for each variable, one bit
 //! means "0 is allowed" and one means "1 is allowed":
@@ -26,10 +30,11 @@
 //! boundary close to a bit-repack.
 
 use super::symbols::{self, Symbols};
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::hash::Hash;
 use std::sync::Arc;
 
 /// Mask selecting the "allows-0" bit of every variable field in a word.
@@ -97,13 +102,13 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
 
 /// A label-carrying row of tri-state values. See the [module docs](self) for the representation.
 #[derive(Clone)]
-pub struct Minterm {
-    symbols: Arc<Symbols>,
+pub struct Minterm<L = Arc<str>> {
+    symbols: Arc<Symbols<L>>,
     /// Packed 2-bit value-set fields, 32 variables per word.
     values: Arc<[u64]>,
 }
 
-impl fmt::Debug for Minterm {
+impl<L: fmt::Display> fmt::Debug for Minterm<L> {
     /// Renders values by name — e.g. `Minterm { a: 1, b: -, c: 0 }` where `1`/`0`/`-` are
     /// true/false/don't-care — rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -120,12 +125,12 @@ impl fmt::Debug for Minterm {
     }
 }
 
-impl Minterm {
+impl<L> Minterm<L> {
     /// Build a minterm from values against a shared [`Symbols`] table.
     ///
     /// `values` is read positionally against `symbols`; both describe the same number of variables.
     /// Minterms built from the *same* `Arc<Symbols>` compare via the pointer-equality fast path.
-    pub fn from_symbols<I>(symbols: Arc<Symbols>, values: I) -> Self
+    pub fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
     where
         I: IntoIterator<Item = Option<bool>>,
     {
@@ -136,33 +141,13 @@ impl Minterm {
         }
     }
 
-    /// Build a standalone minterm from a slice of values, generating anonymous `x0, x1, …` names.
-    ///
-    /// Convenient for tests and ad-hoc use. Minterms built this way share no symbol table, so they
-    /// compare via the (correct, slightly slower) name-aligned path.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::Minterm;
-    ///
-    /// let m = Minterm::new(&[Some(true), None, Some(false)]);
-    /// assert_eq!(m.num_vars(), 3);
-    /// ```
-    pub fn new(values: &[Option<bool>]) -> Self {
-        let labels: Arc<[Arc<str>]> = (0..values.len())
-            .map(|i| Arc::from(format!("x{i}").as_str()))
-            .collect();
-        Self::from_symbols(Symbols::new(labels), values.iter().copied())
-    }
-
     /// The shared symbol table this minterm is defined over.
-    pub fn symbols(&self) -> &Arc<Symbols> {
+    pub fn symbols(&self) -> &Arc<Symbols<L>> {
         &self.symbols
     }
 
-    /// The variable names this minterm is defined over (its shared header).
-    pub fn vars(&self) -> &[Arc<str>] {
+    /// The variable labels this minterm is defined over (its shared header).
+    pub fn vars(&self) -> &[L] {
         self.symbols.labels()
     }
 
@@ -182,24 +167,54 @@ impl Minterm {
         }
     }
 
-    /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
-    pub fn value_of(&self, name: &str) -> Option<bool> {
-        match self.symbols.index_of(name) {
-            Some(i) => decode(field_at(&self.values, i as usize)),
-            None => None,
-        }
-    }
-
     /// Iterate over the values in this minterm's own variable order.
     pub fn iter(&self) -> impl Iterator<Item = Option<bool>> + '_ {
         (0..self.num_vars()).map(move |i| decode(field_at(&self.values, i)))
+    }
+}
+
+impl Minterm<Arc<str>> {
+    /// Build a standalone minterm from a slice of values, generating anonymous `x0, x1, …` names.
+    ///
+    /// Convenient for tests and ad-hoc use. Minterms built this way share no symbol table, so they
+    /// compare via the (correct, slightly slower) name-aligned path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let m = Minterm::new(&[Some(true), None, Some(false)]);
+    /// assert_eq!(m.num_vars(), 3);
+    /// ```
+    pub fn new(values: &[Option<bool>]) -> Self {
+        let labels: Arc<[Arc<str>]> = (0..values.len())
+            .map(|i| Arc::from(format!("x{i}").as_str()))
+            .collect();
+        Self::from_symbols(Symbols::new(labels), values.iter().copied())
+    }
+}
+
+impl<L: Eq + Hash + Clone> Minterm<L> {
+    /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
+    ///
+    /// Accepts any borrowed form of the label (so a `Minterm<Arc<str>>` can be queried with `&str`).
+    pub fn value_of<Q>(&self, label: &Q) -> Option<bool>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        match self.symbols.index_of(label) {
+            Some(i) => decode(field_at(&self.values, i as usize)),
+            None => None,
+        }
     }
 
     /// Re-express this minterm over a `target` symbol table (the union-extend primitive).
     ///
     /// Variables of `target` absent from `self` become don't-care; variables of `self` absent from
     /// `target` are dropped. The result shares `target` as its symbol table.
-    pub fn project_onto(&self, target: &Arc<Symbols>) -> Minterm {
+    pub fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
         if Arc::ptr_eq(&self.symbols, target) {
             return self.clone();
         }
@@ -213,7 +228,7 @@ impl Minterm {
     ///
     /// Returns the bare word buffer: callers either freeze it into storage (`project_onto`) or use
     /// it as a throwaway for an aligned set operation (`aligned`).
-    fn project_words(&self, target: &Symbols) -> Vec<u64> {
+    fn project_words(&self, target: &Symbols<L>) -> Vec<u64> {
         let mut words = vec![0u64; words_for(target.arity())];
         for (i, name) in target.labels().iter().enumerate() {
             let field = self
@@ -225,7 +240,9 @@ impl Minterm {
         }
         words
     }
+}
 
+impl<L: Ord + Hash + Clone> Minterm<L> {
     /// Align two minterms to a common word layout for per-field set operations.
     ///
     /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
@@ -330,7 +347,7 @@ fn rank(value: Option<bool>) -> u8 {
 
 /// Compare two minterms by value, aligned by variable identity over their sorted union.
 ///
-/// The order is total and independent of header ordering: variables are visited in name order, an
+/// The order is total and independent of header ordering: variables are visited in label order, an
 /// absent variable counts as don't-care, and at each variable don't-care < false < true. This makes
 /// `Minterm` usable as a `BTreeSet`/`BTreeMap` key for deduplication.
 ///
@@ -345,11 +362,11 @@ fn rank(value: Option<bool>) -> u8 {
 /// assert!(minterm1 < minterm2);
 /// assert!(minterm2 > minterm1);
 /// ```
-impl Ord for Minterm {
+impl<L: Ord + Hash + Clone> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let mut names: BTreeSet<&str> = BTreeSet::new();
-        names.extend(self.vars().iter().map(|n| n.as_ref()));
-        names.extend(other.vars().iter().map(|n| n.as_ref()));
+        let mut names: BTreeSet<&L> = BTreeSet::new();
+        names.extend(self.vars().iter());
+        names.extend(other.vars().iter());
         for name in names {
             let a = rank(self.value_of(name));
             let b = rank(other.value_of(name));
@@ -362,25 +379,25 @@ impl Ord for Minterm {
     }
 }
 
-impl PartialOrd for Minterm {
+impl<L: Ord + Hash + Clone> PartialOrd for Minterm<L> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for Minterm {
+impl<L: Ord + Hash + Clone> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl Eq for Minterm {}
+impl<L: Ord + Hash + Clone> Eq for Minterm<L> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn syms(names: &[&str]) -> Arc<Symbols> {
+    fn syms(names: &[&str]) -> Arc<Symbols<Arc<str>>> {
         Symbols::new(names.iter().map(|s| Arc::from(*s)).collect())
     }
 

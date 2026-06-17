@@ -280,25 +280,25 @@ impl CoverType {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Cover {
+pub struct Cover<L = Arc<str>> {
     /// Canonical input symbol table, shared by every cube's input minterm.
     ///
     /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
     /// can serve as the shared `Arc` for the minterm fast-comparison path.
-    input_symbols: Arc<Symbols>,
+    input_symbols: Arc<Symbols<L>>,
     /// Canonical output symbol table, shared by every cube's output minterm.
-    output_symbols: Arc<Symbols>,
+    output_symbols: Arc<Symbols<L>>,
     /// Whether input names were explicitly supplied (vs. auto-generated); controls PLA `.ilb`.
     input_labeled: bool,
     /// Whether output names were explicitly supplied; controls PLA `.ob`.
     output_labeled: bool,
     /// Cubes (merged tri-state product terms).
-    pub(crate) cubes: Vec<Cube>,
+    pub(crate) cubes: Vec<Cube<L>>,
     /// Cover type (F, FD, FR, or FDR)
     pub(crate) cover_type: CoverType,
 }
 
-impl Cover {
+impl Cover<Arc<str>> {
     /// Create a new empty cover with the specified type
     ///
     /// # Examples
@@ -571,7 +571,7 @@ impl Cover {
     }
 }
 
-impl Default for Cover {
+impl Default for Cover<Arc<str>> {
     fn default() -> Self {
         Self::new(CoverType::F)
     }

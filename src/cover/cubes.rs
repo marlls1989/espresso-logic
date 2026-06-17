@@ -13,6 +13,8 @@
 //! byte-identically to the C library.
 
 use super::minterm::Minterm;
+use std::fmt;
+use std::sync::Arc;
 
 /// Which of a cover's three sets a cube belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,17 +28,29 @@ pub enum CubeType {
 }
 
 /// A cube (product term) in a cover: an input pattern, an output-membership mask, and a set tag.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Cube {
-    pub(crate) inputs: Minterm,
+///
+/// Generic over the variable label type `L` (defaults to `Arc<str>`).
+#[derive(Clone)]
+pub struct Cube<L = Arc<str>> {
+    pub(crate) inputs: Minterm<L>,
     /// Membership mask: `Some(true)` where this cube asserts the output, `Some(false)` otherwise.
-    pub(crate) outputs: Minterm,
+    pub(crate) outputs: Minterm<L>,
     pub(crate) set: CubeType,
 }
 
-impl Cube {
+impl<L: fmt::Display> fmt::Debug for Cube<L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Cube")
+            .field("inputs", &self.inputs)
+            .field("outputs", &self.outputs)
+            .field("set", &self.set)
+            .finish()
+    }
+}
+
+impl<L> Cube<L> {
     /// Build a cube from its input pattern, output-membership mask, and set tag.
-    pub(crate) fn new(inputs: Minterm, outputs: Minterm, set: CubeType) -> Self {
+    pub(crate) fn new(inputs: Minterm<L>, outputs: Minterm<L>, set: CubeType) -> Self {
         Cube {
             inputs,
             outputs,
@@ -45,7 +59,7 @@ impl Cube {
     }
 
     /// The input pattern of this cube.
-    pub fn inputs(&self) -> &Minterm {
+    pub fn inputs(&self) -> &Minterm<L> {
         &self.inputs
     }
 
@@ -55,7 +69,7 @@ impl Cube {
     /// means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))" and
     /// `Some(false)` means "it does not". For an FR/FDR cover, a given input pattern can therefore
     /// appear in more than one cube (e.g. an F cube and an R cube), each with its own mask.
-    pub fn outputs(&self) -> &Minterm {
+    pub fn outputs(&self) -> &Minterm<L> {
         &self.outputs
     }
 
