@@ -12,6 +12,7 @@
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
 use super::{BoolExpr, BoolExprAst};
+use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -19,22 +20,22 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ProductTerm {
     /// Literals in this product term: variable name -> polarity (true = positive, false = negative)
-    literals: BTreeMap<Arc<str>, bool>,
+    literals: BTreeMap<Symbol, bool>,
 }
 
 impl ProductTerm {
     /// Create a new product term from literals
-    fn new(literals: BTreeMap<Arc<str>, bool>) -> Self {
+    fn new(literals: BTreeMap<Symbol, bool>) -> Self {
         ProductTerm { literals }
     }
 
     /// Check if this term contains a given literal
-    fn contains_literal(&self, var: &Arc<str>, polarity: bool) -> bool {
+    fn contains_literal(&self, var: &Symbol, polarity: bool) -> bool {
         self.literals.get(var) == Some(&polarity)
     }
 
     /// Remove a literal from this term
-    fn remove_literal(&mut self, var: &Arc<str>) -> Option<bool> {
+    fn remove_literal(&mut self, var: &Symbol) -> Option<bool> {
         self.literals.remove(var)
     }
 
@@ -53,7 +54,7 @@ impl ProductTerm {
             .literals
             .iter()
             .map(|(var, &polarity)| {
-                let v = Arc::new(BoolExprAst::Variable(Arc::clone(var)));
+                let v = Arc::new(BoolExprAst::Variable(var.clone()));
                 if polarity {
                     v
                 } else {
@@ -97,23 +98,21 @@ impl SopForm {
 /// Extract common divisors from a set of product terms
 ///
 /// Finds literals that appear in multiple terms and can be factored out.
-fn find_common_divisors(terms: &[ProductTerm]) -> Vec<(Arc<str>, bool)> {
+fn find_common_divisors(terms: &[ProductTerm]) -> Vec<(Symbol, bool)> {
     if terms.len() < 2 {
         return Vec::new();
     }
 
     // Count occurrences of each literal
-    let mut literal_counts: HashMap<(Arc<str>, bool), usize> = HashMap::new();
+    let mut literal_counts: HashMap<(Symbol, bool), usize> = HashMap::new();
     for term in terms {
         for (var, &polarity) in &term.literals {
-            *literal_counts
-                .entry((Arc::clone(var), polarity))
-                .or_insert(0) += 1;
+            *literal_counts.entry((var.clone(), polarity)).or_insert(0) += 1;
         }
     }
 
     // Find literals that appear in at least 2 terms
-    let mut common: Vec<(Arc<str>, bool)> = literal_counts
+    let mut common: Vec<(Symbol, bool)> = literal_counts
         .into_iter()
         .filter(|(_, count)| *count >= 2)
         .map(|((var, polarity), _)| (var, polarity))
@@ -131,7 +130,7 @@ fn find_common_divisors(terms: &[ProductTerm]) -> Vec<(Arc<str>, bool)> {
 /// - Terms not containing the literal
 fn factor_literal(
     terms: Vec<ProductTerm>,
-    var: &Arc<str>,
+    var: &Symbol,
     polarity: bool,
 ) -> (Vec<ProductTerm>, Vec<ProductTerm>) {
     let mut with_literal = Vec::new();
@@ -169,7 +168,7 @@ fn factorise_once(terms: Vec<ProductTerm>) -> Arc<BoolExprAst> {
         let (with_literal, without_literal) = factor_literal(terms, &var, polarity);
 
         // Create the factored part: var * (factorised_with_literal)
-        let var_ast = Arc::new(BoolExprAst::Variable(Arc::clone(&var)));
+        let var_ast = Arc::new(BoolExprAst::Variable(var.clone()));
         let var_ast = if polarity {
             var_ast
         } else {
@@ -198,7 +197,7 @@ fn factorise_once(terms: Vec<ProductTerm>) -> Arc<BoolExprAst> {
 ///
 /// Prefers literals that appear in the most terms, with tie-breaker
 /// favouring lexicographically later variables (e.g., 'q' over 'a').
-fn find_best_factor(terms: &[ProductTerm]) -> Option<(Arc<str>, bool)> {
+fn find_best_factor(terms: &[ProductTerm]) -> Option<(Symbol, bool)> {
     let common = find_common_divisors(terms);
     if common.is_empty() {
         return None;
@@ -207,7 +206,7 @@ fn find_best_factor(terms: &[ProductTerm]) -> Option<(Arc<str>, bool)> {
     // Score each potential factor
     let mut best_factor = None;
     let mut best_score = 0;
-    let mut best_var_name: Arc<str> = Arc::from("");
+    let mut best_var_name: Symbol = Symbol::from("");
 
     for (var, polarity) in common {
         let terms_with_literal = terms
@@ -226,7 +225,7 @@ fn find_best_factor(terms: &[ProductTerm]) -> Option<(Arc<str>, bool)> {
         // Tie-breaker: prefer lexicographically later variables
         if score > best_score || (score == best_score && var.as_ref() > best_var_name.as_ref()) {
             best_score = score;
-            best_factor = Some((Arc::clone(&var), polarity));
+            best_factor = Some((var.clone(), polarity));
             best_var_name = var;
         }
     }
@@ -265,7 +264,7 @@ fn count_operators(expr: &BoolExpr) -> usize {
 /// This is the core factorization function that returns just the AST.
 /// Used by BDD-to-AST conversion to produce beautiful expressions.
 pub(crate) fn factorise_cubes_to_ast(
-    cubes: Vec<(BTreeMap<Arc<str>, bool>, bool)>,
+    cubes: Vec<(BTreeMap<Symbol, bool>, bool)>,
 ) -> Arc<BoolExprAst> {
     // Convert to ProductTerm format
     let terms: Vec<ProductTerm> = cubes
@@ -288,7 +287,7 @@ pub(crate) fn factorise_cubes_to_ast(
 ///
 /// Works entirely with AST to preserve the factored structure, then converts
 /// to BoolExpr at the very end.
-pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Arc<str>, bool>, bool)>) -> BoolExpr {
+pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Symbol, bool>, bool)>) -> BoolExpr {
     // Get factored AST
     let factored_ast = factorise_cubes_to_ast(cubes);
 
@@ -320,40 +319,40 @@ mod tests {
     fn test_common_divisor_extraction() {
         // Create terms: a*b, a*c
         let mut term1_lits = BTreeMap::new();
-        term1_lits.insert(Arc::from("a"), true);
-        term1_lits.insert(Arc::from("b"), true);
+        term1_lits.insert(Symbol::from("a"), true);
+        term1_lits.insert(Symbol::from("b"), true);
         let term1 = ProductTerm::new(term1_lits);
 
         let mut term2_lits = BTreeMap::new();
-        term2_lits.insert(Arc::from("a"), true);
-        term2_lits.insert(Arc::from("c"), true);
+        term2_lits.insert(Symbol::from("a"), true);
+        term2_lits.insert(Symbol::from("c"), true);
         let term2 = ProductTerm::new(term2_lits);
 
         let terms = vec![term1, term2];
         let common = find_common_divisors(&terms);
 
-        assert!(common.contains(&(Arc::from("a"), true)));
+        assert!(common.contains(&(Symbol::from("a"), true)));
     }
 
     #[test]
     fn test_factor_literal() {
         // Create terms: a*b, a*c, d
         let mut term1_lits = BTreeMap::new();
-        term1_lits.insert(Arc::from("a"), true);
-        term1_lits.insert(Arc::from("b"), true);
+        term1_lits.insert(Symbol::from("a"), true);
+        term1_lits.insert(Symbol::from("b"), true);
         let term1 = ProductTerm::new(term1_lits);
 
         let mut term2_lits = BTreeMap::new();
-        term2_lits.insert(Arc::from("a"), true);
-        term2_lits.insert(Arc::from("c"), true);
+        term2_lits.insert(Symbol::from("a"), true);
+        term2_lits.insert(Symbol::from("c"), true);
         let term2 = ProductTerm::new(term2_lits);
 
         let mut term3_lits = BTreeMap::new();
-        term3_lits.insert(Arc::from("d"), true);
+        term3_lits.insert(Symbol::from("d"), true);
         let term3 = ProductTerm::new(term3_lits);
 
         let terms = vec![term1, term2, term3];
-        let (with_a, without_a) = factor_literal(terms, &Arc::from("a"), true);
+        let (with_a, without_a) = factor_literal(terms, &Symbol::from("a"), true);
 
         assert_eq!(with_a.len(), 2); // b and c
         assert_eq!(without_a.len(), 1); // d
@@ -364,12 +363,12 @@ mod tests {
         // Test: a*b + a*c should factorise to a*(b+c)
         // Build product terms directly
         let mut term1 = BTreeMap::new();
-        term1.insert(Arc::from("a"), true);
-        term1.insert(Arc::from("b"), true);
+        term1.insert(Symbol::from("a"), true);
+        term1.insert(Symbol::from("b"), true);
 
         let mut term2 = BTreeMap::new();
-        term2.insert(Arc::from("a"), true);
-        term2.insert(Arc::from("c"), true);
+        term2.insert(Symbol::from("a"), true);
+        term2.insert(Symbol::from("c"), true);
 
         let cubes = vec![(term1, true), (term2, true)];
         let factored = factorise_cubes(cubes.clone());
@@ -398,12 +397,12 @@ mod tests {
     fn test_factorisation_equivalence() {
         // Test that factorisation preserves logical equivalence for a*b + a*c
         let mut term1 = BTreeMap::new();
-        term1.insert(Arc::from("a"), true);
-        term1.insert(Arc::from("b"), true);
+        term1.insert(Symbol::from("a"), true);
+        term1.insert(Symbol::from("b"), true);
 
         let mut term2 = BTreeMap::new();
-        term2.insert(Arc::from("a"), true);
-        term2.insert(Arc::from("c"), true);
+        term2.insert(Symbol::from("a"), true);
+        term2.insert(Symbol::from("c"), true);
 
         let cubes = vec![(term1, true), (term2, true)];
         let factored = factorise_cubes(cubes);
@@ -419,9 +418,9 @@ mod tests {
             for b_val in [false, true] {
                 for c_val in [false, true] {
                     let mut assignment = HashMap::new();
-                    assignment.insert(Arc::from("a"), a_val);
-                    assignment.insert(Arc::from("b"), b_val);
-                    assignment.insert(Arc::from("c"), c_val);
+                    assignment.insert(Symbol::from("a"), a_val);
+                    assignment.insert(Symbol::from("b"), b_val);
+                    assignment.insert(Symbol::from("c"), c_val);
 
                     let original_result = original.evaluate(&assignment);
                     let factored_result = factored.evaluate(&assignment);
@@ -442,7 +441,7 @@ mod tests {
 
         // Single term: just 'a'
         let mut term1 = BTreeMap::new();
-        term1.insert(Arc::from("a"), true);
+        term1.insert(Symbol::from("a"), true);
         let cubes = vec![(term1, true)];
         let factored = factorise_cubes(cubes);
 
@@ -463,14 +462,14 @@ mod tests {
     fn test_complex_factorisation() {
         // Test: a*b*c + a*b*d should factor to a*b*(c + d)
         let mut term1 = BTreeMap::new();
-        term1.insert(Arc::from("a"), true);
-        term1.insert(Arc::from("b"), true);
-        term1.insert(Arc::from("c"), true);
+        term1.insert(Symbol::from("a"), true);
+        term1.insert(Symbol::from("b"), true);
+        term1.insert(Symbol::from("c"), true);
 
         let mut term2 = BTreeMap::new();
-        term2.insert(Arc::from("a"), true);
-        term2.insert(Arc::from("b"), true);
-        term2.insert(Arc::from("d"), true);
+        term2.insert(Symbol::from("a"), true);
+        term2.insert(Symbol::from("b"), true);
+        term2.insert(Symbol::from("d"), true);
 
         let cubes = vec![(term1, true), (term2, true)];
         let factored = factorise_cubes(cubes);

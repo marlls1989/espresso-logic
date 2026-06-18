@@ -50,6 +50,7 @@ pub mod error;
 
 pub use error::{PLAError, PLAReadError, PLAWriteError};
 
+use crate::Symbol;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
@@ -81,10 +82,10 @@ pub(crate) trait PLASerialisable: Sized {
     fn internal_cubes_iter(&self) -> Self::CubesIter<'_>;
 
     /// Get input variable labels if available
-    fn get_input_labels(&self) -> Option<&[Arc<str>]>;
+    fn get_input_labels(&self) -> Option<&[Symbol]>;
 
     /// Get output variable labels if available
-    fn get_output_labels(&self) -> Option<&[Arc<str>]>;
+    fn get_output_labels(&self) -> Option<&[Symbol]>;
 
     // Constructor (for deserialization)
 
@@ -92,8 +93,8 @@ pub(crate) trait PLASerialisable: Sized {
     fn create_from_pla_parts(
         num_inputs: usize,
         num_outputs: usize,
-        input_labels: Vec<Arc<str>>,
-        output_labels: Vec<Arc<str>>,
+        input_labels: Vec<Symbol>,
+        output_labels: Vec<Symbol>,
         cubes: Vec<RawCube>,
         cover_type: CoverType,
     ) -> Self;
@@ -304,8 +305,8 @@ impl<T: PLASerialisable> PLAReader for T {
         // Default to FD_type to match C espresso behavior (main.c line 21)
         // This causes '-' in outputs to be parsed as D cubes, not just don't-care bits
         let mut cover_type = CoverType::FD;
-        let mut input_labels: Option<Vec<Arc<str>>> = None;
-        let mut output_labels: Option<Vec<Arc<str>>> = None;
+        let mut input_labels: Option<Vec<Symbol>> = None;
+        let mut output_labels: Option<Vec<Symbol>> = None;
 
         // Read all lines into memory since we need lookahead for multi-line format
         let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
@@ -356,16 +357,16 @@ impl<T: PLASerialisable> PLAReader for T {
                     }
                     Some(".ilb") => {
                         // Parse input labels: .ilb label1 label2 label3 ...
-                        let labels: Vec<Arc<str>> =
-                            parts.iter().skip(1).map(|s| Arc::from(*s)).collect();
+                        let labels: Vec<Symbol> =
+                            parts.iter().skip(1).map(|s| Symbol::from(*s)).collect();
                         if !labels.is_empty() {
                             input_labels = Some(labels);
                         }
                     }
                     Some(".ob") => {
                         // Parse output labels: .ob label1 label2 label3 ...
-                        let labels: Vec<Arc<str>> =
-                            parts.iter().skip(1).map(|s| Arc::from(*s)).collect();
+                        let labels: Vec<Symbol> =
+                            parts.iter().skip(1).map(|s| Symbol::from(*s)).collect();
                         if !labels.is_empty() {
                             output_labels = Some(labels);
                         }

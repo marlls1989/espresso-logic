@@ -7,6 +7,7 @@
 //! - Operation caching for efficient boolean operations
 //! - Variable ordering (alphabetical)
 
+use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
@@ -68,9 +69,9 @@ pub(super) struct BddManager {
     /// Unique table: (var, low, high) -> NodeId for hash consing
     pub(super) unique_table: HashMap<(VarId, NodeId, NodeId), NodeId>,
     /// Variable ordering: variable name -> variable id
-    pub(super) var_to_id: BTreeMap<Arc<str>, VarId>,
+    pub(super) var_to_id: BTreeMap<Symbol, VarId>,
     /// Reverse mapping: variable id -> variable name
-    pub(super) id_to_var: Vec<Arc<str>>,
+    pub(super) id_to_var: Vec<Symbol>,
     /// Cache for ITE operations: (f, g, h) -> result
     pub(super) ite_cache: HashMap<(NodeId, NodeId, NodeId), NodeId>,
 }
@@ -104,19 +105,19 @@ impl BddManager {
 
     /// Get or create a variable ID for a variable name
     pub(super) fn get_or_create_var(&mut self, name: &str) -> VarId {
-        let key: Arc<str> = Arc::from(name);
+        let key: Symbol = Symbol::from(name);
         if let Some(&id) = self.var_to_id.get(&key) {
             id
         } else {
             let id = self.id_to_var.len();
-            self.var_to_id.insert(Arc::clone(&key), id);
+            self.var_to_id.insert(key.clone(), id);
             self.id_to_var.push(key);
             id
         }
     }
 
     /// Get variable name from ID
-    pub(super) fn var_name(&self, id: VarId) -> Option<&Arc<str>> {
+    pub(super) fn var_name(&self, id: VarId) -> Option<&Symbol> {
         self.id_to_var.get(id)
     }
 

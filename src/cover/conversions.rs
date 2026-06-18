@@ -9,6 +9,7 @@ use super::minterm::Minterm;
 use super::symbols::Symbols;
 use super::CoverType;
 use super::{extend_header, Cover};
+use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
 
@@ -32,7 +33,7 @@ impl super::pla::PLASerialisable for Cover {
         self.cubes.iter()
     }
 
-    fn get_input_labels(&self) -> Option<&[Arc<str>]> {
+    fn get_input_labels(&self) -> Option<&[Symbol]> {
         let labels = self.input_labels();
         if labels.is_empty() {
             None
@@ -41,7 +42,7 @@ impl super::pla::PLASerialisable for Cover {
         }
     }
 
-    fn get_output_labels(&self) -> Option<&[Arc<str>]> {
+    fn get_output_labels(&self) -> Option<&[Symbol]> {
         let labels = self.output_labels();
         if labels.is_empty() {
             None
@@ -53,19 +54,19 @@ impl super::pla::PLASerialisable for Cover {
     fn create_from_pla_parts(
         num_inputs: usize,
         num_outputs: usize,
-        input_labels: Vec<Arc<str>>,
-        output_labels: Vec<Arc<str>>,
+        input_labels: Vec<Symbol>,
+        output_labels: Vec<Symbol>,
         cubes: Vec<RawCube>,
         cover_type: CoverType,
     ) -> Self {
         let input_labeled = !input_labels.is_empty();
         let output_labeled = !output_labels.is_empty();
-        let input_vars: Arc<[Arc<str>]> = if input_labeled {
+        let input_vars: Arc<[Symbol]> = if input_labeled {
             input_labels.into()
         } else {
             extend_header(&[], num_inputs, 'x')
         };
-        let output_vars: Arc<[Arc<str>]> = if output_labeled {
+        let output_vars: Arc<[Symbol]> = if output_labeled {
             output_labels.into()
         } else {
             extend_header(&[], num_outputs, 'y')
@@ -97,13 +98,13 @@ impl super::pla::PLASerialisable for Cover {
     }
 }
 
-/// Build a single-output [`Cover<Arc<str>, Anonymous>`](Cover) from a Boolean expression.
+/// Build a single-output [`Cover<Symbol, Anonymous>`](Cover) from a Boolean expression.
 ///
 /// Goes through the expression's internal **BDD** for efficiency: [`to_cubes`](crate::BoolExpr::to_cubes)
 /// yields the product terms as input minterms over one shared, canonical header. Each becomes an F cube
 /// asserting the cover's single output. The output is **anonymous** (`O = Anonymous`) — an expression has no
 /// output name; label it explicitly with [`relabel_outputs`](Cover::relabel_outputs) if needed.
-fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Arc<str>, Anonymous> {
+fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymous> {
     let minterms = expr.to_cubes();
     let input_symbols = minterms
         .first()
@@ -125,45 +126,45 @@ fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Arc<str>, Anonym
     }
 }
 
-/// Convert a `BoolExpr` into a single-output [`Cover<Arc<str>, Anonymous>`](Cover) (anonymous output).
+/// Convert a `BoolExpr` into a single-output [`Cover<Symbol, Anonymous>`](Cover) (anonymous output).
 ///
 /// Uses the BDD representation for efficient product-term extraction.
 ///
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::{Anonymous, BoolExpr, Cover};
+/// use espresso_logic::{Symbol, Anonymous, BoolExpr, Cover};
 /// use std::sync::Arc;
 ///
 /// let a = BoolExpr::variable("a");
 /// let b = BoolExpr::variable("b");
 /// let expr = a.and(&b);
 ///
-/// let cover: Cover<Arc<str>, Anonymous> = expr.into();
+/// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<crate::expression::BoolExpr> for Cover<Arc<str>, Anonymous> {
+impl From<crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
     fn from(expr: crate::expression::BoolExpr) -> Self {
         cover_from_expr(&expr)
     }
 }
 
-/// Convert a `&BoolExpr` into a single-output [`Cover<Arc<str>, Anonymous>`](Cover) (anonymous output).
+/// Convert a `&BoolExpr` into a single-output [`Cover<Symbol, Anonymous>`](Cover) (anonymous output).
 ///
 /// Extracts the cubes from the internal BDD without requiring ownership of the expression.
 ///
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::{Anonymous, BoolExpr, Cover};
+/// use espresso_logic::{Symbol, Anonymous, BoolExpr, Cover};
 /// use std::sync::Arc;
 ///
 /// let a = BoolExpr::variable("a");
 ///
-/// let cover = Cover::<Arc<str>, Anonymous>::from(&a);
+/// let cover = Cover::<Symbol, Anonymous>::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&crate::expression::BoolExpr> for Cover<Arc<str>, Anonymous> {
+impl From<&crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
     fn from(expr: &crate::expression::BoolExpr) -> Self {
         cover_from_expr(expr)
     }

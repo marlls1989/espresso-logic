@@ -3,7 +3,7 @@
 //! A [`Symbols`] table describes a dense index range (`0..arity`) of variables, storing **one label
 //! of type `L` per position** — there is no separate "anonymous" shape. A positional cover simply
 //! uses the zero-sized [`Anonymous`] label (`Symbols<Anonymous>` holds `[Anonymous; arity]`, which
-//! costs nothing); a named cover uses a real label type such as `Arc<str>`. The difference is carried
+//! costs nothing); a named cover uses a real label type such as `Symbol`. The difference is carried
 //! by the type, via [`Label::NAMED`], not by a runtime variant — so partial labelling is
 //! unrepresentable (every position always has a label) and all alignment is one uniform path keyed on
 //! [`Label::identity`].
@@ -12,6 +12,7 @@
 //! pointer-equality check ([`Arc::ptr_eq`]) and looking a variable up by name is O(1).
 
 use super::label::{Anonymous, Label};
+use crate::Symbol;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -21,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 /// reverse lookups. Construct via [`Symbols::new`] (from a label list) or
 /// [`Symbols::<Anonymous>::anonymous`] (positional); the table is immutable once built and shared
 /// behind an `Arc`. There is no partial state — `labels.len()` *is* the arity.
-pub struct Symbols<L = Arc<str>> {
+pub struct Symbols<L = Symbol> {
     /// index → label, one per position.
     labels: Arc<[L]>,
     /// label → index, built on first [`index_of`](Symbols::index_of) (real label types only).
@@ -99,7 +100,7 @@ impl<L: Label> Symbols<L> {
 impl<L: Eq + Hash + Clone> Symbols<L> {
     /// The index of a label, or `None` if absent. O(1) after a one-time build.
     ///
-    /// Accepts any borrowed form of the label (so a `Symbols<Arc<str>>` can be queried with `&str`).
+    /// Accepts any borrowed form of the label (so a `Symbols<Symbol>` can be queried with `&str`).
     pub fn index_of<Q>(&self, label: &Q) -> Option<u32>
     where
         L: Borrow<Q>,

@@ -125,6 +125,7 @@ pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
 
 // Re-export manager types for internal use
+use crate::Symbol;
 use manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
 
 use std::sync::{Arc, OnceLock, RwLock};
@@ -381,11 +382,11 @@ impl BoolExpr {
 /// (`None`) are simply absent from the map.
 pub(crate) fn minterm_literals(
     cube: &crate::cover::Minterm,
-) -> std::collections::BTreeMap<Arc<str>, bool> {
+) -> std::collections::BTreeMap<Symbol, bool> {
     cube.vars()
         .iter()
         .zip(cube.iter())
-        .filter_map(|(name, val)| val.map(|polarity| (Arc::clone(name), polarity)))
+        .filter_map(|(name, val)| val.map(|polarity| (name.clone(), polarity)))
         .collect()
 }
 

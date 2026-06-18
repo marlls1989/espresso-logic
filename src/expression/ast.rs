@@ -3,6 +3,7 @@
 //! This module contains the AST types and fold operations for boolean expressions.
 
 use super::BoolExpr;
+use crate::Symbol;
 use std::sync::Arc;
 
 /// Node type for expression tree folding
@@ -43,7 +44,7 @@ pub enum ExprNode<'a, T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BoolExprAst {
     /// A named variable
-    Variable(Arc<str>),
+    Variable(Symbol),
     /// Logical AND of two expressions
     And(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical OR of two expressions
@@ -91,7 +92,7 @@ impl BoolExpr {
         let cubes = self.get_or_create_cubes();
 
         // Convert cubes to the (literals, include) format expected by factorisation
-        let cube_terms: Vec<(std::collections::BTreeMap<Arc<str>, bool>, bool)> = cubes
+        let cube_terms: Vec<(std::collections::BTreeMap<Symbol, bool>, bool)> = cubes
             .iter()
             .map(|cube| (super::minterm_literals(cube), true))
             .collect();
@@ -211,16 +212,15 @@ impl BoolExpr {
     /// Apply De Morgan's laws to push negations down:
     ///
     /// ```
-    /// use espresso_logic::{BoolExpr, ExprNode};
+    /// use espresso_logic::{Symbol, BoolExpr, ExprNode};
     /// use std::collections::BTreeMap;
-    /// use std::sync::Arc;
     ///
-    /// fn to_dnf_naive(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
+    /// fn to_dnf_naive(expr: &BoolExpr) -> Vec<BTreeMap<Symbol, bool>> {
     ///     expr.fold_with_context(false, |node, negate, recurse_left, recurse_right| {
     ///         match node {
     ///             ExprNode::Variable(name) => {
     ///                 let mut cube = BTreeMap::new();
-    ///                 cube.insert(Arc::from(name), !negate);
+    ///                 cube.insert(Symbol::from(name), !negate);
     ///                 vec![cube]
     ///             }
     ///             ExprNode::Not(()) => recurse_left(!negate), // Flip negation

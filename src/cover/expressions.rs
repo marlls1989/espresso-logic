@@ -10,6 +10,7 @@ use super::minterm::Minterm;
 use super::symbols::Symbols;
 use super::Cover;
 use crate::expression::BoolExpr;
+use crate::Symbol;
 use std::sync::Arc;
 
 impl Cover {
@@ -53,7 +54,7 @@ impl Cover {
             .any(|v| v.as_ref() == output_name)
         {
             return Err(CoverError::OutputAlreadyExists {
-                name: Arc::from(output_name),
+                name: Symbol::from(output_name),
             }
             .into());
         }
@@ -61,11 +62,11 @@ impl Cover {
         // Extract the expression's product terms as input minterms (goes through the BDD for
         // canonical form). Every minterm shares one header: the expression's variables, sorted.
         let cubes = expr.to_cubes();
-        let expr_vars: &[Arc<str>] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
+        let expr_vars: &[Symbol] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
 
         // Extend the input table with any variables new to the cover, re-pointing existing cubes
         // (new inputs = don't-care). Build the grown header as one chained iterator.
-        let is_new = |v: &Arc<str>| {
+        let is_new = |v: &Symbol| {
             !self
                 .input_symbols
                 .labels()
@@ -73,7 +74,7 @@ impl Cover {
                 .any(|x| x.as_ref() == v.as_ref())
         };
         if expr_vars.iter().any(is_new) {
-            let header: Arc<[Arc<str>]> = self
+            let header: Arc<[Symbol]> = self
                 .input_symbols
                 .labels()
                 .iter()
@@ -92,12 +93,12 @@ impl Cover {
 
         // Append the new output to the output table; existing cubes gain an unasserted column.
         let output_index = self.num_outputs();
-        let out_header: Arc<[Arc<str>]> = self
+        let out_header: Arc<[Symbol]> = self
             .output_symbols
             .labels()
             .iter()
             .cloned()
-            .chain(std::iter::once(Arc::from(output_name)))
+            .chain(std::iter::once(Symbol::from(output_name)))
             .collect();
         let out_syms = Symbols::new(out_header);
         for cube in &mut self.cubes {
@@ -181,7 +182,7 @@ impl Cover {
             .iter()
             .position(|v| v.as_ref() == output_name)
             .ok_or_else(|| CoverError::OutputNotFound {
-                name: Arc::from(output_name),
+                name: Symbol::from(output_name),
             })?;
 
         self.to_expr_by_index(output_idx)
@@ -189,8 +190,8 @@ impl Cover {
 }
 
 /// Rebuilding an expression depends only on the **input** variable names, so it works whatever the
-/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Arc<str>, Anonymous>`).
-impl<O> Cover<Arc<str>, O> {
+/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Symbol, Anonymous>`).
+impl<O> Cover<Symbol, O> {
     /// Convert a specific output index to a boolean expression
     ///
     /// Returns an error if the index is out of bounds.
@@ -234,21 +235,21 @@ impl<O> Cover<Arc<str>, O> {
 ///
 /// If `variables` is empty or shorter than `num_inputs`, generates default variable names (x0, x1, ...).
 pub(super) fn cubes_to_expr<'a, O: 'a>(
-    cubes: impl IntoIterator<Item = &'a Cube<Arc<str>, O>>,
-    variables: &[Arc<str>],
+    cubes: impl IntoIterator<Item = &'a Cube<Symbol, O>>,
+    variables: &[Symbol],
     num_inputs: usize,
 ) -> BoolExpr {
     use std::collections::BTreeMap;
 
     // Each cube becomes a product term (a `name -> polarity` literal map) for the factoriser, which
     // requires an owned collection it can scan repeatedly.
-    let var_name = |i: usize| -> Arc<str> {
+    let var_name = |i: usize| -> Symbol {
         variables
             .get(i)
             .cloned()
-            .unwrap_or_else(|| Arc::from(format!("x{i}").as_str()))
+            .unwrap_or_else(|| Symbol::from(format!("x{i}").as_str()))
     };
-    let product_terms: Vec<(BTreeMap<Arc<str>, bool>, bool)> = cubes
+    let product_terms: Vec<(BTreeMap<Symbol, bool>, bool)> = cubes
         .into_iter()
         .map(|cube| {
             let literals = (0..num_inputs)

@@ -6,6 +6,7 @@
 use super::manager::{BddNode, NodeId, VarId, FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use crate::cover::{Minterm, Symbols};
+use crate::Symbol;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ impl BoolExpr {
     ///
     /// Returns a `BTreeSet` which maintains variables in sorted order.
     /// This ordering is used when converting to covers for minimisation.
-    pub fn collect_variables(&self) -> BTreeSet<Arc<str>> {
+    pub fn collect_variables(&self) -> BTreeSet<Symbol> {
         let mut var_ids = std::collections::HashSet::new();
         self.collect_var_ids(self.root, &mut var_ids);
 
@@ -91,8 +92,8 @@ impl BoolExpr {
     /// expression stay on the [`Minterm`] fast-comparison path.
     pub(super) fn extract_cubes_from_bdd(&self) -> Arc<[Minterm]> {
         // Canonical, alphabetically sorted variable header shared by every extracted minterm.
-        let vars: Arc<[Arc<str>]> = self.collect_variables().into_iter().collect();
-        let index: HashMap<Arc<str>, usize> = vars
+        let vars: Arc<[Symbol]> = self.collect_variables().into_iter().collect();
+        let index: HashMap<Symbol, usize> = vars
             .iter()
             .cloned()
             .enumerate()
@@ -113,7 +114,7 @@ impl BoolExpr {
         &self,
         node: NodeId,
         symbols: &Arc<Symbols>,
-        index: &HashMap<Arc<str>, usize>,
+        index: &HashMap<Symbol, usize>,
         path: &mut [Option<bool>],
         results: &mut Vec<Minterm>,
     ) {
@@ -127,7 +128,7 @@ impl BoolExpr {
                 Some(BddNode::Decision { var, low, high }) => {
                     let var_name = inner.var_name(*var)
                         .expect("Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation");
-                    Some((false, Some((Arc::clone(var_name), *low, *high))))
+                    Some((false, Some((var_name.clone(), *low, *high))))
                 }
                 None => {
                     panic!("Invalid node ID {} encountered during cube extraction - this indicates a bug in the BDD implementation", node);

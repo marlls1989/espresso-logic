@@ -45,7 +45,7 @@
 //! - An **anonymous** [`Cover<Anonymous, Anonymous>`](Cover) (built with [`Cover::<Anonymous, Anonymous>::anonymous`]) grows
 //!   **positionally**: [`push`](Cover::push) / [`from_cubes`](Cover::from_cubes) widen the cover to
 //!   the widest cube seen, matching variables by index.
-//! - A **labelled** `Cover<I, O>` (e.g. the default `Cover<Arc<str>, Arc<str>>` built with
+//! - A **labelled** `Cover<I, O>` (e.g. the default `Cover<Symbol, Symbol>` built with
 //!   [`Cover::new`] + [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA
 //!   file) grows by **merging variable names**: new labels extend the header, shared labels line up
 //!   by identity.
@@ -122,16 +122,13 @@ pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 pub use symbols::Symbols;
 
+use crate::Symbol;
 use std::sync::Arc;
 
 /// Build a variable header of length `target_len`, extending `current` with auto-generated
 /// `{prefix}{n}` names that avoid colliding with names already present.
-pub(crate) fn extend_header(
-    current: &[Arc<str>],
-    target_len: usize,
-    prefix: char,
-) -> Arc<[Arc<str>]> {
-    let mut names: Vec<Arc<str>> = current.to_vec();
+pub(crate) fn extend_header(current: &[Symbol], target_len: usize, prefix: char) -> Arc<[Symbol]> {
+    let mut names: Vec<Symbol> = current.to_vec();
     while names.len() < target_len {
         let mut n = names.len();
         let label = loop {
@@ -141,7 +138,7 @@ pub(crate) fn extend_header(
             }
             n += 1;
         };
-        names.push(Arc::from(label.as_str()));
+        names.push(Symbol::from(label.as_str()));
     }
     names.into()
 }
@@ -204,8 +201,8 @@ impl CoverType {
 /// # Generic over the label types
 ///
 /// `Cover<I, O>` is generic over its **input** label type `I` and **output** label type `O`, both
-/// defaulting to `Arc<str>` (so plain `Cover` is the string-labelled form). The two are independent:
-/// a cover can have, e.g., labelled inputs and an anonymous output (`Cover<Arc<str>, Anonymous>`). The
+/// defaulting to `Symbol` (so plain `Cover` is the string-labelled form). The two are independent:
+/// a cover can have, e.g., labelled inputs and an anonymous output (`Cover<Symbol, Anonymous>`). The
 /// anonymous form [`Cover<Anonymous, Anonymous>`](Cover) carries no names and is purely positional. Label types are
 /// kept apart by the type system — see [`relabel`](Cover::relabel) /
 /// [`relabel_inputs`](Cover::relabel_inputs) / [`relabel_outputs`](Cover::relabel_outputs) /
@@ -303,7 +300,7 @@ impl CoverType {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Cover<I = Arc<str>, O = Arc<str>> {
+pub struct Cover<I = Symbol, O = Symbol> {
     /// Canonical input symbol table, shared by every cube's input minterm.
     ///
     /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
@@ -321,7 +318,7 @@ pub struct Cover<I = Arc<str>, O = Arc<str>> {
     pub(crate) cover_type: CoverType,
 }
 
-impl Cover<Arc<str>, Arc<str>> {
+impl Cover<Symbol, Symbol> {
     /// Create a new empty cover with the specified type
     ///
     /// # Examples
@@ -367,11 +364,13 @@ impl Cover<Arc<str>, Arc<str>> {
         input_labels: &[S],
         output_labels: &[S],
     ) -> Self {
-        let input_vars: Arc<[Arc<str>]> =
-            input_labels.iter().map(|s| Arc::from(s.as_ref())).collect();
-        let output_vars: Arc<[Arc<str>]> = output_labels
+        let input_vars: Arc<[Symbol]> = input_labels
             .iter()
-            .map(|s| Arc::from(s.as_ref()))
+            .map(|s| Symbol::from(s.as_ref()))
+            .collect();
+        let output_vars: Arc<[Symbol]> = output_labels
+            .iter()
+            .map(|s| Symbol::from(s.as_ref()))
             .collect();
 
         Cover {
@@ -390,7 +389,7 @@ impl<I, O> Cover<I, O> {
     ///
     /// Positions are purely positional; dimensions grow as cubes are added. This is the generic
     /// constructor for any label types (e.g. `Cover::<Anonymous, Anonymous>::anonymous(CoverType::F)`); for named
-    /// `Arc<str>` covers use [`Cover::new`] / [`Cover::with_labels`].
+    /// `Symbol` covers use [`Cover::new`] / [`Cover::with_labels`].
     pub fn anonymous(cover_type: CoverType) -> Self {
         Cover {
             input_symbols: Symbols::empty(),
@@ -860,12 +859,12 @@ impl<I: Label, O: Label> Cover<I, O> {
     }
 }
 
-impl<O> Cover<Arc<str>, O> {
+impl<O> Cover<Symbol, O> {
     /// Get input variable labels.
     ///
-    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover. Available whatever the
+    /// Returns a slice of `Symbol`; empty for an unlabeled/anonymous cover. Available whatever the
     /// output label type is.
-    pub fn input_labels(&self) -> &[Arc<str>] {
+    pub fn input_labels(&self) -> &[Symbol] {
         if self.input_labeled {
             self.input_symbols.labels()
         } else {
@@ -874,12 +873,12 @@ impl<O> Cover<Arc<str>, O> {
     }
 }
 
-impl<I> Cover<I, Arc<str>> {
+impl<I> Cover<I, Symbol> {
     /// Get output variable labels.
     ///
-    /// Returns a slice of `Arc<str>`; empty for an unlabeled/anonymous cover. Available whatever the
+    /// Returns a slice of `Symbol`; empty for an unlabeled/anonymous cover. Available whatever the
     /// input label type is.
-    pub fn output_labels(&self) -> &[Arc<str>] {
+    pub fn output_labels(&self) -> &[Symbol] {
         if self.output_labeled {
             self.output_symbols.labels()
         } else {
@@ -888,7 +887,7 @@ impl<I> Cover<I, Arc<str>> {
     }
 }
 
-impl Default for Cover<Arc<str>, Arc<str>> {
+impl Default for Cover<Symbol, Symbol> {
     fn default() -> Self {
         Self::new(CoverType::F)
     }

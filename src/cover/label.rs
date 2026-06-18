@@ -13,7 +13,7 @@ use std::hash::Hash;
 
 /// How a cover's variable labels align across differently-ordered headers.
 ///
-/// Implemented for every `Ord + Eq + Hash + Clone` type via a blanket impl (so `Arc<str>`,
+/// Implemented for every `Ord + Eq + Hash + Clone` type via a blanket impl (so `Symbol`,
 /// [`Symbol`](crate::Symbol), `String`, `u32`, … all work as labels, aligning **by value**), and for
 /// [`Anonymous`] (aligning **by position**).
 pub trait Label: Clone {

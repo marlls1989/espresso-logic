@@ -2,6 +2,7 @@
 
 use super::pla::{PLAReader, PLAWriter};
 use super::*;
+use crate::Symbol;
 
 #[test]
 fn test_cover_creation() {
@@ -372,8 +373,8 @@ fn test_to_expr_basic() {
     // Should be able to collect variables
     let vars = retrieved.collect_variables();
     assert_eq!(vars.len(), 2);
-    assert!(vars.contains(&std::sync::Arc::from("a")));
-    assert!(vars.contains(&std::sync::Arc::from("b")));
+    assert!(vars.contains("a"));
+    assert!(vars.contains("b"));
 }
 
 #[test]
@@ -719,7 +720,6 @@ fn custom_u32_labels_via_relabel() {
 
 #[test]
 fn anonymize_drops_labels_preserving_values() {
-    use std::sync::Arc;
     // Build positionally, label explicitly, then anonymise back — values preserved throughout.
     let mut anon = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     anon.push(Cube::anonymous(
@@ -728,8 +728,8 @@ fn anonymize_drops_labels_preserving_values() {
         CubeType::F,
     ));
     let labeled = anon.relabel(
-        Symbols::new(vec![Arc::<str>::from("a"), Arc::from("b")].into()),
-        Symbols::new(vec![Arc::<str>::from("out")].into()),
+        Symbols::new(vec![Symbol::from("a"), Symbol::from("b")].into()),
+        Symbols::new(vec![Symbol::from("out")].into()),
     );
     assert_eq!(labeled.num_inputs(), 2);
 
@@ -745,7 +745,7 @@ fn cover_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Cover<Anonymous, Anonymous>>();
     assert_send_sync::<Cover<u32, u32>>();
-    assert_send_sync::<Cover<std::sync::Arc<str>>>();
+    assert_send_sync::<Cover<Symbol>>();
 }
 
 // ===== extend / merge =====
@@ -816,22 +816,22 @@ fn merge_overlays_anonymous_outputs_by_position() {
 
 #[test]
 fn extend_aligns_named_inputs_anonymous_outputs() {
-    let arc = |s: &str| std::sync::Arc::from(s);
+    let sym = |s: &str| Symbol::from(s);
     // Labelled inputs, anonymous output, built by relabelling the inputs of an anonymous cover.
     let mut a = Cover::from_cubes(
         CoverType::F,
         [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
     )
-    .relabel_inputs(Symbols::new(vec![arc("x")].into()));
+    .relabel_inputs(Symbols::new(vec![sym("x")].into()));
     let b = Cover::from_cubes(
         CoverType::F,
         [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
     )
-    .relabel_inputs(Symbols::new(vec![arc("y")].into()));
+    .relabel_inputs(Symbols::new(vec![sym("y")].into()));
 
     a.extend(&b);
     assert_eq!(a.num_inputs(), 2); // union {x, y}
-    assert_eq!(a.input_labels(), &[arc("x"), arc("y")]);
+    assert_eq!(a.input_labels(), &[sym("x"), sym("y")]);
     assert_eq!(a.num_outputs(), 2); // appended
     assert_eq!(a.num_cubes(), 2);
 }
@@ -862,7 +862,7 @@ fn extend_equals_merge_for_named_covers() {
     assert_eq!(by_extend.num_inputs(), 2); // union {x, y}
 }
 
-// ===== BoolExpr -> Cover<Arc<str>, Anonymous> and per-side relabel =====
+// ===== BoolExpr -> Cover<Symbol, Anonymous> and per-side relabel =====
 
 #[test]
 fn expr_into_anonymous_output_cover_roundtrips() {
@@ -871,7 +871,7 @@ fn expr_into_anonymous_output_cover_roundtrips() {
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
 
     // From<&BoolExpr> yields a labelled-input, anonymous-output cover (via the BDD).
-    let cover: Cover<std::sync::Arc<str>, Anonymous> = (&expr).into();
+    let cover: Cover<Symbol, Anonymous> = (&expr).into();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
@@ -888,19 +888,17 @@ fn relabel_outputs_keeps_inputs() {
         .unwrap();
 
     // Drop only the output label, keeping the named inputs.
-    let anon_out: Cover<std::sync::Arc<str>, Anonymous> =
-        named
-            .clone()
-            .relabel_outputs(Symbols::<Anonymous>::anonymous(1));
+    let anon_out: Cover<Symbol, Anonymous> = named
+        .clone()
+        .relabel_outputs(Symbols::<Anonymous>::anonymous(1));
     assert_eq!(anon_out.input_labels(), named.input_labels());
     assert_eq!(anon_out.num_outputs(), 1);
     assert_eq!(io_rows(&anon_out), io_rows(&named));
 
     // Dual: relabel only the inputs, keeping the named output.
-    let anon_in: Cover<Anonymous, std::sync::Arc<str>> =
-        named
-            .clone()
-            .relabel_inputs(Symbols::<Anonymous>::anonymous(named.num_inputs()));
+    let anon_in: Cover<Anonymous, Symbol> = named
+        .clone()
+        .relabel_inputs(Symbols::<Anonymous>::anonymous(named.num_inputs()));
     assert_eq!(anon_in.output_labels(), named.output_labels());
     assert_eq!(anon_in.num_inputs(), named.num_inputs());
 }

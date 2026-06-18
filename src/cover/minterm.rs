@@ -7,7 +7,7 @@
 //! came from different orderings, and lets the same type serve as both the input pattern and the
 //! (membership) output pattern of a cube.
 //!
-//! The label type is generic and defaults to `Arc<str>`. The core type imposes no bound on `L`;
+//! The label type is generic and defaults to `Symbol`. The core type imposes no bound on `L`;
 //! richer operations add bounds on their own `impl` blocks (label lookup needs `L: Eq + Hash`,
 //! ordering/set-ops need `L: Ord`, `Debug` needs `L: Display`).
 //!
@@ -31,6 +31,7 @@
 
 use super::label::Label;
 use super::symbols::Symbols;
+use crate::Symbol;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
@@ -102,7 +103,7 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
 
 /// A label-carrying row of tri-state values. See the [module docs](self) for the representation.
 #[derive(Clone)]
-pub struct Minterm<L = Arc<str>> {
+pub struct Minterm<L = Symbol> {
     symbols: Arc<Symbols<L>>,
     /// Packed 2-bit value-set fields, 32 variables per word.
     values: Arc<[u64]>,
@@ -180,7 +181,7 @@ impl<L> Minterm<L> {
     }
 }
 
-impl Minterm<Arc<str>> {
+impl Minterm<Symbol> {
     /// Build a standalone minterm from a slice of values, generating anonymous `x0, x1, …` names.
     ///
     /// Convenient for tests and ad-hoc use. Minterms built this way share no symbol table, so they
@@ -195,8 +196,8 @@ impl Minterm<Arc<str>> {
     /// assert_eq!(m.num_vars(), 3);
     /// ```
     pub fn new(values: &[Option<bool>]) -> Self {
-        let labels: Arc<[Arc<str>]> = (0..values.len())
-            .map(|i| Arc::from(format!("x{i}").as_str()))
+        let labels: Arc<[Symbol]> = (0..values.len())
+            .map(|i| Symbol::from(format!("x{i}").as_str()))
             .collect();
         Self::from_symbols(Symbols::new(labels), values.iter().copied())
     }
@@ -205,7 +206,7 @@ impl Minterm<Arc<str>> {
 impl<L: Eq + Hash + Clone> Minterm<L> {
     /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
     ///
-    /// Accepts any borrowed form of the label (so a `Minterm<Arc<str>>` can be queried with `&str`).
+    /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be queried with `&str`).
     pub fn value_of<Q>(&self, label: &Q) -> Option<bool>
     where
         L: Borrow<Q>,
@@ -480,8 +481,8 @@ impl<L: Label> Eq for Minterm<L> {}
 mod tests {
     use super::*;
 
-    fn syms(names: &[&str]) -> Arc<Symbols<Arc<str>>> {
-        Symbols::new(names.iter().map(|s| Arc::from(*s)).collect())
+    fn syms(names: &[&str]) -> Arc<Symbols<Symbol>> {
+        Symbols::new(names.iter().map(|s| Symbol::from(*s)).collect())
     }
 
     /// Round-trip every value through the packed encoding.

@@ -2,8 +2,9 @@
 
 use super::manager::{BddNode, NodeId};
 use super::BoolExpr;
+use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::hash::Hash;
 
 impl BoolExpr {
     /// Check if two boolean expressions are logically equivalent
@@ -81,7 +82,8 @@ impl BoolExpr {
 
         if self_vars.is_empty() && other_vars.is_empty() {
             // Both are constants - just evaluate
-            return self.evaluate(&HashMap::new()) == other.evaluate(&HashMap::new());
+            let empty: HashMap<&str, bool> = HashMap::new();
+            return self.evaluate(&empty) == other.evaluate(&empty);
         }
 
         // OPTIMIZATION: First try BDD equality check (fast)
@@ -151,12 +153,18 @@ impl BoolExpr {
     /// assignment.insert(Arc::from("b"), false);
     /// assert_eq!(expr.evaluate(&assignment), false);
     /// ```
-    pub fn evaluate(&self, assignment: &HashMap<Arc<str>, bool>) -> bool {
+    pub fn evaluate<K>(&self, assignment: &HashMap<K, bool>) -> bool
+    where
+        K: Borrow<str> + Eq + Hash,
+    {
         self.evaluate_node(self.root, assignment)
     }
 
     /// Recursively evaluate a BDD node
-    fn evaluate_node(&self, node_id: NodeId, assignment: &HashMap<Arc<str>, bool>) -> bool {
+    fn evaluate_node<K>(&self, node_id: NodeId, assignment: &HashMap<K, bool>) -> bool
+    where
+        K: Borrow<str> + Eq + Hash,
+    {
         // Acquire lock, extract needed data, then release before recursing
         let node_info = {
             let mgr = self.manager.read().unwrap();
@@ -166,7 +174,7 @@ impl BoolExpr {
                     let var_name = mgr
                         .var_name(*var)
                         .expect("Invalid variable ID in BDD evaluation");
-                    (false, false, *low, *high, Some(Arc::clone(var_name)))
+                    (false, false, *low, *high, Some(var_name.clone()))
                 }
                 None => panic!("Invalid node ID {} in BDD evaluation", node_id),
             }
@@ -176,7 +184,7 @@ impl BoolExpr {
             (true, val, _, _, _) => val, // Terminal node
             (false, _, low, high, Some(var_name)) => {
                 // Decision node: follow edge based on variable value
-                let var_value = assignment.get(&var_name).copied().unwrap_or(false);
+                let var_value = assignment.get(var_name.as_str()).copied().unwrap_or(false);
                 if var_value {
                     self.evaluate_node(high, assignment)
                 } else {

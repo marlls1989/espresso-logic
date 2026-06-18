@@ -1,8 +1,8 @@
 //! Error types for cover operations
 
+use crate::Symbol;
 use std::fmt;
 use std::io;
-use std::sync::Arc;
 
 /// Errors related to cover operations
 ///
@@ -13,12 +13,12 @@ pub enum CoverError {
     /// Attempted to add an expression to an output name that already exists
     OutputAlreadyExists {
         /// The name of the output that already exists
-        name: Arc<str>,
+        name: Symbol,
     },
     /// Attempted to access an output by name that doesn't exist
     OutputNotFound {
         /// The name of the output that was not found
-        name: Arc<str>,
+        name: Symbol,
     },
     /// Attempted to access an output by an index that is out of bounds
     OutputIndexOutOfBounds {
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn test_cover_error_output_already_exists() {
         let err = CoverError::OutputAlreadyExists {
-            name: Arc::from("result"),
+            name: Symbol::from("result"),
         };
         let msg = err.to_string();
         assert!(msg.contains("Output 'result' already exists"));
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_cover_error_output_not_found() {
         let err = CoverError::OutputNotFound {
-            name: Arc::from("missing"),
+            name: Symbol::from("missing"),
         };
         let msg = err.to_string();
         assert!(msg.contains("Output 'missing' not found"));
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_add_expr_error_from_cover_error() {
         let cover_err = CoverError::OutputAlreadyExists {
-            name: Arc::from("test"),
+            name: Symbol::from("test"),
         };
         let add_err: AddExprError = cover_err.into();
         assert!(matches!(add_err, AddExprError::Cover(_)));
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn test_to_expr_error_from_cover_error() {
         let cover_err = CoverError::OutputNotFound {
-            name: Arc::from("test"),
+            name: Symbol::from("test"),
         };
         let to_expr_err: ToExprError = cover_err.into();
         assert!(matches!(to_expr_err, ToExprError::Cover(_)));
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_cover_error_to_io_error() {
         let err = CoverError::OutputNotFound {
-            name: Arc::from("test"),
+            name: Symbol::from("test"),
         };
         let io_err: io::Error = err.into();
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn test_add_expr_error_to_io_error() {
         let cover_err = CoverError::OutputAlreadyExists {
-            name: Arc::from("test"),
+            name: Symbol::from("test"),
         };
         let add_err = AddExprError::Cover(cover_err);
         let io_err: io::Error = add_err.into();
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn test_to_expr_error_to_io_error() {
         let cover_err = CoverError::OutputNotFound {
-            name: Arc::from("test"),
+            name: Symbol::from("test"),
         };
         let to_expr_err = ToExprError::Cover(cover_err);
         let io_err: io::Error = to_expr_err.into();

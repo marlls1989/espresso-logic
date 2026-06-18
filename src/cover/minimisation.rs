@@ -11,6 +11,7 @@ use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::expression::BoolExpr;
 use crate::EspressoConfig;
+use crate::Symbol;
 use std::sync::Arc;
 
 /// Public trait for types that can be minimized using Espresso
@@ -296,12 +297,12 @@ fn minimize_expr_with<F>(
 ) -> Result<BoolExpr, MinimizationError>
 where
     F: FnOnce(
-        &Cover<Arc<str>, Anonymous>,
+        &Cover<Symbol, Anonymous>,
         &EspressoConfig,
-    ) -> Result<Cover<Arc<str>, Anonymous>, MinimizationError>,
+    ) -> Result<Cover<Symbol, Anonymous>, MinimizationError>,
 {
     // Build a single-output, anonymous-output cover from the expression (canonical via the BDD).
-    let cover: Cover<Arc<str>, Anonymous> = expr.into();
+    let cover: Cover<Symbol, Anonymous> = expr.into();
 
     // Minimise it with the provided (heuristic or exact) algorithm.
     let minimized = minimize_fn(&cover, config)?;

@@ -5,7 +5,7 @@
 
 use super::Cover;
 use crate::expression::BoolExpr;
-use std::sync::Arc;
+use crate::Symbol;
 
 /// Iterator over filtered cubes with generic yield type
 ///
@@ -34,7 +34,7 @@ pub struct ToExprs<'a> {
 }
 
 impl<'a> Iterator for ToExprs<'a> {
-    type Item = (Arc<str>, BoolExpr);
+    type Item = (Symbol, BoolExpr);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_idx >= self.cover.num_outputs() {
@@ -45,9 +45,9 @@ impl<'a> Iterator for ToExprs<'a> {
 
         // Use provided label or generate default
         let name = if let Some(label) = self.cover.output_labels().get(idx) {
-            Arc::clone(label)
+            label.clone()
         } else {
-            Arc::from(format!("y{}", idx).as_str())
+            Symbol::from(format!("y{}", idx).as_str())
         };
 
         let expr = self

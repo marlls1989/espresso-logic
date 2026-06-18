@@ -115,8 +115,8 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     // After minimization, should have only a and b (c is absorbed)
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 2);
-    assert!(vars.contains(&Arc::from("a")));
-    assert!(vars.contains(&Arc::from("b")));
+    assert!(vars.contains("a"));
+    assert!(vars.contains("b"));
 
     // Verify the minimized expression behaves like a*b
     let mut assignment = HashMap::new();
@@ -252,7 +252,7 @@ fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
     let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
-    assert!(vars.contains(&Arc::from("a")));
+    assert!(vars.contains("a"));
 
     Ok(())
 }
@@ -299,7 +299,7 @@ fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
     let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
-    assert!(vars.contains(&Arc::from("a")));
+    assert!(vars.contains("a"));
 
     Ok(())
 }
@@ -447,7 +447,7 @@ fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
     let minimized = cover.to_expr("out").unwrap();
     let vars = minimized.collect_variables();
     assert_eq!(vars.len(), 1);
-    assert!(vars.contains(&Arc::from("a")));
+    assert!(vars.contains("a"));
 
     Ok(())
 }
