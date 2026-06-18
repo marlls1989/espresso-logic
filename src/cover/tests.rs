@@ -445,6 +445,45 @@ fn test_to_exprs_iterator() {
 }
 
 #[test]
+fn to_exprs_works_for_any_string_input_label() {
+    use std::sync::Arc;
+
+    // Build a named cover, then relabel both sides to a *different* string type (Arc<str>).
+    let mut cover = Cover::new(CoverType::F);
+    let a = crate::BoolExpr::variable("a");
+    let b = crate::BoolExpr::variable("b");
+    cover.add_expr(&a.and(&b), "out").unwrap();
+
+    let in_syms = Symbols::new(
+        cover
+            .input_labels()
+            .iter()
+            .map(|s| Arc::<str>::from(s.as_ref()))
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    let out_syms = Symbols::new(vec![Arc::<str>::from("out")].into());
+    let arc_cover: Cover<Arc<str>, Arc<str>> = cover.relabel(in_syms, out_syms);
+
+    // to_expr_by_index / to_exprs / to_expr all work on an `Arc<str>`-labelled cover.
+    assert_eq!(
+        arc_cover
+            .to_expr_by_index(0)
+            .unwrap()
+            .collect_variables()
+            .len(),
+        2
+    );
+    let pairs: Vec<_> = arc_cover.to_exprs().collect();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].0.as_ref(), "out"); // (&O, BoolExpr) — output label borrowed
+    assert_eq!(
+        arc_cover.to_expr("out").unwrap().collect_variables().len(),
+        2
+    );
+}
+
+#[test]
 fn test_to_exprs_after_minimization() {
     let mut cover = Cover::new(CoverType::F);
 

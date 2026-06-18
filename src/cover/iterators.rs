@@ -23,18 +23,18 @@ impl<'a, T> Iterator for CubesIter<'a, T> {
     }
 }
 
-/// Iterator over output expressions from a Cover
+/// Iterator over output expressions from a [`Cover`], created by [`Cover::to_exprs`].
 ///
-/// This iterator uses the visitor pattern to generate boolean expressions
-/// on-demand for each output in the cover. It maintains state (current index)
-/// and calls the cover's conversion method during iteration.
-pub struct ToExprs<'a> {
-    pub(super) cover: &'a Cover,
+/// Generates boolean expressions on-demand for each output, yielding the output label (borrowed from
+/// the cover) paired with the rebuilt expression. Generic over the cover's input label `I` (which must
+/// be string-like to name the variables) and output label `O`.
+pub struct ToExprs<'a, I = Symbol, O = Symbol> {
+    pub(super) cover: &'a Cover<I, O>,
     pub(super) current_idx: usize,
 }
 
-impl<'a> Iterator for ToExprs<'a> {
-    type Item = (Symbol, BoolExpr);
+impl<'a, I: AsRef<str>, O> Iterator for ToExprs<'a, I, O> {
+    type Item = (&'a O, BoolExpr);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_idx >= self.cover.num_outputs() {
@@ -43,17 +43,12 @@ impl<'a> Iterator for ToExprs<'a> {
         let idx = self.current_idx;
         self.current_idx += 1;
 
-        // Use provided label or generate default
-        let name = if let Some(label) = self.cover.output_labels().get(idx) {
-            label.clone()
-        } else {
-            Symbol::from(format!("y{}", idx).as_str())
-        };
-
+        // The output label at this position (one label per output — `Symbols` is never partial).
+        let label = &self.cover.output_symbols().labels()[idx];
         let expr = self
             .cover
             .to_expr_by_index(idx)
             .unwrap_or_else(|_| BoolExpr::constant(false));
-        Some((name, expr))
+        Some((label, expr))
     }
 }

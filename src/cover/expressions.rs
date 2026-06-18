@@ -132,66 +132,12 @@ impl Cover {
 
         Ok(())
     }
-
-    /// Convert all outputs to boolean expressions
-    ///
-    /// Returns an iterator over (output_name, expression) tuples, one for each output.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType};
-    ///
-    /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    ///
-    /// cover.add_expr(&a, "out1").unwrap();
-    /// cover.add_expr(&b, "out2").unwrap();
-    ///
-    /// for (name, expr) in cover.to_exprs() {
-    ///     println!("{}: {}", name, expr);
-    /// }
-    /// ```
-    pub fn to_exprs(&self) -> ToExprs<'_> {
-        ToExprs {
-            cover: self,
-            current_idx: 0,
-        }
-    }
-
-    /// Convert a specific named output to a boolean expression
-    ///
-    /// Returns an error if the output name doesn't exist.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType};
-    ///
-    /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
-    ///
-    /// cover.add_expr(&a, "result").unwrap();
-    /// let expr = cover.to_expr("result").unwrap();
-    /// println!("result: {}", expr);
-    /// ```
-    pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
-        let output_idx = self
-            .output_labels()
-            .iter()
-            .position(|v| v.as_ref() == output_name)
-            .ok_or_else(|| CoverError::OutputNotFound {
-                name: Symbol::from(output_name),
-            })?;
-
-        self.to_expr_by_index(output_idx)
-    }
 }
 
-/// Rebuilding an expression depends only on the **input** variable names, so it works whatever the
-/// output label type is — including an anonymous-output cover from `BoolExpr` (`Cover<Symbol, Anonymous>`).
-impl<O> Cover<Symbol, O> {
+/// Rebuilding an expression depends only on the **input** variable names, so these conversions work
+/// for any string-like input label `I` whatever the output label type `O` is — including an
+/// anonymous-output cover from a `BoolExpr` (`Cover<Symbol, Anonymous>`).
+impl<I: AsRef<str>, O> Cover<I, O> {
     /// Convert a specific output index to a boolean expression
     ///
     /// Returns an error if the index is out of bounds.
@@ -229,24 +175,87 @@ impl<O> Cover<Symbol, O> {
             self.num_inputs(),
         ))
     }
+
+    /// Convert every output to a boolean expression.
+    ///
+    /// Yields `(output_label, expression)` for each output — the output label borrowed from the cover
+    /// (`&O`), paired with the expression rebuilt from the input names. For an anonymous-output cover
+    /// the label is uninformative; use [`to_expr_by_index`](Self::to_expr_by_index) there instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
+    ///
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    ///
+    /// cover.add_expr(&a, "out1").unwrap();
+    /// cover.add_expr(&b, "out2").unwrap();
+    ///
+    /// for (name, expr) in cover.to_exprs() {
+    ///     println!("{}: {}", name, expr);
+    /// }
+    /// ```
+    pub fn to_exprs(&self) -> ToExprs<'_, I, O> {
+        ToExprs {
+            cover: self,
+            current_idx: 0,
+        }
+    }
+}
+
+/// Looking an output up by name additionally needs a string-like **output** label.
+impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
+    /// Convert a specific named output to a boolean expression
+    ///
+    /// Returns an error if the output name doesn't exist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
+    ///
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::variable("a");
+    ///
+    /// cover.add_expr(&a, "result").unwrap();
+    /// let expr = cover.to_expr("result").unwrap();
+    /// println!("result: {}", expr);
+    /// ```
+    pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
+        let output_idx = self
+            .output_symbols()
+            .labels()
+            .iter()
+            .position(|v| v.as_ref() == output_name)
+            .ok_or_else(|| CoverError::OutputNotFound {
+                name: Symbol::from(output_name),
+            })?;
+
+        self.to_expr_by_index(output_idx)
+    }
 }
 
 /// Convert cubes back to a boolean expression.
 ///
-/// If `variables` is empty or shorter than `num_inputs`, generates default variable names (x0, x1, ...).
-pub(super) fn cubes_to_expr<'a, O: 'a>(
-    cubes: impl IntoIterator<Item = &'a Cube<Symbol, O>>,
-    variables: &[Symbol],
+/// Reads the cubes' input pattern against the input variable names (any `I: AsRef<str>`); if
+/// `variables` is empty or shorter than `num_inputs`, generates default names (x0, x1, ...).
+pub(super) fn cubes_to_expr<'a, I: AsRef<str> + 'a, O: 'a>(
+    cubes: impl IntoIterator<Item = &'a Cube<I, O>>,
+    variables: &[I],
     num_inputs: usize,
 ) -> BoolExpr {
     use std::collections::BTreeMap;
 
     // Each cube becomes a product term (a `name -> polarity` literal map) for the factoriser, which
-    // requires an owned collection it can scan repeatedly.
+    // requires an owned collection it can scan repeatedly. Input labels are interned into `Symbol`s
+    // (the expression layer's name type) at this boundary.
     let var_name = |i: usize| -> Symbol {
         variables
             .get(i)
-            .cloned()
+            .map(|v| Symbol::from(v.as_ref()))
             .unwrap_or_else(|| Symbol::from(format!("x{i}").as_str()))
     };
     let product_terms: Vec<(BTreeMap<Symbol, bool>, bool)> = cubes
