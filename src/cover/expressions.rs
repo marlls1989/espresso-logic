@@ -14,11 +14,15 @@ use crate::Symbol;
 use std::sync::Arc;
 
 impl Cover<Symbol, Symbol> {
-    /// Add a boolean function to a named output
+    /// Add a boolean function to a named output.
     ///
-    /// The expression's product terms (extracted from its internal BDD) become F cubes
-    /// asserting `output_name`. Input variables are matched by name with existing variables,
-    /// and new variables are appended in alphabetical order.
+    /// The expression's product terms (extracted from its internal BDD) become F cubes asserting
+    /// `output_name`. Input variables are matched by name with existing variables, and new variables
+    /// are appended.
+    ///
+    /// This is the bridge *from* the `Symbol`-based expression/BDD layer, so it produces the natural
+    /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
+    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`).
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
     ///
