@@ -1285,7 +1285,7 @@ fn main() -> std::io::Result<()> {
     
     // The type system prevents mistakes
     let expr: BoolExpr = expr!(a * b);  // Type-safe
-    let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
+    let mut cover = Cover::new(CoverType::F);  // type inferred from add_expr below
     cover.add_expr(&expr, "output")?;  // Explicit conversion
     
     Ok(())

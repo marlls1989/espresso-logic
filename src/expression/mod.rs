@@ -222,7 +222,7 @@ pub struct BoolExpr {
     /// Cached product-term cubes (input minterms) for this BDD.
     /// This avoids expensive BDD traversal when extracting cubes or minimising.
     /// OnceLock's Clone copies the content, so clones share cached data via Arc.
-    cube_cache: OnceLock<Arc<[crate::cover::Minterm]>>,
+    cube_cache: OnceLock<Arc<[crate::cover::Minterm<crate::Symbol>]>>,
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
     /// OnceLock's Clone copies the content, so clones share cached data via Arc
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
@@ -307,14 +307,14 @@ impl BoolExpr {
     ///
     /// Extracts cubes (input [`Minterm`](crate::cover::Minterm)s) from the BDD on first
     /// access and caches them for subsequent calls.
-    pub(crate) fn get_or_create_cubes(&self) -> Arc<[crate::cover::Minterm]> {
+    pub(crate) fn get_or_create_cubes(&self) -> Arc<[crate::cover::Minterm<crate::Symbol>]> {
         // Check local cache
         if let Some(cubes) = self.cube_cache.get() {
             return Arc::clone(cubes); // Cheap Arc clone
         }
 
         // Not cached - extract from BDD
-        let cubes: Arc<[crate::cover::Minterm]> = self.extract_cubes_from_bdd();
+        let cubes: Arc<[crate::cover::Minterm<crate::Symbol>]> = self.extract_cubes_from_bdd();
 
         // Cache it locally
         let _ = self.cube_cache.set(Arc::clone(&cubes));
@@ -333,7 +333,7 @@ impl BoolExpr {
     /// the cubes must fix every variable the function depends on. This holds for the only caller
     /// (a single-output `Cover` derived from the same variable namespace); passing an unrelated cube
     /// set would desync [`to_cubes`](Self::to_cubes) from the BDD. Checked with a `debug_assert!`.
-    pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm]>) -> BoolExpr {
+    pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm<crate::Symbol>]>) -> BoolExpr {
         if cubes.is_empty() {
             return BoolExpr::constant(false);
         }
@@ -381,7 +381,7 @@ impl BoolExpr {
 /// This is the scratch format consumed by the algebraic factoriser; don't-care variables
 /// (`None`) are simply absent from the map.
 pub(crate) fn minterm_literals(
-    cube: &crate::cover::Minterm,
+    cube: &crate::cover::Minterm<crate::Symbol>,
 ) -> std::collections::BTreeMap<Symbol, bool> {
     cube.vars()
         .iter()

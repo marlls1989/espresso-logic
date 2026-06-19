@@ -9,6 +9,7 @@
 //! All alignment in the cover layer (projection, the merge-join comparison, `extend`/`merge`) is one
 //! generic algorithm keyed on [`Identity`](Label::Identity); there is no per-concrete-type dispatch.
 
+use std::collections::HashSet;
 use std::hash::Hash;
 
 /// How a cover's variable labels align across differently-ordered headers.
@@ -49,9 +50,13 @@ impl<T: Ord + Eq + Hash + Clone> Label for T {
 /// *position*. Used as the label type of a positional cover, e.g. `Cover<Anonymous, Anonymous>`.
 ///
 /// **Invariant (load-bearing):** `Anonymous` must **never** implement `Ord`, `Eq`, `Hash`,
-/// `PartialEq`, or `PartialOrd`. Those omissions are what keep it out of the blanket [`Label`] impl
-/// above — if it satisfied that bound the two impls would overlap (E0119), and its position-based
-/// identity would collapse all positions to "equal". This is deliberate, not an oversight.
+/// `PartialEq`, `PartialOrd`, `Display`, `AsRef<str>`, or `From<&str>`. Those omissions are what keep
+/// it out of the blanket impls of [`Label`] (above), [`ReconcilableLabel`], and [`PlaLabel`] — if it
+/// satisfied any of those bounds the impls would overlap (E0119). They also encode the type-level
+/// facts that an anonymous variable has no *name* (`!Display`) and no string form (`!AsRef<str>`). This
+/// is deliberate, not an oversight.
+///
+/// [`PlaLabel`]: crate::PlaLabel
 #[derive(Clone, Copy, Debug)]
 pub struct Anonymous;
 
@@ -62,5 +67,100 @@ impl Label for Anonymous {
     #[inline]
     fn identity(&self, position: usize) -> usize {
         position
+    }
+}
+
+/// How a label type produces conflict-free labels for the columns [`Cover::extend`](crate::Cover::extend)
+/// appends.
+///
+/// When `extend` stacks `b`'s columns after `a`'s, an appended label may clash with one already in the
+/// header. This trait resolves that clash, per label type:
+/// - **string-like** labels keep their name, suffixing a number on collision (`x` → `x0` → `x1`, …);
+/// - **integer** labels keep their value, taking the first unused number on collision;
+/// - [`Anonymous`] appends a fresh position (its identity is its index, so it never clashes).
+///
+/// `merge`, which overlays by identity rather than appending, needs only [`Label`]; `extend` requires
+/// this. Label types with no sensible collision policy (an arbitrary struct key) get neither blanket
+/// impl below and so cannot be `extend`ed — only `merge`d.
+pub trait ReconcilableLabel: Label {
+    /// Given the labels already in `header`, return one label per entry of `additions`, each distinct
+    /// from the header and from the others returned (renaming/renumbering on collision).
+    fn reconcile(header: &[Self], additions: &[Self]) -> Vec<Self>;
+}
+
+/// String-like labels reconcile by suffixing a number to a clashing name (`x` → `x0` → `x1`, …). The
+/// construction bound (`From<&str>`) lives only on this impl; `String`, [`Symbol`](crate::Symbol),
+/// `Box<str>`, `Cow<str>` all qualify — `Anonymous` implements neither `AsRef<str>` nor `From<&str>`,
+/// so it is provably excluded (no overlap with the impls below).
+impl<T: Label + AsRef<str> + for<'a> From<&'a str>> ReconcilableLabel for T {
+    fn reconcile(header: &[Self], additions: &[Self]) -> Vec<Self> {
+        let mut taken: HashSet<String> = header.iter().map(|l| l.as_ref().to_owned()).collect();
+        let mut out = Vec::with_capacity(additions.len());
+        for add in additions {
+            let base = add.as_ref();
+            let name = if taken.contains(base) {
+                (0..)
+                    .map(|n| format!("{base}{n}"))
+                    .find(|cand| !taken.contains(cand))
+                    .expect("an unbounded candidate range always yields a free name")
+            } else {
+                base.to_owned()
+            };
+            taken.insert(name.clone());
+            out.push(T::from(name.as_str()));
+        }
+        out
+    }
+}
+
+/// [`Anonymous`] reconciles by appending fresh positions — each appended `Anonymous` lands at a new
+/// index whose identity is that index, so it is automatically distinct. Just clone the additions.
+impl ReconcilableLabel for Anonymous {
+    #[inline]
+    fn reconcile(_header: &[Self], additions: &[Self]) -> Vec<Self> {
+        additions.to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Symbol;
+
+    fn syms(names: &[&str]) -> Vec<Symbol> {
+        names.iter().map(|s| Symbol::from(*s)).collect()
+    }
+
+    #[test]
+    fn string_reconcile_suffixes_on_collision() {
+        assert_eq!(
+            Symbol::reconcile(&syms(&["x"]), &syms(&["x"])),
+            syms(&["x0"])
+        );
+        // `x0` already taken → next free suffix.
+        assert_eq!(
+            Symbol::reconcile(&syms(&["x", "x0"]), &syms(&["x"])),
+            syms(&["x1"])
+        );
+        // Two identical additions collide with each other, not just the header.
+        assert_eq!(
+            Symbol::reconcile(&syms(&["x"]), &syms(&["x", "x"])),
+            syms(&["x0", "x1"])
+        );
+    }
+
+    #[test]
+    fn string_reconcile_passes_non_colliding_through() {
+        assert_eq!(
+            Symbol::reconcile(&syms(&["x"]), &syms(&["y"])),
+            syms(&["y"])
+        );
+    }
+
+    #[test]
+    fn anonymous_reconcile_appends() {
+        // `Anonymous` has no `PartialEq`; only the count is observable.
+        let out = Anonymous::reconcile(&[Anonymous, Anonymous], &[Anonymous]);
+        assert_eq!(out.len(), 1);
     }
 }

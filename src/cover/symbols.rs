@@ -12,7 +12,6 @@
 //! pointer-equality check ([`Arc::ptr_eq`]) and looking a variable up by name is O(1).
 
 use super::label::{Anonymous, Label};
-use crate::Symbol;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -22,7 +21,7 @@ use std::sync::{Arc, OnceLock};
 /// reverse lookups. Construct via [`Symbols::new`] (from a label list) or
 /// [`Symbols::<Anonymous>::anonymous`] (positional); the table is immutable once built and shared
 /// behind an `Arc`. There is no partial state — `labels.len()` *is* the arity.
-pub struct Symbols<L = Symbol> {
+pub struct Symbols<L> {
     /// index → label, one per position.
     labels: Arc<[L]>,
     /// label → index, built on first [`index_of`](Symbols::index_of) (real label types only).

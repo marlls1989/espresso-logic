@@ -45,7 +45,7 @@
 //! - An **anonymous** [`Cover<Anonymous, Anonymous>`](Cover) (built with [`Cover::<Anonymous, Anonymous>::anonymous`]) grows
 //!   **positionally**: [`push`](Cover::push) / [`from_cubes`](Cover::from_cubes) widen the cover to
 //!   the widest cube seen, matching variables by index.
-//! - A **labelled** `Cover<I, O>` (e.g. the default `Cover<Symbol, Symbol>` built with
+//! - A **labelled** `Cover<I, O>` (e.g. a `Cover<Symbol, Symbol>` built with
 //!   [`Cover::new`] + [`add_expr`](Cover::add_expr), [`with_labels`](Cover::with_labels), or a PLA
 //!   file) grows by **merging variable names**: new labels extend the header, shared labels line up
 //!   by identity.
@@ -117,7 +117,7 @@ mod symbols;
 pub use cubes::{Cube, CubeType};
 pub use error::{AddExprError, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
-pub use label::{Anonymous, Label};
+pub use label::{Anonymous, Label, ReconcilableLabel};
 pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 pub use symbols::Symbols;
@@ -200,9 +200,10 @@ impl CoverType {
 ///
 /// # Generic over the label types
 ///
-/// `Cover<I, O>` is generic over its **input** label type `I` and **output** label type `O`, both
-/// defaulting to `Symbol` (so plain `Cover` is the string-labelled form). The two are independent:
-/// a cover can have, e.g., labelled inputs and an anonymous output (`Cover<Symbol, Anonymous>`). The
+/// `Cover<I, O>` is generic over its **input** label type `I` and **output** label type `O`, with no
+/// privileged label type — `Symbol`, `String`, `Arc<str>`, and `u32` are all on equal footing. The two
+/// sides are independent: a cover can have, e.g., labelled inputs and an anonymous output
+/// (`Cover<Symbol, Anonymous>`). The
 /// anonymous form [`Cover<Anonymous, Anonymous>`](Cover) carries no names and is purely positional. Label types are
 /// kept apart by the type system — see [`relabel`](Cover::relabel) /
 /// [`relabel_inputs`](Cover::relabel_inputs) / [`relabel_outputs`](Cover::relabel_outputs) /
@@ -271,9 +272,9 @@ impl CoverType {
 /// ## With Labels
 ///
 /// ```
-/// use espresso_logic::{Cover, CoverType};
+/// use espresso_logic::{Cover, CoverType, Symbol};
 ///
-/// let mut cover = Cover::with_labels(
+/// let mut cover: Cover<Symbol, Symbol> = Cover::with_labels(
 ///     CoverType::F,
 ///     &["a", "b", "c"],
 ///     &["sum", "carry"],
@@ -300,7 +301,7 @@ impl CoverType {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Cover<I = Symbol, O = Symbol> {
+pub struct Cover<I, O> {
     /// Canonical input symbol table, shared by every cube's input minterm.
     ///
     /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
@@ -318,40 +319,23 @@ pub struct Cover<I = Symbol, O = Symbol> {
     pub(crate) cover_type: CoverType,
 }
 
-impl Cover<Symbol, Symbol> {
-    /// Create a new empty cover with the specified type
+impl<I, O> Cover<I, O>
+where
+    I: for<'a> From<&'a str>,
+    O: for<'a> From<&'a str>,
+{
+    /// Create a new cover with pre-defined labels.
+    ///
+    /// Useful when you know the variable names in advance. The dimensions are set from the label
+    /// counts. The label types are inferred from context (e.g. `Cover::<Symbol, Symbol>::with_labels`
+    /// or `Cover::<String, String>::with_labels`) — any label type constructible from `&str` works.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, CoverType};
+    /// use espresso_logic::{Cover, CoverType, Symbol};
     ///
-    /// let cover = Cover::new(CoverType::F);
-    /// assert_eq!(cover.num_inputs(), 0);
-    /// assert_eq!(cover.num_outputs(), 0);
-    /// ```
-    pub fn new(cover_type: CoverType) -> Self {
-        Cover {
-            input_symbols: Symbols::empty(),
-            output_symbols: Symbols::empty(),
-            input_labeled: false,
-            output_labeled: false,
-            cubes: Vec::new(),
-            cover_type,
-        }
-    }
-
-    /// Create a new cover with pre-defined labels
-    ///
-    /// This is useful when you know the variable names in advance.
-    /// The dimensions are set based on the label counts.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, CoverType};
-    ///
-    /// let cover = Cover::with_labels(
+    /// let cover: Cover<Symbol, Symbol> = Cover::with_labels(
     ///     CoverType::F,
     ///     &["a", "b", "c"],
     ///     &["out"],
@@ -364,14 +348,8 @@ impl Cover<Symbol, Symbol> {
         input_labels: &[S],
         output_labels: &[S],
     ) -> Self {
-        let input_vars: Arc<[Symbol]> = input_labels
-            .iter()
-            .map(|s| Symbol::from(s.as_ref()))
-            .collect();
-        let output_vars: Arc<[Symbol]> = output_labels
-            .iter()
-            .map(|s| Symbol::from(s.as_ref()))
-            .collect();
+        let input_vars: Arc<[I]> = input_labels.iter().map(|s| I::from(s.as_ref())).collect();
+        let output_vars: Arc<[O]> = output_labels.iter().map(|s| O::from(s.as_ref())).collect();
 
         Cover {
             input_labeled: !input_vars.is_empty(),
@@ -385,12 +363,13 @@ impl Cover<Symbol, Symbol> {
 }
 
 impl<I, O> Cover<I, O> {
-    /// Create a new empty **anonymous** cover (no variable labels) of the given type.
+    /// Create a new empty cover of the given type, for **any** label types.
     ///
-    /// Positions are purely positional; dimensions grow as cubes are added. This is the generic
-    /// constructor for any label types (e.g. `Cover::<Anonymous, Anonymous>::anonymous(CoverType::F)`); for named
-    /// `Symbol` covers use [`Cover::new`] / [`Cover::with_labels`].
-    pub fn anonymous(cover_type: CoverType) -> Self {
+    /// The cover starts with no variables; dimensions grow as cubes/expressions are added. Works for
+    /// every label type — `Cover::<Symbol, Symbol>::new(..)`, `Cover::<String, String>::new(..)`, or
+    /// `Cover::<Anonymous, Anonymous>::new(..)` for a positional cover. The label types are inferred
+    /// from later use where possible, else annotated.
+    pub fn new(cover_type: CoverType) -> Self {
         Cover {
             input_symbols: Symbols::empty(),
             output_symbols: Symbols::empty(),
@@ -399,6 +378,14 @@ impl<I, O> Cover<I, O> {
             cubes: Vec::new(),
             cover_type,
         }
+    }
+
+    /// Create a new empty **anonymous** cover (no variable labels) of the given type.
+    ///
+    /// Equivalent to `Cover::<Anonymous, Anonymous>::new(..)`; kept for readability at call sites that
+    /// build positionally.
+    pub fn anonymous(cover_type: CoverType) -> Self {
+        Self::new(cover_type)
     }
 
     /// Re-express this cover over different label types, position-for-position.
@@ -729,13 +716,15 @@ impl Cover<Anonymous, Anonymous> {
 
 // ===== Cover combination (`extend` / `merge`) =====
 //
-// One generic implementation drives both operations for every label type. Inputs and outputs are
-// aligned by variable *identity* ([`Label::identity`]): for labelled headers that is the name (union
-// by name), for anonymous headers it is the position (grow to the wider arity, pad don't-care). The
-// labelled-vs-anonymous choice is a runtime `is_labeled()` check inside one `impl<I: Label, O: Label>`
-// — not a per-concrete-type dispatch. The only difference between `extend` and `merge` is the output
-// map (see [`combine_outputs`]); for named outputs the two coincide because names are distinct
-// identities regardless of position.
+// Inputs always union by variable *identity* ([`Label::identity`]) for both operations: shared inputs
+// line up (by name when labelled, by position when anonymous) and never get renamed. The two operations
+// differ only in how the OUTPUT columns combine, and each is consistent across every label type:
+//   - `merge` overlays outputs by identity ([`overlay_outputs`]) — `b`'s output of an identity already
+//     in `a` lands on it; new identities extend the header.
+//   - `extend` always appends `b`'s outputs as distinct columns ([`append_outputs`]), reconciling name
+//     clashes via [`ReconcilableLabel`] (string `f`→`f0`, `Anonymous` fresh position).
+// There is no runtime labelled-vs-anonymous branch: the per-label-type behaviour lives entirely in the
+// `Label`/`ReconcilableLabel` impls.
 
 /// Build a cube's new output-membership minterm over `new_output`: for each old output position the
 /// cube asserts, set the mapped new position; everything else is unasserted (`Some(false)`).
@@ -754,63 +743,82 @@ fn rebuild_output<I, O>(
     Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
 }
 
-/// Append `b`'s label of a new identity to `header`, returning the position `b`'s position `j` maps to
-/// (whether found among the existing labels or freshly appended). `offset` shifts `b`'s position before
-/// taking its identity — used by `extend` to give `b`'s **anonymous** labels fresh identities (a no-op
-/// for named labels, whose identity ignores position).
-fn map_into<L: Label>(header: &mut Vec<L>, j: usize, lb: &L, offset: usize) -> usize {
-    let id = lb.identity(j + offset);
-    match header
-        .iter()
-        .enumerate()
-        .position(|(k, la)| la.identity(k) == id)
-    {
-        Some(p) => p,
-        None => {
-            header.push(lb.clone());
-            header.len() - 1
-        }
-    }
-}
-
 /// The union input header of two covers, aligned by identity: `a`'s labels followed by `b`'s labels of
 /// a new identity. By name when labelled, by position when anonymous (`Anonymous`'s identity is its
 /// index, so this grows to the wider arity and positions pad don't-care on projection).
-fn union_inputs<I: Label>(a: &Arc<Symbols<I>>, b: &Arc<Symbols<I>>) -> Arc<Symbols<I>> {
+fn union_inputs<I: Label>(a: &Symbols<I>, b: &Symbols<I>) -> Arc<Symbols<I>> {
     let mut header: Vec<I> = a.labels().to_vec();
-    for (i, lb) in b.labels().iter().enumerate() {
-        map_into(&mut header, i, lb, 0);
+    for (j, lb) in b.labels().iter().enumerate() {
+        let id = lb.identity(j);
+        if !header
+            .iter()
+            .enumerate()
+            .any(|(k, la)| la.identity(k) == id)
+        {
+            header.push(lb.clone());
+        }
     }
     Symbols::new(header.into())
 }
 
-/// The union output header of two covers plus each side's old-index → new-index map.
-///
-/// `merge` overlays `b`'s outputs onto `a`'s by identity; `extend` first offsets `b`'s positions by
-/// `a`'s arity. For **named** outputs the offset is irrelevant (identity is the name, not the position)
-/// so `extend` and `merge` coincide; for **anonymous** outputs the offset makes `extend` append `b`'s
-/// columns after `a`'s while `merge` overlays them at the same positions.
-fn combine_outputs<O: Label>(
-    a: &Arc<Symbols<O>>,
-    b: &Arc<Symbols<O>>,
-    append: bool,
+/// Output header for `merge`: overlay `b`'s outputs onto `a`'s by identity. Returns the new header plus
+/// each side's old→new position map (`b`'s output of an identity already in `a` reuses that position;
+/// new identities extend the header).
+fn overlay_outputs<O: Label>(
+    a: &Symbols<O>,
+    b: &Symbols<O>,
 ) -> (Arc<Symbols<O>>, Vec<usize>, Vec<usize>) {
     let a_no = a.arity();
-    let offset = if append { a_no } else { 0 };
     let mut header: Vec<O> = a.labels().to_vec();
     let b_map = b
         .labels()
         .iter()
         .enumerate()
-        .map(|(j, lb)| map_into(&mut header, j, lb, offset))
+        .map(|(j, lb)| {
+            let id = lb.identity(j);
+            match header
+                .iter()
+                .enumerate()
+                .position(|(k, la)| la.identity(k) == id)
+            {
+                Some(p) => p,
+                None => {
+                    header.push(lb.clone());
+                    header.len() - 1
+                }
+            }
+        })
         .collect();
     (Symbols::new(header.into()), (0..a_no).collect(), b_map)
 }
 
-/// Combine `b` into `a` (re-pointed onto common headers). Inputs union by identity; outputs follow
-/// [`combine_outputs`] (`append` = extend vs overlay = merge). Each cube keeps its [`CubeType`].
-fn combine<I: Label, O: Label>(a: &Cover<I, O>, b: &Cover<I, O>, append: bool) -> Cover<I, O> {
-    let (new_output, a_map, b_map) = combine_outputs(&a.output_symbols, &b.output_symbols, append);
+/// Output header for `extend`: append **all** of `b`'s outputs after `a`'s as distinct columns,
+/// reconciling clashes via [`ReconcilableLabel`]. `b`'s output `j` maps to `a_no + j` (contiguous).
+fn append_outputs<O: ReconcilableLabel>(
+    a: &Symbols<O>,
+    b: &Symbols<O>,
+) -> (Arc<Symbols<O>>, Vec<usize>, Vec<usize>) {
+    let a_no = a.arity();
+    let b_no = b.arity();
+    let mut header: Vec<O> = a.labels().to_vec();
+    header.extend(O::reconcile(a.labels(), b.labels()));
+    (
+        Symbols::new(header.into()),
+        (0..a_no).collect(),
+        (a_no..a_no + b_no).collect(),
+    )
+}
+
+/// Re-point both covers' cubes onto the given combined headers. Inputs union by identity (via
+/// [`project_onto`](Minterm::project_onto)); outputs follow the supplied per-side maps. Each cube keeps
+/// its [`CubeType`]. Shared by `extend` and `merge` — only the output header/maps differ.
+fn assemble<I: Label, O: Label>(
+    a: &Cover<I, O>,
+    b: &Cover<I, O>,
+    new_output: Arc<Symbols<O>>,
+    a_out_map: Vec<usize>,
+    b_out_map: Vec<usize>,
+) -> Cover<I, O> {
     let new_input = union_inputs(&a.input_symbols, &b.input_symbols);
     let new_no = new_output.arity();
     let rebuild = |c: &Cube<I, O>, out_map: &[usize]| {
@@ -823,8 +831,8 @@ fn combine<I: Label, O: Label>(a: &Cover<I, O>, b: &Cover<I, O>, append: bool) -
     let cubes = a
         .cubes
         .iter()
-        .map(|c| rebuild(c, &a_map))
-        .chain(b.cubes.iter().map(|c| rebuild(c, &b_map)))
+        .map(|c| rebuild(c, &a_out_map))
+        .chain(b.cubes.iter().map(|c| rebuild(c, &b_out_map)))
         .collect();
     Cover {
         input_labeled: new_input.is_labeled(),
@@ -837,34 +845,42 @@ fn combine<I: Label, O: Label>(a: &Cover<I, O>, b: &Cover<I, O>, append: bool) -
 }
 
 impl<I: Label, O: Label> Cover<I, O> {
-    /// Combine `other` into this cover by **appending** its outputs after this cover's.
-    ///
-    /// Inputs union by variable identity (by name when labelled, by position when anonymous — missing
-    /// inputs pad don't-care). For an **anonymous** output the result has `self.num_outputs() +
-    /// other.num_outputs()` outputs (`other`'s are stacked after `self`'s) — use this to combine two
-    /// functions into one multi-output cover. For a **labelled** output, shared names line up and new
-    /// names extend, so `extend` and [`merge`](Self::merge) coincide.
-    pub fn extend(&mut self, other: &Cover<I, O>) {
-        *self = combine(self, other, true);
-    }
-
     /// Combine `other` into this cover, **overlaying** outputs by identity.
     ///
-    /// Inputs union exactly as for [`extend`](Self::extend). For an **anonymous** output, output `i`
-    /// of `other` overlays output `i` of `self` (same position ⇒ same output); the result has
-    /// `max(self.num_outputs(), other.num_outputs())` outputs. For a **labelled** output this is
-    /// identical to [`extend`](Self::extend) — shared names overlay, new names extend.
+    /// Inputs union by variable identity (by name when labelled, by position when anonymous — missing
+    /// inputs pad don't-care). Outputs overlay by identity: `other`'s output of an identity already in
+    /// `self` lands on the same column; new identities extend the header. For an anonymous output that
+    /// means output `i` of `other` overlays output `i` of `self`; the result has
+    /// `max(self.num_outputs(), other.num_outputs())` outputs. Consistent across every label type.
     pub fn merge(&mut self, other: &Cover<I, O>) {
-        *self = combine(self, other, false);
+        let (new_output, a_map, b_map) =
+            overlay_outputs(&self.output_symbols, &other.output_symbols);
+        *self = assemble(self, other, new_output, a_map, b_map);
     }
 }
 
-impl<O> Cover<Symbol, O> {
+impl<I: Label, O: ReconcilableLabel> Cover<I, O> {
+    /// Combine `other` into this cover by **appending** its outputs after this cover's, as distinct
+    /// columns.
+    ///
+    /// Inputs union by identity exactly as for [`merge`](Self::merge). Every one of `other`'s outputs
+    /// is appended (the result always has `self.num_outputs() + other.num_outputs()` outputs), so use
+    /// this to stack two functions into one multi-output cover. A clashing output **name** is reconciled
+    /// by [`ReconcilableLabel`] (string `f` → `f0`); an anonymous output appends a fresh position.
+    /// Consistent across every label type — unlike `merge`, never overlays.
+    pub fn extend(&mut self, other: &Cover<I, O>) {
+        let (new_output, a_map, b_map) =
+            append_outputs(&self.output_symbols, &other.output_symbols);
+        *self = assemble(self, other, new_output, a_map, b_map);
+    }
+}
+
+impl<I: AsRef<str>, O> Cover<I, O> {
     /// Get input variable labels.
     ///
-    /// Returns a slice of `Symbol`; empty for an unlabeled/anonymous cover. Available whatever the
-    /// output label type is.
-    pub fn input_labels(&self) -> &[Symbol] {
+    /// Returns a slice of the input label type `I`; empty for an unlabeled cover. Available for any
+    /// string-like input label whatever the output label type is.
+    pub fn input_labels(&self) -> &[I] {
         if self.input_labeled {
             self.input_symbols.labels()
         } else {
@@ -873,12 +889,12 @@ impl<O> Cover<Symbol, O> {
     }
 }
 
-impl<I> Cover<I, Symbol> {
+impl<I, O: AsRef<str>> Cover<I, O> {
     /// Get output variable labels.
     ///
-    /// Returns a slice of `Symbol`; empty for an unlabeled/anonymous cover. Available whatever the
-    /// input label type is.
-    pub fn output_labels(&self) -> &[Symbol] {
+    /// Returns a slice of the output label type `O`; empty for an unlabeled cover. Available for any
+    /// string-like output label whatever the input label type is.
+    pub fn output_labels(&self) -> &[O] {
         if self.output_labeled {
             self.output_symbols.labels()
         } else {

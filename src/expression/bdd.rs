@@ -77,9 +77,9 @@ impl BoolExpr {
     ///
     /// Each minterm represents one path from the root to the TRUE terminal.
     ///
-    /// The result is `Arc<[Minterm]>`: extracted minterms are cached, so this is a cheap
+    /// The result is `Arc<[Minterm<Symbol>]>`: extracted minterms are cached, so this is a cheap
     /// reference-count clone of the shared cache rather than a fresh allocation per call.
-    pub fn to_cubes(&self) -> Arc<[Minterm]> {
+    pub fn to_cubes(&self) -> Arc<[Minterm<Symbol>]> {
         self.get_or_create_cubes()
     }
 
@@ -90,7 +90,7 @@ impl BoolExpr {
     ///
     /// Every returned minterm shares one canonical header `Arc`, so cubes of the same
     /// expression stay on the [`Minterm`] fast-comparison path.
-    pub(super) fn extract_cubes_from_bdd(&self) -> Arc<[Minterm]> {
+    pub(super) fn extract_cubes_from_bdd(&self) -> Arc<[Minterm<Symbol>]> {
         // Canonical, alphabetically sorted variable header shared by every extracted minterm.
         let vars: Arc<[Symbol]> = self.collect_variables().into_iter().collect();
         let index: HashMap<Symbol, usize> = vars
@@ -113,10 +113,10 @@ impl BoolExpr {
     fn extract_cubes(
         &self,
         node: NodeId,
-        symbols: &Arc<Symbols>,
+        symbols: &Arc<Symbols<Symbol>>,
         index: &HashMap<Symbol, usize>,
         path: &mut [Option<bool>],
-        results: &mut Vec<Minterm>,
+        results: &mut Vec<Minterm<Symbol>>,
     ) {
         // Acquire lock, extract needed data, then release before recursing.
         // This is safe because NodeIds are stable (nodes are never removed/reordered).

@@ -13,7 +13,7 @@ use crate::expression::BoolExpr;
 use crate::Symbol;
 use std::sync::Arc;
 
-impl Cover {
+impl Cover<Symbol, Symbol> {
     /// Add a boolean function to a named output
     ///
     /// The expression's product terms (extracted from its internal BDD) become F cubes

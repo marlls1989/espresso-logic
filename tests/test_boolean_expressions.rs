@@ -499,7 +499,7 @@ fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> 
 #[test]
 fn test_cover_empty_to_expr() {
     // Edge case: Cover with dimensions but no cubes
-    let cover = Cover::with_labels(CoverType::F, &["a", "b"], &["out"]);
+    let cover: Cover<String, String> = Cover::with_labels(CoverType::F, &["a", "b"], &["out"]);
 
     // Try to get expression for output with no cubes - should return constant false
     let expr = cover.to_expr("out").unwrap();

@@ -15,7 +15,6 @@
 use super::label::{Anonymous, Label};
 use super::minterm::Minterm;
 use super::symbols::Symbols;
-use crate::Symbol;
 use std::fmt;
 
 /// Which of a cover's three sets a cube belongs to.
@@ -31,10 +30,10 @@ pub enum CubeType {
 
 /// A cube (product term) in a cover: an input pattern, an output-membership mask, and a set tag.
 ///
-/// Generic over the input label type `I` and the output label type `O` (both default `Symbol`),
-/// so a cover can have, e.g., labelled inputs and an anonymous output.
+/// Generic over the input label type `I` and the output label type `O`, so a cover can have, e.g.,
+/// labelled inputs and an anonymous output.
 #[derive(Clone)]
-pub struct Cube<I = Symbol, O = Symbol> {
+pub struct Cube<I, O> {
     pub(crate) inputs: Minterm<I>,
     /// Membership mask: `Some(true)` where this cube asserts the output, `Some(false)` otherwise.
     pub(crate) outputs: Minterm<O>,

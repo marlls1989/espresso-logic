@@ -6,7 +6,7 @@ use crate::Symbol;
 
 #[test]
 fn test_cover_creation() {
-    let cover = Cover::new(CoverType::F);
+    let cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     assert_eq!(cover.num_inputs(), 0);
     assert_eq!(cover.num_outputs(), 0);
     assert_eq!(cover.num_cubes(), 0);
@@ -14,7 +14,7 @@ fn test_cover_creation() {
 
 #[test]
 fn test_cover_with_labels() {
-    let cover = Cover::with_labels(CoverType::F, &["a", "b", "c"], &["out"]);
+    let cover: Cover<Symbol, Symbol> = Cover::with_labels(CoverType::F, &["a", "b", "c"], &["out"]);
     assert_eq!(cover.num_inputs(), 3);
     assert_eq!(cover.num_outputs(), 1);
     assert_eq!(cover.input_labels()[0].as_ref(), "a");
@@ -636,7 +636,7 @@ fn test_complex_expression_with_minimization() {
 
 #[test]
 fn test_empty_cover_to_expr() {
-    let cover = Cover::new(CoverType::F);
+    let cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
 
     // Try to get expression from empty cover - should fail
     let result = cover.to_expr_by_index(0);
@@ -784,7 +784,7 @@ fn cover_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Cover<Anonymous, Anonymous>>();
     assert_send_sync::<Cover<u32, u32>>();
-    assert_send_sync::<Cover<Symbol>>();
+    assert_send_sync::<Cover<Symbol, Symbol>>();
 }
 
 // ===== extend / merge =====
@@ -876,7 +876,9 @@ fn extend_aligns_named_inputs_anonymous_outputs() {
 }
 
 #[test]
-fn extend_equals_merge_for_named_covers() {
+fn extend_equals_merge_for_distinct_named_outputs() {
+    // When the two covers' output names DON'T collide, extend (append) and merge (overlay) coincide:
+    // both keep the two distinct columns. They diverge only on a collision (tests below).
     let mut by_extend = Cover::new(CoverType::F);
     by_extend
         .add_expr(&crate::BoolExpr::variable("x"), "f")
@@ -890,7 +892,6 @@ fn extend_equals_merge_for_named_covers() {
     by_extend.extend(&other);
     by_merge.merge(&other);
 
-    // Named outputs ⇒ extend and merge coincide.
     assert_eq!(by_extend.num_inputs(), by_merge.num_inputs());
     assert_eq!(by_extend.num_outputs(), by_merge.num_outputs());
     assert_eq!(by_extend.input_labels(), by_merge.input_labels());
@@ -899,6 +900,36 @@ fn extend_equals_merge_for_named_covers() {
     // Two distinct named outputs from two single-output expressions.
     assert_eq!(by_extend.num_outputs(), 2);
     assert_eq!(by_extend.num_inputs(), 2); // union {x, y}
+}
+
+#[test]
+fn extend_renames_colliding_named_outputs() {
+    // Both covers output "f"; extend always appends, reconciling the clash to "f0".
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    let mut b = Cover::new(CoverType::F);
+    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+
+    a.extend(&b);
+    assert_eq!(a.num_outputs(), 2); // distinct columns, not overlaid
+    assert_eq!(a.output_labels()[0].as_ref(), "f");
+    assert_eq!(a.output_labels()[1].as_ref(), "f0"); // reconciled
+    assert_eq!(a.num_inputs(), 2); // union {x, y}
+}
+
+#[test]
+fn merge_overlays_colliding_named_outputs() {
+    // Both covers output "f"; merge overlays them onto one column (pins the divergence from extend).
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    let mut b = Cover::new(CoverType::F);
+    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+
+    a.merge(&b);
+    assert_eq!(a.num_outputs(), 1); // single overlaid column
+    assert_eq!(a.output_labels()[0].as_ref(), "f");
+    // Both source cubes now assert the one shared output.
+    assert!(output_rows(&a).iter().all(|row| row == &vec![Some(true)]));
 }
 
 // ===== BoolExpr -> Cover<Symbol, Anonymous> and per-side relabel =====

@@ -18,8 +18,8 @@ use std::sync::Arc;
 pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, CubeType);
 
 // Implement PLASerialisable for Cover (used for PLA I/O)
-impl super::pla::PLASerialisable for Cover {
-    type CubesIter<'a> = std::slice::Iter<'a, Cube>;
+impl super::pla::PLASerialisable for Cover<Symbol, Symbol> {
+    type CubesIter<'a> = std::slice::Iter<'a, Cube<Symbol, Symbol>>;
 
     fn num_inputs(&self) -> usize {
         self.input_symbols().arity()
@@ -170,15 +170,15 @@ impl From<&crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
     }
 }
 
-impl fmt::Debug for Cover {
+impl<I: fmt::Debug, O: fmt::Debug> fmt::Debug for Cover<I, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cover")
             .field("num_inputs", &self.num_inputs())
             .field("num_outputs", &self.num_outputs())
             .field("cover_type", &self.cover_type)
             .field("num_cubes", &self.num_cubes())
-            .field("input_labels", &self.input_labels())
-            .field("output_labels", &self.output_labels())
+            .field("input_labels", &self.input_symbols().labels())
+            .field("output_labels", &self.output_symbols().labels())
             .finish()
     }
 }

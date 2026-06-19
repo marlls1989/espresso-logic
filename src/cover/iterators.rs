@@ -5,7 +5,6 @@
 
 use super::Cover;
 use crate::expression::BoolExpr;
-use crate::Symbol;
 
 /// Iterator over filtered cubes with generic yield type
 ///
@@ -28,7 +27,7 @@ impl<'a, T> Iterator for CubesIter<'a, T> {
 /// Generates boolean expressions on-demand for each output, yielding the output label (borrowed from
 /// the cover) paired with the rebuilt expression. Generic over the cover's input label `I` (which must
 /// be string-like to name the variables) and output label `O`.
-pub struct ToExprs<'a, I = Symbol, O = Symbol> {
+pub struct ToExprs<'a, I, O> {
     pub(super) cover: &'a Cover<I, O>,
     pub(super) current_idx: usize,
 }

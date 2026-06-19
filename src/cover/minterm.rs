@@ -103,7 +103,7 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
 
 /// A label-carrying row of tri-state values. See the [module docs](self) for the representation.
 #[derive(Clone)]
-pub struct Minterm<L = Symbol> {
+pub struct Minterm<L> {
     symbols: Arc<Symbols<L>>,
     /// Packed 2-bit value-set fields, 32 variables per word.
     values: Arc<[u64]>,

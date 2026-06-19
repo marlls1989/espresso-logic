@@ -66,7 +66,7 @@ use super::{CoverType, Cube, CubeType};
 /// for the public `PLAReader` and `PLAWriter` traits.
 pub(crate) trait PLASerialisable: Sized {
     /// Associated type for iterating over cubes
-    type CubesIter<'a>: Iterator<Item = &'a Cube>
+    type CubesIter<'a>: Iterator<Item = &'a Cube<Symbol, Symbol>>
     where
         Self: 'a;
 
