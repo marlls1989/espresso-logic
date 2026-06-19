@@ -290,4 +290,36 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn concurrent_distinct_intern_and_drop() {
+        use std::thread;
+        // Many threads interning DISTINCT long names while others drop theirs — exercises the weak
+        // set's prune-on-drop path racing against the insert path. Invariants: a name never aliases
+        // the wrong `Arc` (checked inline), and once every `Symbol` has dropped the pool keeps none
+        // of them alive.
+        let threads = 8;
+        let per_thread = 200;
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                thread::spawn(move || {
+                    for i in 0..per_thread {
+                        let name = format!("{LONG}_distinct_{t}_{i}");
+                        let s = Symbol::new(&name);
+                        assert_eq!(s.as_str(), name); // no cross-thread aliasing
+                        drop(s); // immediate drop prunes this weak entry
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        for t in 0..threads {
+            for i in [0, per_thread - 1] {
+                let name = format!("{LONG}_distinct_{t}_{i}");
+                assert!(!pool_has_live(&name), "pool must not keep {name} alive");
+            }
+        }
+    }
 }

@@ -231,3 +231,36 @@ fn test_stress_concurrent() {
         handle.join().expect("Thread panicked");
     }
 }
+
+#[test]
+fn concurrent_symbol_covers() {
+    use espresso_logic::{BoolExpr, Symbol};
+
+    // The other cases all minimise an anonymous 2x1 XOR. This one builds per-thread `Symbol`-labelled
+    // covers with distinct names, exercising the shared `Symbol` intern pool and the labelled
+    // Cover/minimise path across threads.
+    let handles: Vec<_> = (0..8)
+        .map(|t| {
+            thread::spawn(move || {
+                let a = BoolExpr::variable(&format!("t{t}_a"));
+                let b = BoolExpr::variable(&format!("t{t}_b"));
+                let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+                // a*b + a*~b  ==  a  (so b drops out under minimisation)
+                cover
+                    .add_expr(&a.and(&b).or(&a.and(&b.not())), &format!("out{t}"))
+                    .unwrap();
+                let min = cover.minimize().unwrap();
+                assert!(min.num_cubes() >= 1);
+                assert!(
+                    min.input_labels()
+                        .iter()
+                        .all(|s| s.as_ref().starts_with(&format!("t{t}_"))),
+                    "labels must stay this thread's own"
+                );
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+}

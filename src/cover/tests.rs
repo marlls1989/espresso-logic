@@ -845,6 +845,140 @@ fn minterm_hash_agrees_with_eq() {
 }
 
 #[test]
+fn minterm_hash_permutation_independent() {
+    use std::collections::hash_map::RandomState;
+    use std::collections::HashSet;
+    use std::hash::BuildHasher;
+
+    // Same assignment over the same variables, but two different header orders. Identity-based `Eq`
+    // makes them equal; the `Hash` impl walks identity-sorted order, so they must hash equal too.
+    let mk = |order: &[&str], vals: &[Option<bool>]| {
+        let syms = Symbols::new(
+            order
+                .iter()
+                .map(|s| Symbol::from(*s))
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        Minterm::from_symbols(syms, vals.iter().copied())
+    };
+    let m1 = mk(&["a", "b", "c"], &[Some(true), None, Some(false)]);
+    let m2 = mk(&["c", "a", "b"], &[Some(false), Some(true), None]);
+    assert_eq!(m1, m2, "identity-aligned equality across permuted headers");
+
+    let rs = RandomState::new();
+    assert_eq!(
+        rs.hash_one(&m1),
+        rs.hash_one(&m2),
+        "equal minterms must hash equal regardless of header order"
+    );
+    let mut set = HashSet::new();
+    set.insert(m1);
+    assert!(set.contains(&m2));
+}
+
+#[test]
+fn value_of_by_name_wide() {
+    // >32 variables so the packed values span a word boundary, with labels stored in reverse
+    // (non-identity) order so `index_of`'s binary search over the identity-sorted order genuinely
+    // differs from storage order.
+    let n = 40usize;
+    let labels: Vec<Symbol> = (0..n)
+        .rev()
+        .map(|i| Symbol::from(format!("v{i:02}").as_str()))
+        .collect();
+    let values: Vec<Option<bool>> = (0..n)
+        .map(|i| match i % 3 {
+            0 => Some(true),
+            1 => Some(false),
+            _ => None,
+        })
+        .collect();
+    let m = Minterm::from_symbols(Symbols::new(labels.clone().into()), values.iter().copied());
+
+    for (pos, label) in labels.iter().enumerate() {
+        assert_eq!(m.value_of(label.as_ref()), values[pos], "value_of {label}");
+        assert_eq!(
+            m.value_of(label.as_ref()),
+            m.value_at(pos),
+            "value_of vs value_at for {label}"
+        );
+    }
+    assert_eq!(m.value_of("not_a_var"), None);
+}
+
+#[test]
+fn pla_cover_minimize_preserves_variant() {
+    let cubes = "\n01 1\n10 1\n.e\n";
+    let cases = [
+        (format!(".i 2\n.o 1\n.ilb a b\n.ob f{cubes}"), true, true),
+        (format!(".i 2\n.o 1\n.ilb a b{cubes}"), true, false),
+        (format!(".i 2\n.o 1\n.ob f{cubes}"), false, true),
+        (format!(".i 2\n.o 1{cubes}"), false, false),
+    ];
+    for (src, has_ilb, has_ob) in cases {
+        let cover = PlaCover::<Symbol>::from_pla_string(&src).unwrap();
+        let min = cover.minimize().unwrap();
+        // Minimisation goes through every variant arm of `map_inner_cover!` and preserves which sides
+        // are named.
+        let variant_ok = match &min {
+            PlaCover::InputsOutputsNamed(_) => has_ilb && has_ob,
+            PlaCover::InputsNamed(_) => has_ilb && !has_ob,
+            PlaCover::OutputsNamed(_) => !has_ilb && has_ob,
+            PlaCover::Positional(_) => !has_ilb && !has_ob,
+        };
+        assert!(
+            variant_ok,
+            "variant not preserved for ilb={has_ilb} ob={has_ob}"
+        );
+        let out = min.to_pla_string(CoverType::F).unwrap();
+        assert_eq!(out.contains(".ilb"), has_ilb, "ilb in {src}");
+        assert_eq!(out.contains(".ob"), has_ob, "ob in {src}");
+    }
+}
+
+#[test]
+fn malformed_pla_other_errors() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| {
+        PlaCover::<Symbol>::from_pla_string(s)
+            .err()
+            .expect("should error")
+    };
+    // .ilb declares fewer labels than .i inputs.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::LabelCountMismatch { .. })
+    ));
+    // No .i/.o and a single-token line can't infer the dimensions.
+    assert!(matches!(
+        err("0101\n.e\n"),
+        PLAReadError::PLA(PLAError::MissingDimensions)
+    ));
+    // Invalid character in the input field.
+    assert!(matches!(
+        err(".i 2\n.o 1\n0z 1\n.e\n"),
+        PLAReadError::PLA(PLAError::InvalidInputCharacter { .. })
+    ));
+    // Invalid character in the output field.
+    assert!(matches!(
+        err(".i 1\n.o 1\n0 9\n.e\n"),
+        PLAReadError::PLA(PLAError::InvalidOutputCharacter { .. })
+    ));
+    // Non-numeric .i directive value.
+    assert!(matches!(
+        err(".i two\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::InvalidInputDirective { .. })
+    ));
+    // .i present but no .o (and nothing to infer it from).
+    assert!(matches!(
+        err(".i 2\n.e\n"),
+        PLAReadError::PLA(PLAError::MissingOutputDirective)
+    ));
+}
+
+#[test]
 fn test_minimize_preserves_structure() {
     let mut cover = Cover::new(CoverType::F);
 

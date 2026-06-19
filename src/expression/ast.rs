@@ -56,6 +56,45 @@ pub(crate) enum BoolExprAst {
     Constant(bool),
 }
 
+/// Drop a `BoolExprAst` iteratively so a very deep tree can't overflow the stack.
+///
+/// A factorised AST can be a long `And`/`Or` chain; the compiler-derived recursive drop of its nested
+/// `Arc<BoolExprAst>` children would recurse to the tree's full depth and overflow on such inputs (the
+/// same depth hazard the traversals were rewritten to avoid). Instead, move each node's children onto a
+/// heap work-stack, leaving a shared childless placeholder behind, so every node that actually drops has
+/// only leaf children and cannot recurse further.
+impl Drop for BoolExprAst {
+    fn drop(&mut self) {
+        // One process-wide placeholder `Constant`; replacing a child with a clone of it is a refcount
+        // bump (no allocation), and the static keeps a reference so the placeholder's own drop never
+        // fires through these clones.
+        fn placeholder() -> Arc<BoolExprAst> {
+            static P: std::sync::OnceLock<Arc<BoolExprAst>> = std::sync::OnceLock::new();
+            Arc::clone(P.get_or_init(|| Arc::new(BoolExprAst::Constant(false))))
+        }
+        fn take_children(node: &mut BoolExprAst, stack: &mut Vec<Arc<BoolExprAst>>) {
+            match node {
+                BoolExprAst::Not(a) => stack.push(std::mem::replace(a, placeholder())),
+                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) => {
+                    stack.push(std::mem::replace(a, placeholder()));
+                    stack.push(std::mem::replace(b, placeholder()));
+                }
+                BoolExprAst::Variable(_) | BoolExprAst::Constant(_) => {}
+            }
+        }
+
+        let mut stack: Vec<Arc<BoolExprAst>> = Vec::new();
+        take_children(self, &mut stack);
+        while let Some(child) = stack.pop() {
+            // Only the sole owner dismantles further; a shared child just decrements its refcount. The
+            // unwrapped node's children were just taken, so its drop here sees only placeholders.
+            if let Ok(mut node) = Arc::try_unwrap(child) {
+                take_children(&mut node, &mut stack);
+            }
+        }
+    }
+}
+
 impl BoolExpr {
     /// Get or create the AST representation from the BDD
     ///

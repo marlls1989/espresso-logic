@@ -973,3 +973,57 @@ fn test_dnf_cache_updates_with_better_version() {
     // Verify equivalence
     assert!(redundant.equivalent_to(&minimized));
 }
+
+/// The BDD/AST traversals were converted from recursion to explicit work-stacks specifically so a deep
+/// input can't overflow the call stack. Build a tall expression and exercise every iterative consumer
+/// on a deliberately small thread stack, so a regression back to recursion fails **deterministically**
+/// (stack overflow → the join returns `Err`) instead of silently passing on the default ~8 MiB stack.
+///
+/// Covers the BDD walks (`var_count`, `collect_variables`, `node_count`, `to_cubes`) and the AST folds
+/// (`fold`, `fold_with_context`). `Display` and `to_expr_by_index` route through `fmt_ast_with_context`
+/// / `ast_to_expr`, which are converted separately; this test grows to cover them there.
+#[test]
+fn deep_chain_does_not_overflow() {
+    const N: usize = 2000;
+    // 256 KiB comfortably holds the iterative (heap-backed) walks, but is far too small for ~N frames
+    // of recursion, so a recursive regression overflows here rather than passing.
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            // Left-associated AND chain over N distinct variables: its BDD is an N-node chain and its
+            // factorised AST is N deep — both would blow a recursive traversal at this stack size.
+            let mut expr = BoolExpr::variable("v0000");
+            for i in 1..N {
+                expr = expr.and(&BoolExpr::variable(&format!("v{i:04}")));
+            }
+
+            // BDD-side iterative consumers.
+            assert_eq!(expr.var_count(), N);
+            assert_eq!(expr.collect_variables().len(), N);
+            assert!(expr.node_count() >= N); // a chain of N decision nodes (+ terminals)
+            assert_eq!(expr.to_cubes().len(), 1); // AND of all vars => one all-true cube
+
+            // AST-side iterative folds.
+            let op_count = expr.fold(|node| match node {
+                ExprNode::Variable(_) | ExprNode::Constant(_) => 0usize,
+                ExprNode::Not(inner) => inner,
+                ExprNode::And(l, r) | ExprNode::Or(l, r) => l + r + 1,
+            });
+            assert_eq!(op_count, N - 1); // N-1 AND operators over N literals
+
+            let depth = expr.fold_with_context(
+                0usize,
+                |_node, &d| (d + 1, d + 1),
+                |node, d| match node {
+                    ExprNode::Variable(_) | ExprNode::Constant(_) => d,
+                    ExprNode::Not(inner) => inner,
+                    ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
+                },
+            );
+            assert!(depth >= N / 2); // genuinely deep (exact shape depends on factorisation)
+        })
+        .expect("spawn deep-chain thread");
+    handle
+        .join()
+        .expect("deep-chain traversals must not overflow the stack");
+}
