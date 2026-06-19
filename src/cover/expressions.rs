@@ -157,11 +157,7 @@ impl<I: AsRef<str>, O> Cover<I, O> {
             .iter()
             .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx));
 
-        Ok(cubes_to_expr(
-            relevant_cubes,
-            self.input_symbols().labels(),
-            self.num_inputs(),
-        ))
+        Ok(cubes_to_expr(relevant_cubes, self.input_symbols().labels()))
     }
 
     /// Convert every output to a boolean expression.
@@ -228,32 +224,25 @@ impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
 
 /// Convert cubes back to a boolean expression.
 ///
-/// Reads the cubes' input pattern against the input variable names (any `I: AsRef<str>`); if
-/// `variables` is empty or shorter than `num_inputs`, generates default names (x0, x1, ...).
+/// Reads each cube's input pattern against the input variable names (`variables`, one label per input
+/// — the caller always passes the cover's full input header).
 pub(super) fn cubes_to_expr<'a, I: AsRef<str> + 'a, O: 'a>(
     cubes: impl IntoIterator<Item = &'a Cube<I, O>>,
     variables: &[I],
-    num_inputs: usize,
 ) -> BoolExpr {
     use std::collections::BTreeMap;
 
     // Each cube becomes a product term (a `name -> polarity` literal map) for the factoriser, which
     // requires an owned collection it can scan repeatedly. Input labels are interned into `Symbol`s
     // (the expression layer's name type) at this boundary.
-    let var_name = |i: usize| -> Symbol {
-        variables
-            .get(i)
-            .map(|v| Symbol::from(v.as_ref()))
-            .unwrap_or_else(|| Symbol::from(format!("x{i}").as_str()))
-    };
     let product_terms: Vec<(BTreeMap<Symbol, bool>, bool)> = cubes
         .into_iter()
         .map(|cube| {
-            let literals = (0..num_inputs)
+            let literals = (0..variables.len())
                 .filter_map(|i| {
                     cube.inputs()
                         .value_at(i)
-                        .map(|polarity| (var_name(i), polarity))
+                        .map(|polarity| (Symbol::from(variables[i].as_ref()), polarity))
                 })
                 .collect();
             (literals, true)

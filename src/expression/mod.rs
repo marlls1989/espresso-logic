@@ -229,32 +229,43 @@ pub struct BoolExpr {
 }
 
 impl BoolExpr {
+    /// Build a `BoolExpr` from a manager and root node, with fresh (empty) caches. The single place the
+    /// struct is constructed, so the cache fields are initialised in exactly one spot.
+    fn from_root(manager: Arc<RwLock<BddManager>>, root: NodeId) -> Self {
+        BoolExpr {
+            manager,
+            root,
+            cube_cache: OnceLock::new(),
+            ast_cache: OnceLock::new(),
+        }
+    }
+
+    /// Apply a BDD operation to this expression's root under one write lock, returning the result as a
+    /// fresh `BoolExpr` sharing the same manager. Shared by `and`/`or`/`not`.
+    fn op(&self, f: impl FnOnce(&mut BddManager, NodeId) -> NodeId) -> BoolExpr {
+        let manager = Arc::clone(&self.manager);
+        let root = f(&mut manager.write().unwrap(), self.root);
+        BoolExpr::from_root(manager, root)
+    }
+
     /// Create a variable expression with the given name
     #[must_use]
     pub fn variable(name: &str) -> Self {
         let manager = BddManager::get_or_create();
-        let mut mgr = manager.write().unwrap();
-        let var_id = mgr.get_or_create_var(name);
-        let node = mgr.make_node(var_id, FALSE_NODE, TRUE_NODE);
-        drop(mgr); // Explicitly release the lock
-        BoolExpr {
-            manager,
-            root: node,
-            cube_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        let node = {
+            let mut mgr = manager.write().unwrap();
+            let var_id = mgr.get_or_create_var(name);
+            mgr.make_node(var_id, FALSE_NODE, TRUE_NODE)
+        };
+        BoolExpr::from_root(manager, node)
     }
 
     /// Create a constant expression (true or false)
     #[must_use]
     pub fn constant(value: bool) -> Self {
         let manager = BddManager::get_or_create();
-        BoolExpr {
-            manager,
-            root: if value { TRUE_NODE } else { FALSE_NODE },
-            cube_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        let root = if value { TRUE_NODE } else { FALSE_NODE };
+        BoolExpr::from_root(manager, root)
     }
 
     /// Convert this boolean expression to a Binary Decision Diagram

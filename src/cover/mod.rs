@@ -623,10 +623,8 @@ pub(super) fn repoint<I, O>(
         Arc::clone(input_symbols),
         (0..ni).map(|i| cube.inputs().value_at(i)),
     );
-    let om = Minterm::from_symbols(
-        Arc::clone(output_symbols),
-        (0..no).map(|i| Some(cube.asserts(i))),
-    );
+    // Outputs re-home positionally: new position i asserts iff the cube asserts position i.
+    let om = assert_mask(cube, output_symbols, no, no, |i| i);
     Cube::new(im, om, cube.cube_type())
 }
 
@@ -750,18 +748,21 @@ impl Cover<Anonymous, Anonymous> {
 // There is no runtime labelled-vs-anonymous branch: the per-label-type behaviour lives entirely in the
 // `Label`/`ReconcilableLabel` impls.
 
-/// Build a cube's new output-membership minterm over `new_output`: for each old output position the
-/// cube asserts, set the mapped new position; everything else is unasserted (`Some(false)`).
-fn rebuild_output<I, O>(
+/// Build a cube's output-membership minterm over `new_output` (width `new_no`): for each old output
+/// position `0..old_count` the cube asserts, set the new position `map(old)`; everything else is
+/// unasserted (`Some(false)`). Shared by [`repoint`] (positional re-home, identity map) and the
+/// `merge`/`extend` rebuild (remapped via the per-side output map).
+fn assert_mask<I, O, M>(
     cube: &Cube<I, O>,
-    new_output: &Arc<Symbols<O>>,
-    out_map: &[usize],
+    new_output: &Arc<Symbols<M>>,
     new_no: usize,
-) -> Minterm<O> {
+    old_count: usize,
+    map: impl Fn(usize) -> usize,
+) -> Minterm<M> {
     let mut mask = vec![false; new_no];
-    for (old, &newp) in out_map.iter().enumerate() {
+    for old in 0..old_count {
         if cube.asserts(old) {
-            mask[newp] = true;
+            mask[map(old)] = true;
         }
     }
     Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
@@ -848,7 +849,7 @@ fn assemble<I: Label, O: Label>(
     let rebuild = |c: &Cube<I, O>, out_map: &[usize]| {
         Cube::new(
             c.inputs().project_onto(&new_input),
-            rebuild_output(c, &new_output, out_map, new_no),
+            assert_mask(c, &new_output, new_no, out_map.len(), |old| out_map[old]),
             c.set,
         )
     };
