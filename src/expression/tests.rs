@@ -979,9 +979,9 @@ fn test_dnf_cache_updates_with_better_version() {
 /// on a deliberately small thread stack, so a regression back to recursion fails **deterministically**
 /// (stack overflow → the join returns `Err`) instead of silently passing on the default ~8 MiB stack.
 ///
-/// Covers the BDD walks (`var_count`, `collect_variables`, `node_count`, `to_cubes`) and the AST folds
-/// (`fold`, `fold_with_context`). `Display` and `to_expr_by_index` route through `fmt_ast_with_context`
-/// / `ast_to_expr`, which are converted separately; this test grows to cover them there.
+/// Covers every traversal that was de-recursed: the BDD walks (`var_count`, `collect_variables`,
+/// `node_count`, `to_cubes`), the AST folds (`fold`, `fold_with_context`), `Display`
+/// (`fmt_with_context`), and `to_expr_by_index` (`ast_to_expr`).
 #[test]
 fn deep_chain_does_not_overflow() {
     const N: usize = 2000;
@@ -1021,6 +1021,17 @@ fn deep_chain_does_not_overflow() {
                 },
             );
             assert!(depth >= N / 2); // genuinely deep (exact shape depends on factorisation)
+
+            // Display routes through the now-iterative `fmt_with_context`.
+            let rendered = format!("{expr}");
+            assert!(rendered.len() >= N); // ~N variable names rendered
+
+            // to_expr_by_index -> cubes_to_expr -> factorise_cubes -> ast_to_expr (now iterative).
+            let cover = crate::Cover::<crate::Symbol, crate::Anonymous>::from(&expr);
+            let back = cover
+                .to_expr_by_index(0)
+                .expect("to_expr_by_index on the deep cover");
+            assert!(back.equivalent_to(&expr));
         })
         .expect("spawn deep-chain thread");
     handle

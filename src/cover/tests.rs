@@ -740,6 +740,23 @@ fn malformed_pla_cube_dimension_mismatch_errors() {
         "expected CubeDimensionMismatch, got {err:?}"
     );
 
+    // An over-long cube that spans multiple lines errors too (accumulated 7 chars where .i 4 / .o 2
+    // expects 6) — previously the excess was silently truncated, unlike the single-line path.
+    let over_long_multiline = ".i 4\n.o 2\n0101\n111\n.e\n";
+    let err = PlaCover::<Symbol>::from_pla_string(over_long_multiline)
+        .err()
+        .expect("over-long multi-line cube should error");
+    assert!(
+        matches!(
+            err,
+            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
+        ),
+        "expected CubeDimensionMismatch, got {err:?}"
+    );
+
+    // A well-formed multi-line cube (split across lines, exactly ni + no wide) still parses.
+    assert!(PlaCover::<Symbol>::from_pla_string(".i 4\n.o 2\n0101\n11\n.e\n").is_ok());
+
     // Well-formed input still parses cleanly (the stricter checks don't reject valid covers).
     assert!(PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n11 1\n.e\n").is_ok());
 

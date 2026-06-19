@@ -1,9 +1,10 @@
 //! Display and Debug formatting for boolean expressions
 
-use super::{BoolExpr, BoolExprAst};
+use super::{BoolExpr, ExprNode};
 use std::fmt;
 
-/// Context for formatting expressions with minimal parentheses
+/// Context for formatting expressions with minimal parentheses: the operator the current node sits
+/// directly inside, which decides whether the node needs wrapping parentheses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpContext {
     None, // Top level or inside parentheses
@@ -13,74 +14,47 @@ enum OpContext {
 }
 
 impl BoolExpr {
-    /// Format with operator precedence context to minimise parentheses
+    /// Format with operator-precedence context to minimise parentheses.
+    ///
+    /// Renders via [`fold_with_context`](BoolExpr::fold_with_context) — an iterative walk — so a deeply
+    /// nested expression can't overflow the call stack while formatting. The top-down context is the
+    /// surrounding operator; a node wraps itself in parentheses only when its precedence requires it
+    /// (an `AND` inside a `NOT`, or an `OR` inside an `AND`/`NOT`). A `NOT` never needs parens itself —
+    /// its compound operand wraps via this same rule — and a variable/constant never does.
     fn fmt_with_context(&self, f: &mut fmt::Formatter<'_>, ctx: OpContext) -> fmt::Result {
-        let ast = self.get_or_create_ast();
-        Self::fmt_ast_with_context(f, &ast, ctx)
-    }
-
-    /// Format AST with context (helper method)
-    fn fmt_ast_with_context(
-        f: &mut fmt::Formatter<'_>,
-        ast: &BoolExprAst,
-        ctx: OpContext,
-    ) -> fmt::Result {
-        match ast {
-            BoolExprAst::Variable(name) => write!(f, "{}", name),
-            BoolExprAst::Constant(val) => write!(f, "{}", if *val { "1" } else { "0" }),
-
-            BoolExprAst::And(left, right) => {
-                // AND needs parens if inside a NOT
-                let needs_parens = ctx == OpContext::Not;
-
-                if needs_parens {
-                    write!(f, "(")?;
-                }
-
-                Self::fmt_ast_with_context(f, left, OpContext::And)?;
-                write!(f, " * ")?;
-                Self::fmt_ast_with_context(f, right, OpContext::And)?;
-
-                if needs_parens {
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
-
-            BoolExprAst::Or(left, right) => {
-                // OR needs parens if inside AND or NOT (lower precedence)
-                let needs_parens = ctx == OpContext::And || ctx == OpContext::Not;
-
-                if needs_parens {
-                    write!(f, "(")?;
-                }
-
-                Self::fmt_ast_with_context(f, left, OpContext::Or)?;
-                write!(f, " + ")?;
-                Self::fmt_ast_with_context(f, right, OpContext::Or)?;
-
-                if needs_parens {
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
-
-            BoolExprAst::Not(inner) => {
-                write!(f, "~")?;
-                // NOT needs parens around compound expressions (AND/OR)
-                // but NOT of NOT or variables/constants don't need parens
-                match inner.as_ref() {
-                    BoolExprAst::Variable(_) | BoolExprAst::Constant(_) | BoolExprAst::Not(_) => {
-                        Self::fmt_ast_with_context(f, inner, OpContext::Not)
-                    }
-                    _ => {
-                        write!(f, "(")?;
-                        Self::fmt_ast_with_context(f, inner, OpContext::None)?;
-                        write!(f, ")")
+        let rendered = self.fold_with_context(
+            ctx,
+            // descend: a node's children sit "inside" that node's operator.
+            |node, _parent| match node {
+                ExprNode::And(..) => (OpContext::And, OpContext::And),
+                ExprNode::Or(..) => (OpContext::Or, OpContext::Or),
+                ExprNode::Not(()) => (OpContext::Not, OpContext::Not),
+                ExprNode::Variable(_) | ExprNode::Constant(_) => (OpContext::None, OpContext::None),
+            },
+            // combine: build each node's string, parenthesising by its own surrounding context.
+            |node, ctx| match node {
+                ExprNode::Variable(name) => name.to_string(),
+                ExprNode::Constant(val) => if val { "1" } else { "0" }.to_string(),
+                ExprNode::Not(inner) => format!("~{inner}"),
+                ExprNode::And(left, right) => {
+                    let s = format!("{left} * {right}");
+                    if ctx == OpContext::Not {
+                        format!("({s})")
+                    } else {
+                        s
                     }
                 }
-            }
-        }
+                ExprNode::Or(left, right) => {
+                    let s = format!("{left} + {right}");
+                    if ctx == OpContext::And || ctx == OpContext::Not {
+                        format!("({s})")
+                    } else {
+                        s
+                    }
+                }
+            },
+        );
+        write!(f, "{rendered}")
     }
 }
 

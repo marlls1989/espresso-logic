@@ -461,16 +461,20 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     .into());
                 }
 
-                // Split accumulated data at the input/output boundary
-                let (inp, out) = accumulated.split_at(ni);
-                let mut out_str = out.to_string();
-
-                // Truncate output to exact size if we accumulated too much
-                if out_str.len() > no {
-                    out_str.truncate(no);
+                // An over-long multi-line cube (more characters than the declared width) is rejected
+                // here too, mirroring the single-line path, rather than silently truncating the excess.
+                if accumulated.len() > ni + no {
+                    return Err(PLAError::CubeDimensionMismatch {
+                        expected_inputs: ni,
+                        actual_inputs: ni,
+                        expected_outputs: no,
+                        actual_outputs: accumulated.len() - ni,
+                    }
+                    .into());
                 }
-
-                (inp.to_string(), out_str)
+                // Split accumulated data at the input/output boundary (now exactly `ni + no` wide).
+                let (inp, out) = accumulated.split_at(ni);
+                (inp.to_string(), out.to_string())
             }
         } else {
             // Dimensions not yet known - use whitespace splitting as before
