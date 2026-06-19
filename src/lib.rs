@@ -346,8 +346,6 @@ pub use cover::{
     StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-#[allow(deprecated)]
-pub use expression::Bdd;
 pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
 

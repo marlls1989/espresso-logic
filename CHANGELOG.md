@@ -54,6 +54,9 @@ Label types & cover construction:
 - **`BoolExpr::collect_variables()` returns `BTreeSet<Symbol>`** (was `BTreeSet<Arc<str>>`).
 - **`Minterm::value_of` / `Symbols::index_of` query bound is now `Q: Ord`** (was `Q: Hash + Eq`).
 - **All public error enums are `#[non_exhaustive]`;** `INLINE_CAP` is no longer public.
+- **Removed the deprecated `Bdd` type alias and the `to_bdd` / `from_expr` / `to_expr` methods**
+  (all no-op `clone()` shims). A `BoolExpr` is already a BDD; use it directly (and `clone()` where a
+  copy is wanted).
 - **Minimum supported Rust version is now 1.82.**
 
 ### Added

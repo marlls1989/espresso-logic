@@ -441,7 +441,6 @@ fn test_bdd_subexpression_caching() {
 }
 
 // ========== BDD-specific Tests (merged from bdd module) ==========
-// Note: Bdd is now a type alias for BoolExpr
 
 #[test]
 fn test_terminal_nodes() {
@@ -721,22 +720,6 @@ fn test_to_cubes_complex() {
 }
 
 #[test]
-fn test_roundtrip_bdd_expr() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let expr = a.and(&b);
-
-    // Convert to BDD and back (note: now they're the same type, so this is just cloning)
-    #[allow(deprecated)]
-    let bdd = expr.to_bdd();
-    #[allow(deprecated)]
-    let expr2 = bdd.to_expr();
-
-    // Should be logically equivalent
-    assert!(expr.equivalent_to(&expr2));
-}
-
-#[test]
 fn test_bdd_consensus_theorem() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
@@ -762,11 +745,6 @@ fn test_bdd_xor() {
 
     // Should produce 2 cubes
     assert_eq!(cubes.len(), 2);
-
-    // Convert back and verify equivalence (deprecated method, but test for compatibility)
-    #[allow(deprecated)]
-    let expr2 = xor.to_expr();
-    assert!(xor.equivalent_to(&expr2));
 }
 
 #[test]

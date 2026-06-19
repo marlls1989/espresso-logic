@@ -436,89 +436,71 @@ fn main() {
 
 ## Binary Decision Diagrams (BDDs)
 
-**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. All boolean expressions use BDD as their internal representation, providing canonical form, efficient operations, and automatic simplification.
-
-Binary Decision Diagrams provide canonical representation with efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally.
+Every `BoolExpr` **is** a Binary Decision Diagram internally: a canonical reduced-ordered BDD, giving canonical form, efficient operations, and automatic simplification. There is no separate BDD type to convert to or from.
 
 ### Basic BDD Construction
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
-use std::sync::Arc;
+use espresso_logic::BoolExpr;
 
 fn main() {
     // Create expressions (already BDDs internally)
     let true_expr = BoolExpr::constant(true);
     let false_expr = BoolExpr::constant(false);
-    
+
     // Create from variable (already a BDD)
     let a = BoolExpr::variable("a");
-    
+
     // Build expression (uses BDD operations internally)
     let expr = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
-    
+
     // All expressions ARE BDDs - no conversion needed
     println!("BDD has {} nodes", expr.node_count());
-    
-    // Bdd is just a type alias now (v3.1.1+)
-    let bdd: Bdd = expr.clone();
 }
 ```
 
 ### BDD Operations
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
-use std::sync::Arc;
+use espresso_logic::BoolExpr;
 
 fn main() {
-    // BoolExpr and Bdd are the same (v3.1.1+)
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
-    
+
     // All operations use efficient BDD algorithms
     let a_and_b = a.and(&b);
     let a_or_b = a.or(&b);
     let not_a = a.not();
-    
+
     // Complex expression: (a AND b) OR (NOT a AND c)
     let complex = a.and(&b).or(&a.not().and(&c));
-    
+
     // All expressions ARE BDDs with canonical representation
     println!("Complex BDD has {} nodes", complex.node_count());
     println!("Uses {} variables", complex.var_count());
 }
 ```
 
-### Working with BDD Representation (v3.1.1+)
-
-**Note:** Conversion methods `to_bdd()`, `from_expr()`, and `to_expr()` are deprecated as they're no-ops (return clones). BoolExpr IS a BDD.
+### Working with the BDD Representation
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd, Minimizable};
+use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
+fn main() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
-    
+
     // Create expression (already a BDD internally)
     let expr = a.and(&b).or(&b.and(&c));
-    
+
     // Already in canonical BDD form
     println!("BDD has {} nodes", expr.node_count());
-    
-    // Display uses algebraic factorisation (v3.1.1+)
+
+    // Display uses algebraic factorisation
     println!("Expression: {}", expr);
-    
-    // Can assign to Bdd type (it's just an alias)
-    let bdd: Bdd = expr.clone();
-    
-    // Verify they're the same
-    assert_eq!(expr.node_count(), bdd.node_count());
-    
-    Ok(())
 }
 ```
 

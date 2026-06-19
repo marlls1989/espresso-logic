@@ -571,11 +571,9 @@ let expr4 = expr!(!"a" * !"b");
 
 ## Working with BDDs
 
-**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. 
-All boolean expressions use BDD as their internal representation, not as a separate conversion step.
-
 Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
-efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally, providing:
+efficient operations. Every `BoolExpr` **is** a BDD internally — there is no separate BDD type and no
+conversion step — providing:
 
 - **Canonical representation**: Equivalent expressions have identical internal structure
 - **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation  
@@ -606,10 +604,8 @@ When you minimise a `BoolExpr`, the library:
 
 ### Direct BDD Usage
 
-**Note (v3.1.1+):** `Bdd` is now a type alias for `BoolExpr`. The types are unified—all expressions are BDDs.
-
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
+use espresso_logic::BoolExpr;
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -626,20 +622,13 @@ println!("Variables: {}", expr.var_count());
 let d = BoolExpr::variable("d");
 let combined = expr.and(&d);
 
-// Display uses algebraic factorisation (v3.1.1+)
+// Display uses algebraic factorisation
 println!("Result: {}", combined);
 ```
 
-**Deprecated Methods (v3.1.1+):**
-- `to_bdd()` - Returns `self.clone()` (expression IS a BDD)
-- `from_expr()` - Returns `expr.clone()` (redundant)
-- `to_expr()` - Returns `self.clone()` (redundant)
-
-These remain for backwards compatibility but are no-ops.
-
 ### BDD Advantages
 
-Since v3.1.1, all expressions automatically benefit from BDD optimisations during construction:
+All expressions automatically benefit from BDD optimisations during construction:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -661,7 +650,7 @@ let expr2 = a.and(&b).or(&a.not().and(&c));
 println!("Same function: {}", expr == expr2);  // May be true due to canonical form
 ```
 
-### Benefits of Unified BDD Architecture (v3.1.1+)
+### Benefits of the BDD Architecture
 
 All `BoolExpr` instances automatically get BDD benefits:
 
@@ -671,7 +660,7 @@ All `BoolExpr` instances automatically get BDD benefits:
 - **Fast equality**: O(1) comparison for equivalent expressions
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
+use espresso_logic::BoolExpr;
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -836,7 +825,7 @@ fn main() -> std::io::Result<()> {
   - OR operations: efficient in BDD representation (polynomial time)
   - AND operations: efficient in BDD representation (polynomial time)
   - NOT operations: efficient in BDD representation (just flip terminal nodes)
-- **Implementation:** All conversions go through BDD: `BoolExpr -> Bdd -> cubes` (avoids exponential complexity)
+- **Implementation:** Cubes are extracted from the expression's internal BDD: `BoolExpr (BDD) -> cubes` (avoids exponential complexity)
 
 **Why Both BDD and Espresso?**
 - **BDD minimization is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)

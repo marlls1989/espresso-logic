@@ -26,11 +26,6 @@
 //! The BDD implementation makes the high-level API practical for complex expressions,
 //! but the primary purpose remains **Boolean function minimisation via Espresso**.
 //!
-//! **Deprecated methods:**
-//! - `to_bdd()` - Returns `self.clone()` (expression already uses BDD internally)
-//! - `Bdd::from_expr()` - Returns `expr.clone()` (redundant conversion)
-//! - `Bdd::to_expr()` - Returns `self.clone()` (redundant conversion)
-//!
 //! # Quick Start
 //!
 //! ## Using the `expr!` Macro (Recommended)
@@ -268,54 +263,6 @@ impl BoolExpr {
         BoolExpr::from_root(manager, root)
     }
 
-    /// Convert this boolean expression to a Binary Decision Diagram
-    ///
-    /// **Deprecated:** `BoolExpr` is now implemented as a BDD internally.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::BoolExpr;
-    ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let expr = a.and(&b);
-    ///
-    /// let bdd = expr.to_bdd();  // Just returns a clone
-    /// ```
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr is now a BDD internally. Use clone() instead."
-    )]
-    pub fn to_bdd(&self) -> Self {
-        self.clone()
-    }
-
-    /// Create a BoolExpr from a BDD (actually the same type)
-    ///
-    /// **Deprecated:** `BoolExpr` and `Bdd` are now the same type.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr and Bdd are now the same type. Use clone() instead."
-    )]
-    pub fn from_expr(expr: &BoolExpr) -> Self {
-        expr.clone()
-    }
-
-    /// Convert this BDD to a BoolExpr (actually the same type)
-    ///
-    /// **Deprecated:** `BoolExpr` and `Bdd` are now the same type.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr and Bdd are now the same type. Use clone() instead."
-    )]
-    pub fn to_expr(&self) -> Self {
-        self.clone()
-    }
-
     /// Get or create the cached product-term cubes with local caching.
     ///
     /// Extracts cubes (input [`Minterm`](crate::cover::Minterm)s) from the BDD on first
@@ -425,38 +372,6 @@ impl std::hash::Hash for BoolExpr {
         self.root.hash(state);
     }
 }
-
-/// Type alias for backwards compatibility.
-///
-/// **Deprecated:** Use [`BoolExpr`] directly instead.
-///
-/// `Bdd` and `BoolExpr` are now the same type in the unified architecture (v3.1.1+).
-/// This alias exists for backwards compatibility but should not be used in new code.
-///
-/// # Migration
-///
-/// Old code using `Bdd`:
-/// ```
-/// use espresso_logic::Bdd;
-///
-/// let a = Bdd::variable("a");
-/// let b = Bdd::variable("b");
-/// let result = a.and(&b);
-/// ```
-///
-/// Should be updated to use [`BoolExpr`] directly:
-/// ```
-/// use espresso_logic::BoolExpr;
-///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let result = a.and(&b);
-/// ```
-#[deprecated(
-    since = "3.1.1",
-    note = "Use `BoolExpr` directly. `Bdd` is now just a type alias for backwards compatibility."
-)]
-pub type Bdd = BoolExpr;
 
 #[cfg(test)]
 mod tests;
