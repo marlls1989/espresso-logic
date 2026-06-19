@@ -22,11 +22,15 @@ use std::sync::Arc;
 /// shared behind an `Arc`. There is no partial state and no interior mutability — `labels.len()` *is*
 /// the arity, and the sorted order is computed eagerly at construction.
 pub struct Symbols<L> {
-    /// index → label, one per position.
+    /// index → label, one per position. The single, authoritative copy of the labels.
     labels: Arc<[L]>,
     /// Positions `0..arity` sorted by [`identity`](Label::identity), computed once at construction.
     /// Drives the merge-join that aligns differing headers and the binary-search reverse lookups
     /// ([`index_of`](Symbols::index_of) / [`position_of_identity`](Symbols::position_of_identity)).
+    ///
+    /// Stored as a *permutation of positions* (`u32`), not a second label array: the identity ordering
+    /// is read by indirection (`labels[sorted[k]]`), so the labels are never duplicated — which also
+    /// keeps this cheap for heap labels like `String`/`Arc<str>`.
     sorted: Box<[u32]>,
 }
 

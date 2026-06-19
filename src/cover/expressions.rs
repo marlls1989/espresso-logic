@@ -66,30 +66,18 @@ impl Cover<Symbol, Symbol> {
         // Extract the expression's product terms as input minterms (goes through the BDD for
         // canonical form). Every minterm shares one header: the expression's variables, sorted.
         let cubes = expr.to_cubes();
-        let expr_vars: &[Symbol] = cubes.first().map(|m| m.vars()).unwrap_or(&[]);
 
-        // Extend the input table with any variables new to the cover, re-pointing existing cubes
-        // (new inputs = don't-care). Build the grown header as one chained iterator.
-        let is_new = |v: &Symbol| {
-            !self
-                .input_symbols
-                .labels()
-                .iter()
-                .any(|x| x.as_ref() == v.as_ref())
-        };
-        if expr_vars.iter().any(is_new) {
-            let header: Arc<[Symbol]> = self
-                .input_symbols
-                .labels()
-                .iter()
-                .cloned()
-                .chain(expr_vars.iter().filter(|v| is_new(v)).cloned())
-                .collect();
-            let new_syms = Symbols::new(header);
-            for cube in &mut self.cubes {
-                cube.inputs = cube.inputs.project_onto(&new_syms);
+        // Union the cover's input header with the expression's variables, re-pointing existing cubes
+        // onto the grown header (new inputs = don't-care). Reuse the shared identity-union helper
+        // rather than re-implementing union-by-name (for `Symbol`, identity *is* the name).
+        if let Some(expr_syms) = cubes.first().map(|m| m.symbols()) {
+            let (new_syms, _, _) = super::identity_union(&self.input_symbols, expr_syms);
+            if new_syms.arity() > self.num_inputs() {
+                for cube in &mut self.cubes {
+                    cube.inputs = cube.inputs.project_onto(&new_syms);
+                }
+                self.input_symbols = new_syms;
             }
-            self.input_symbols = new_syms;
         }
 
         // Append the new output to the output table; existing cubes gain an unasserted column.

@@ -262,15 +262,11 @@ impl<L: Label> Minterm<L> {
 }
 
 impl<L: Label> Minterm<L> {
-    /// Align two minterms to a common word layout for per-field set operations.
-    ///
-    /// Fast path: shared symbol table → borrow both word slices directly. Slow path: project both
-    /// onto the sorted union of their variables.
     /// Merge-join the two minterms' fields, aligned by variable identity in sorted-label order.
     ///
     /// Yields `(self_field, other_field)` per variable of the union; an absent variable reads as
-    /// don't-care. O(n+m) over the two cached sorted label sequences — no union set, no projection.
-    /// Callers on a shared symbol table use the faster word-wise path instead.
+    /// don't-care. O(n+m) over the two sorted label sequences — no union set, no projection. Callers
+    /// that share a symbol table take the faster word-wise path directly instead of this.
     fn merged_fields<'a>(&'a self, other: &'a Self) -> MergedFields<'a, L> {
         MergedFields {
             a: self,
@@ -365,9 +361,8 @@ impl<L: Label> Minterm<L> {
     }
 }
 
-/// Merge-join iterator over two minterms' fields, aligned by variable identity in sorted-label
-/// order. Yields `(self_field, other_field)` per variable of the union; a variable absent from one
-/// side reads as don't-care (`FIELD_DC`). O(n+m) over the two sorted label sequences.
+/// Merge-join iterator backing [`Minterm::merged_fields`]; a variable absent from one side reads as
+/// don't-care (`FIELD_DC`).
 struct MergedFields<'a, L> {
     a: &'a Minterm<L>,
     b: &'a Minterm<L>,

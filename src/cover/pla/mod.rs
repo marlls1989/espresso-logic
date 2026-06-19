@@ -644,6 +644,19 @@ macro_rules! on_inner_cover {
     };
 }
 
+/// Like [`on_inner_cover!`], but **re-wraps** `$body`'s result in the same variant — used by the
+/// transforms (e.g. minimisation) that map the inner [`Cover`] and must preserve which sides are named.
+macro_rules! map_inner_cover {
+    ($self:expr, $c:ident => $body:expr) => {
+        match $self {
+            PlaCover::InputsOutputsNamed($c) => PlaCover::InputsOutputsNamed($body),
+            PlaCover::InputsNamed($c) => PlaCover::InputsNamed($body),
+            PlaCover::OutputsNamed($c) => PlaCover::OutputsNamed($body),
+            PlaCover::Positional($c) => PlaCover::Positional($body),
+        }
+    };
+}
+
 impl<S: StringLabel> PlaCover<S> {
     /// Parse a `PlaCover` from any `BufRead`, reading label sections into the label type `S`.
     ///
@@ -746,31 +759,13 @@ impl<S: PlaLabel> PLAWriter for PlaCover<S> {
 /// Minimisation preserves which sides are named (the label types are carried through).
 impl<S> Minimizable for PlaCover<S> {
     fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
-        Ok(match self {
-            PlaCover::InputsOutputsNamed(c) => {
-                PlaCover::InputsOutputsNamed(c.minimize_with_config(config)?)
-            }
-            PlaCover::InputsNamed(c) => PlaCover::InputsNamed(c.minimize_with_config(config)?),
-            PlaCover::OutputsNamed(c) => PlaCover::OutputsNamed(c.minimize_with_config(config)?),
-            PlaCover::Positional(c) => PlaCover::Positional(c.minimize_with_config(config)?),
-        })
+        Ok(map_inner_cover!(self, c => c.minimize_with_config(config)?))
     }
 
     fn minimize_exact_with_config(
         &self,
         config: &EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        Ok(match self {
-            PlaCover::InputsOutputsNamed(c) => {
-                PlaCover::InputsOutputsNamed(c.minimize_exact_with_config(config)?)
-            }
-            PlaCover::InputsNamed(c) => {
-                PlaCover::InputsNamed(c.minimize_exact_with_config(config)?)
-            }
-            PlaCover::OutputsNamed(c) => {
-                PlaCover::OutputsNamed(c.minimize_exact_with_config(config)?)
-            }
-            PlaCover::Positional(c) => PlaCover::Positional(c.minimize_exact_with_config(config)?),
-        })
+        Ok(map_inner_cover!(self, c => c.minimize_exact_with_config(config)?))
     }
 }

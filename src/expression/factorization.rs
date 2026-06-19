@@ -276,13 +276,15 @@ fn find_best_factor(terms: &[ProductTerm]) -> Option<(Symbol, bool)> {
     best_factor
 }
 
-/// Apply single-pass factorisation, returning AST directly
-fn factorise_multipass(terms: Vec<ProductTerm>, _max_iterations: usize) -> Arc<BoolExprAst> {
+/// Apply single-pass factorisation, returning AST directly.
+///
+/// Working directly with the AST already preserves the factored structure, so a single pass is all
+/// this needs (an earlier multi-pass iteration count was never used).
+fn factorise_single_pass(terms: Vec<ProductTerm>) -> Arc<BoolExprAst> {
     if terms.is_empty() {
         return Arc::new(BoolExprAst::Constant(false));
     }
 
-    // Single pass only - working directly with AST preserves factored structure
     factorise_once(terms)
 }
 
@@ -317,7 +319,7 @@ pub(crate) fn factorise_cubes_to_ast(
         .collect();
 
     // Factorise and return AST
-    factorise_multipass(terms, 3)
+    factorise_single_pass(terms)
 }
 
 /// Convert cubes (from Cover) directly to factored expression

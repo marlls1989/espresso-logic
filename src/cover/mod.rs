@@ -123,6 +123,7 @@ pub use minterm::Minterm;
 pub use symbols::Symbols;
 
 use crate::Symbol;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Represents the type of cover (F, FD, FR, or FDR)
@@ -585,13 +586,16 @@ impl<I: Clone, O> Cover<I, O> {
     }
 }
 
-/// Re-point an anonymous cube positionally onto target symbol tables: inputs beyond the cube's own
-/// arity become don't-care, output membership beyond it becomes unasserted (`Some(false)`).
-fn repoint_anonymous(
+/// Re-point an anonymous cube positionally onto target symbol tables of any label type: input values
+/// are read by position (positions beyond the cube's own arity become don't-care), output membership is
+/// read by position (positions beyond it become unasserted, `Some(false)`). The target tables supply
+/// the labels; the cube only supplies values, so this works for both anonymous (`I = O = Anonymous`)
+/// and named targets — Espresso hands back anonymous positional cubes that get re-homed this way.
+pub(super) fn repoint<I, O>(
     cube: &Cube<Anonymous, Anonymous>,
-    input_symbols: &Arc<Symbols<Anonymous>>,
-    output_symbols: &Arc<Symbols<Anonymous>>,
-) -> Cube<Anonymous, Anonymous> {
+    input_symbols: &Arc<Symbols<I>>,
+    output_symbols: &Arc<Symbols<O>>,
+) -> Cube<I, O> {
     let ni = input_symbols.arity();
     let no = output_symbols.arity();
     let im = Minterm::from_symbols(
@@ -645,7 +649,7 @@ impl Cover<Anonymous, Anonymous> {
         let output_symbols = Symbols::<Anonymous>::anonymous(no);
         let cubes = cubes
             .iter()
-            .map(|cube| repoint_anonymous(cube, &input_symbols, &output_symbols))
+            .map(|cube| repoint(cube, &input_symbols, &output_symbols))
             .collect();
         Cover {
             input_symbols,
@@ -673,7 +677,7 @@ impl Cover<Anonymous, Anonymous> {
     /// ```
     pub fn push(&mut self, cube: Cube<Anonymous, Anonymous>) {
         self.grow_to_fit(cube.inputs().num_vars(), cube.outputs().num_vars());
-        let repointed = repoint_anonymous(&cube, &self.input_symbols, &self.output_symbols);
+        let repointed = repoint(&cube, &self.input_symbols, &self.output_symbols);
         self.cubes.push(repointed);
     }
 
@@ -741,53 +745,53 @@ fn rebuild_output<I, O>(
     Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
 }
 
-/// The union input header of two covers, aligned by identity: `a`'s labels followed by `b`'s labels of
-/// a new identity. By name when labelled, by position when anonymous (`Anonymous`'s identity is its
-/// index, so this grows to the wider arity and positions pad don't-care on projection).
-fn union_inputs<I: Label>(a: &Symbols<I>, b: &Symbols<I>) -> Arc<Symbols<I>> {
-    let mut header: Vec<I> = a.labels().to_vec();
-    for (j, lb) in b.labels().iter().enumerate() {
-        let id = lb.identity(j);
-        if !header
-            .iter()
-            .enumerate()
-            .any(|(k, la)| la.identity(k) == id)
-        {
-            header.push(lb.clone());
-        }
-    }
-    Symbols::new(header.into())
-}
-
-/// Output header for `merge`: overlay `b`'s outputs onto `a`'s by identity. Returns the new header plus
-/// each side's old→new position map (`b`'s output of an identity already in `a` reuses that position;
-/// new identities extend the header).
-fn overlay_outputs<O: Label>(
-    a: &Symbols<O>,
-    b: &Symbols<O>,
-) -> (Arc<Symbols<O>>, Vec<usize>, Vec<usize>) {
+/// Union two headers by variable identity: `a`'s labels, then each of `b`'s labels whose identity is
+/// new. Returns the combined header plus each side's old→new position map — `a` maps to itself
+/// (`0..a_no`), and `b`'s label reuses the position of a matching identity (in `a` or an earlier `b`
+/// column) or extends the header. Alignment is by name when labelled, by position when anonymous
+/// (`Anonymous`'s identity is its index).
+///
+/// O(n + m): membership is probed through a `HashMap` keyed on [`Identity`](Label::Identity) (which is
+/// `Hash`), not the former per-label linear scan of the growing header.
+fn identity_union<L: Label>(
+    a: &Symbols<L>,
+    b: &Symbols<L>,
+) -> (Arc<Symbols<L>>, Vec<usize>, Vec<usize>) {
     let a_no = a.arity();
-    let mut header: Vec<O> = a.labels().to_vec();
+    let mut header: Vec<L> = a.labels().to_vec();
+    let mut pos_by_id: HashMap<L::Identity, usize> = a
+        .labels()
+        .iter()
+        .enumerate()
+        .map(|(k, la)| (la.identity(k), k))
+        .collect();
     let b_map = b
         .labels()
         .iter()
         .enumerate()
         .map(|(j, lb)| {
-            let id = lb.identity(j);
-            match header
-                .iter()
-                .enumerate()
-                .position(|(k, la)| la.identity(k) == id)
-            {
-                Some(p) => p,
-                None => {
-                    header.push(lb.clone());
-                    header.len() - 1
-                }
-            }
+            *pos_by_id.entry(lb.identity(j)).or_insert_with(|| {
+                header.push(lb.clone());
+                header.len() - 1
+            })
         })
         .collect();
     (Symbols::new(header.into()), (0..a_no).collect(), b_map)
+}
+
+/// The union **input** header of two covers, aligned by identity (the header from [`identity_union`];
+/// the position maps are unused for inputs, which re-point via [`project_onto`](Minterm::project_onto)).
+fn union_inputs<I: Label>(a: &Symbols<I>, b: &Symbols<I>) -> Arc<Symbols<I>> {
+    identity_union(a, b).0
+}
+
+/// Output header for `merge`: overlay `b`'s outputs onto `a`'s by identity (an identity already in `a`
+/// reuses that column; new identities extend the header). Exactly [`identity_union`].
+fn overlay_outputs<O: Label>(
+    a: &Symbols<O>,
+    b: &Symbols<O>,
+) -> (Arc<Symbols<O>>, Vec<usize>, Vec<usize>) {
+    identity_union(a, b)
 }
 
 /// Output header for `extend`: append **all** of `b`'s outputs after `a`'s as distinct columns,

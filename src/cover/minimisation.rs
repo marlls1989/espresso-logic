@@ -6,7 +6,6 @@
 
 use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
-use super::minterm::Minterm;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::expression::BoolExpr;
@@ -239,15 +238,11 @@ where
     let no = cover.num_outputs();
     let input_symbols = Arc::clone(cover.input_symbols());
     let output_symbols = Arc::clone(cover.output_symbols());
-    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the cover's
-    // real `Symbols<L>` table by reading values positionally (variable order is preserved across
-    // the boundary).
+    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the
+    // cover's real `Symbols<L>` tables by reading values positionally (variable order is preserved across
+    // the boundary). Same operation as building any cover from anonymous cubes — see `repoint`.
     let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
-        let inputs = (0..ni).map(|i| cube.inputs().value_at(i));
-        let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
-        let outputs = (0..no).map(|i| cube.outputs().value_at(i));
-        let om = Minterm::from_symbols(Arc::clone(&output_symbols), outputs);
-        Cube::new(im, om, cube.cube_type())
+        super::repoint(cube, &input_symbols, &output_symbols)
     };
 
     // Bind the three decoded sets so their cubes outlive the chained iterator below.
