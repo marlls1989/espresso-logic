@@ -9,6 +9,7 @@ use std::io;
 /// These errors occur during cover manipulation, such as adding expressions
 /// or accessing outputs by name or index.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CoverError {
     /// Attempted to add an expression to an output name that already exists
     OutputAlreadyExists {
@@ -59,6 +60,7 @@ impl From<CoverError> for io::Error {
 ///
 /// This error type is returned by `Cover::add_expr()`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AddExprError {
     /// Cover operation error
     Cover(CoverError),
@@ -98,6 +100,7 @@ impl From<AddExprError> for io::Error {
 ///
 /// This error type is returned by `Cover::to_expr()` and `Cover::to_expr_by_index()`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ToExprError {
     /// Cover operation error
     Cover(CoverError),
@@ -133,9 +136,71 @@ impl From<ToExprError> for io::Error {
     }
 }
 
+/// A new symbol table's arity did not match the cover it was being applied to.
+///
+/// Returned by [`Cover::relabel`](crate::Cover::relabel),
+/// [`relabel_inputs`](crate::Cover::relabel_inputs) and
+/// [`relabel_outputs`](crate::Cover::relabel_outputs): re-labelling is position-for-position, so the
+/// replacement table must have exactly as many labels as the side it replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ArityMismatch {
+    /// The new input table's arity differs from the cover's input arity.
+    Inputs {
+        /// The cover's input arity.
+        expected: usize,
+        /// The replacement input table's arity.
+        actual: usize,
+    },
+    /// The new output table's arity differs from the cover's output arity.
+    Outputs {
+        /// The cover's output arity.
+        expected: usize,
+        /// The replacement output table's arity.
+        actual: usize,
+    },
+}
+
+impl fmt::Display for ArityMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArityMismatch::Inputs { expected, actual } => write!(
+                f,
+                "input arity mismatch: cover has {} input(s) but the new label table has {}",
+                expected, actual
+            ),
+            ArityMismatch::Outputs { expected, actual } => write!(
+                f,
+                "output arity mismatch: cover has {} output(s) but the new label table has {}",
+                expected, actual
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ArityMismatch {}
+
+impl From<ArityMismatch> for io::Error {
+    fn from(err: ArityMismatch) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arity_mismatch_displays_side_and_counts() {
+        let err = ArityMismatch::Inputs {
+            expected: 3,
+            actual: 2,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("input arity mismatch"));
+        assert!(msg.contains('3'));
+        assert!(msg.contains('2'));
+    }
 
     #[test]
     fn test_cover_error_output_already_exists() {

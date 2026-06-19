@@ -8,6 +8,7 @@ use std::sync::Arc;
 ///
 /// These errors occur when reading or parsing PLA files with invalid format.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PLAError {
     /// PLA file is missing the .i (inputs) directive
     MissingInputDirective,
@@ -116,6 +117,7 @@ impl From<PLAError> for io::Error {
 ///
 /// This error type is returned by `Cover::from_pla_*` methods.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PLAReadError {
     /// PLA format error
     PLA(PLAError),
@@ -168,6 +170,7 @@ impl From<PLAReadError> for io::Error {
 ///
 /// This error type is returned by `Cover::to_pla_*` methods.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PLAWriteError {
     /// IO error during writing
     Io(io::Error),

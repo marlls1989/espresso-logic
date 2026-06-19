@@ -343,7 +343,7 @@ pub mod examples;
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, ReconcilableLabel,
-    Symbols,
+    StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
 #[allow(deprecated)]

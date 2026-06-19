@@ -35,7 +35,7 @@ use crate::Symbol;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// Mask selecting the "allows-0" bit of every variable field in a word.
@@ -203,14 +203,14 @@ impl Minterm<Symbol> {
     }
 }
 
-impl<L: Eq + Hash + Clone> Minterm<L> {
+impl<L: Label> Minterm<L> {
     /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
     ///
     /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be queried with `&str`).
     pub fn value_of<Q>(&self, label: &Q) -> Option<bool>
     where
         L: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Ord + ?Sized,
     {
         match self.symbols.index_of(label) {
             Some(i) => decode(field_at(&self.values, i as usize)),
@@ -476,6 +476,36 @@ impl<L: Label> PartialEq for Minterm<L> {
 }
 
 impl<L: Label> Eq for Minterm<L> {}
+
+/// Hashes the same identity-aligned canonical sequence that [`Eq`]/[`Ord`] compare over, so
+/// `a == b` always implies `hash(a) == hash(b)`.
+///
+/// Equality aligns variables by [`identity`](Label::identity), ignores don't-care (`None`) entries
+/// (an absent variable reads as don't-care, so a fixed variable and a missing one are
+/// distinguished only when the present one is *not* don't-care), and is independent of physical
+/// word/position order. We therefore hash, in sorted-identity order, the `(identity, value)` pair
+/// of every variable whose value is **not** don't-care — skipping the don't-cares that `Eq` treats
+/// as absent. Raw words, the `Arc` pointer, the arity and any position-dependent state that `Eq`
+/// ignores are deliberately left out, preserving the `Hash`/`Eq` contract.
+impl<L: Label> Hash for Minterm<L> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let labels = self.symbols.labels();
+        let mut len = 0usize;
+        for &pos in self.symbols.sorted_order() {
+            let pos = pos as usize;
+            if let Some(value) = decode(field_at(&self.values, pos)) {
+                // Walk sorted-identity order so the sequence is canonical regardless of header
+                // ordering; don't-cares are skipped to match `Eq`'s absent-equals-don't-care rule.
+                labels[pos].identity(pos).hash(state);
+                value.hash(state);
+                len += 1;
+            }
+        }
+        // Hash the trimmed length too, so the empty/all-don't-care prefix of a longer sequence
+        // cannot collide with the same prefix followed by more fixed variables.
+        len.hash(state);
+    }
+}
 
 #[cfg(test)]
 mod tests {

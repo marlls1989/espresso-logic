@@ -115,9 +115,9 @@ mod symbols;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
-pub use error::{AddExprError, CoverError, ToExprError};
+pub use error::{AddExprError, ArityMismatch, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
-pub use label::{Anonymous, Label, ReconcilableLabel};
+pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 pub use symbols::Symbols;
@@ -296,10 +296,24 @@ pub struct Cover<I, O> {
     pub(crate) cover_type: CoverType,
 }
 
+/// Two covers are equal when they have the same cover type, the same input and output headers
+/// (position-for-position, compared by label [`identity`](Label::identity)), and the same cubes in the
+/// same order. Cube comparison is identity-based (see [`Cube`]'s `PartialEq`).
+impl<I: Label, O: Label> PartialEq for Cover<I, O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cover_type == other.cover_type
+            && self.input_symbols == other.input_symbols
+            && self.output_symbols == other.output_symbols
+            && self.cubes == other.cubes
+    }
+}
+
+impl<I: Label, O: Label> Eq for Cover<I, O> {}
+
 impl<I, O> Cover<I, O>
 where
-    I: for<'a> From<&'a str>,
-    O: for<'a> From<&'a str>,
+    I: StringLabel,
+    O: StringLabel,
 {
     /// Create a new cover with pre-defined labels.
     ///
@@ -367,21 +381,28 @@ impl<I, O> Cover<I, O> {
     /// never happen implicitly. The new symbol tables must have the same arities as this cover.
     /// To change only one side, use [`relabel_inputs`](Self::relabel_inputs) /
     /// [`relabel_outputs`](Self::relabel_outputs).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArityMismatch`] if either replacement table's arity differs from this cover's
+    /// corresponding arity (re-labelling is position-for-position).
     pub fn relabel<I2: Label, O2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
         output_symbols: Arc<Symbols<O2>>,
-    ) -> Cover<I2, O2> {
-        assert_eq!(
-            input_symbols.arity(),
-            self.num_inputs(),
-            "relabel: input arity mismatch"
-        );
-        assert_eq!(
-            output_symbols.arity(),
-            self.num_outputs(),
-            "relabel: output arity mismatch"
-        );
+    ) -> Result<Cover<I2, O2>, ArityMismatch> {
+        if input_symbols.arity() != self.num_inputs() {
+            return Err(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: input_symbols.arity(),
+            });
+        }
+        if output_symbols.arity() != self.num_outputs() {
+            return Err(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: output_symbols.arity(),
+            });
+        }
         let cubes = self
             .cubes
             .into_iter()
@@ -393,23 +414,29 @@ impl<I, O> Cover<I, O> {
                 )
             })
             .collect();
-        Cover {
+        Ok(Cover {
             input_symbols,
             output_symbols,
             cubes,
             cover_type: self.cover_type,
-        }
+        })
     }
 
     /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
     ///
-    /// The new input table must have the same input arity as this cover.
-    pub fn relabel_inputs<I2: Label>(self, input_symbols: Arc<Symbols<I2>>) -> Cover<I2, O> {
-        assert_eq!(
-            input_symbols.arity(),
-            self.num_inputs(),
-            "relabel_inputs: input arity mismatch"
-        );
+    /// # Errors
+    ///
+    /// Returns [`ArityMismatch`] if the new input table's arity differs from this cover's input arity.
+    pub fn relabel_inputs<I2: Label>(
+        self,
+        input_symbols: Arc<Symbols<I2>>,
+    ) -> Result<Cover<I2, O>, ArityMismatch> {
+        if input_symbols.arity() != self.num_inputs() {
+            return Err(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: input_symbols.arity(),
+            });
+        }
         let cubes = self
             .cubes
             .into_iter()
@@ -421,23 +448,29 @@ impl<I, O> Cover<I, O> {
                 )
             })
             .collect();
-        Cover {
+        Ok(Cover {
             input_symbols,
             output_symbols: self.output_symbols,
             cubes,
             cover_type: self.cover_type,
-        }
+        })
     }
 
     /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
     ///
-    /// The new output table must have the same output arity as this cover.
-    pub fn relabel_outputs<O2: Label>(self, output_symbols: Arc<Symbols<O2>>) -> Cover<I, O2> {
-        assert_eq!(
-            output_symbols.arity(),
-            self.num_outputs(),
-            "relabel_outputs: output arity mismatch"
-        );
+    /// # Errors
+    ///
+    /// Returns [`ArityMismatch`] if the new output table's arity differs from this cover's output arity.
+    pub fn relabel_outputs<O2: Label>(
+        self,
+        output_symbols: Arc<Symbols<O2>>,
+    ) -> Result<Cover<I, O2>, ArityMismatch> {
+        if output_symbols.arity() != self.num_outputs() {
+            return Err(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: output_symbols.arity(),
+            });
+        }
         let cubes = self
             .cubes
             .into_iter()
@@ -449,21 +482,25 @@ impl<I, O> Cover<I, O> {
                 )
             })
             .collect();
-        Cover {
+        Ok(Cover {
             input_symbols: self.input_symbols,
             output_symbols,
             cubes,
             cover_type: self.cover_type,
-        }
+        })
     }
 
     /// Drop all labels, yielding a positional [`Cover<Anonymous, Anonymous>`](Cover) (explicit anonymisation).
+    ///
+    /// Infallible: the anonymous tables are built at this cover's own arities, so they always match.
+    #[must_use = "anonymize returns a new cover; the original is consumed"]
     pub fn anonymize(self) -> Cover<Anonymous, Anonymous> {
         let (ni, no) = (self.num_inputs(), self.num_outputs());
         self.relabel(
             Symbols::<Anonymous>::anonymous(ni),
             Symbols::<Anonymous>::anonymous(no),
         )
+        .expect("anonymous tables are built at the cover's own arities")
     }
 
     /// Get the number of inputs

@@ -50,6 +50,17 @@ impl<I: Label + fmt::Debug, O: Label + fmt::Debug> fmt::Debug for Cube<I, O> {
     }
 }
 
+/// Two cubes are equal when they belong to the same set and their input and output patterns are
+/// equal. The pattern comparison is [`Minterm`]'s identity-based equality, so cubes align by variable
+/// name (ignoring header order) and treat absent variables as don't-cares.
+impl<I: Label, O: Label> PartialEq for Cube<I, O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.set == other.set && self.inputs == other.inputs && self.outputs == other.outputs
+    }
+}
+
+impl<I: Label, O: Label> Eq for Cube<I, O> {}
+
 impl<I, O> Cube<I, O> {
     /// Build a cube from its input pattern, output-membership mask, and set tag.
     pub(crate) fn new(inputs: Minterm<I>, outputs: Minterm<O>, set: CubeType) -> Self {

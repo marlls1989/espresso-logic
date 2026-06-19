@@ -3,7 +3,7 @@
 //! Variable names flow through every layer of the crate (BDD manager, cover labels, cubes). `Symbol`
 //! is the storage we use for them, tuned for that workload:
 //!
-//! - **Small-string optimised.** A name of up to [`INLINE_CAP`] bytes (which is virtually every real
+//! - **Small-string optimised.** A name of up to `INLINE_CAP` bytes (which is virtually every real
 //!   variable name — `a`, `x0`, `carry_in`, …) lives **inline**, with no heap allocation and an O(1),
 //!   `memcpy`-cheap [`Clone`]. An `Arc<str>` would heap-allocate a refcount header plus the bytes even
 //!   for `"a"`.
@@ -24,7 +24,7 @@ use weak_table::WeakHashSet;
 
 /// Maximum byte length stored inline (without heap allocation). Chosen so `size_of::<Symbol>()` stays
 /// in the `Arc<str>`/`String` class (24 bytes on 64-bit).
-pub const INLINE_CAP: usize = 22;
+pub(crate) const INLINE_CAP: usize = 22;
 
 /// The inline length is stored as a `u8` (`Repr::Inline { len: u8, .. }`), so the inline capacity
 /// must fit in a `u8` for the `len = bytes.len() as u8` cast to be lossless.
@@ -36,7 +36,7 @@ pub struct Symbol(Repr);
 
 #[derive(Clone)]
 enum Repr {
-    /// Up to [`INLINE_CAP`] bytes stored inline (`buf[..len]` is valid UTF-8).
+    /// Up to `INLINE_CAP` bytes stored inline (`buf[..len]` is valid UTF-8).
     Inline { len: u8, buf: [u8; INLINE_CAP] },
     /// A longer name, interned and shared.
     Heap(Arc<str>),

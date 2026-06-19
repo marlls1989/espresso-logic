@@ -230,6 +230,7 @@ pub struct BoolExpr {
 
 impl BoolExpr {
     /// Create a variable expression with the given name
+    #[must_use]
     pub fn variable(name: &str) -> Self {
         let manager = BddManager::get_or_create();
         let mut mgr = manager.write().unwrap();
@@ -245,6 +246,7 @@ impl BoolExpr {
     }
 
     /// Create a constant expression (true or false)
+    #[must_use]
     pub fn constant(value: bool) -> Self {
         let manager = BddManager::get_or_create();
         BoolExpr {

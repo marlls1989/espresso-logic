@@ -9,6 +9,7 @@ use std::io;
 /// These errors occur when trying to create or use Espresso instances with
 /// conflicting dimensions or configurations on the same thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InstanceError {
     /// The requested dimensions don't match the existing thread-local instance
     DimensionMismatch {
@@ -65,6 +66,7 @@ impl From<InstanceError> for io::Error {
 ///
 /// These errors occur when invalid cube values are provided during cover creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CubeError {
     /// Invalid cube value encountered
     ///
@@ -101,6 +103,7 @@ impl From<CubeError> for io::Error {
 ///
 /// This error type is returned by `Cover::minimize()` and `BoolExpr::minimize()`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MinimizationError {
     /// Instance management error
     Instance(InstanceError),

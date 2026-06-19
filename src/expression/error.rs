@@ -8,6 +8,7 @@ use std::sync::Arc;
 ///
 /// These errors occur when parsing a boolean expression string fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExpressionParseError {
     /// Failed to parse a boolean expression due to invalid syntax
     InvalidSyntax {
@@ -58,6 +59,7 @@ impl From<ExpressionParseError> for io::Error {
 ///
 /// This error type is returned by `BoolExpr::parse()`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ParseBoolExprError {
     /// Expression parsing error
     Parse(ExpressionParseError),

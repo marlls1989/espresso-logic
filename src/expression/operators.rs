@@ -148,6 +148,7 @@ impl BoolExpr {
     ///
     /// Computes the conjunction using the BDD ITE operation:
     /// `and(f, g) = ite(f, g, false)`
+    #[must_use]
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
         // Use ITE: and(f, g) = ite(f, g, false)
         let manager = Arc::clone(&self.manager);
@@ -167,6 +168,7 @@ impl BoolExpr {
     ///
     /// Computes the disjunction using the BDD ITE operation:
     /// `or(f, g) = ite(f, true, g)`
+    #[must_use]
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
         // Use ITE: or(f, g) = ite(f, true, g)
         let manager = Arc::clone(&self.manager);
@@ -186,6 +188,7 @@ impl BoolExpr {
     ///
     /// Computes the negation using the BDD ITE operation:
     /// `not(f) = ite(f, false, true)`
+    #[must_use]
     pub fn not(&self) -> BoolExpr {
         // Use ITE: not(f) = ite(f, false, true)
         let manager = Arc::clone(&self.manager);

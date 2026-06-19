@@ -12,12 +12,28 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
+/// Seals the label trait family ([`Label`], [`ReconcilableLabel`], [`PlaLabel`], [`StringLabel`]) so
+/// they cannot be implemented for new types outside this crate. `Sealed` is implemented exactly where
+/// `Label` is — for every `Ord + Eq + Hash + Clone` type and for [`Anonymous`] — so a type that
+/// already qualifies as a label via the blanket impls is unaffected, but a foreign type that does not
+/// can no longer hand-roll a `Label` (and thus a custom [`identity`](Label::identity)) impl.
+pub(crate) mod sealed {
+    /// Private supertrait that gates the label traits; see [`super::sealed`].
+    pub trait Sealed {}
+}
+
+impl<T: Ord + Eq + Hash + Clone> sealed::Sealed for T {}
+impl sealed::Sealed for Anonymous {}
+
 /// How a cover's variable labels align across differently-ordered headers.
 ///
 /// Implemented for every `Ord + Eq + Hash + Clone` type via a blanket impl (so `Symbol`,
 /// [`Symbol`](crate::Symbol), `String`, `u32`, … all work as labels, aligning **by value**), and for
 /// [`Anonymous`] (aligning **by position**).
-pub trait Label: Clone {
+///
+/// This trait is sealed (private `Sealed` supertrait): the blanket impls below are the only
+/// implementations, so external code cannot supply its own [`identity`](Label::identity).
+pub trait Label: Clone + sealed::Sealed {
     /// What makes two variables "the same" for alignment. `Ord` drives the merge-join that aligns two
     /// headers, `Hash` drives the O(1) reverse lookup, `Clone` lets the caches own a copy.
     type Identity: Ord + Hash + Clone;
@@ -70,6 +86,20 @@ impl Label for Anonymous {
     }
 }
 
+/// A [`Label`] that is also a string: it has a borrowed `&str` view ([`AsRef<str>`]) and can be built
+/// from one ([`From<&str>`]). This is the bound the string-oriented cover APIs share — building a
+/// labelled cover from names ([`Cover::with_labels`](crate::Cover::with_labels)), reading a named
+/// [`PlaCover`](crate::PlaCover), and string-collision reconciliation ([`ReconcilableLabel`]) — so it
+/// is named once here instead of repeating the `Label + AsRef<str> + for<'a> From<&'a str>` cluster at
+/// every site. `String`, [`Symbol`](crate::Symbol), `Arc<str>`, `Box<str>`, `Cow<str>` all qualify;
+/// [`Anonymous`] does not (it is neither `AsRef<str>` nor `From<&str>`).
+///
+/// Sealed via its [`Label`] supertrait and provided by a single blanket impl, so it is an alias
+/// callers name but never implement.
+pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
+
+impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}
+
 /// How a label type produces conflict-free labels for the columns [`Cover::extend`](crate::Cover::extend)
 /// appends.
 ///
@@ -92,7 +122,7 @@ pub trait ReconcilableLabel: Label {
 /// construction bound (`From<&str>`) lives only on this impl; `String`, [`Symbol`](crate::Symbol),
 /// `Box<str>`, `Cow<str>` all qualify — `Anonymous` implements neither `AsRef<str>` nor `From<&str>`,
 /// so it is provably excluded (no overlap with the impls below).
-impl<T: Label + AsRef<str> + for<'a> From<&'a str>> ReconcilableLabel for T {
+impl<T: StringLabel> ReconcilableLabel for T {
     fn reconcile(header: &[Self], additions: &[Self]) -> Vec<Self> {
         let mut taken: HashSet<String> = header.iter().map(|l| l.as_ref().to_owned()).collect();
         let mut out = Vec::with_capacity(additions.len());

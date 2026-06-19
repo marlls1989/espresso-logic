@@ -57,7 +57,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::conversions::{anonymous_cover_from_raw, RawCube};
-use super::label::{Anonymous, Label};
+use super::label::{Anonymous, Label, StringLabel};
 use super::minimisation::Minimizable;
 use super::symbols::Symbols;
 use super::{Cover, CoverType, CubeType};
@@ -264,6 +264,23 @@ pub enum PlaCover<S> {
     /// Neither section was present — a purely positional cover.
     Positional(Cover<Anonymous, Anonymous>),
 }
+
+/// Two `PlaCover`s are equal only when they carry the same label sections (same variant) and their
+/// inner covers are equal. A named and a positional cover are never equal even if their cubes match,
+/// because their types — and the PLA they would write — differ.
+impl<S: Label> PartialEq for PlaCover<S> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::InputsOutputsNamed(a), Self::InputsOutputsNamed(b)) => a == b,
+            (Self::InputsNamed(a), Self::InputsNamed(b)) => a == b,
+            (Self::OutputsNamed(a), Self::OutputsNamed(b)) => a == b,
+            (Self::Positional(a), Self::Positional(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<S: Label> Eq for PlaCover<S> {}
 
 /// Raw PLA components from [`parse_pla`]: label sections kept as the strings read from the file (an
 /// absent section is `None`), to be turned into a concrete label type by [`PlaCover`].
@@ -627,7 +644,7 @@ macro_rules! on_inner_cover {
     };
 }
 
-impl<S: Label + for<'a> From<&'a str>> PlaCover<S> {
+impl<S: StringLabel> PlaCover<S> {
     /// Parse a `PlaCover` from any `BufRead`, reading label sections into the label type `S`.
     ///
     /// The cubes are read positionally into a `Cover<Anonymous, Anonymous>`, then each present label
@@ -638,10 +655,15 @@ impl<S: Label + for<'a> From<&'a str>> PlaCover<S> {
         let to_syms = |labels: Vec<String>| -> Arc<Symbols<S>> {
             Symbols::new(labels.iter().map(|s| S::from(s.as_str())).collect())
         };
+        // `parse_pla` has already checked each present label section against the cube width
+        // (PLAError::LabelCountMismatch), so these relabels match by construction.
+        let arity = "label sections were validated against the cube width during parsing";
         Ok(match (p.input_labels, p.output_labels) {
-            (Some(i), Some(o)) => Self::InputsOutputsNamed(base.relabel(to_syms(i), to_syms(o))),
-            (Some(i), None) => Self::InputsNamed(base.relabel_inputs(to_syms(i))),
-            (None, Some(o)) => Self::OutputsNamed(base.relabel_outputs(to_syms(o))),
+            (Some(i), Some(o)) => {
+                Self::InputsOutputsNamed(base.relabel(to_syms(i), to_syms(o)).expect(arity))
+            }
+            (Some(i), None) => Self::InputsNamed(base.relabel_inputs(to_syms(i)).expect(arity)),
+            (None, Some(o)) => Self::OutputsNamed(base.relabel_outputs(to_syms(o)).expect(arity)),
             (None, None) => Self::Positional(base),
         })
     }
