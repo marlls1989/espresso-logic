@@ -11,24 +11,24 @@
 //! - Output variables and their values
 //! - Optional variable labels for readability
 //!
-//! This module provides two main traits:
+//! This module provides:
 //!
-//! - [`PLAReader`] - For types that can be constructed from PLA format
-//! - [`PLAWriter`] - For types that can be serialised to PLA format
+//! - [`PlaCover`] - the reader output: a cover typed by which label sections (`.ilb`/`.ob`) the file
+//!   carried (named sides use the label type `S`, absent sides are [`Anonymous`])
+//! - [`PLAWriter`] - serialising any [`Cover`] whose labels can render (see [`PlaLabel`])
 //!
-//! Both traits are implemented for [`Cover`](crate::Cover), making PLA file I/O
-//! straightforward and idiomatic.
+//! Reading is provided by [`PlaCover`]; writing by [`PLAWriter`], making PLA file I/O straightforward.
 //!
 //! # Quick Example
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+//! use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! # let pla_text = ".i 2\n.o 1\n.p 2\n01 1\n10 1\n.e\n";
-//! # let cover = Cover::from_pla_string(pla_text)?;
+//! # let cover = PlaCover::<Symbol>::from_pla_string(pla_text)?;
 //! // Read PLA file
-//! // let cover = Cover::from_pla_file("input.pla")?;
+//! // let cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
 //!
 //! // Minimise
 //! let minimised = cover.minimize()?;
@@ -50,54 +50,49 @@ pub mod error;
 
 pub use error::{PLAError, PLAReadError, PLAWriteError};
 
-use crate::Symbol;
+use std::fmt;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufReader, BufWriter, Cursor, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use super::conversions::RawCube;
-use super::{CoverType, Cube, CubeType};
+use super::conversions::{anonymous_cover_from_raw, RawCube};
+use super::label::{Anonymous, Label};
+use super::minimisation::Minimizable;
+use super::symbols::Symbols;
+use super::{Cover, CoverType, CubeType};
+use crate::espresso::error::MinimizationError;
+use crate::EspressoConfig;
 
-/// Internal trait for types that can be serialized to and deserialized from PLA format
+/// How a label type renders into a PLA `.ilb`/`.ob` section — the type-level "is this a name?" test.
 ///
-/// This trait provides the necessary methods for both reading (serialization) and
-/// constructing (deserialization) types from PLA format. It is used as the basis
-/// for the public `PLAReader` and `PLAWriter` traits.
-pub(crate) trait PLASerialisable: Sized {
-    /// Associated type for iterating over cubes
-    type CubesIter<'a>: Iterator<Item = &'a Cube<Symbol, Symbol>>
-    where
-        Self: 'a;
+/// A label that implements [`Display`](std::fmt::Display) is a *name* and renders itself; [`Anonymous`]
+/// is positional and renders nothing, so its section is omitted. This is what makes label-presence a
+/// compile-time fact rather than a runtime flag: a `Cover<Anonymous, _>` cannot emit input names *by
+/// construction*, and a named `Cover<Symbol, _>` always can.
+///
+/// Implemented (blanket) for every `Label + Display` — `Symbol`, `String`, `Arc<str>`, `u32`, … — and
+/// for [`Anonymous`] (which deliberately is not `Display`, so the two impls never overlap).
+pub trait PlaLabel: Label {
+    /// The label strings to write for a section, or `None` to omit it (positional labels, or an empty
+    /// header — a zero-width cover writes no `.ilb`/`.ob`).
+    fn pla_labels(labels: &[Self]) -> Option<Vec<String>>;
+}
 
-    // Read access (for serialization)
+impl<T: Label + fmt::Display> PlaLabel for T {
+    fn pla_labels(labels: &[Self]) -> Option<Vec<String>> {
+        if labels.is_empty() {
+            None
+        } else {
+            Some(labels.iter().map(|l| l.to_string()).collect())
+        }
+    }
+}
 
-    /// Get the number of inputs
-    fn num_inputs(&self) -> usize;
-
-    /// Get the number of outputs
-    fn num_outputs(&self) -> usize;
-
-    /// Iterate over all cubes (internal use)
-    fn internal_cubes_iter(&self) -> Self::CubesIter<'_>;
-
-    /// Get input variable labels if available
-    fn get_input_labels(&self) -> Option<&[Symbol]>;
-
-    /// Get output variable labels if available
-    fn get_output_labels(&self) -> Option<&[Symbol]>;
-
-    // Constructor (for deserialization)
-
-    /// Create an instance from parsed PLA components
-    fn create_from_pla_parts(
-        num_inputs: usize,
-        num_outputs: usize,
-        input_labels: Vec<Symbol>,
-        output_labels: Vec<Symbol>,
-        cubes: Vec<RawCube>,
-        cover_type: CoverType,
-    ) -> Self;
+impl PlaLabel for Anonymous {
+    fn pla_labels(_labels: &[Self]) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// Trait for types that support PLA serialization (writing)
@@ -140,8 +135,11 @@ pub trait PLAWriter {
     }
 }
 
-/// Blanket implementation of PLAWriter for all PLASerialisable types
-impl<T: PLASerialisable> PLAWriter for T {
+/// `PLAWriter` for any cover whose label types can render PLA sections ([`PlaLabel`]).
+///
+/// `.ilb`/`.ob` are emitted iff the input/output label types are *names* (`Display`); an `Anonymous`
+/// side omits its section by construction. No runtime label-presence flag is consulted.
+impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
     fn write_pla<W: Write>(
         &self,
         writer: &mut W,
@@ -159,8 +157,8 @@ impl<T: PLASerialisable> PLAWriter for T {
         writeln!(writer, ".i {}", self.num_inputs())?;
         writeln!(writer, ".o {}", self.num_outputs())?;
 
-        // Write input labels if available
-        if let Some(labels) = self.get_input_labels() {
+        // Write input labels iff the input label type is a name (Display); Anonymous omits.
+        if let Some(labels) = I::pla_labels(self.input_symbols().labels()) {
             write!(writer, ".ilb")?;
             for label in labels {
                 write!(writer, " {}", label)?;
@@ -168,8 +166,8 @@ impl<T: PLASerialisable> PLAWriter for T {
             writeln!(writer)?;
         }
 
-        // Write output labels if available
-        if let Some(labels) = self.get_output_labels() {
+        // Write output labels iff the output label type is a name; Anonymous omits.
+        if let Some(labels) = O::pla_labels(self.output_symbols().labels()) {
             write!(writer, ".ob")?;
             for label in labels {
                 write!(writer, " {}", label)?;
@@ -179,7 +177,8 @@ impl<T: PLASerialisable> PLAWriter for T {
 
         // Filter cubes based on output type using the cube's set tag
         let filtered_cubes: Vec<_> = self
-            .internal_cubes_iter()
+            .cubes
+            .iter()
             .filter(|cube| match pla_type {
                 CoverType::F => cube.set == CubeType::F,
                 CoverType::FD => cube.set == CubeType::F || cube.set == CubeType::D,
@@ -243,385 +242,499 @@ impl<T: PLASerialisable> PLAWriter for T {
     }
 }
 
-/// Trait for types that support PLA deserialization (reading/parsing)
+/// A cover read from a PLA file, typed by **which label sections the file carried**.
 ///
-/// This trait provides methods for deserializing covers from PLA format.
-/// It is automatically implemented for all types that implement `PLASerialisable`.
+/// PLA `.ilb` and `.ob` are independent and optional, so a file's label content is reflected in the
+/// **type**: a present section makes that side a *name* (label type `S`), an absent one makes it
+/// [`Anonymous`]. There is no runtime "is it labelled" flag — the writer reproduces exactly the
+/// sections the file carried because the absence of names is encoded as `Anonymous` (which cannot emit
+/// a section). The label type `S` is whatever string-like type you read into (`Symbol`, `String`,
+/// `Arc<str>`, …); none is privileged.
 ///
-/// The trait provides default implementations for convenience methods that
-/// delegate to the core `from_pla_reader` method.
-pub trait PLAReader: Sized {
-    /// Parse a cover from a PLA format reader
-    ///
-    /// This is the core deserialization method that reads from any `BufRead` implementation.
-    /// Both `from_pla_string` and `from_pla_file` delegate to this method.
-    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError>;
+/// Read with [`from_pla_file`](Self::from_pla_file) / [`from_pla_string`](Self::from_pla_string), then
+/// [`minimize`](crate::Minimizable::minimize) and [`to_pla_string`](crate::PLAWriter::to_pla_string)
+/// dispatch across the variants. Match on it to recover the concrete [`Cover`].
+pub enum PlaCover<S> {
+    /// Both `.ilb` and `.ob` were present.
+    InputsOutputsNamed(Cover<S, S>),
+    /// Only `.ilb` was present (named inputs, positional outputs).
+    InputsNamed(Cover<S, Anonymous>),
+    /// Only `.ob` was present (positional inputs, named outputs).
+    OutputsNamed(Cover<Anonymous, S>),
+    /// Neither section was present — a purely positional cover.
+    Positional(Cover<Anonymous, Anonymous>),
+}
 
-    /// Parse a cover from a PLA format string
+/// Raw PLA components from [`parse_pla`]: label sections kept as the strings read from the file (an
+/// absent section is `None`), to be turned into a concrete label type by [`PlaCover`].
+struct ParsedPla {
+    num_inputs: usize,
+    num_outputs: usize,
+    input_labels: Option<Vec<String>>,
+    output_labels: Option<Vec<String>>,
+    cubes: Vec<RawCube>,
+    cover_type: CoverType,
+}
+
+/// Parse a PLA stream into its raw components (dimensions, optional `.ilb`/`.ob` strings, cubes). The
+/// label type is decided later by [`PlaCover`], so this stays label-type-agnostic.
+fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> {
+    let mut num_inputs: Option<usize> = None;
+    let mut num_outputs: Option<usize> = None;
+    let mut cubes: Vec<RawCube> = Vec::new();
+    // Default to FD_type to match C espresso behavior (main.c line 21)
+    // This causes '-' in outputs to be parsed as D cubes, not just don't-care bits
+    let mut cover_type = CoverType::FD;
+    let mut input_labels: Option<Vec<String>> = None;
+    let mut output_labels: Option<Vec<String>> = None;
+
+    // Read all lines into memory since we need lookahead for multi-line format
+    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i].trim();
+        i += 1;
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse directives
+        if line.starts_with('.') {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+
+            match parts.first().copied() {
+                Some(".i") => {
+                    let val: usize =
+                        parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
+                            PLAError::InvalidInputDirective {
+                                value: Arc::from(*parts.get(1).unwrap_or(&"")),
+                            }
+                        })?;
+                    num_inputs = Some(val);
+                }
+                Some(".o") => {
+                    let val: usize =
+                        parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
+                            PLAError::InvalidOutputDirective {
+                                value: Arc::from(*parts.get(1).unwrap_or(&"")),
+                            }
+                        })?;
+                    num_outputs = Some(val);
+                }
+                Some(".type") => {
+                    if let Some(type_str) = parts.get(1) {
+                        cover_type = match *type_str {
+                            "f" => CoverType::F,
+                            "fd" => CoverType::FD,
+                            "fr" => CoverType::FR,
+                            "fdr" => CoverType::FDR,
+                            _ => CoverType::F,
+                        };
+                    }
+                }
+                Some(".ilb") => {
+                    // Parse input labels: .ilb label1 label2 label3 ...
+                    let labels: Vec<String> = parts.iter().skip(1).map(|s| s.to_string()).collect();
+                    if !labels.is_empty() {
+                        input_labels = Some(labels);
+                    }
+                }
+                Some(".ob") => {
+                    // Parse output labels: .ob label1 label2 label3 ...
+                    let labels: Vec<String> = parts.iter().skip(1).map(|s| s.to_string()).collect();
+                    if !labels.is_empty() {
+                        output_labels = Some(labels);
+                    }
+                }
+                Some(".e") => break,
+                Some(".p") => {}
+                _ => {}
+            }
+            continue;
+        }
+
+        // Parse cube line(s) - supports both single-line and multi-line formats
+        // Some PLA files use | as separator between inputs and outputs
+        let (input_part, output_part) = if line.contains('|') {
+            let parts: Vec<&str> = line.splitn(2, '|').collect();
+            (
+                parts.first().copied().unwrap_or(""),
+                parts.get(1).copied().unwrap_or(""),
+            )
+        } else {
+            (line, "")
+        };
+
+        // Remove ALL whitespace to handle column-based formatting
+        // (e.g., files where inputs/outputs are formatted in columns with spaces)
+        let line_no_spaces: String = if !output_part.is_empty() {
+            // Format with |: remove spaces from each part separately
+            let inp = input_part
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>();
+            let out = output_part
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>();
+            format!("{}{}", inp, out)
+        } else {
+            // No |: remove all spaces from whole line
+            line.chars().filter(|c| !c.is_whitespace()).collect()
+        };
+
+        if line_no_spaces.is_empty() {
+            continue;
+        }
+
+        // Determine input and output strings based on declared dimensions
+        let (input_str, output_str) = if let (Some(ni), Some(no)) = (num_inputs, num_outputs) {
+            // We know the dimensions, so split at the boundary
+            if line_no_spaces.len() >= ni + no {
+                // Line has enough characters - split at boundary
+                let (inp, out) = line_no_spaces.split_at(ni);
+                (inp.to_string(), out.to_string())
+            } else {
+                // Line too short, might be multi-line format
+                let mut accumulated = line_no_spaces.clone();
+
+                // Look ahead to accumulate more lines until we have enough characters
+                while accumulated.len() < ni + no && i < lines.len() {
+                    let next_line = lines[i].trim();
+
+                    // Skip empty lines
+                    if next_line.is_empty() || next_line.starts_with('#') {
+                        i += 1;
+                        continue;
+                    }
+
+                    // Stop at directives
+                    if next_line.starts_with('.') {
+                        break;
+                    }
+
+                    // Remove whitespace from next line and append
+                    let next_no_spaces: String =
+                        next_line.chars().filter(|c| !c.is_whitespace()).collect();
+                    if next_no_spaces.is_empty() {
+                        i += 1;
+                        continue;
+                    }
+
+                    accumulated.push_str(&next_no_spaces);
+                    i += 1; // Consume this line
+
+                    if accumulated.len() >= ni + no {
+                        break;
+                    }
+                }
+
+                // Check if we have the right amount of data
+                if accumulated.len() < ni + no {
+                    continue; // Skip malformed cubes
+                }
+
+                // Split accumulated data at the input/output boundary
+                let (inp, out) = accumulated.split_at(ni);
+                let mut out_str = out.to_string();
+
+                // Truncate output to exact size if we accumulated too much
+                if out_str.len() > no {
+                    out_str.truncate(no);
+                }
+
+                (inp.to_string(), out_str)
+            }
+        } else {
+            // Dimensions not yet known - use whitespace splitting as before
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue; // Need at least inputs and outputs
+            }
+            (parts[0].to_string(), parts[1].to_string())
+        };
+
+        // Infer dimensions from first cube if not specified
+        if num_inputs.is_none() {
+            num_inputs = Some(input_str.len());
+        }
+        if num_outputs.is_none() {
+            num_outputs = Some(output_str.len());
+        }
+
+        let ni = num_inputs.unwrap();
+        let no = num_outputs.unwrap();
+
+        // Verify dimensions are consistent
+        if input_str.len() != ni || output_str.len() != no {
+            // Skip cubes with wrong dimensions (might be intermediate lines)
+            continue;
+        }
+
+        // Parse inputs
+        let mut inputs = Vec::with_capacity(ni);
+        for (pos, ch) in input_str.chars().enumerate() {
+            inputs.push(match ch {
+                '0' => Some(false),
+                '1' => Some(true),
+                '-' | '~' | 'x' | 'X' => None,
+                _ => {
+                    return Err(PLAError::InvalidInputCharacter {
+                        character: ch,
+                        position: pos,
+                    }
+                    .into())
+                }
+            });
+        }
+
+        // Parse outputs following Espresso C convention (cvrin.c lines 176-199)
+        // The C code creates separate F, D, R cubes from a single line:
+        // - '1' or '4' → bit set in F cube
+        // - '0' or '3' → bit set in R cube
+        // - '-' or '2' → bit set in D cube (if pla_type includes D_type)
+        // - '~' → does NOTHING (cvrin.c line 190: just breaks)
+        //
+        // Simplified: outputs are Vec<bool> where true = bit set in this cube
+        let mut f_outputs = Vec::with_capacity(no);
+        let mut d_outputs = Vec::with_capacity(no);
+        let mut r_outputs = Vec::with_capacity(no);
+        let mut has_f = false;
+        let mut has_d = false;
+        let mut has_r = false;
+
+        for (pos, ch) in output_str.chars().enumerate() {
+            match ch {
+                '1' | '4' if cover_type.has_f() => {
+                    f_outputs.push(true); // Bit set in F cube
+                    d_outputs.push(false); // Not in D cube
+                    r_outputs.push(false); // Not in R cube
+                    has_f = true;
+                }
+                '0' | '3' if cover_type.has_r() => {
+                    f_outputs.push(false); // Not in F cube
+                    d_outputs.push(false); // Not in D cube
+                    r_outputs.push(true); // Bit set in R cube
+                    has_r = true;
+                }
+                '-' | '2' if cover_type.has_d() => {
+                    // Only '-' and '2' create D cubes, NOT '~'
+                    f_outputs.push(false); // Not in F cube
+                    d_outputs.push(true); // Bit set in D cube
+                    r_outputs.push(false); // Not in R cube
+                    has_d = true;
+                }
+                '~' | '-' | '2' => {
+                    // '~' does nothing (C code line 190)
+                    // If '-' or '2' but D_type not set, also do nothing
+                    f_outputs.push(false);
+                    d_outputs.push(false);
+                    r_outputs.push(false);
+                }
+                '1' | '4' | '0' | '3' => {
+                    // Type flag not set, don't set bits
+                    f_outputs.push(false);
+                    d_outputs.push(false);
+                    r_outputs.push(false);
+                }
+                _ => {
+                    return Err(PLAError::InvalidOutputCharacter {
+                        character: ch,
+                        position: pos,
+                    }
+                    .into())
+                }
+            }
+        }
+
+        // Add cubes only if they have meaningful outputs
+        if has_f {
+            cubes.push((inputs.clone(), f_outputs, CubeType::F));
+        }
+        if has_d {
+            cubes.push((inputs.clone(), d_outputs, CubeType::D));
+        }
+        if has_r {
+            cubes.push((inputs, r_outputs, CubeType::R));
+        }
+    }
+
+    // Verify we got dimensions
+    let num_inputs = num_inputs.ok_or(PLAError::MissingInputDirective)?;
+    let num_outputs = num_outputs.ok_or(PLAError::MissingOutputDirective)?;
+
+    // Validate label counts if present
+    if let Some(ref labels) = input_labels {
+        if labels.len() != num_inputs {
+            return Err(PLAError::LabelCountMismatch {
+                label_type: Arc::from("input"),
+                expected: num_inputs,
+                actual: labels.len(),
+            }
+            .into());
+        }
+    }
+    if let Some(ref labels) = output_labels {
+        if labels.len() != num_outputs {
+            return Err(PLAError::LabelCountMismatch {
+                label_type: Arc::from("output"),
+                expected: num_outputs,
+                actual: labels.len(),
+            }
+            .into());
+        }
+    }
+
+    // Label sections stay `Option`: their presence/absence is what selects the `PlaCover` variant
+    // (and thus whether the writer re-emits them).
+    Ok(ParsedPla {
+        num_inputs,
+        num_outputs,
+        input_labels,
+        output_labels,
+        cubes,
+        cover_type,
+    })
+}
+
+/// Run `$c` (bound to the inner [`Cover`]) for every [`PlaCover`] variant — used by the accessors and
+/// writer that behave identically regardless of which sides are named.
+macro_rules! on_inner_cover {
+    ($self:expr, $c:ident => $body:expr) => {
+        match $self {
+            PlaCover::InputsOutputsNamed($c) => $body,
+            PlaCover::InputsNamed($c) => $body,
+            PlaCover::OutputsNamed($c) => $body,
+            PlaCover::Positional($c) => $body,
+        }
+    };
+}
+
+impl<S: Label + for<'a> From<&'a str>> PlaCover<S> {
+    /// Parse a `PlaCover` from any `BufRead`, reading label sections into the label type `S`.
     ///
-    /// This is a convenience method that delegates to `from_pla_reader`.
+    /// The cubes are read positionally into a `Cover<Anonymous, Anonymous>`, then each present label
+    /// section relabels that side, selecting the variant.
+    pub fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError> {
+        let p = parse_pla(reader)?;
+        let base = anonymous_cover_from_raw(p.num_inputs, p.num_outputs, p.cubes, p.cover_type);
+        let to_syms = |labels: Vec<String>| -> Arc<Symbols<S>> {
+            Symbols::new(labels.iter().map(|s| S::from(s.as_str())).collect())
+        };
+        Ok(match (p.input_labels, p.output_labels) {
+            (Some(i), Some(o)) => Self::InputsOutputsNamed(base.relabel(to_syms(i), to_syms(o))),
+            (Some(i), None) => Self::InputsNamed(base.relabel_inputs(to_syms(i))),
+            (None, Some(o)) => Self::OutputsNamed(base.relabel_outputs(to_syms(o))),
+            (None, None) => Self::Positional(base),
+        })
+    }
+
+    /// Parse a `PlaCover` from a PLA-format string.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, PLAReader};
+    /// use espresso_logic::{PlaCover, Symbol};
     ///
     /// let pla = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
-    /// let cover = Cover::from_pla_string(pla).unwrap();
+    /// let cover = PlaCover::<Symbol>::from_pla_string(pla).unwrap();
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
-    fn from_pla_string(s: &str) -> Result<Self, PLAReadError> {
-        use std::io::Cursor;
-        let cursor = Cursor::new(s.as_bytes());
-        Self::from_pla_reader(cursor)
+    pub fn from_pla_string(s: &str) -> Result<Self, PLAReadError> {
+        Self::from_pla_reader(Cursor::new(s.as_bytes()))
     }
 
-    /// Load a cover from a PLA format file
-    ///
-    /// This is a convenience method that delegates to `from_pla_reader`.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use espresso_logic::{Cover, PLAReader};
-    ///
-    /// let cover = Cover::from_pla_file("input.pla").unwrap();
-    /// println!("Loaded {} inputs, {} outputs", cover.num_inputs(), cover.num_outputs());
-    /// ```
-    fn from_pla_file<P: AsRef<Path>>(path: P) -> Result<Self, PLAReadError> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        Self::from_pla_reader(reader)
+    /// Load a `PlaCover` from a PLA-format file.
+    pub fn from_pla_file<P: AsRef<Path>>(path: P) -> Result<Self, PLAReadError> {
+        Self::from_pla_reader(BufReader::new(File::open(path)?))
     }
 }
 
-/// Blanket implementation of PLAReader for all PLASerialisable types
-impl<T: PLASerialisable> PLAReader for T {
-    fn from_pla_reader<R: std::io::BufRead>(reader: R) -> Result<Self, PLAReadError> {
-        let mut num_inputs: Option<usize> = None;
-        let mut num_outputs: Option<usize> = None;
-        let mut cubes = Vec::new();
-        // Default to FD_type to match C espresso behavior (main.c line 21)
-        // This causes '-' in outputs to be parsed as D cubes, not just don't-care bits
-        let mut cover_type = CoverType::FD;
-        let mut input_labels: Option<Vec<Symbol>> = None;
-        let mut output_labels: Option<Vec<Symbol>> = None;
+impl<S> PlaCover<S> {
+    /// The number of input variables.
+    pub fn num_inputs(&self) -> usize {
+        on_inner_cover!(self, c => c.num_inputs())
+    }
 
-        // Read all lines into memory since we need lookahead for multi-line format
-        let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
-        let mut i = 0;
+    /// The number of output variables.
+    pub fn num_outputs(&self) -> usize {
+        on_inner_cover!(self, c => c.num_outputs())
+    }
 
-        while i < lines.len() {
-            let line = lines[i].trim();
-            i += 1;
+    /// The number of cubes (counted per the cover type).
+    pub fn num_cubes(&self) -> usize {
+        on_inner_cover!(self, c => c.num_cubes())
+    }
 
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
+    /// The cover type (F/FD/FR/FDR).
+    pub fn cover_type(&self) -> CoverType {
+        on_inner_cover!(self, c => c.cover_type())
+    }
+}
 
-            // Parse directives
-            if line.starts_with('.') {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-
-                match parts.first().copied() {
-                    Some(".i") => {
-                        let val: usize =
-                            parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
-                                PLAError::InvalidInputDirective {
-                                    value: Arc::from(*parts.get(1).unwrap_or(&"")),
-                                }
-                            })?;
-                        num_inputs = Some(val);
-                    }
-                    Some(".o") => {
-                        let val: usize =
-                            parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
-                                PLAError::InvalidOutputDirective {
-                                    value: Arc::from(*parts.get(1).unwrap_or(&"")),
-                                }
-                            })?;
-                        num_outputs = Some(val);
-                    }
-                    Some(".type") => {
-                        if let Some(type_str) = parts.get(1) {
-                            cover_type = match *type_str {
-                                "f" => CoverType::F,
-                                "fd" => CoverType::FD,
-                                "fr" => CoverType::FR,
-                                "fdr" => CoverType::FDR,
-                                _ => CoverType::F,
-                            };
-                        }
-                    }
-                    Some(".ilb") => {
-                        // Parse input labels: .ilb label1 label2 label3 ...
-                        let labels: Vec<Symbol> =
-                            parts.iter().skip(1).map(|s| Symbol::from(*s)).collect();
-                        if !labels.is_empty() {
-                            input_labels = Some(labels);
-                        }
-                    }
-                    Some(".ob") => {
-                        // Parse output labels: .ob label1 label2 label3 ...
-                        let labels: Vec<Symbol> =
-                            parts.iter().skip(1).map(|s| Symbol::from(*s)).collect();
-                        if !labels.is_empty() {
-                            output_labels = Some(labels);
-                        }
-                    }
-                    Some(".e") => break,
-                    Some(".p") => {}
-                    _ => {}
-                }
-                continue;
-            }
-
-            // Parse cube line(s) - supports both single-line and multi-line formats
-            // Some PLA files use | as separator between inputs and outputs
-            let (input_part, output_part) = if line.contains('|') {
-                let parts: Vec<&str> = line.splitn(2, '|').collect();
-                (
-                    parts.first().copied().unwrap_or(""),
-                    parts.get(1).copied().unwrap_or(""),
-                )
-            } else {
-                (line, "")
-            };
-
-            // Remove ALL whitespace to handle column-based formatting
-            // (e.g., files where inputs/outputs are formatted in columns with spaces)
-            let line_no_spaces: String = if !output_part.is_empty() {
-                // Format with |: remove spaces from each part separately
-                let inp = input_part
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect::<String>();
-                let out = output_part
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect::<String>();
-                format!("{}{}", inp, out)
-            } else {
-                // No |: remove all spaces from whole line
-                line.chars().filter(|c| !c.is_whitespace()).collect()
-            };
-
-            if line_no_spaces.is_empty() {
-                continue;
-            }
-
-            // Determine input and output strings based on declared dimensions
-            let (input_str, output_str) = if let (Some(ni), Some(no)) = (num_inputs, num_outputs) {
-                // We know the dimensions, so split at the boundary
-                if line_no_spaces.len() >= ni + no {
-                    // Line has enough characters - split at boundary
-                    let (inp, out) = line_no_spaces.split_at(ni);
-                    (inp.to_string(), out.to_string())
-                } else {
-                    // Line too short, might be multi-line format
-                    let mut accumulated = line_no_spaces.clone();
-
-                    // Look ahead to accumulate more lines until we have enough characters
-                    while accumulated.len() < ni + no && i < lines.len() {
-                        let next_line = lines[i].trim();
-
-                        // Skip empty lines
-                        if next_line.is_empty() || next_line.starts_with('#') {
-                            i += 1;
-                            continue;
-                        }
-
-                        // Stop at directives
-                        if next_line.starts_with('.') {
-                            break;
-                        }
-
-                        // Remove whitespace from next line and append
-                        let next_no_spaces: String =
-                            next_line.chars().filter(|c| !c.is_whitespace()).collect();
-                        if next_no_spaces.is_empty() {
-                            i += 1;
-                            continue;
-                        }
-
-                        accumulated.push_str(&next_no_spaces);
-                        i += 1; // Consume this line
-
-                        if accumulated.len() >= ni + no {
-                            break;
-                        }
-                    }
-
-                    // Check if we have the right amount of data
-                    if accumulated.len() < ni + no {
-                        continue; // Skip malformed cubes
-                    }
-
-                    // Split accumulated data at the input/output boundary
-                    let (inp, out) = accumulated.split_at(ni);
-                    let mut out_str = out.to_string();
-
-                    // Truncate output to exact size if we accumulated too much
-                    if out_str.len() > no {
-                        out_str.truncate(no);
-                    }
-
-                    (inp.to_string(), out_str)
-                }
-            } else {
-                // Dimensions not yet known - use whitespace splitting as before
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() < 2 {
-                    continue; // Need at least inputs and outputs
-                }
-                (parts[0].to_string(), parts[1].to_string())
-            };
-
-            // Infer dimensions from first cube if not specified
-            if num_inputs.is_none() {
-                num_inputs = Some(input_str.len());
-            }
-            if num_outputs.is_none() {
-                num_outputs = Some(output_str.len());
-            }
-
-            let ni = num_inputs.unwrap();
-            let no = num_outputs.unwrap();
-
-            // Verify dimensions are consistent
-            if input_str.len() != ni || output_str.len() != no {
-                // Skip cubes with wrong dimensions (might be intermediate lines)
-                continue;
-            }
-
-            // Parse inputs
-            let mut inputs = Vec::with_capacity(ni);
-            for (pos, ch) in input_str.chars().enumerate() {
-                inputs.push(match ch {
-                    '0' => Some(false),
-                    '1' => Some(true),
-                    '-' | '~' | 'x' | 'X' => None,
-                    _ => {
-                        return Err(PLAError::InvalidInputCharacter {
-                            character: ch,
-                            position: pos,
-                        }
-                        .into())
-                    }
-                });
-            }
-
-            // Parse outputs following Espresso C convention (cvrin.c lines 176-199)
-            // The C code creates separate F, D, R cubes from a single line:
-            // - '1' or '4' → bit set in F cube
-            // - '0' or '3' → bit set in R cube
-            // - '-' or '2' → bit set in D cube (if pla_type includes D_type)
-            // - '~' → does NOTHING (cvrin.c line 190: just breaks)
-            //
-            // Simplified: outputs are Vec<bool> where true = bit set in this cube
-            let mut f_outputs = Vec::with_capacity(no);
-            let mut d_outputs = Vec::with_capacity(no);
-            let mut r_outputs = Vec::with_capacity(no);
-            let mut has_f = false;
-            let mut has_d = false;
-            let mut has_r = false;
-
-            for (pos, ch) in output_str.chars().enumerate() {
-                match ch {
-                    '1' | '4' if cover_type.has_f() => {
-                        f_outputs.push(true); // Bit set in F cube
-                        d_outputs.push(false); // Not in D cube
-                        r_outputs.push(false); // Not in R cube
-                        has_f = true;
-                    }
-                    '0' | '3' if cover_type.has_r() => {
-                        f_outputs.push(false); // Not in F cube
-                        d_outputs.push(false); // Not in D cube
-                        r_outputs.push(true); // Bit set in R cube
-                        has_r = true;
-                    }
-                    '-' | '2' if cover_type.has_d() => {
-                        // Only '-' and '2' create D cubes, NOT '~'
-                        f_outputs.push(false); // Not in F cube
-                        d_outputs.push(true); // Bit set in D cube
-                        r_outputs.push(false); // Not in R cube
-                        has_d = true;
-                    }
-                    '~' | '-' | '2' => {
-                        // '~' does nothing (C code line 190)
-                        // If '-' or '2' but D_type not set, also do nothing
-                        f_outputs.push(false);
-                        d_outputs.push(false);
-                        r_outputs.push(false);
-                    }
-                    '1' | '4' | '0' | '3' => {
-                        // Type flag not set, don't set bits
-                        f_outputs.push(false);
-                        d_outputs.push(false);
-                        r_outputs.push(false);
-                    }
-                    _ => {
-                        return Err(PLAError::InvalidOutputCharacter {
-                            character: ch,
-                            position: pos,
-                        }
-                        .into())
-                    }
-                }
-            }
-
-            // Add cubes only if they have meaningful outputs
-            if has_f {
-                cubes.push((inputs.clone(), f_outputs, CubeType::F));
-            }
-            if has_d {
-                cubes.push((inputs.clone(), d_outputs, CubeType::D));
-            }
-            if has_r {
-                cubes.push((inputs, r_outputs, CubeType::R));
-            }
+impl<S: AsRef<str>> PlaCover<S> {
+    /// The input labels, or `&[]` when the inputs are positional (no `.ilb` in the file).
+    pub fn input_labels(&self) -> &[S] {
+        match self {
+            PlaCover::InputsOutputsNamed(c) => c.input_labels(),
+            PlaCover::InputsNamed(c) => c.input_labels(),
+            PlaCover::OutputsNamed(_) | PlaCover::Positional(_) => &[],
         }
+    }
 
-        // Verify we got dimensions
-        let num_inputs = num_inputs.ok_or(PLAError::MissingInputDirective)?;
-        let num_outputs = num_outputs.ok_or(PLAError::MissingOutputDirective)?;
-
-        // Validate label counts if present
-        if let Some(ref labels) = input_labels {
-            if labels.len() != num_inputs {
-                return Err(PLAError::LabelCountMismatch {
-                    label_type: Arc::from("input"),
-                    expected: num_inputs,
-                    actual: labels.len(),
-                }
-                .into());
-            }
+    /// The output labels, or `&[]` when the outputs are positional (no `.ob` in the file).
+    pub fn output_labels(&self) -> &[S] {
+        match self {
+            PlaCover::InputsOutputsNamed(c) => c.output_labels(),
+            PlaCover::OutputsNamed(c) => c.output_labels(),
+            PlaCover::InputsNamed(_) | PlaCover::Positional(_) => &[],
         }
-        if let Some(ref labels) = output_labels {
-            if labels.len() != num_outputs {
-                return Err(PLAError::LabelCountMismatch {
-                    label_type: Arc::from("output"),
-                    expected: num_outputs,
-                    actual: labels.len(),
-                }
-                .into());
+    }
+}
+
+/// Writing dispatches to the inner cover; each variant's named sides emit, positional sides omit.
+impl<S: PlaLabel> PLAWriter for PlaCover<S> {
+    fn write_pla<W: Write>(
+        &self,
+        writer: &mut W,
+        pla_type: CoverType,
+    ) -> Result<(), PLAWriteError> {
+        on_inner_cover!(self, c => c.write_pla(writer, pla_type))
+    }
+}
+
+/// Minimisation preserves which sides are named (the label types are carried through).
+impl<S> Minimizable for PlaCover<S> {
+    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
+        Ok(match self {
+            PlaCover::InputsOutputsNamed(c) => {
+                PlaCover::InputsOutputsNamed(c.minimize_with_config(config)?)
             }
-        }
+            PlaCover::InputsNamed(c) => PlaCover::InputsNamed(c.minimize_with_config(config)?),
+            PlaCover::OutputsNamed(c) => PlaCover::OutputsNamed(c.minimize_with_config(config)?),
+            PlaCover::Positional(c) => PlaCover::Positional(c.minimize_with_config(config)?),
+        })
+    }
 
-        // Don't generate default labels - let the cover remain unlabeled if no labels were in the file
-        let input_labels = input_labels.unwrap_or_default();
-        let output_labels = output_labels.unwrap_or_default();
-
-        // Construct the type using the trait method
-        Ok(T::create_from_pla_parts(
-            num_inputs,
-            num_outputs,
-            input_labels,
-            output_labels,
-            cubes,
-            cover_type,
-        ))
+    fn minimize_exact_with_config(
+        &self,
+        config: &EspressoConfig,
+    ) -> Result<Self, MinimizationError> {
+        Ok(match self {
+            PlaCover::InputsOutputsNamed(c) => {
+                PlaCover::InputsOutputsNamed(c.minimize_exact_with_config(config)?)
+            }
+            PlaCover::InputsNamed(c) => {
+                PlaCover::InputsNamed(c.minimize_exact_with_config(config)?)
+            }
+            PlaCover::OutputsNamed(c) => {
+                PlaCover::OutputsNamed(c.minimize_exact_with_config(config)?)
+            }
+            PlaCover::Positional(c) => PlaCover::Positional(c.minimize_exact_with_config(config)?),
+        })
     }
 }

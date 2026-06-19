@@ -6,7 +6,7 @@
 //! - Serialize covers with labels back to PLA format
 //! - Use Cover with automatically named variables
 
-use espresso_logic::{BoolExpr, Cover, CoverType, PLAReader, PLAWriter};
+use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter, PlaCover, Symbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Variable Labels Example ===\n");
@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 .e
 "#;
 
-    let cover = Cover::from_pla_string(pla_with_labels)?;
+    let cover = PlaCover::<Symbol>::from_pla_string(pla_with_labels)?;
 
     println!(
         "Loaded PLA with {} inputs and {} outputs",
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 .e
 "#;
 
-    let cover_anon = Cover::from_pla_string(pla_no_labels)?;
+    let cover_anon = PlaCover::<Symbol>::from_pla_string(pla_no_labels)?;
     println!(
         "Loaded PLA with {} inputs and {} outputs",
         cover_anon.num_inputs(),
@@ -129,9 +129,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 .e
 "#;
 
-    let cover1 = Cover::from_pla_string(original_pla)?;
+    let cover1 = PlaCover::<Symbol>::from_pla_string(original_pla)?;
     let serialized1 = cover1.to_pla_string(cover1.cover_type())?;
-    let cover2 = Cover::from_pla_string(&serialized1)?;
+    let cover2 = PlaCover::<Symbol>::from_pla_string(&serialized1)?;
 
     println!("Original input labels: {:?}", cover1.input_labels());
     println!("Round-trip input labels: {:?}", cover2.input_labels());

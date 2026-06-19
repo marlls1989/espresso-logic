@@ -72,9 +72,9 @@ impl<L> Symbols<L> {
         self.labels.len()
     }
 
-    /// The variable labels in index order. For a positional ([`Anonymous`]) table these are the
-    /// placeholder `Anonymous` values, one per position; callers that want *names* should gate on
-    /// [`is_labeled`](Self::is_labeled) (or `L::NAMED`).
+    /// The variable labels in index order. Whether these are *names* is the label type's business —
+    /// for a positional ([`Anonymous`]) table they are the zero-sized `Anonymous` placeholders, and a
+    /// named table (e.g. `Symbols<Symbol>`) holds real names. There is no separate "is it labelled" flag.
     pub fn labels(&self) -> &[L] {
         &self.labels
     }
@@ -85,14 +85,6 @@ impl Symbols<Anonymous> {
     /// position (a named table is built from real labels via [`new`](Self::new)).
     pub fn anonymous(arity: usize) -> Arc<Symbols<Anonymous>> {
         Symbols::new((0..arity).map(|_| Anonymous).collect())
-    }
-}
-
-impl<L: Label> Symbols<L> {
-    /// Whether this table carries real **names** (`L::NAMED`) as opposed to positional placeholders,
-    /// and is non-empty. An anonymous table, or an empty one, reports `false`.
-    pub fn is_labeled(&self) -> bool {
-        L::NAMED && !self.labels.is_empty()
     }
 }
 

@@ -228,12 +228,12 @@ Lines starting with `#` are comments and are ignored:
 ### Reading PLA Files
 
 ```rust
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Cover, Minimizable, PlaCover, Symbol};
 
 fn main() -> std::io::Result<()> {
     // Read from string
     let pla_text = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
-    let cover = Cover::from_pla_string(pla_text)?;
+    let cover = PlaCover::<Symbol>::from_pla_string(pla_text)?;
     
     println!("Loaded cover with {} inputs", cover.num_inputs());
     
@@ -244,11 +244,11 @@ fn main() -> std::io::Result<()> {
 ### Writing PLA Files
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Create or load a cover
-    let cover = Cover::from_pla_string(".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
+    let cover = PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
     
     // Write to file
     cover.to_pla_file("output.pla", CoverType::F)?;
@@ -264,11 +264,11 @@ fn main() -> std::io::Result<()> {
 ### Minimizing PLA Files
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read PLA file
-    let mut cover = Cover::from_pla_file("input.pla")?;
+    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
     println!("Before: {} cubes", cover.num_cubes());
     

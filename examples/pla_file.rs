@@ -3,7 +3,7 @@
 //! This example demonstrates how to read a PLA file, minimize it,
 //! and write the result back to a file.
 
-use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{CoverType, Minimizable, PLAWriter, PlaCover, Symbol};
 use std::env;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -40,7 +40,7 @@ fn main() {
 
     // Read the PLA file
     println!("\nReading PLA file...");
-    let mut cover = match Cover::from_pla_file(temp_in.path()) {
+    let mut cover = match PlaCover::<Symbol>::from_pla_file(temp_in.path()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA: {}", e);

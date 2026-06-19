@@ -6,7 +6,7 @@
 //! For efficiency, randomly selects 10 files from each size category.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Minimizable, PlaCover, Symbol};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -60,7 +60,7 @@ fn discover_pla_files() -> Vec<PLATestFile> {
 
                 if is_pla {
                     // Try to parse the file to get cube count
-                    if let Ok(cover) = Cover::from_pla_file(&path) {
+                    if let Ok(cover) = PlaCover::<Symbol>::from_pla_file(&path) {
                         let num_cubes = cover.num_cubes();
 
                         // Categorize by size
@@ -161,7 +161,7 @@ fn bench_parse(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     black_box(cover);
                 });
             },
@@ -201,7 +201,7 @@ fn bench_minimize(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     let cover = cover.minimize().unwrap();
                     black_box(cover);
                 });
@@ -242,7 +242,7 @@ fn bench_full_pipeline(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     let cover = cover.minimize().unwrap();
                     let result = cover.num_cubes();
                     black_box(result);
@@ -284,7 +284,7 @@ fn bench_by_category(c: &mut Criterion) {
                 &file.path,
                 |b, path| {
                     b.iter(|| {
-                        let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                        let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                         let cover = cover.minimize().unwrap();
                         black_box(cover);
                     });
@@ -311,15 +311,27 @@ fn bench_cube_iteration(c: &mut Criterion) {
         .iter()
         .find(|f| matches!(f.category, Category::Medium))
     {
-        let cover = Cover::from_pla_file(&file.path).unwrap();
+        let cover = PlaCover::<Symbol>::from_pla_file(&file.path).unwrap();
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
+        // `PlaCover` is a sum type over which sides are named; match once to get a concrete cover to
+        // iterate. (These bench PLAs carry both label sections.)
         group.bench_function("iterate_cubes", |b| {
             b.iter(|| {
                 let mut count = 0;
-                for cube in cover.cubes() {
-                    black_box(cube);
-                    count += 1;
+                macro_rules! count_cubes {
+                    ($c:expr) => {
+                        for cube in $c.cubes() {
+                            black_box(cube);
+                            count += 1;
+                        }
+                    };
+                }
+                match &cover {
+                    PlaCover::InputsOutputsNamed(c) => count_cubes!(c),
+                    PlaCover::InputsNamed(c) => count_cubes!(c),
+                    PlaCover::OutputsNamed(c) => count_cubes!(c),
+                    PlaCover::Positional(c) => count_cubes!(c),
                 }
                 black_box(count);
             });

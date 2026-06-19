@@ -166,7 +166,7 @@
 //! Covers can be read from and written to PLA format files (compatible with original Espresso):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+//! use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 //! # use std::io::Write;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -175,7 +175,7 @@
 //! # temp.flush()?;
 //! # let input_path = temp.path();
 //! // Read from PLA file (PLAReader trait)
-//! let mut cover = Cover::from_pla_file(input_path)?;
+//! let mut cover = PlaCover::<Symbol>::from_pla_file(input_path)?;
 //!
 //! // Minimize
 //! cover = cover.minimize()?;
@@ -192,7 +192,7 @@
 //!
 //! // Similarly, you can read from any BufRead implementation
 //! let reader = BufReader::new(buffer.as_slice());
-//! let cover2 = Cover::from_pla_reader(reader)?;
+//! let cover2 = PlaCover::<Symbol>::from_pla_reader(reader)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -340,9 +340,10 @@ pub mod sys;
 pub mod examples;
 
 // Re-export high-level public API
-pub use cover::pla::{PLAReader, PLAWriter};
+pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
-    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, Symbols,
+    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, ReconcilableLabel,
+    Symbols,
 };
 pub use espresso::EspressoConfig;
 #[allow(deprecated)]

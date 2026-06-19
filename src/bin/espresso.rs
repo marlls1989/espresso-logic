@@ -3,7 +3,7 @@
 //! A clean Rust implementation using the safe Cover API with process isolation
 
 use clap::{Parser, ValueEnum};
-use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{CoverType, EspressoConfig, Minimizable, PLAWriter, PlaCover, Symbol};
 use std::path::PathBuf;
 use std::process;
 
@@ -104,7 +104,7 @@ fn main() {
     }
 
     // Read the input PLA using Cover API
-    let mut cover = match Cover::from_pla_file(&args.input) {
+    let mut cover = match PlaCover::<Symbol>::from_pla_file(&args.input) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA file '{}': {}", args.input.display(), e);

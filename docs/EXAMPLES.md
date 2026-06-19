@@ -334,11 +334,11 @@ fn main() -> std::io::Result<()> {
 ### Reading and Writing
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read from file
-    let mut cover = Cover::from_pla_file("input.pla")?;
+    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
     println!("Inputs: {}", cover.num_inputs());
     println!("Outputs: {}", cover.num_outputs());
@@ -705,7 +705,7 @@ fn main() -> std::io::Result<()> {
 ### Parallel Cover Processing
 
 ```rust,no_run
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Cover, Minimizable, PlaCover, Symbol};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -713,7 +713,7 @@ fn main() -> std::io::Result<()> {
     
     let handles: Vec<_> = files.into_iter().map(|file| {
         thread::spawn(move || -> std::io::Result<usize> {
-            let mut cover = Cover::from_pla_file(file)?;
+            let mut cover = PlaCover::<Symbol>::from_pla_file(file)?;
             cover = cover.minimize()?;
             Ok(cover.num_cubes())
         })
@@ -732,10 +732,10 @@ fn main() -> std::io::Result<()> {
 ### Inspecting Cubes
 
 ```rust,no_run
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Minimizable, PlaCover, Symbol};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::from_pla_file("input.pla")?;
+    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
     // Get cubes before minimization
     let before_count = cover.num_cubes();
@@ -747,9 +747,12 @@ fn main() -> std::io::Result<()> {
     let after_count = cover.num_cubes();
     println!("After: {} cubes", after_count);
     
-    // Inspect individual cubes
-    for cube in cover.cubes() {
-        println!("Cube: {:?}", cube);
+    // `PlaCover` is a sum type over which label sections the file carried; match to reach the
+    // concrete `Cover` and inspect its cubes.
+    if let PlaCover::InputsOutputsNamed(c) = &cover {
+        for cube in c.cubes() {
+            println!("Cube: {:?}", cube);
+        }
     }
     
     Ok(())

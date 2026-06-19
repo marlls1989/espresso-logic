@@ -7,94 +7,43 @@ use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
 use super::minterm::Minterm;
 use super::symbols::Symbols;
+use super::Cover;
 use super::CoverType;
-use super::{extend_header, Cover};
 use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
 
-/// Raw parsed cube data handed to [`PLASerialisable::create_from_pla_parts`]:
-/// `(input pattern, output-membership mask, set)`.
+/// Raw parsed cube data from the PLA reader: `(input pattern, output-membership mask, set)`.
 pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, CubeType);
 
-// Implement PLASerialisable for Cover (used for PLA I/O)
-impl super::pla::PLASerialisable for Cover<Symbol, Symbol> {
-    type CubesIter<'a> = std::slice::Iter<'a, Cube<Symbol, Symbol>>;
+/// Build a positional [`Cover<Anonymous, Anonymous>`](Cover) from raw parsed PLA cubes. The PLA reader
+/// then relabels the present sides (`.ilb`/`.ob`) to select a [`PlaCover`](super::pla::PlaCover) variant
+/// — there are no synthesised placeholder names, so an unlabelled side stays `Anonymous`.
+pub(crate) fn anonymous_cover_from_raw(
+    num_inputs: usize,
+    num_outputs: usize,
+    cubes: Vec<RawCube>,
+    cover_type: CoverType,
+) -> Cover<Anonymous, Anonymous> {
+    let input_symbols = Symbols::<Anonymous>::anonymous(num_inputs);
+    let output_symbols = Symbols::<Anonymous>::anonymous(num_outputs);
 
-    fn num_inputs(&self) -> usize {
-        self.input_symbols().arity()
-    }
+    let cubes = cubes
+        .into_iter()
+        .map(|(mut inputs, mask, set)| {
+            inputs.resize(num_inputs, None);
+            let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
+            let om =
+                Minterm::from_symbols(Arc::clone(&output_symbols), mask.iter().map(|&b| Some(b)));
+            Cube::new(im, om, set)
+        })
+        .collect();
 
-    fn num_outputs(&self) -> usize {
-        self.output_symbols().arity()
-    }
-
-    fn internal_cubes_iter(&self) -> Self::CubesIter<'_> {
-        self.cubes.iter()
-    }
-
-    fn get_input_labels(&self) -> Option<&[Symbol]> {
-        let labels = self.input_labels();
-        if labels.is_empty() {
-            None
-        } else {
-            Some(labels)
-        }
-    }
-
-    fn get_output_labels(&self) -> Option<&[Symbol]> {
-        let labels = self.output_labels();
-        if labels.is_empty() {
-            None
-        } else {
-            Some(labels)
-        }
-    }
-
-    fn create_from_pla_parts(
-        num_inputs: usize,
-        num_outputs: usize,
-        input_labels: Vec<Symbol>,
-        output_labels: Vec<Symbol>,
-        cubes: Vec<RawCube>,
-        cover_type: CoverType,
-    ) -> Self {
-        let input_labeled = !input_labels.is_empty();
-        let output_labeled = !output_labels.is_empty();
-        let input_vars: Arc<[Symbol]> = if input_labeled {
-            input_labels.into()
-        } else {
-            extend_header(&[], num_inputs, 'x')
-        };
-        let output_vars: Arc<[Symbol]> = if output_labeled {
-            output_labels.into()
-        } else {
-            extend_header(&[], num_outputs, 'y')
-        };
-        let input_symbols = Symbols::new(input_vars);
-        let output_symbols = Symbols::new(output_vars);
-
-        let cubes = cubes
-            .into_iter()
-            .map(|(mut inputs, mask, set)| {
-                inputs.resize(num_inputs, None);
-                let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
-                let om = Minterm::from_symbols(
-                    Arc::clone(&output_symbols),
-                    mask.iter().map(|&b| Some(b)),
-                );
-                Cube::new(im, om, set)
-            })
-            .collect();
-
-        Cover {
-            input_symbols,
-            output_symbols,
-            input_labeled,
-            output_labeled,
-            cubes,
-            cover_type,
-        }
+    Cover {
+        input_symbols,
+        output_symbols,
+        cubes,
+        cover_type,
     }
 }
 
@@ -117,8 +66,6 @@ fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymou
         .map(|m| Cube::new(m.clone(), asserted.clone(), CubeType::F))
         .collect();
     Cover {
-        input_labeled: input_symbols.is_labeled(),
-        output_labeled: false,
         input_symbols,
         output_symbols,
         cubes,

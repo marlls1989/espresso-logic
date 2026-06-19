@@ -15,7 +15,7 @@
 //! **For most use cases, prefer the higher-level APIs:**
 //! - [`BoolExpr`](crate::BoolExpr) for boolean expressions
 //! - [`Cover`](crate::Cover) for covers with dynamic dimensions
-//! - [`PLAReader`](crate::PLAReader) trait for reading PLA files
+//! - [`PlaCover`](crate::PlaCover) for reading PLA files
 //!
 //! **Note:** Algorithm tuning via [`EspressoConfig`] works with **both**
 //! the high-level [`Cover::minimize_with_config()`](crate::cover::Minimizable::minimize_with_config) and

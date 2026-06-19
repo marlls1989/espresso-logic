@@ -1,6 +1,6 @@
 //! Tests for the cover module
 
-use super::pla::{PLAReader, PLAWriter};
+use super::pla::{PLAWriter, PlaCover};
 use super::*;
 use crate::Symbol;
 
@@ -672,7 +672,7 @@ fn test_pla_roundtrip_with_expressions() {
     let pla_string = cover.to_pla_string(CoverType::F).unwrap();
 
     // Parse it back
-    let cover2 = Cover::from_pla_string(&pla_string).unwrap();
+    let cover2 = PlaCover::<Symbol>::from_pla_string(&pla_string).unwrap();
 
     // Should have same dimensions
     assert_eq!(cover2.num_inputs(), cover.num_inputs());
@@ -683,6 +683,30 @@ fn test_pla_roundtrip_with_expressions() {
     assert_eq!(cover2.input_labels()[0].as_ref(), "a");
     assert_eq!(cover2.input_labels()[1].as_ref(), "b");
     assert_eq!(cover2.output_labels()[0].as_ref(), "output");
+}
+
+#[test]
+fn pla_cover_variant_tracks_label_sections() {
+    // Which `.ilb`/`.ob` sections a file carries selects the PlaCover variant, and the writer
+    // reproduces exactly that set (label-presence is type-level, never a runtime flag).
+    let cubes = "\n01 1\n10 1\n.e\n";
+    let both = format!(".i 2\n.o 1\n.ilb a b\n.ob f{cubes}");
+    let inputs_only = format!(".i 2\n.o 1\n.ilb a b{cubes}");
+    let outputs_only = format!(".i 2\n.o 1\n.ob f{cubes}");
+    let neither = format!(".i 2\n.o 1{cubes}");
+
+    let read = |s: &str| PlaCover::<Symbol>::from_pla_string(s).unwrap();
+    assert!(matches!(read(&both), PlaCover::InputsOutputsNamed(_)));
+    assert!(matches!(read(&inputs_only), PlaCover::InputsNamed(_)));
+    assert!(matches!(read(&outputs_only), PlaCover::OutputsNamed(_)));
+    assert!(matches!(read(&neither), PlaCover::Positional(_)));
+
+    // Round-trip reproduces the same section set.
+    for src in [&both, &inputs_only, &outputs_only, &neither] {
+        let out = read(src).to_pla_string(CoverType::F).unwrap();
+        assert_eq!(out.contains(".ilb"), src.contains(".ilb"), "ilb: {src}");
+        assert_eq!(out.contains(".ob"), src.contains(".ob"), "ob: {src}");
+    }
 }
 
 #[test]

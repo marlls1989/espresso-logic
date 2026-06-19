@@ -259,8 +259,6 @@ where
     Ok(Cover {
         input_symbols: Arc::clone(cover.input_symbols()),
         output_symbols: Arc::clone(cover.output_symbols()),
-        input_labeled: cover.input_labeled,
-        output_labeled: cover.output_labeled,
         cubes: f_cubes
             .iter()
             .chain(d_cubes.iter())

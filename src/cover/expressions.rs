@@ -87,9 +87,6 @@ impl Cover<Symbol, Symbol> {
             }
             self.input_symbols = new_syms;
         }
-        if !expr_vars.is_empty() {
-            self.input_labeled = true;
-        }
 
         // Append the new output to the output table; existing cubes gain an unasserted column.
         let output_index = self.num_outputs();
@@ -108,7 +105,6 @@ impl Cover<Symbol, Symbol> {
             );
         }
         self.output_symbols = out_syms;
-        self.output_labeled = true;
 
         // Add an F cube per product term, asserting only the new output. Each product-term minterm
         // carries its own names, so read the input pattern positionally off the cover table by name.

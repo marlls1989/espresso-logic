@@ -125,24 +125,6 @@ pub use symbols::Symbols;
 use crate::Symbol;
 use std::sync::Arc;
 
-/// Build a variable header of length `target_len`, extending `current` with auto-generated
-/// `{prefix}{n}` names that avoid colliding with names already present.
-pub(crate) fn extend_header(current: &[Symbol], target_len: usize, prefix: char) -> Arc<[Symbol]> {
-    let mut names: Vec<Symbol> = current.to_vec();
-    while names.len() < target_len {
-        let mut n = names.len();
-        let label = loop {
-            let candidate = format!("{prefix}{n}");
-            if !names.iter().any(|existing| existing.as_ref() == candidate) {
-                break candidate;
-            }
-            n += 1;
-        };
-        names.push(Symbol::from(label.as_str()));
-    }
-    names.into()
-}
-
 /// Represents the type of cover (F, FD, FR, or FDR)
 ///
 /// This type determines which sets are included in the cover:
@@ -302,17 +284,12 @@ impl CoverType {
 /// ```
 #[derive(Clone)]
 pub struct Cover<I, O> {
-    /// Canonical input symbol table, shared by every cube's input minterm.
-    ///
-    /// Always has one name per input position (auto-generated `x0, x1, …` when unlabeled), so it
-    /// can serve as the shared `Arc` for the minterm fast-comparison path.
+    /// Canonical input symbol table, shared by every cube's input minterm. One label per input
+    /// position; whether those labels are *names* is the label type's business (`Symbol`/`String` are
+    /// names, `Anonymous` is positional), so there is no separate "is it labelled" flag.
     input_symbols: Arc<Symbols<I>>,
     /// Canonical output symbol table, shared by every cube's output minterm.
     output_symbols: Arc<Symbols<O>>,
-    /// Whether input names were explicitly supplied (vs. auto-generated); controls PLA `.ilb`.
-    input_labeled: bool,
-    /// Whether output names were explicitly supplied; controls PLA `.ob`.
-    output_labeled: bool,
     /// Cubes (merged tri-state product terms).
     pub(crate) cubes: Vec<Cube<I, O>>,
     /// Cover type (F, FD, FR, or FDR)
@@ -352,8 +329,6 @@ where
         let output_vars: Arc<[O]> = output_labels.iter().map(|s| O::from(s.as_ref())).collect();
 
         Cover {
-            input_labeled: !input_vars.is_empty(),
-            output_labeled: !output_vars.is_empty(),
             input_symbols: Symbols::new(input_vars),
             output_symbols: Symbols::new(output_vars),
             cubes: Vec::new(),
@@ -373,8 +348,6 @@ impl<I, O> Cover<I, O> {
         Cover {
             input_symbols: Symbols::empty(),
             output_symbols: Symbols::empty(),
-            input_labeled: false,
-            output_labeled: false,
             cubes: Vec::new(),
             cover_type,
         }
@@ -409,8 +382,6 @@ impl<I, O> Cover<I, O> {
             self.num_outputs(),
             "relabel: output arity mismatch"
         );
-        let input_labeled = input_symbols.is_labeled();
-        let output_labeled = output_symbols.is_labeled();
         let cubes = self
             .cubes
             .into_iter()
@@ -425,8 +396,6 @@ impl<I, O> Cover<I, O> {
         Cover {
             input_symbols,
             output_symbols,
-            input_labeled,
-            output_labeled,
             cubes,
             cover_type: self.cover_type,
         }
@@ -441,7 +410,6 @@ impl<I, O> Cover<I, O> {
             self.num_inputs(),
             "relabel_inputs: input arity mismatch"
         );
-        let input_labeled = input_symbols.is_labeled();
         let cubes = self
             .cubes
             .into_iter()
@@ -456,8 +424,6 @@ impl<I, O> Cover<I, O> {
         Cover {
             input_symbols,
             output_symbols: self.output_symbols,
-            input_labeled,
-            output_labeled: self.output_labeled,
             cubes,
             cover_type: self.cover_type,
         }
@@ -472,7 +438,6 @@ impl<I, O> Cover<I, O> {
             self.num_outputs(),
             "relabel_outputs: output arity mismatch"
         );
-        let output_labeled = output_symbols.is_labeled();
         let cubes = self
             .cubes
             .into_iter()
@@ -487,8 +452,6 @@ impl<I, O> Cover<I, O> {
         Cover {
             input_symbols: self.input_symbols,
             output_symbols,
-            input_labeled: self.input_labeled,
-            output_labeled,
             cubes,
             cover_type: self.cover_type,
         }
@@ -650,8 +613,6 @@ impl Cover<Anonymous, Anonymous> {
         Cover {
             input_symbols,
             output_symbols,
-            input_labeled: false,
-            output_labeled: false,
             cubes,
             cover_type,
         }
@@ -835,8 +796,6 @@ fn assemble<I: Label, O: Label>(
         .chain(b.cubes.iter().map(|c| rebuild(c, &b_out_map)))
         .collect();
     Cover {
-        input_labeled: new_input.is_labeled(),
-        output_labeled: new_output.is_labeled(),
         input_symbols: new_input,
         output_symbols: new_output,
         cubes,
@@ -878,28 +837,20 @@ impl<I: Label, O: ReconcilableLabel> Cover<I, O> {
 impl<I: AsRef<str>, O> Cover<I, O> {
     /// Get input variable labels.
     ///
-    /// Returns a slice of the input label type `I`; empty for an unlabeled cover. Available for any
-    /// string-like input label whatever the output label type is.
+    /// Returns the input labels (one per input position). Available for any string-like input label
+    /// type whatever the output label type is; a positional `Cover<Anonymous, _>` has no such method.
     pub fn input_labels(&self) -> &[I] {
-        if self.input_labeled {
-            self.input_symbols.labels()
-        } else {
-            &[]
-        }
+        self.input_symbols.labels()
     }
 }
 
 impl<I, O: AsRef<str>> Cover<I, O> {
     /// Get output variable labels.
     ///
-    /// Returns a slice of the output label type `O`; empty for an unlabeled cover. Available for any
-    /// string-like output label whatever the input label type is.
+    /// Returns the output labels (one per output position). Available for any string-like output label
+    /// type whatever the input label type is; a positional `Cover<_, Anonymous>` has no such method.
     pub fn output_labels(&self) -> &[O] {
-        if self.output_labeled {
-            self.output_symbols.labels()
-        } else {
-            &[]
-        }
+        self.output_symbols.labels()
     }
 }
 
