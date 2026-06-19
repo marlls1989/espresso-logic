@@ -535,16 +535,10 @@ fn main() {
     let expr1 = a.and(&b);
     let expr2 = b.and(&a);
     
-    // BDD canonical representation means equivalent expressions
-    // have identical internal structure (v3.1.1+)
-    
-    // Convert to BDDs
-    let bdd1 = expr1.to_bdd();
-    let bdd2 = expr2.to_bdd();
-    
-    // BDDs are identical for equivalent expressions (canonical representation)
-    assert_eq!(bdd1, bdd2);
-    assert_eq!(bdd1.node_count(), bdd2.node_count());
+    // BoolExpr is BDD-backed: equivalent expressions share the same
+    // canonical internal structure, so they compare equal directly.
+    assert_eq!(expr1, expr2);
+    assert_eq!(expr1.node_count(), expr2.node_count());
     
     println!("Expressions are equivalent!");
 }

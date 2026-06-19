@@ -95,14 +95,14 @@ impl PlaLabel for Anonymous {
     }
 }
 
-/// Trait for types that support PLA serialization (writing)
+/// Trait for types that support PLA serialisation (writing)
 ///
-/// This trait provides methods for serializing covers to PLA format.
+/// This trait provides methods for serialising covers to PLA format.
 /// It is automatically implemented for all types that implement `PLASerialisable`.
 pub trait PLAWriter {
     /// Write this cover to PLA format using a writer
     ///
-    /// This is the core serialization method that writes directly to any `Write` implementation.
+    /// This is the core serialisation method that writes directly to any `Write` implementation.
     /// Both `to_pla_string` and `to_pla_file` delegate to this method.
     fn write_pla<W: Write>(&self, writer: &mut W, pla_type: CoverType)
         -> Result<(), PLAWriteError>;
@@ -299,7 +299,7 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
     let mut num_inputs: Option<usize> = None;
     let mut num_outputs: Option<usize> = None;
     let mut cubes: Vec<RawCube> = Vec::new();
-    // Default to FD_type to match C espresso behavior (main.c line 21)
+    // Default to FD_type to match C espresso behaviour (main.c line 21)
     // This causes '-' in outputs to be parsed as D cubes, not just don't-care bits
     let mut cover_type = CoverType::FD;
     let mut input_labels: Option<Vec<String>> = None;

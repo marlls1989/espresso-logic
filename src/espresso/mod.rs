@@ -122,10 +122,10 @@
 //!
 //! ## Why This Limitation Exists
 //!
-//! The Espresso C library uses global state that must be initialized for specific dimensions:
+//! The Espresso C library uses global state that must be initialised for specific dimensions:
 //! - The cube structure defines bit layouts for variables
 //! - Memory allocation patterns depend on the number of inputs/outputs
-//! - Changing dimensions requires tearing down and reinitializing all this state
+//! - Changing dimensions requires tearing down and reinitialising all this state
 //!
 //! This module protects you from memory corruption by:
 //! 1. Using a thread-local singleton that tracks the current dimensions
@@ -599,7 +599,7 @@ impl EspressoCover {
         // Checks dimensions and returns an error if an instance with different dimensions already exists
         let espresso = Espresso::try_new(num_inputs, num_outputs, None)?;
 
-        // This assumes Espresso has already initialized the cube structure
+        // This assumes Espresso has already initialised the cube structure
         let cube_size = unsafe { (*sys::get_cube()).size as usize };
 
         // Create empty cover with capacity (reuse the espresso reference)
@@ -792,7 +792,7 @@ impl EspressoCover {
         }
     }
 
-    /// Minimize this cover using the Espresso algorithm
+    /// Minimise this cover using the Espresso algorithm
     ///
     /// This is a convenience method that automatically uses the thread-local Espresso instance
     /// associated with this cover. It's equivalent to calling `esp.minimize(cover, d, r)` but
@@ -862,9 +862,9 @@ impl EspressoCover {
         espresso.minimize(&self, d.as_ref(), r.as_ref())
     }
 
-    /// Minimize this cover using exact minimization
+    /// Minimise this cover using exact minimisation
     ///
-    /// This is a convenience method that uses the exact minimization algorithm which
+    /// This is a convenience method that uses the exact minimisation algorithm which
     /// guarantees minimal results, unlike the heuristic [`minimize()`](Self::minimize) method.
     ///
     /// # Arguments
@@ -959,7 +959,7 @@ struct InnerEspresso {
 
 /// Direct wrapper around Espresso using thread-local global state
 ///
-/// This type provides direct access to the Espresso minimization algorithm through
+/// This type provides direct access to the Espresso minimisation algorithm through
 /// the C library. It uses C11 thread-local storage to maintain thread safety -
 /// each thread gets its own independent copy of all global state.
 ///
@@ -1299,7 +1299,7 @@ impl Espresso {
     /// Minimize a boolean function using the Espresso algorithm
     ///
     /// Takes the ON-set (F), optional don't-care set (D), and optional OFF-set (R),
-    /// and returns minimized versions of all three covers.
+    /// and returns minimised versions of all three covers.
     ///
     /// # Arguments
     ///
@@ -1312,9 +1312,9 @@ impl Espresso {
     /// # Returns
     ///
     /// A tuple of `(minimized_f, d, r)` where:
-    /// - `minimized_f` - The minimized ON-set (primary result)
-    /// - `d` - The don't-care set used during minimization
-    /// - `r` - The OFF-set used during minimization
+    /// - `minimized_f` - The minimised ON-set (primary result)
+    /// - `d` - The don't-care set used during minimisation
+    /// - `r` - The OFF-set used during minimisation
     ///
     /// # Memory Management
     ///
@@ -1341,7 +1341,7 @@ impl Espresso {
     /// # Algorithm Notes
     ///
     /// Espresso is a **heuristic algorithm** - it produces near-optimal results quickly but
-    /// does not guarantee absolute minimality. For exact minimization (slower), use the
+    /// does not guarantee absolute minimality. For exact minimisation (slower), use the
     /// `exact` configuration option.
     ///
     /// The algorithm quality depends on the configuration:
@@ -1405,13 +1405,13 @@ impl Espresso {
         })
     }
 
-    /// Minimize a boolean function using exact minimization
+    /// Minimise a boolean function using exact minimisation
     ///
-    /// This method uses the exact minimization algorithm which guarantees minimal results
+    /// This method uses the exact minimisation algorithm which guarantees minimal results
     /// by solving the unate covering problem, unlike the heuristic `minimize()` method.
     ///
     /// Takes the ON-set (F), optional don't-care set (D), and optional OFF-set (R),
-    /// and returns minimized versions of all three covers.
+    /// and returns minimised versions of all three covers.
     ///
     /// # Arguments
     ///
@@ -1424,9 +1424,9 @@ impl Espresso {
     /// # Returns
     ///
     /// A tuple of `(minimized_f, d, r)` where:
-    /// - `minimized_f` - The exactly minimized ON-set (primary result)
-    /// - `d` - The don't-care set used during minimization
-    /// - `r` - The OFF-set used during minimization
+    /// - `minimized_f` - The exactly minimised ON-set (primary result)
+    /// - `d` - The don't-care set used during minimisation
+    /// - `r` - The OFF-set used during minimisation
     ///
     /// # Performance vs Quality Trade-off
     ///
@@ -2348,17 +2348,17 @@ mod tests {
 }
 /// Configuration for the Espresso algorithm
 ///
-/// Controls the behavior of the Espresso heuristic logic minimizer. This configuration
-/// can be used with **both the high-level and low-level APIs** to tune the minimization
+/// Controls the behaviour of the Espresso heuristic logic minimiser. This configuration
+/// can be used with **both the high-level and low-level APIs** to tune the minimisation
 /// process for your specific needs.
 ///
 /// # When to Use
 ///
 /// Most users should use the **default configuration** which provides a good balance
-/// between speed and result quality. Consider customizing when you need:
+/// between speed and result quality. Consider customising when you need:
 ///
 /// - **Maximum speed** with acceptable quality loss (`single_expand = true`)
-/// - **Debugging** algorithm behavior (`debug = true`, `trace = true`)
+/// - **Debugging** algorithm behaviour (`debug = true`, `trace = true`)
 /// - **Performance metrics** (`summary = true`)
 /// - **Non-deterministic exploration** (`use_random_order = true`)
 ///
@@ -2469,15 +2469,15 @@ mod tests {
 /// 1. **Reduce** - Remove redundant literals from cubes
 /// 2. **Expand** - Enlarge cubes to cover more area
 /// 3. **Irredundant** - Remove covered cubes
-/// 4. **Lastgasp** - Final optimization pass
+/// 4. **Lastgasp** - Final optimisation pass
 ///
 /// The configuration controls how aggressively each phase operates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EspressoConfig {
     /// Enable debugging output to stderr
     ///
-    /// When `true`, prints detailed information about the minimization process.
-    /// Useful for understanding algorithm behavior but verbose.
+    /// When `true`, prints detailed information about the minimisation process.
+    /// Useful for understanding algorithm behaviour but verbose.
     ///
     /// **Default:** `false`
     pub debug: bool,
@@ -2489,24 +2489,24 @@ pub struct EspressoConfig {
     /// **Default:** `false`
     pub verbose_debug: bool,
 
-    /// Print trace information during minimization
+    /// Print trace information during minimisation
     ///
-    /// Shows progress through different minimization phases.
+    /// Shows progress through different minimisation phases.
     ///
     /// **Default:** `false`
     pub trace: bool,
 
-    /// Print summary statistics after minimization
+    /// Print summary statistics after minimisation
     ///
-    /// Shows cube counts, execution time, and optimization metrics.
+    /// Shows cube counts, execution time, and optimisation metrics.
     ///
     /// **Default:** `false`
     pub summary: bool,
 
-    /// Remove essential prime implicants before minimization
+    /// Remove essential prime implicants before minimisation
     ///
     /// Essential primes are terms that must be in any minimal cover. Removing
-    /// them first can speed up minimization for large problems.
+    /// them first can speed up minimisation for large problems.
     ///
     /// **Default:** `true` (recommended)
     pub remove_essential: bool,
@@ -2519,7 +2519,7 @@ pub struct EspressoConfig {
     /// **Default:** `true` (recommended)
     pub force_irredundant: bool,
 
-    /// Unwrap the onset before minimization
+    /// Unwrap the onset before minimisation
     ///
     /// A preprocessing step that can improve results for certain functions.
     ///

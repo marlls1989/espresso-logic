@@ -27,15 +27,16 @@ impl sealed::Sealed for Anonymous {}
 
 /// How a cover's variable labels align across differently-ordered headers.
 ///
-/// Implemented for every `Ord + Eq + Hash + Clone` type via a blanket impl (so `Symbol`,
+/// Implemented for every `Ord + Eq + Hash + Clone` type via a blanket impl (so
 /// [`Symbol`](crate::Symbol), `String`, `u32`, … all work as labels, aligning **by value**), and for
 /// [`Anonymous`] (aligning **by position**).
 ///
 /// This trait is sealed (private `Sealed` supertrait): the blanket impls below are the only
 /// implementations, so external code cannot supply its own [`identity`](Label::identity).
 pub trait Label: Clone + sealed::Sealed {
-    /// What makes two variables "the same" for alignment. `Ord` drives the merge-join that aligns two
-    /// headers, `Hash` drives the O(1) reverse lookup, `Clone` lets the caches own a copy.
+    /// What makes two variables "the same" for alignment. `Ord` drives both the merge-join that aligns
+    /// two headers and the binary-search reverse lookups; `Hash` drives the header-union map; `Clone`
+    /// lets the tables own a copy.
     type Identity: Ord + Hash + Clone;
 
     /// Whether this label type carries real **names** (`true`) or is purely positional (`false`, like

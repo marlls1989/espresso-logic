@@ -7,14 +7,17 @@ use espresso_logic::{CoverType, EspressoConfig, Minimizable, PLAWriter, PlaCover
 use std::path::PathBuf;
 use std::process;
 
-const VERSION: &str =
-    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper 3.0.0)";
+const VERSION: &str = concat!(
+    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper ",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
 #[derive(Debug, Clone, PartialEq, ValueEnum)]
 enum Command {
-    /// Run the Espresso heuristic minimization algorithm (default)
+    /// Run the Espresso heuristic minimisation algorithm (default)
     Espresso,
-    /// Exact minimization (note: uses same algorithm for now)
+    /// Exact minimisation (note: uses same algorithm for now)
     Exact,
     /// Echo the PLA without modification
     Echo,
@@ -90,7 +93,7 @@ struct Args {
     #[arg(long = "fast")]
     single_expand: bool,
 
-    /// Use exact minimization (slower, but guarantees minimal result)
+    /// Use exact minimisation (slower, but guarantees minimal result)
     #[arg(short = 'e', long = "exact")]
     exact: bool,
 }

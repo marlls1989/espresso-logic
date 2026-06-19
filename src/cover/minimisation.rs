@@ -1,7 +1,7 @@
-//! Minimizable trait and implementations for Boolean function minimization
+//! Minimizable trait and implementations for Boolean function minimisation
 //!
 //! This module provides the [`Minimizable`] trait which defines a uniform interface
-//! for minimizing Boolean functions using the Espresso algorithm, along with implementations
+//! for minimising Boolean functions using the Espresso algorithm, along with implementations
 //! for [`Cover`] and [`BoolExpr`].
 
 use super::cubes::{Cube, CubeType};
@@ -13,10 +13,10 @@ use crate::EspressoConfig;
 use crate::Symbol;
 use std::sync::Arc;
 
-/// Public trait for types that can be minimized using Espresso
+/// Public trait for types that can be minimised using Espresso
 ///
-/// This trait provides a **transparent, uniform interface** for minimizing boolean functions
-/// using the Espresso algorithm. All methods take `&self` and return a new minimized instance,
+/// This trait provides a **transparent, uniform interface** for minimising boolean functions
+/// using the Espresso algorithm. All methods take `&self` and return a new minimised instance,
 /// following an immutable functional style.
 ///
 /// **Note (v3.1+):** You must explicitly import this trait to use its methods:
@@ -28,10 +28,10 @@ use std::sync::Arc;
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
-/// # Transparent Minimization
+/// # Transparent Minimisation
 ///
-/// The beauty of this trait is that minimization works the same way regardless of input type.
-/// Just call `.minimize()` on any supported type and get back a minimized version of the same type:
+/// The beauty of this trait is that minimisation works the same way regardless of input type.
+/// Just call `.minimize()` on any supported type and get back a minimised version of the same type:
 ///
 /// ```
 /// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
@@ -59,17 +59,17 @@ use std::sync::Arc;
 ///
 /// # Implementations
 ///
-/// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
+/// - **[`Cover`]**: Direct implementation - minimises cubes directly with Espresso
 /// - **[`BoolExpr`]**: Extracts the expression's product terms (from its internal BDD) into a
-///   single-output [`Cover`], minimizes it with Espresso, then rebuilds an expression from the
-///   minimized product terms. Workflow: Expression → Cover → Espresso → minimized Cover → Expression
+///   single-output [`Cover`], minimises it with Espresso, then rebuilds an expression from the
+///   minimised product terms. Workflow: Expression → Cover → Espresso → minimised Cover → Expression
 ///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
 ///
 /// # Immutable Design
 ///
-/// All minimization methods preserve the original and return a new minimized instance:
+/// All minimisation methods preserve the original and return a new minimised instance:
 ///
 /// ```
 /// use espresso_logic::{BoolExpr, Minimizable};
@@ -92,9 +92,9 @@ use std::sync::Arc;
 /// # }
 /// ```
 pub trait Minimizable {
-    /// Minimize using the heuristic Espresso algorithm
+    /// Minimise using the heuristic Espresso algorithm
     ///
-    /// Returns a new minimized instance without modifying the original.
+    /// Returns a new minimised instance without modifying the original.
     /// This is fast and produces near-optimal results (~99% optimal in practice).
     ///
     /// Default implementation calls `minimize_with_config` with default config.
@@ -106,18 +106,18 @@ pub trait Minimizable {
         self.minimize_with_config(&config)
     }
 
-    /// Minimize using the heuristic algorithm with custom configuration
+    /// Minimise using the heuristic algorithm with custom configuration
     ///
-    /// Returns a new minimized instance without modifying the original.
+    /// Returns a new minimised instance without modifying the original.
     ///
     /// This is the primary method that implementations must provide.
     fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
     where
         Self: Sized;
 
-    /// Minimize using exact minimization
+    /// Minimise using exact minimisation
     ///
-    /// Returns a new minimized instance without modifying the original.
+    /// Returns a new minimised instance without modifying the original.
     /// This guarantees minimal results but may be slower for large expressions.
     ///
     /// Default implementation calls `minimize_exact_with_config` with default config.
@@ -129,9 +129,9 @@ pub trait Minimizable {
         self.minimize_exact_with_config(&config)
     }
 
-    /// Minimize using exact minimization with custom configuration
+    /// Minimise using exact minimisation with custom configuration
     ///
-    /// Returns a new minimized instance without modifying the original.
+    /// Returns a new minimised instance without modifying the original.
     ///
     /// This is the primary method that implementations must provide.
     fn minimize_exact_with_config(
@@ -142,7 +142,7 @@ pub trait Minimizable {
         Self: Sized;
 }
 
-/// Private helper function to minimize a Cover using either heuristic or exact algorithm
+/// Private helper function to minimise a Cover using either heuristic or exact algorithm
 fn minimize_cover_with<F, I, O>(
     cover: &Cover<I, O>,
     config: &EspressoConfig,
@@ -233,7 +233,7 @@ where
     let (f_result, d_result, r_result) =
         minimize_fn(&esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
 
-    // Extract minimized cubes back onto the cover's shared symbol tables.
+    // Extract minimised cubes back onto the cover's shared symbol tables.
     let ni = cover.num_inputs();
     let no = cover.num_outputs();
     let input_symbols = Arc::clone(cover.input_symbols());
@@ -250,7 +250,7 @@ where
     let d_cubes = d_result.to_cubes(ni, no, CubeType::D);
     let r_cubes = r_result.to_cubes(ni, no, CubeType::R);
 
-    // Build new cover with minimized cubes - reuse the cover's symbol tables (Arc, cheap)
+    // Build new cover with minimised cubes - reuse the cover's symbol tables (Arc, cheap)
     Ok(Cover {
         input_symbols: Arc::clone(cover.input_symbols()),
         output_symbols: Arc::clone(cover.output_symbols()),

@@ -1007,7 +1007,7 @@ use espresso_logic::{BoolExpr, expr, Minimizable};
 let expr = expr!("x" * "y" + "z");
 
 let vars = expr.collect_variables();
-// Returns BTreeSet<Arc<str>> in alphabetical order
+// Returns BTreeSet<Symbol> in alphabetical order
 for var in vars {
     println!("Variable: {}", var);
 }

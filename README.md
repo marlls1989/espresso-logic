@@ -31,15 +31,15 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "3.1"
+espresso-logic = "4.0"
 ```
 
 ### Boolean Expression Minimisation
 
 ```rust
-use espresso_logic::{BoolExpr, expr};
+use espresso_logic::{expr, Minimizable};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build expression with redundant terms
     let redundant = expr!("a" * "b" + "a" * "b" * "c");
     println!("Original: {}", redundant);
@@ -55,24 +55,54 @@ fn main() -> std::io::Result<()> {
 ### Truth Table Minimisation (Cover API)
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
-fn main() -> std::io::Result<()> {
-    // Create a cover for XOR function
-    let mut cover = Cover::new(CoverType::F);
-    
-    // Add cubes: output is 1 when inputs differ
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)])?;  // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)])?;  // 10 -> 1
-    
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a cover for XOR function (positional, no labels)
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+
+    // Push cubes: output is 1 when inputs differ
+    cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F)); // 01 -> 1
+    cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F)); // 10 -> 1
+
     let minimised = cover.minimize()?;
     println!("Minimised to {} cubes", minimised.num_cubes());
-    
+
     Ok(())
 }
 ```
 
 **Note:** Covers support multi-output functions, don't-care optimisation, and PLA file I/O.
+
+### Reading and Writing PLA Files
+
+```rust
+use espresso_logic::{CoverType, Minimizable, PlaCover, PLAWriter, Symbol};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pla = "\
+.i 2
+.o 1
+.ilb a b
+.ob f
+01 1
+10 1
+.e
+";
+
+    // Parse a PLA from a string (or use PlaCover::<Symbol>::from_pla_file(path))
+    let cover = PlaCover::<Symbol>::from_pla_string(pla)?;
+    println!("{} inputs, {} outputs, {} cubes",
+        cover.num_inputs(), cover.num_outputs(), cover.num_cubes());
+
+    // Minimise and write back out as PLA text
+    let minimised = cover.minimize()?;
+    let out = minimised.to_pla_string(CoverType::F)?;
+    println!("{out}");
+
+    Ok(())
+}
+```
 
 ## API Overview
 
@@ -101,10 +131,10 @@ Use when you need to:
 - Read/write PLA files
 
 ```rust
-use espresso_logic::{Cover, CoverType};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
 
-let mut cover = Cover::new(CoverType::FD);  // with don't-cares
-cover.add_cube(&[Some(true), None], &[Some(true)])?;  // 1- -> 1
+let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FD);  // with don't-cares
+cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -> 1
 ```
 
 ### Low-Level API - For Maximum Control

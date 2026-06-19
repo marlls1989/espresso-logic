@@ -99,7 +99,7 @@ impl From<CubeError> for io::Error {
     }
 }
 
-/// Errors that can occur during minimization operations
+/// Errors that can occur during minimisation operations
 ///
 /// This error type is returned by `Cover::minimize()` and `BoolExpr::minimize()`.
 #[derive(Debug)]
@@ -111,7 +111,7 @@ pub enum MinimizationError {
     Cube(CubeError),
     /// Cover operation error
     Cover(CoverError),
-    /// IO error during minimization
+    /// IO error during minimisation
     Io(io::Error),
 }
 

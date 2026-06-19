@@ -6,7 +6,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "3.0"
+espresso-logic = "4.0"
 ```
 
 The library has **minimal dependencies** (only `libc` and `lalrpop-util` for core functionality).

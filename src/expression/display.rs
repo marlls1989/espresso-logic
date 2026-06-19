@@ -13,7 +13,7 @@ enum OpContext {
 }
 
 impl BoolExpr {
-    /// Format with operator precedence context to minimize parentheses
+    /// Format with operator precedence context to minimise parentheses
     fn fmt_with_context(&self, f: &mut fmt::Formatter<'_>, ctx: OpContext) -> fmt::Result {
         let ast = self.get_or_create_ast();
         Self::fmt_ast_with_context(f, &ast, ctx)

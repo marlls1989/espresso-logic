@@ -174,7 +174,7 @@
 //! # temp.write_all(b".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
 //! # temp.flush()?;
 //! # let input_path = temp.path();
-//! // Read from PLA file (PLAReader trait)
+//! // Read from a PLA file into a `PlaCover` (the variant reflects which label sections were present)
 //! let mut cover = PlaCover::<Symbol>::from_pla_file(input_path)?;
 //!
 //! // Minimize

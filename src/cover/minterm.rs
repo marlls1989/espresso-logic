@@ -7,9 +7,10 @@
 //! came from different orderings, and lets the same type serve as both the input pattern and the
 //! (membership) output pattern of a cube.
 //!
-//! The label type is generic and defaults to `Symbol`. The core type imposes no bound on `L`;
-//! richer operations add bounds on their own `impl` blocks (label lookup needs `L: Eq + Hash`,
-//! ordering/set-ops need `L: Ord`, `Debug` needs `L: Display`).
+//! The label type `L` is fully generic, with no default — `Symbol` is just one choice among
+//! `String`, `Arc<str>`, `u32`, [`Anonymous`](crate::Anonymous), … The core type imposes no bound on
+//! `L`; richer operations add bounds on their own `impl` blocks (most need `L: Label` — the alignment
+//! contract — and `Debug` additionally needs `L: Debug`).
 //!
 //! # Representation
 //!

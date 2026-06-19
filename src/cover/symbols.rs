@@ -114,7 +114,7 @@ impl<L: Label> Symbols<L> {
     /// Build a symbol table from an ordered list of labels (arity = `labels.len()`).
     ///
     /// Computes the identity-sorted order eagerly (one O(n log n) sort). When the labels are already
-    /// in identity order, prefer [`from_identity_sorted`](Self::from_identity_sorted) to skip it.
+    /// in identity order, the crate-internal `from_identity_sorted` skips it.
     pub fn new(labels: Arc<[L]>) -> Arc<Symbols<L>> {
         let mut order: Vec<u32> = (0..labels.len() as u32).collect();
         order.sort_by(|&x, &y| {

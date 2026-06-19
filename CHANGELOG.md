@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.0] - 2026-06-16
+## [4.0.0] - 2026-06-19
 
-Unifies the crate's four parallel product-term representations onto a single, label-carrying
-`Minterm` type, and modernises the internal style (write-once data returned as `Arc<[T]>`,
-computation expressed with iterators). This is a breaking release.
+A breaking release with two themes: unifying the crate's four parallel product-term representations
+onto a single label-carrying `Minterm` type, and reworking the cover layer around generic, first-class
+variable **label types** (with no privileged default). It also modernises the internals (write-once
+data returned as `Arc<[T]>`, iterator pipelines, recursion replaced by explicit work-stacks) and
+tightens the public API.
 
 ### Breaking
+
+Product-term representation:
 
 - **Removed `Dnf`.** A disjunctive normal form is now just a single-output `Cover`; the
   `BTreeMap<Arc<str>, bool>` cube representation and the `BoolExpr ↔ Dnf` conversions are gone.
@@ -26,15 +30,51 @@ computation expressed with iterators). This is a breaking release.
 - **`BoolExpr::to_cubes()` now returns `Arc<[Minterm]>`** (was `Vec<BTreeMap<Arc<str>, bool>>`).
 - **`EspressoCover::to_cubes()` now returns `Arc<[Cube]>`** (was `Vec<Cube>`).
 - **Removed the `LabelManager` type;** `Cover` owns its canonical input/output headers directly.
+
+Label types & cover construction:
+
+- **`Symbol` is now the variable-name type** — a small-string-optimised, interned string — replacing
+  `Arc<str>` as the default name representation.
+- **`Cover`, `Cube`, `Minterm`, `Symbols` are generic over their label type(s) with no default type
+  parameter.** `Cover<I, O>` and `Cube<I, O>` carry **separate input/output label types**, so `Symbol`
+  is no more privileged than `String`/`Arc<str>`/`u32`. `Cover::new(..)` consequently needs a type
+  annotation, e.g. `Cover::<Symbol, Symbol>::new(..)`.
+- **Positional covers use the zero-sized `Anonymous` label** instead of `()`; build them with
+  `Cover::<Anonymous, Anonymous>::anonymous(..)`.
+- **Removed `Cover::add_cube(...)`.** Construct cubes explicitly with
+  `Cube::anonymous(inputs, outputs, CubeType)` + `Cover::push`, or `Cover::from_cubes`.
+- **`Cover::relabel` / `relabel_inputs` / `relabel_outputs` now return `Result<_, ArityMismatch>`**
+  instead of panicking on a wrong-arity table. `anonymize()` stays infallible.
+- **PLA reading now yields a `PlaCover<S>`** — a sum type whose variant records which `.ilb`/`.ob`
+  label sections the file carried — via `PlaCover::from_pla_string` / `from_pla_file`. The old
+  `Cover::from_pla_*` methods and the `PLAReader` trait are removed; writing still goes through
+  `PLAWriter`.
+- **`BoolExpr::fold_with_context` redesigned** from continuation-passing callbacks to a
+  `(descend, combine)` pair (top-down context, bottom-up results), enabling an iterative walk.
+- **`BoolExpr::collect_variables()` returns `BTreeSet<Symbol>`** (was `BTreeSet<Arc<str>>`).
+- **`Minterm::value_of` / `Symbols::index_of` query bound is now `Q: Ord`** (was `Q: Hash + Eq`).
+- **All public error enums are `#[non_exhaustive]`;** `INLINE_CAP` is no longer public.
 - **Minimum supported Rust version is now 1.82.**
 
 ### Added
 
+- **`Symbol`** (`src/symbol.rs`): a compact, interned variable-name type — inline for short names,
+  pooled and shared for longer ones.
 - **Unified `Minterm` type** (`src/cover/minterm.rs`): a label-carrying row of tri-state values
   (`Some(true)`/`Some(false)`/`None`), bit-packed two bits per variable. Carries its variable header
   so comparisons align by variable identity, with a pointer-equality fast path for same-cover cubes.
-  Public set operations: `is_subset_of`, `is_superset_of`, `is_disjoint_with`, plus `Ord`/`Eq`.
+  Public set operations: `is_subset_of`, `is_superset_of`, `is_disjoint_with`, plus `Ord`/`Eq`/`Hash`.
 - **`Cube` and `CubeType` are public**, each cube being a pair of `Minterm`s plus an F/D/R set tag.
+- **`Anonymous` label** and the sealed **`Label` / `StringLabel` / `PlaLabel` / `ReconcilableLabel`**
+  trait family. Label-presence is **type-level**: a label is a *name* iff it is `Display`, so a
+  `Cover<Anonymous, _>` cannot emit input names by construction.
+- **`PlaCover<S>` PLA reader** with variants `InputsOutputsNamed` / `InputsNamed` / `OutputsNamed` /
+  `Positional`.
+- **`Cover::extend` and `Cover::merge`** for combining covers (append vs identity-overlay of outputs),
+  renaming output-column collisions via `ReconcilableLabel`.
+- `PartialEq`/`Eq` for `Cover`/`Cube`/`PlaCover`, `Hash` for `Minterm`, `Debug` for `Symbols`.
+- Malformed PLA input now reports `PLAError::CubeDimensionMismatch` / `MissingDimensions` instead of
+  being silently skipped; `.end` is accepted as a read terminator alongside `.e`.
 
 ### Changed
 
@@ -42,11 +82,20 @@ computation expressed with iterators). This is a breaking release.
   iterator pipelines instead of intermediate `Vec` buffers.
 - `Minterm` has a readable `Debug` (e.g. `Minterm { a: 1, b: -, c: 0 }`) instead of exposing the
   packed words.
+- **Recursive BDD/AST traversals are now explicit work-stack iteration** (the BDD `ite` apply, cube
+  extraction, evaluation, the AST folds, and factorisation), removing the call-stack depth ceiling on
+  deep inputs while preserving memoisation.
+- **`Symbols` is fully immutable** — its identity-sorted order is computed eagerly at construction
+  rather than memoised behind an `OnceLock`, so `Minterm`/`Cube`/`Cover`/`Symbols` are sound
+  `HashMap`/`HashSet` keys.
+- Consolidated duplicated cover-layer logic (header union by identity, cube re-pointing).
 
 ### Fixed
 
 - BDD variable collection (`collect_variables` / `var_count`) now deduplicates by **node** rather
   than by variable, so it no longer misses variables that appear only in some branches.
+- **`BoolExpr::equivalent_to` no longer swallows an internal error as `false`** — equivalence is an
+  exact canonical-BDD root comparison (identical to `==`).
 
 ## [3.1.2] - 2025-11-12
 

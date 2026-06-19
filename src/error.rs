@@ -1,4 +1,4 @@
-//! Error types for the Espresso logic minimizer
+//! Error types for the Espresso logic minimiser
 //!
 //! This module re-exports error types from their respective submodules where each error
 //! is colocated with the functionality it relates to:
@@ -8,7 +8,7 @@
 //! - [`expression::error`](crate::expression::error) - Expression parsing errors
 //! - [`cover::pla::error`](crate::cover::pla::error) - PLA format errors
 //!
-//! # Organization
+//! # Organisation
 //!
 //! Each error type lives in the module it's most relevant to:
 //!
@@ -16,7 +16,7 @@
 //!
 //! - [`InstanceError`] - Espresso instance dimension/config conflicts
 //! - [`CubeError`] - Invalid cube values during cover creation
-//! - [`MinimizationError`] - Errors during minimization (combines Instance, Cube, IO)
+//! - [`MinimizationError`] - Errors during minimisation (combines Instance, Cube, IO)
 //!
 //! ## Cover Module Errors
 //!
