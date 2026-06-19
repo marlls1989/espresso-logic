@@ -710,6 +710,44 @@ fn pla_cover_variant_tracks_label_sections() {
 }
 
 #[test]
+fn malformed_pla_cube_dimension_mismatch_errors() {
+    use super::pla::{PLAError, PLAReadError};
+
+    // A cube line wider than the declared dimensions is no longer silently dropped: it surfaces a
+    // CubeDimensionMismatch (3 chars where .i 2 / .o 1 expects 2 inputs + 1 output).
+    let too_wide = ".i 2\n.o 1\n0111 1\n.e\n";
+    let err = PlaCover::<Symbol>::from_pla_string(too_wide)
+        .err()
+        .expect("too-wide cube should error");
+    assert!(
+        matches!(
+            err,
+            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
+        ),
+        "expected CubeDimensionMismatch, got {err:?}"
+    );
+
+    // A truncated final cube (fewer chars than ni + no, nothing left to accumulate) also errors.
+    let truncated = ".i 4\n.o 2\n01\n.e\n";
+    let err = PlaCover::<Symbol>::from_pla_string(truncated)
+        .err()
+        .expect("truncated cube should error");
+    assert!(
+        matches!(
+            err,
+            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
+        ),
+        "expected CubeDimensionMismatch, got {err:?}"
+    );
+
+    // Well-formed input still parses cleanly (the stricter checks don't reject valid covers).
+    assert!(PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n11 1\n.e\n").is_ok());
+
+    // `.end` is accepted as a terminator alongside `.e`.
+    assert!(PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n.end\n").is_ok());
+}
+
+#[test]
 fn test_minimize_preserves_structure() {
     let mut cover = Cover::new(CoverType::F);
 

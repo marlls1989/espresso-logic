@@ -349,7 +349,7 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                         output_labels = Some(labels);
                     }
                 }
-                Some(".e") => break,
+                Some(".e") | Some(".end") => break,
                 Some(".p") => {}
                 _ => {}
             }
@@ -434,7 +434,14 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
 
                 // Check if we have the right amount of data
                 if accumulated.len() < ni + no {
-                    continue; // Skip malformed cubes
+                    // Truncated cube: ran out of input before reaching the declared width.
+                    return Err(PLAError::CubeDimensionMismatch {
+                        expected_inputs: ni,
+                        actual_inputs: accumulated.len().min(ni),
+                        expected_outputs: no,
+                        actual_outputs: accumulated.len().saturating_sub(ni),
+                    }
+                    .into());
                 }
 
                 // Split accumulated data at the input/output boundary
@@ -452,7 +459,9 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
             // Dimensions not yet known - use whitespace splitting as before
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() < 2 {
-                continue; // Need at least inputs and outputs
+                // No .i/.o directive declared the dimensions, and this line can't be split into
+                // input/output halves to infer them.
+                return Err(PLAError::MissingDimensions.into());
             }
             (parts[0].to_string(), parts[1].to_string())
         };
@@ -468,10 +477,15 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
         let ni = num_inputs.unwrap();
         let no = num_outputs.unwrap();
 
-        // Verify dimensions are consistent
+        // Verify dimensions are consistent with the declared/inferred width.
         if input_str.len() != ni || output_str.len() != no {
-            // Skip cubes with wrong dimensions (might be intermediate lines)
-            continue;
+            return Err(PLAError::CubeDimensionMismatch {
+                expected_inputs: ni,
+                actual_inputs: input_str.len(),
+                expected_outputs: no,
+                actual_outputs: output_str.len(),
+            }
+            .into());
         }
 
         // Parse inputs

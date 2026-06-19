@@ -26,6 +26,10 @@ use weak_table::WeakHashSet;
 /// in the `Arc<str>`/`String` class (24 bytes on 64-bit).
 pub const INLINE_CAP: usize = 22;
 
+/// The inline length is stored as a `u8` (`Repr::Inline { len: u8, .. }`), so the inline capacity
+/// must fit in a `u8` for the `len = bytes.len() as u8` cast to be lossless.
+const _: () = assert!(INLINE_CAP <= u8::MAX as usize);
+
 /// A compact, interned variable-name string. See the [module docs](self).
 #[derive(Clone)]
 pub struct Symbol(Repr);
