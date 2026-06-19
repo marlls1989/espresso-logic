@@ -1,6 +1,6 @@
 # Espresso Logic Minimizer
 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.82%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Rust bindings to the Espresso heuristic logic minimiser from UC Berkeley, with a modern high-level API for Boolean function minimisation.
@@ -148,7 +148,7 @@ See the [`espresso` module documentation](https://docs.rs/espresso-logic/latest/
 
 ## Installation
 
-**Prerequisites:** Rust 1.70+, C compiler, libclang
+**Prerequisites:** Rust 1.82+, C compiler, libclang
 
 ```bash
 # macOS

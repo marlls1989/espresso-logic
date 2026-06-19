@@ -706,7 +706,7 @@ impl EspressoCover {
     ///
     /// # Returns
     ///
-    /// A `Vec<Cube>` containing all cubes in this cover. Each cube represents one product
+    /// An `Arc<[Cube]>` containing all cubes in this cover. Each cube represents one product
     /// term in the sum-of-products representation.
     ///
     /// # Cube Representation

@@ -55,11 +55,9 @@ If building locally, use `./target/release/espresso` after running `cargo build 
 
 - `-D, --do <COMMAND>` - Select algorithm
   - `espresso` - Heuristic minimization (default, fast)
-  - `exact` - Exact minimization (slower, optimal)
-  - `qm` - Quine-McCluskey method
+  - `exact` - Exact minimization (currently runs the same algorithm as `espresso`; reserved for a future exact path)
   - `echo` - Echo input without modification
   - `stats` - Print statistics only
-  - `simplify` - Simplify the function
 
 - `-o, --output <FORMAT>` - Output format
   - `f` - ON-set only (default)
@@ -70,10 +68,6 @@ If building locally, use `./target/release/espresso` after running `cargo build 
 ### Espresso Options
 
 - `--fast` - Use fast mode (single expand)
-- `--ness` - Don't remove essential primes
-- `--nirr` - Don't force irredundant
-- `--strong` - Use strong gasp
-- `--random` - Use random order
 
 ### Output Control
 

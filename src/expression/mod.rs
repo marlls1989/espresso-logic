@@ -171,6 +171,14 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// Thread-safe via global BDD manager with `RwLock` protection. Multiple threads
 /// can safely create and manipulate expressions concurrently.
 ///
+/// # Memory
+///
+/// The shared manager's node table and operation caches **grow monotonically and are never evicted**
+/// while any `BoolExpr` is alive (node IDs must stay stable for lock-free traversal). The manager is
+/// dropped — reclaiming everything — only once the last live `BoolExpr` is dropped. A long-running
+/// program that builds very many distinct expressions over its lifetime will therefore see the
+/// manager's memory grow until that point; this is intentional, not a leak.
+///
 /// # Examples
 ///
 /// ## Method-based API

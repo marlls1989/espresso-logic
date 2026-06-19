@@ -77,16 +77,13 @@ ASan instruments all memory operations to detect leaks, use-after-free, double-f
 # Install nightly toolchain (one-time setup)
 rustup toolchain install nightly
 
-# EASIEST: Use the provided script (handles macOS setup automatically)
-./scripts/test_with_asan.sh
-
-# MANUAL: Run tests with ASan
+# Run tests with ASan
 # On macOS, you need to set DYLD_INSERT_LIBRARIES:
 export DYLD_INSERT_LIBRARIES=$HOME/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/aarch64-apple-darwin/lib/librustc-nightly_rt.asan.dylib
-RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test leak_detection_integration
+RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety
 
 # On Linux, just use RUSTFLAGS:
-RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test leak_detection_integration
+RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety
 ```
 
 **How it works:**
@@ -135,10 +132,10 @@ Valgrind emulates your program and tracks every memory operation.
 sudo apt install valgrind
 
 # Build test
-cargo test --no-run --test leak_detection_integration
+cargo test --no-run --test test_memory_safety
 
 # Find test binary
-TEST_BINARY=$(find target/debug/deps -name 'leak_detection_integration-*' -executable)
+TEST_BINARY=$(find target/debug/deps -name 'test_memory_safety-*' -executable)
 
 # Run with valgrind
 valgrind \
@@ -176,7 +173,7 @@ export MallocStackLogging=1
 export MallocStackLoggingNoCompact=1
 
 # Run test
-cargo test --test leak_detection_integration
+cargo test --test test_memory_safety
 
 # Check for leaks (while process is running)
 leaks <PID>
@@ -184,8 +181,8 @@ leaks <PID>
 
 **Using Instruments GUI:**
 
-1. Build your test: `cargo test --no-run --test leak_detection_integration`
-2. Find binary: `find target/debug/deps -name 'leak_detection_integration-*'`
+1. Build your test: `cargo test --no-run --test test_memory_safety`
+2. Find binary: `find target/debug/deps -name 'test_memory_safety-*'`
 3. Open Instruments.app
 4. Choose "Leaks" template
 5. Select the test binary and run
@@ -208,8 +205,8 @@ Heaptrack provides detailed heap profiling with a nice GUI.
 sudo apt install heaptrack heaptrack-gui
 
 # Run test with heaptrack
-cargo test --no-run --test leak_detection_integration
-TEST_BINARY=$(find target/debug/deps -name 'leak_detection_integration-*' -executable)
+cargo test --no-run --test test_memory_safety
+TEST_BINARY=$(find target/debug/deps -name 'test_memory_safety-*' -executable)
 heaptrack $TEST_BINARY --test-threads=1
 
 # View results
@@ -230,19 +227,9 @@ Contains tests that measure memory usage and verify proper cleanup:
 
 **Run:** `cargo test --test test_memory_safety -- --nocapture`
 
-### tests/leak_detection_integration.rs
-
-Simple, focused tests designed for external leak detectors:
-
-- `leak_test_01_basic_allocation` - Basic alloc/free
-- `leak_test_02_clone_allocation` - Clone creates independent memory
-- `leak_test_03_minimize` - Minimize allocates and frees correctly
-- `leak_test_05_repeated_operations` - 100 iterations to amplify leaks
-- `leak_test_10_stress` - 500 iterations for stress testing
-
 **Run with ASan:**
 ```bash
-RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test leak_detection_integration
+RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety
 ```
 
 **Run with valgrind:**
@@ -343,7 +330,7 @@ test result: ok. 12 passed; 0 failed
 Direct leak of 1024 byte(s) in 1 object(s) allocated from:
     #0 0x... malloc
     #1 0x... sf_new (espresso-src/set.c:123)
-    #2 0x... EspressoCover::from_cubes (src/espresso.rs:214)
+    #2 0x... EspressoCover::from_cubes (src/espresso/mod.rs:214)
 ```
 
 ### Valgrind Output
@@ -360,7 +347,7 @@ Direct leak of 1024 byte(s) in 1 object(s) allocated from:
 ==12345== 1,024 bytes in 1 blocks are definitely lost in loss record 1 of 1
 ==12345==    at 0x...: malloc (vg_replace_malloc.c:299)
 ==12345==    by 0x...: sf_new (set.c:123)
-==12345==    by 0x...: EspressoCover::from_cubes (espresso.rs:214)
+==12345==    by 0x...: EspressoCover::from_cubes (src/espresso/mod.rs:214)
 ```
 
 ### Memory Measurement Output
@@ -408,7 +395,7 @@ For thorough testing (manual or scheduled):
 - name: Run with AddressSanitizer
   run: |
     rustup toolchain install nightly
-    RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test leak_detection_integration
+    RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety
 ```
 
 ## Quick Reference
@@ -425,7 +412,7 @@ For thorough testing (manual or scheduled):
 
 **For development:** Use `cargo test --test test_memory_safety`
 
-**For verification:** Use `RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test leak_detection_integration`
+**For verification:** Use `RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety`
 
 **For CI:** Use memory measurement tests
 

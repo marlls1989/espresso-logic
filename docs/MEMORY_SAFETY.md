@@ -22,7 +22,7 @@ pset_family sf_append(A, B);             // Appends B to A, FREES B
 ```rust
 pub struct EspressoCover {
     ptr: sys::pset_family,           // Raw C pointer
-    _espresso: Rc<Espresso>,         // Keeps Espresso alive
+    _espresso: Rc<InnerEspresso>,    // Keeps Espresso alive
     _marker: PhantomData<*mut ()>,   // !Send + !Sync marker
 }
 ```
@@ -114,7 +114,7 @@ The original ptr is transferred to C or re-wrapped elsewhere.
 
 ### ✅ No Use-After-Free
 
-- `EspressoCover` holds `Rc<Espresso>`, keeping Espresso alive
+- `EspressoCover` holds `Rc<InnerEspresso>`, keeping Espresso alive
 - Espresso can't be dropped while covers exist
 - Global C state (cube structure) remains valid
 
@@ -169,7 +169,7 @@ impl Drop for Espresso {
 
 This is safe because:
 - Each thread has its own C globals
-- `EspressoCover` holds `Rc<Espresso>`
+- `EspressoCover` holds `Rc<InnerEspresso>`
 - C globals can't be freed while covers exist
 
 ## Conclusion

@@ -23,7 +23,7 @@ This installs the `espresso` binary to your cargo bin directory (usually `~/.car
 
 ## Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.82 or later
 - C compiler (gcc, clang, or msvc)
 - libclang (for bindgen during build)
 

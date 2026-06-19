@@ -15,7 +15,7 @@
 //! # Representation
 //!
 //! Labels live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols<L>>`, so
-//! same-cover comparisons take a pointer-equality fast path and label lookup is O(1)). Values are
+//! same-cover comparisons take a pointer-equality fast path and label lookup is O(log n)). Values are
 //! packed two bits per variable using Espresso's value-set encoding — for each variable, one bit
 //! means "0 is allowed" and one means "1 is allowed":
 //!

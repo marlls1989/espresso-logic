@@ -260,7 +260,7 @@ fn main() -> std::io::Result<()> {
 
 ### Real-World Example: 5-Input Threshold Gate
 
-A threshold gate with complex activation/deactivation regions demonstrates dramatic minimization and proper expression composition.
+A threshold gate with complex activation/deactivation regions demonstrates dramatic minimisation and proper expression composition.
 
 Run with: `cargo run --example threshold_gate_example`
 
@@ -326,8 +326,8 @@ fn main() -> std::io::Result<()> {
 - **Helper function `xor()`**: Returns `BoolExpr` for clean composition
 - **Complex expressions**: `hold` starts with 22 terms, minimizes to 10
 - **Stateful logic**: `next_q` efficiently combines activation with feedback
-- **No early minimization**: Compose all expressions first, minimize once
-- **Multiple outputs**: All four functions optimized together in one call
+- **No early minimisation**: Compose all expressions first, minimize once
+- **Multiple outputs**: All four functions optimised together in one call
 
 ## PLA Files
 
@@ -552,7 +552,7 @@ fn main() {
 }
 ```
 
-### BDD Automatic Optimization
+### BDD Automatic Optimisation
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -579,7 +579,7 @@ fn main() {
 }
 ```
 
-### Using BDDs for Efficient Minimization
+### Using BDDs for Efficient Minimisation
 
 ```rust
 use espresso_logic::{BoolExpr, Minimizable};
@@ -776,6 +776,6 @@ cargo run --example c_element_example
 The following examples demonstrate new features in v3.1:
 
 - **expression_composition.rs** - Shows how to compose expressions from parsed functions, variables, and minimized results
-- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimization and proper composition of complex functions
+- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimisation and proper composition of complex functions
 - **c_element_example.rs** - C-element (Muller C-element) demonstrating proper asynchronous circuit design with set/reset logic
 

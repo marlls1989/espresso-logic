@@ -9,7 +9,8 @@
 //! [`Label::identity`].
 //!
 //! Every cube of a cover shares one `Arc<Symbols<L>>`, so aligning two cubes of the same cover is a
-//! pointer-equality check ([`Arc::ptr_eq`]) and looking a variable up by name is O(1).
+//! pointer-equality check ([`Arc::ptr_eq`]) and looking a variable up by name is O(log n) (binary
+//! search over the identity-sorted order).
 
 use super::label::{Anonymous, Label};
 use std::borrow::Borrow;
