@@ -154,28 +154,107 @@ impl BddManager {
     ///
     /// Computes: if f then g else h
     /// This is the fundamental BDD operation from which all others are derived.
+    ///
+    /// Evaluated **iteratively** with an explicit work-stack rather than recursion, so a tall BDD
+    /// (deep variable ordering) can't overflow the call stack. Memoisation is preserved exactly:
+    /// every sub-triple is resolved through [`ite_resolved`](Self::ite_resolved) (terminal cases +
+    /// `ite_cache`), so shared sub-problems collapse to cache hits just as in the recursive form —
+    /// the walk stays linear in the number of distinct reachable triples, not exponential.
     pub(super) fn ite(&mut self, f: NodeId, g: NodeId, h: NodeId) -> NodeId {
-        // Terminal cases
+        /// One unit of work. `Solve` resolves a triple (expanding it if needed); `Combine` runs
+        /// after a triple's two children are resolved and builds the result node for it.
+        enum Work {
+            Solve(NodeId, NodeId, NodeId),
+            Combine {
+                triple: (NodeId, NodeId, NodeId),
+                top_var: VarId,
+                low: (NodeId, NodeId, NodeId),
+                high: (NodeId, NodeId, NodeId),
+            },
+        }
+
+        let mut stack = vec![Work::Solve(f, g, h)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Solve(f, g, h) => {
+                    // Terminal case or already-memoised: nothing to do, result is fetchable later.
+                    if self.ite_resolved(f, g, h).is_some() {
+                        continue;
+                    }
+                    // Shannon expansion: schedule both cofactor triples, then a Combine that runs
+                    // once they're resolved. Pushed Combine-first so it pops last (LIFO).
+                    let (top_var, low, high) = self.ite_expand(f, g, h);
+                    stack.push(Work::Combine {
+                        triple: (f, g, h),
+                        top_var,
+                        low,
+                        high,
+                    });
+                    stack.push(Work::Solve(high.0, high.1, high.2));
+                    stack.push(Work::Solve(low.0, low.1, low.2));
+                }
+                Work::Combine {
+                    triple,
+                    top_var,
+                    low,
+                    high,
+                } => {
+                    // A diamond in the DAG can schedule the same Combine twice; the first one
+                    // caches the result, so later ones are no-ops.
+                    if self.ite_cache.contains_key(&triple) {
+                        continue;
+                    }
+                    // Both children are guaranteed resolved by the time this runs.
+                    let low_id = self
+                        .ite_resolved(low.0, low.1, low.2)
+                        .expect("ITE low child unresolved at combine time - BDD scheduling bug");
+                    let high_id = self
+                        .ite_resolved(high.0, high.1, high.2)
+                        .expect("ITE high child unresolved at combine time - BDD scheduling bug");
+                    let result = self.make_node(top_var, low_id, high_id);
+                    self.ite_cache.insert(triple, result);
+                }
+            }
+        }
+
+        self.ite_resolved(f, g, h).expect(
+            "top-level ITE triple unresolved after iterative evaluation - BDD scheduling bug",
+        )
+    }
+
+    /// Resolve an ITE triple **without** Shannon expansion.
+    ///
+    /// Returns `Some(node)` when `(f, g, h)` is a terminal case or already lives in `ite_cache`,
+    /// and `None` when it still needs expanding. This is the memo-aware lookup the iterative
+    /// [`ite`](Self::ite) loop uses both to short-circuit `Solve` items and to read back child
+    /// results in `Combine`. The terminal-case checks mirror the head of the former recursive `ite`.
+    fn ite_resolved(&self, f: NodeId, g: NodeId, h: NodeId) -> Option<NodeId> {
         if f == TRUE_NODE {
-            return g;
+            return Some(g);
         }
         if f == FALSE_NODE {
-            return h;
+            return Some(h);
         }
         if g == TRUE_NODE && h == FALSE_NODE {
-            return f;
+            return Some(f);
         }
         if g == h {
-            return g;
+            return Some(g);
         }
+        self.ite_cache.get(&(f, g, h)).copied()
+    }
 
-        // Check cache
-        let cache_key = (f, g, h);
-        if let Some(&result) = self.ite_cache.get(&cache_key) {
-            return result;
-        }
-
-        // Find the topmost variable among f, g, h
+    /// Shannon-expand a non-terminal ITE triple around its topmost variable.
+    ///
+    /// Returns the split variable and the two child triples (low/false cofactor and high/true
+    /// cofactor). Only called when [`ite_resolved`](Self::ite_resolved) returned `None`, so at
+    /// least `f` is a decision node and `top_var` is a real variable.
+    fn ite_expand(
+        &self,
+        f: NodeId,
+        g: NodeId,
+        h: NodeId,
+    ) -> (VarId, (NodeId, NodeId, NodeId), (NodeId, NodeId, NodeId)) {
         let f_node = self.get_node(f).expect(
             "Invalid node ID in ITE operation - this indicates a bug in the BDD implementation",
         );
@@ -186,30 +265,16 @@ impl BddManager {
             "Invalid node ID in ITE operation - this indicates a bug in the BDD implementation",
         );
 
-        let (top_var, f_var, g_var, h_var) = match (f_node, g_node, h_node) {
-            (BddNode::Terminal(_), BddNode::Terminal(_), BddNode::Terminal(_)) => {
-                unreachable!("All terminals should be handled above")
-            }
-            _ => {
-                let f_var = Self::node_var(f_node);
-                let g_var = Self::node_var(g_node);
-                let h_var = Self::node_var(h_node);
-                let top_var = f_var.min(g_var).min(h_var);
-                (top_var, f_var, g_var, h_var)
-            }
-        };
+        let f_var = Self::node_var(f_node);
+        let g_var = Self::node_var(g_node);
+        let h_var = Self::node_var(h_node);
+        let top_var = f_var.min(g_var).min(h_var);
 
-        // Shannon expansion on the topmost variable
         let (f_low, f_high) = Self::cofactors(f_node, f_var, top_var, f);
         let (g_low, g_high) = Self::cofactors(g_node, g_var, top_var, g);
         let (h_low, h_high) = Self::cofactors(h_node, h_var, top_var, h);
 
-        let low = self.ite(f_low, g_low, h_low);
-        let high = self.ite(f_high, g_high, h_high);
-
-        let result = self.make_node(top_var, low, high);
-        self.ite_cache.insert(cache_key, result);
-        result
+        (top_var, (f_low, g_low, h_low), (f_high, g_high, h_high))
     }
 
     /// Get the variable of a node (usize::MAX for terminals)

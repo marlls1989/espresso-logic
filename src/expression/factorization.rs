@@ -154,43 +154,86 @@ fn factor_literal(
 /// `a*b + a*c → a*(b + c)`
 ///
 /// Uses greedy heuristic: factors out the first profitable literal found.
+///
+/// Driven **iteratively** with an explicit work-stack rather than recursion, so a wide term set
+/// (which factors into a deep chain of subproblems) can't overflow the call stack. Each `Solve`
+/// either resolves a subproblem to a leaf AST directly or, when a profitable factor exists, schedules
+/// its `with`/`without` halves and a `Combine` that reassembles them — exactly mirroring the former
+/// recursive shape (`var * factor(with) [ + factor(without) ]`).
 fn factorise_once(terms: Vec<ProductTerm>) -> Arc<BoolExprAst> {
-    if terms.is_empty() {
-        return Arc::new(BoolExprAst::Constant(false));
+    enum Work {
+        /// Factorise this set of terms.
+        Solve(Vec<ProductTerm>),
+        /// Reassemble after the children of a factored node are on the result stack. `has_without`
+        /// records whether a `without` branch was scheduled (and so sits under the `with` result).
+        Combine {
+            var_ast: Arc<BoolExprAst>,
+            has_without: bool,
+        },
     }
 
-    if terms.len() == 1 {
-        return terms[0].to_ast();
-    }
+    let mut work = vec![Work::Solve(terms)];
+    let mut results: Vec<Arc<BoolExprAst>> = Vec::new();
 
-    // Find the best literal to factor out (greedy choice)
-    if let Some((var, polarity)) = find_best_factor(&terms) {
-        let (with_literal, without_literal) = factor_literal(terms, &var, polarity);
+    while let Some(item) = work.pop() {
+        match item {
+            Work::Solve(terms) => {
+                if terms.is_empty() {
+                    results.push(Arc::new(BoolExprAst::Constant(false)));
+                    continue;
+                }
+                if terms.len() == 1 {
+                    results.push(terms[0].to_ast());
+                    continue;
+                }
 
-        // Create the factored part: var * (factorised_with_literal)
-        let var_ast = Arc::new(BoolExprAst::Variable(var.clone()));
-        let var_ast = if polarity {
-            var_ast
-        } else {
-            Arc::new(BoolExprAst::Not(var_ast))
-        };
+                // Find the best literal to factor out (greedy choice)
+                if let Some((var, polarity)) = find_best_factor(&terms) {
+                    let (with_literal, without_literal) = factor_literal(terms, &var, polarity);
 
-        // Recursively factorise the terms with the literal removed
-        let factored_terms = factorise_once(with_literal);
-        let factored_part = Arc::new(BoolExprAst::And(var_ast, factored_terms));
+                    // The factored-out literal: var (or ~var).
+                    let var_ast = Arc::new(BoolExprAst::Variable(var.clone()));
+                    let var_ast = if polarity {
+                        var_ast
+                    } else {
+                        Arc::new(BoolExprAst::Not(var_ast))
+                    };
 
-        // Handle remaining terms
-        if without_literal.is_empty() {
-            factored_part
-        } else {
-            let remaining = factorise_once(without_literal);
-            // Put unfactored terms first for neater appearance: a*b + q*(a+b)
-            Arc::new(BoolExprAst::Or(remaining, factored_part))
+                    let has_without = !without_literal.is_empty();
+                    // Schedule Combine first (pops last). Push `with` then `without` so `without`
+                    // pops/solves first and lands *under* the `with` result on the stack — Combine
+                    // reads `with` (top) then `without`.
+                    work.push(Work::Combine {
+                        var_ast,
+                        has_without,
+                    });
+                    work.push(Work::Solve(with_literal));
+                    if has_without {
+                        work.push(Work::Solve(without_literal));
+                    }
+                } else {
+                    // No common factors, just OR all terms together
+                    results.push(SopForm::new(terms).to_ast());
+                }
+            }
+            Work::Combine {
+                var_ast,
+                has_without,
+            } => {
+                let factored_terms = results.pop().expect("factor `with` branch result");
+                let factored_part = Arc::new(BoolExprAst::And(var_ast, factored_terms));
+                if has_without {
+                    let remaining = results.pop().expect("factor `without` branch result");
+                    // Put unfactored terms first for neater appearance: a*b + q*(a+b)
+                    results.push(Arc::new(BoolExprAst::Or(remaining, factored_part)));
+                } else {
+                    results.push(factored_part);
+                }
+            }
         }
-    } else {
-        // No common factors, just OR all terms together
-        SopForm::new(terms).to_ast()
     }
+
+    results.pop().expect("factorise_once produced a result")
 }
 
 /// Find the best literal to factor out (greedy heuristic)

@@ -27,45 +27,30 @@ impl BoolExpr {
             .collect()
     }
 
-    /// Collect all variable IDs reachable from a node
+    /// Collect all variable IDs reachable from `root` (iterative DFS over the BDD DAG).
     ///
     /// Deduplicates on visited *nodes* (not variables): a variable can label several distinct
     /// nodes, so stopping at the first occurrence of a variable would miss variables that only
     /// appear deeper in other branches. Tracking visited nodes keeps the walk both complete and
-    /// linear in the BDD size.
-    fn collect_var_ids(&self, node: NodeId, vars: &mut std::collections::HashSet<VarId>) {
+    /// linear in the BDD size. An explicit work-stack avoids unbounded recursion on large BDDs;
+    /// one read guard is held for the whole walk (NodeIds are stable).
+    fn collect_var_ids(&self, root: NodeId, vars: &mut std::collections::HashSet<VarId>) {
+        let mgr = self.manager.read().unwrap();
         let mut visited = std::collections::HashSet::new();
-        self.collect_var_ids_inner(node, vars, &mut visited);
-    }
-
-    /// Recursive helper for [`collect_var_ids`] that tracks already-visited nodes.
-    fn collect_var_ids_inner(
-        &self,
-        node: NodeId,
-        vars: &mut std::collections::HashSet<VarId>,
-        visited: &mut std::collections::HashSet<NodeId>,
-    ) {
-        if !visited.insert(node) {
-            return;
-        }
-
-        // Acquire lock, extract needed data, then release before recursing.
-        // This is safe because NodeIds are stable (nodes are never removed/reordered).
-        let node_info = {
-            let inner = self.manager.read().unwrap();
-            match inner.get_node(node) {
-                Some(BddNode::Terminal(_)) => None,
-                Some(BddNode::Decision { var, low, high }) => Some((*var, *low, *high)),
-                None => {
-                    panic!("Invalid node ID {} encountered during variable collection - this indicates a bug in the BDD implementation", node);
-                }
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if !visited.insert(node) {
+                continue;
             }
-        }; // Lock released here
-
-        if let Some((var, low, high)) = node_info {
-            vars.insert(var);
-            self.collect_var_ids_inner(low, vars, visited);
-            self.collect_var_ids_inner(high, vars, visited);
+            match mgr.get_node(node) {
+                Some(BddNode::Terminal(_)) => {}
+                Some(BddNode::Decision { var, low, high }) => {
+                    vars.insert(*var);
+                    stack.push(*low);
+                    stack.push(*high);
+                }
+                None => panic!("Invalid node ID {node} encountered during variable collection - this indicates a bug in the BDD implementation"),
+            }
         }
     }
 
@@ -101,68 +86,48 @@ impl BoolExpr {
             .collect();
         let symbols = Symbols::new(vars);
 
-        // The DFS accumulates into a Vec (legit tree-traversal scratch), then freezes into Arc<[]>.
+        // Iterative DFS enumerating every root->TRUE path (an explicit work-stack rather than
+        // recursion, so a deep BDD can't overflow the stack). `SetPath` items replay the recursive
+        // "fix this header slot on descent, restore it on backtrack" around the two child visits;
+        // because the stack is LIFO they fire in the same order the recursion did. One read guard
+        // is held for the whole walk (NodeIds are stable). Stack depth is O(BDD height).
+        enum Work {
+            Node(NodeId),
+            SetPath(usize, Option<bool>),
+        }
+
         let mut results = Vec::new();
         // Scratch path indexed by header position; `None` = variable not yet fixed (don't-care).
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
-        self.extract_cubes(self.root, &symbols, &index, &mut path, &mut results);
-        results.into()
-    }
 
-    /// Extract cubes recursively by traversing the BDD
-    fn extract_cubes(
-        &self,
-        node: NodeId,
-        symbols: &Arc<Symbols<Symbol>>,
-        index: &HashMap<Symbol, usize>,
-        path: &mut [Option<bool>],
-        results: &mut Vec<Minterm<Symbol>>,
-    ) {
-        // Acquire lock, extract needed data, then release before recursing.
-        // This is safe because NodeIds are stable (nodes are never removed/reordered).
-        let node_info = {
-            let inner = self.manager.read().unwrap();
-            match inner.get_node(node) {
-                Some(BddNode::Terminal(true)) => Some((true, None)),
-                Some(BddNode::Terminal(false)) => Some((false, None)),
-                Some(BddNode::Decision { var, low, high }) => {
-                    let var_name = inner.var_name(*var)
-                        .expect("Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation");
-                    Some((false, Some((var_name.clone(), *low, *high))))
-                }
-                None => {
-                    panic!("Invalid node ID {} encountered during cube extraction - this indicates a bug in the BDD implementation", node);
-                }
+        let mgr = self.manager.read().unwrap();
+        let mut stack = vec![Work::Node(self.root)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::SetPath(i, value) => path[i] = value,
+                Work::Node(node) => match mgr.get_node(node) {
+                    // TRUE terminal - materialise the current path as a minterm.
+                    Some(BddNode::Terminal(true)) => {
+                        results.push(Minterm::from_symbols(Arc::clone(&symbols), path.iter().copied()));
+                    }
+                    // FALSE terminal - this path doesn't contribute.
+                    Some(BddNode::Terminal(false)) => {}
+                    Some(BddNode::Decision { var, low, high }) => {
+                        let var_name = mgr.var_name(*var).expect("Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation");
+                        let i = *index.get(var_name).expect("BDD variable absent from the collected header - this indicates a bug in the BDD implementation");
+                        // Recursion was: path[i]=false; visit(low); path[i]=true; visit(high); path[i]=None.
+                        // Push in reverse so LIFO pops reproduce that exact order.
+                        stack.push(Work::SetPath(i, None));
+                        stack.push(Work::Node(*high));
+                        stack.push(Work::SetPath(i, Some(true)));
+                        stack.push(Work::Node(*low));
+                        stack.push(Work::SetPath(i, Some(false)));
+                    }
+                    None => panic!("Invalid node ID {node} encountered during cube extraction - this indicates a bug in the BDD implementation"),
+                },
             }
-        }; // Lock released here
-
-        match node_info {
-            Some((true, None)) => {
-                // Reached TRUE terminal - materialise the current path as a minterm.
-                results.push(Minterm::from_symbols(
-                    Arc::clone(symbols),
-                    path.iter().copied(),
-                ));
-            }
-            Some((false, None)) => {
-                // Reached FALSE terminal - this path doesn't contribute
-            }
-            Some((false, Some((var_name, low, high)))) => {
-                let i = index[&var_name];
-
-                // Traverse low edge (var = false)
-                path[i] = Some(false);
-                self.extract_cubes(low, symbols, index, path, results);
-
-                // Traverse high edge (var = true)
-                path[i] = Some(true);
-                self.extract_cubes(high, symbols, index, path, results);
-
-                // Restore don't-care on backtrack.
-                path[i] = None;
-            }
-            _ => unreachable!(),
         }
+        results.into()
     }
 
     /// Check if this expression is a terminal (constant)
@@ -180,36 +145,30 @@ impl BoolExpr {
         self.root == FALSE_NODE
     }
 
-    /// Get the number of nodes in this BDD representation
+    /// Get the number of (distinct, reachable) nodes in this BDD representation.
+    ///
+    /// Iterative DFS over the BDD DAG, counting each reachable node once; one read guard for the
+    /// whole walk (NodeIds are stable).
     pub fn node_count(&self) -> usize {
-        self.count_reachable_nodes(self.root, &mut HashMap::new())
-    }
-
-    /// Count reachable nodes from a given root
-    fn count_reachable_nodes(&self, node: NodeId, visited: &mut HashMap<NodeId, ()>) -> usize {
-        if visited.contains_key(&node) {
-            return 0;
-        }
-        visited.insert(node, ());
-
-        // Acquire lock, extract needed data, then release before recursing.
-        // This is safe because NodeIds are stable (nodes are never removed/reordered).
-        let (is_terminal, low, high) = {
-            let inner = self.manager.read().unwrap();
-            match inner.get_node(node) {
-                Some(BddNode::Terminal(_)) => (true, 0, 0),
-                Some(BddNode::Decision { low, high, .. }) => (false, *low, *high),
-                None => {
-                    panic!("Invalid node ID {} encountered during node counting - this indicates a bug in the BDD implementation", node);
-                }
+        let mgr = self.manager.read().unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = vec![self.root];
+        let mut count = 0;
+        while let Some(node) = stack.pop() {
+            if !visited.insert(node) {
+                continue;
             }
-        }; // Lock released here
-
-        if is_terminal {
-            1
-        } else {
-            1 + self.count_reachable_nodes(low, visited) + self.count_reachable_nodes(high, visited)
+            count += 1;
+            match mgr.get_node(node) {
+                Some(BddNode::Terminal(_)) => {}
+                Some(BddNode::Decision { low, high, .. }) => {
+                    stack.push(*low);
+                    stack.push(*high);
+                }
+                None => panic!("Invalid node ID {node} encountered during node counting - this indicates a bug in the BDD implementation"),
+            }
         }
+        count
     }
 
     /// Get the variable count (number of distinct variables)
