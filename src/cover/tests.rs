@@ -996,6 +996,27 @@ fn malformed_pla_other_errors() {
 }
 
 #[test]
+fn cover_hash_and_blanket_default() {
+    use std::collections::HashSet;
+
+    // Default is now generic over any label types (Symbol no longer privileged).
+    let _: Cover<Anonymous, Anonymous> = Cover::default();
+    let _: Cover<Symbol, Symbol> = Cover::default();
+    let _: Cover<u32, u32> = Cover::default();
+    assert_eq!(Cover::<Anonymous, Anonymous>::default().num_cubes(), 0);
+
+    // Cover and Cube are Hash, consistent with their Eq.
+    let build = || {
+        let mut c = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+        c.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));
+        c
+    };
+    let mut set = HashSet::new();
+    set.insert(build());
+    assert!(set.contains(&build()));
+}
+
+#[test]
 fn test_minimize_preserves_structure() {
     let mut cover = Cover::new(CoverType::F);
 

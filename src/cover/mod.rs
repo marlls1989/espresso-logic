@@ -122,7 +122,6 @@ pub use minimisation::Minimizable;
 pub use minterm::Minterm;
 pub use symbols::Symbols;
 
-use crate::Symbol;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -133,7 +132,7 @@ use std::sync::Arc;
 /// - FD: ON-set + Don't-care set
 /// - FR: ON-set + OFF-set  
 /// - FDR: ON-set + Don't-care set + OFF-set
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CoverType {
     /// On-set only (F)
     F = 1,
@@ -147,6 +146,7 @@ pub enum CoverType {
 
 impl CoverType {
     /// Check if this type includes F (ON-set)
+    #[must_use]
     pub fn has_f(&self) -> bool {
         matches!(
             self,
@@ -155,11 +155,13 @@ impl CoverType {
     }
 
     /// Check if this type includes D (don't-care set)
+    #[must_use]
     pub fn has_d(&self) -> bool {
         matches!(self, CoverType::FD | CoverType::FDR)
     }
 
     /// Check if this type includes R (OFF-set)
+    #[must_use]
     pub fn has_r(&self) -> bool {
         matches!(self, CoverType::FR | CoverType::FDR)
     }
@@ -311,6 +313,17 @@ impl<I: Label, O: Label> PartialEq for Cover<I, O> {
 
 impl<I: Label, O: Label> Eq for Cover<I, O> {}
 
+/// Hashes the same fields the [`PartialEq`] impl compares (cover type, both headers, and the cubes in
+/// order), keeping the `Hash`/`Eq` contract so a `Cover` can key a `HashMap`/`HashSet`.
+impl<I: Label, O: Label> std::hash::Hash for Cover<I, O> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.cover_type.hash(state);
+        self.input_symbols.hash(state);
+        self.output_symbols.hash(state);
+        self.cubes.hash(state);
+    }
+}
+
 impl<I, O> Cover<I, O>
 where
     I: StringLabel,
@@ -335,6 +348,7 @@ where
     /// assert_eq!(cover.num_inputs(), 3);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
+    #[must_use]
     pub fn with_labels<S: AsRef<str>>(
         cover_type: CoverType,
         input_labels: &[S],
@@ -359,6 +373,7 @@ impl<I, O> Cover<I, O> {
     /// every label type — `Cover::<Symbol, Symbol>::new(..)`, `Cover::<String, String>::new(..)`, or
     /// `Cover::<Anonymous, Anonymous>::new(..)` for a positional cover. The label types are inferred
     /// from later use where possible, else annotated.
+    #[must_use]
     pub fn new(cover_type: CoverType) -> Self {
         Cover {
             input_symbols: Symbols::empty(),
@@ -372,6 +387,7 @@ impl<I, O> Cover<I, O> {
     ///
     /// Equivalent to `Cover::<Anonymous, Anonymous>::new(..)`; kept for readability at call sites that
     /// build positionally.
+    #[must_use]
     pub fn anonymous(cover_type: CoverType) -> Self {
         Self::new(cover_type)
     }
@@ -505,16 +521,19 @@ impl<I, O> Cover<I, O> {
     }
 
     /// Get the number of inputs
+    #[must_use]
     pub fn num_inputs(&self) -> usize {
         self.input_symbols.arity()
     }
 
     /// Get the number of outputs
+    #[must_use]
     pub fn num_outputs(&self) -> usize {
         self.output_symbols.arity()
     }
 
     /// Get the number of cubes (for F/FD types, only counts F cubes; for FR/FDR, counts all)
+    #[must_use]
     pub fn num_cubes(&self) -> usize {
         if self.cover_type.has_r() {
             self.cubes.len()
@@ -528,6 +547,7 @@ impl<I, O> Cover<I, O> {
     }
 
     /// Get the cover type (F, FD, FR, or FDR)
+    #[must_use]
     pub fn cover_type(&self) -> CoverType {
         self.cover_type
     }
@@ -558,6 +578,7 @@ impl<I, O> Cover<I, O> {
     ///     println!("Inputs: {:?}, Outputs: {:?}", cube.inputs(), cube.outputs());
     /// }
     /// ```
+    #[must_use]
     pub fn cubes(&self) -> CubesIter<'_, &Cube<I, O>> {
         // For F-type covers, only return F cubes; for FD/FR/FDR, return all
         let cover_type = self.cover_type;
@@ -630,6 +651,7 @@ impl Cover<Anonymous, Anonymous> {
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_cubes(), 2);
     /// ```
+    #[must_use]
     pub fn from_cubes(
         cover_type: CoverType,
         cubes: impl IntoIterator<Item = Cube<Anonymous, Anonymous>>,
@@ -880,6 +902,7 @@ impl<I: AsRef<str>, O> Cover<I, O> {
     ///
     /// Returns the input labels (one per input position). Available for any string-like input label
     /// type whatever the output label type is; a positional `Cover<Anonymous, _>` has no such method.
+    #[must_use]
     pub fn input_labels(&self) -> &[I] {
         self.input_symbols.labels()
     }
@@ -890,12 +913,15 @@ impl<I, O: AsRef<str>> Cover<I, O> {
     ///
     /// Returns the output labels (one per output position). Available for any string-like output label
     /// type whatever the input label type is; a positional `Cover<_, Anonymous>` has no such method.
+    #[must_use]
     pub fn output_labels(&self) -> &[O] {
         self.output_symbols.labels()
     }
 }
 
-impl Default for Cover<Symbol, Symbol> {
+/// An empty `F`-type cover, for any label types. (An empty cover carries no labels, so this is generic
+/// — `Symbol` is not privileged.)
+impl<I, O> Default for Cover<I, O> {
     fn default() -> Self {
         Self::new(CoverType::F)
     }

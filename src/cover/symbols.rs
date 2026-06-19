@@ -56,6 +56,17 @@ impl<L: Label> PartialEq for Symbols<L> {
 
 impl<L: Label> Eq for Symbols<L> {}
 
+/// Hashes the per-position [`identity`](Label::identity) sequence — exactly what [`Eq`] compares — so
+/// the `Hash`/`Eq` contract holds. The derived `sorted` cache is not hashed (it follows from `labels`).
+impl<L: Label> std::hash::Hash for Symbols<L> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for (i, label) in self.labels.iter().enumerate() {
+            label.identity(i).hash(state);
+        }
+        self.labels.len().hash(state);
+    }
+}
+
 /// Renders the variable labels in index order. The `sorted` field is derived from the labels (the
 /// [`Eq`] impl above ignores it too), so it is omitted to keep the debug output stable.
 ///

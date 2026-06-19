@@ -41,6 +41,16 @@ impl BoolExpr {
     }
 }
 
+/// Parse a boolean expression from a string, so `"a + b".parse::<BoolExpr>()` and generic `FromStr`
+/// bounds work. Delegates to the inherent [`BoolExpr::parse`].
+impl std::str::FromStr for BoolExpr {
+    type Err = ParseBoolExprError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        BoolExpr::parse(s)
+    }
+}
+
 /// Helper function to extract position information from lalrpop error messages
 ///
 /// Lalrpop errors often contain position information in the form "at line X column Y"

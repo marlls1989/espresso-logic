@@ -26,6 +26,7 @@ impl BoolExpr {
     /// // Different structure, same logic (commutativity).
     /// assert!(a.and(&b).equivalent_to(&b.and(&a)));
     /// ```
+    #[must_use]
     pub fn equivalent_to(&self, other: &BoolExpr) -> bool {
         self == other
     }
@@ -61,6 +62,7 @@ impl BoolExpr {
     /// let only_a: HashMap<&str, bool> = HashMap::from([("a", true)]);
     /// assert_eq!(expr.evaluate(&only_a), false);
     /// ```
+    #[must_use]
     pub fn evaluate<K>(&self, assignment: &HashMap<K, bool>) -> bool
     where
         K: Borrow<str> + Eq + Hash,

@@ -131,16 +131,19 @@ impl BoolExpr {
     }
 
     /// Check if this expression is a terminal (constant)
+    #[must_use]
     pub fn is_terminal(&self) -> bool {
         self.root == TRUE_NODE || self.root == FALSE_NODE
     }
 
     /// Check if this expression represents TRUE
+    #[must_use]
     pub fn is_true(&self) -> bool {
         self.root == TRUE_NODE
     }
 
     /// Check if this expression represents FALSE
+    #[must_use]
     pub fn is_false(&self) -> bool {
         self.root == FALSE_NODE
     }
@@ -149,6 +152,7 @@ impl BoolExpr {
     ///
     /// Iterative DFS over the BDD DAG, counting each reachable node once; one read guard for the
     /// whole walk (NodeIds are stable).
+    #[must_use]
     pub fn node_count(&self) -> usize {
         let mgr = self.manager.read().unwrap();
         let mut visited = std::collections::HashSet::new();
@@ -172,6 +176,7 @@ impl BoolExpr {
     }
 
     /// Get the variable count (number of distinct variables)
+    #[must_use]
     pub fn var_count(&self) -> usize {
         let mut vars = std::collections::HashSet::new();
         self.collect_var_ids(self.root, &mut vars);

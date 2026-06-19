@@ -406,6 +406,15 @@ impl PartialEq for BoolExpr {
 
 impl Eq for BoolExpr {}
 
+/// Hashes the same identity the [`PartialEq`] impl compares — the shared manager's pointer and the BDD
+/// root node — so the `Hash`/`Eq` contract holds and a `BoolExpr` can be a `HashMap`/`HashSet` key.
+impl std::hash::Hash for BoolExpr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.manager) as *const ()).hash(state);
+        self.root.hash(state);
+    }
+}
+
 /// Type alias for backwards compatibility.
 ///
 /// **Deprecated:** Use [`BoolExpr`] directly instead.

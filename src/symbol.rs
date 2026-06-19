@@ -44,6 +44,7 @@ enum Repr {
 
 impl Symbol {
     /// Intern a string as a `Symbol` (inline if short, pooled otherwise).
+    #[must_use]
     pub fn new(s: &str) -> Symbol {
         let bytes = s.as_bytes();
         if bytes.len() <= INLINE_CAP {
@@ -60,6 +61,7 @@ impl Symbol {
 
     /// The string content.
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match &self.0 {
             // SAFETY: `buf[..len]` was copied from a `&str` in `new`, so it is valid UTF-8.

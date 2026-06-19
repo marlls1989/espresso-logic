@@ -18,7 +18,7 @@ use super::symbols::Symbols;
 use std::fmt;
 
 /// Which of a cover's three sets a cube belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeType {
     /// ON-set (the function is 1).
     F,
@@ -60,6 +60,16 @@ impl<I: Label, O: Label> PartialEq for Cube<I, O> {
 }
 
 impl<I: Label, O: Label> Eq for Cube<I, O> {}
+
+/// Hashes the same fields the [`PartialEq`] impl compares (set tag + both pattern minterms), keeping
+/// the `Hash`/`Eq` contract so a `Cube` can key a `HashMap`/`HashSet`.
+impl<I: Label, O: Label> std::hash::Hash for Cube<I, O> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.set.hash(state);
+        self.inputs.hash(state);
+        self.outputs.hash(state);
+    }
+}
 
 impl<I, O> Cube<I, O> {
     /// Build a cube from its input pattern, output-membership mask, and set tag.
@@ -117,6 +127,7 @@ impl Cube<Anonymous, Anonymous> {
     /// let cube = Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F);
     /// assert_eq!(cube.cube_type(), CubeType::F);
     /// ```
+    #[must_use]
     pub fn anonymous(
         inputs: &[Option<bool>],
         membership: &[bool],

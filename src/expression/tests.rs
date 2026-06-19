@@ -1038,3 +1038,24 @@ fn deep_chain_does_not_overflow() {
         .join()
         .expect("deep-chain traversals must not overflow the stack");
 }
+
+#[test]
+fn from_str_and_hash() {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+
+    // FromStr: `"...".parse::<BoolExpr>()` works and matches the builder API.
+    let parsed: BoolExpr = "a + b".parse().unwrap();
+    assert_eq!(parsed, BoolExpr::variable("a").or(&BoolExpr::variable("b")));
+    assert!("a +".parse::<BoolExpr>().is_err());
+
+    // Eq + Hash contract: equal (canonical) expressions hash equal, even when built differently.
+    // Checked by hashing directly rather than via a HashSet: a BoolExpr owns the shared *mutable* BDD
+    // manager, so it trips clippy::mutable_key_type as a map key. The Hash uses only the stable
+    // (manager pointer, root node), so it is sound — but a map isn't needed to verify the contract.
+    let ab = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
+    let ba = BoolExpr::variable("b").and(&BoolExpr::variable("a"));
+    assert_eq!(ab, ba);
+    let rs = RandomState::new();
+    assert_eq!(rs.hash_one(&ab), rs.hash_one(&ba));
+}

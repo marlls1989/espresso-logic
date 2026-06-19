@@ -30,9 +30,8 @@
 //! C library's cube layout, which makes set operations cheap (word-wise bit ops) and the Espresso
 //! boundary close to a bit-repack.
 
-use super::label::Label;
+use super::label::{Anonymous, Label};
 use super::symbols::Symbols;
-use crate::Symbol;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
@@ -139,6 +138,7 @@ impl<L> Minterm<L> {
     ///
     /// `values` is read positionally against `symbols`; both describe the same number of variables.
     /// Minterms built from the *same* `Arc<Symbols>` compare via the pointer-equality fast path.
+    #[must_use]
     pub fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
     where
         I: IntoIterator<Item = Option<bool>>,
@@ -182,25 +182,27 @@ impl<L> Minterm<L> {
     }
 }
 
-impl Minterm<Symbol> {
-    /// Build a standalone minterm from a slice of values, generating anonymous `x0, x1, …` names.
+impl Minterm<Anonymous> {
+    /// Build a standalone **anonymous** (positional) minterm from a slice of values.
     ///
-    /// Convenient for tests and ad-hoc use. Minterms built this way share no symbol table, so they
-    /// compare via the (correct, slightly slower) name-aligned path.
+    /// Convenient for tests and ad-hoc use; the variables are positional ([`Anonymous`]), so two such
+    /// minterms align by position. For a named minterm build a [`Symbols`] table and use
+    /// [`from_symbols`](Minterm::from_symbols).
     ///
     /// # Examples
     ///
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let m = Minterm::new(&[Some(true), None, Some(false)]);
+    /// let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
     /// assert_eq!(m.num_vars(), 3);
     /// ```
-    pub fn new(values: &[Option<bool>]) -> Self {
-        let labels: Arc<[Symbol]> = (0..values.len())
-            .map(|i| Symbol::from(format!("x{i}").as_str()))
-            .collect();
-        Self::from_symbols(Symbols::new(labels), values.iter().copied())
+    #[must_use]
+    pub fn anonymous(values: &[Option<bool>]) -> Self {
+        Self::from_symbols(
+            Symbols::<Anonymous>::anonymous(values.len()),
+            values.iter().copied(),
+        )
     }
 }
 
@@ -290,12 +292,13 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let minterm1 = Minterm::new(&[Some(true), Some(false), None]);
-    /// let minterm2 = Minterm::new(&[Some(true), Some(false), Some(true)]);
+    /// let minterm1 = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// let minterm2 = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
     ///
     /// assert!(!minterm1.is_subset_of(&minterm2));
     /// assert!(minterm2.is_subset_of(&minterm1));
     /// ```
+    #[must_use]
     pub fn is_subset_of(&self, other: &Self) -> bool {
         // self ⊆ other  ⟺  every allowed bit of self is allowed in other  ⟺  self & !other == 0.
         if self.symbols == other.symbols {
@@ -315,12 +318,13 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let minterm1 = Minterm::new(&[Some(true), Some(false), None]);
-    /// let minterm2 = Minterm::new(&[Some(true), Some(false), Some(true)]);
+    /// let minterm1 = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// let minterm2 = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
     ///
     /// assert!(minterm1.is_superset_of(&minterm2));
     /// assert!(!minterm2.is_superset_of(&minterm1));
     /// ```
+    #[must_use]
     pub fn is_superset_of(&self, other: &Self) -> bool {
         other.is_subset_of(self)
     }
@@ -334,13 +338,14 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let minterm1 = Minterm::new(&[Some(true),  Some(false), None]);
-    /// let minterm2 = Minterm::new(&[Some(false), Some(true),  Some(false)]);
-    /// let minterm3 = Minterm::new(&[Some(true),  None,        Some(false)]);
+    /// let minterm1 = Minterm::anonymous(&[Some(true),  Some(false), None]);
+    /// let minterm2 = Minterm::anonymous(&[Some(false), Some(true),  Some(false)]);
+    /// let minterm3 = Minterm::anonymous(&[Some(true),  None,        Some(false)]);
     ///
     /// assert!(minterm1.is_disjoint_with(&minterm2));
     /// assert!(!minterm1.is_disjoint_with(&minterm3));
     /// ```
+    #[must_use]
     pub fn is_disjoint_with(&self, other: &Self) -> bool {
         if self.symbols == other.symbols {
             // Word-wise: a field's intersection is empty (00) exactly where the two disagree.
@@ -436,8 +441,8 @@ fn rank(value: Option<bool>) -> u8 {
 /// ```
 /// use espresso_logic::Minterm;
 ///
-/// let minterm1 = Minterm::new(&[Some(true), Some(false), None]);
-/// let minterm2 = Minterm::new(&[Some(true), Some(false), Some(true)]);
+/// let minterm1 = Minterm::anonymous(&[Some(true), Some(false), None]);
+/// let minterm2 = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
 ///
 /// assert!(minterm1 < minterm2);
 /// assert!(minterm2 > minterm1);
@@ -506,6 +511,7 @@ impl<L: Label> Hash for Minterm<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Symbol;
 
     fn syms(names: &[&str]) -> Arc<Symbols<Symbol>> {
         Symbols::new(names.iter().map(|s| Symbol::from(*s)).collect())
@@ -521,7 +527,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let m = Minterm::new(&values);
+        let m = Minterm::anonymous(&values);
         assert_eq!(m.iter().collect::<Vec<_>>(), values);
     }
 
@@ -559,8 +565,8 @@ mod tests {
         let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), None, Some(false)]);
         let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(false)]);
         // Same values, independent symbol tables (slow path).
-        let a2 = Minterm::new(&[Some(true), None, Some(false)]);
-        let b2 = Minterm::new(&[Some(true), Some(false), Some(false)]);
+        let a2 = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let b2 = Minterm::anonymous(&[Some(true), Some(false), Some(false)]);
         assert_eq!(a.is_subset_of(&b), a2.is_subset_of(&b2));
         assert_eq!(b.is_subset_of(&a), b2.is_subset_of(&a2));
         assert_eq!(a.is_disjoint_with(&b), a2.is_disjoint_with(&b2));
@@ -587,8 +593,8 @@ mod tests {
             for &x1 in &opts {
                 for &y0 in &opts {
                     for &y1 in &opts {
-                        let a = Minterm::new(&[x0, x1]);
-                        let b = Minterm::new(&[y0, y1]);
+                        let a = Minterm::anonymous(&[x0, x1]);
+                        let b = Minterm::anonymous(&[y0, y1]);
                         assert_eq!(a.is_subset_of(&b), ref_subset(&[x0, x1], &[y0, y1]));
                         assert_eq!(a.is_disjoint_with(&b), ref_disjoint(&[x0, x1], &[y0, y1]));
                     }
@@ -604,11 +610,11 @@ mod tests {
         let mut vb = vec![None; 64];
         va[40] = Some(true);
         vb[40] = Some(false);
-        let a = Minterm::new(&va);
-        let b = Minterm::new(&vb);
+        let a = Minterm::anonymous(&va);
+        let b = Minterm::anonymous(&vb);
         assert!(a.is_disjoint_with(&b));
         vb[40] = Some(true);
-        let b = Minterm::new(&vb);
+        let b = Minterm::anonymous(&vb);
         assert!(!a.is_disjoint_with(&b));
     }
 
@@ -659,9 +665,9 @@ mod tests {
 
     #[test]
     fn ord_is_dont_care_lt_false_lt_true() {
-        let dc = Minterm::new(&[None]);
-        let f = Minterm::new(&[Some(false)]);
-        let t = Minterm::new(&[Some(true)]);
+        let dc = Minterm::anonymous(&[None]);
+        let f = Minterm::anonymous(&[Some(false)]);
+        let t = Minterm::anonymous(&[Some(true)]);
         assert!(dc < f);
         assert!(f < t);
         assert!(dc < t);
