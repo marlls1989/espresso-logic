@@ -364,6 +364,48 @@ fn bench_symbols_construction(c: &mut Criterion) {
     group.finish();
 }
 
+/// Realistic named lifecycle: construct two differently-ordered named headers, then *use* them —
+/// a name-aligned merge-join (`is_subset_of`) plus name lookups (`value_of`). This is where eager and
+/// lazy `Symbols` actually differ: lazy defers the sort to the first alignment and builds a HashMap on
+/// the first lookup, so a fair comparison must include the alignment/lookups, not just construction.
+fn bench_named_align(c: &mut Criterion) {
+    use espresso_logic::{Minterm, Symbols};
+    use std::sync::Arc;
+
+    let mut group = c.benchmark_group("named_align");
+    for &width in &[16usize, 64] {
+        let names_a: Arc<[Symbol]> = (0..width)
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        let names_b: Arc<[Symbol]> = (0..width)
+            .rev()
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        let vals: Vec<Option<bool>> = (0..width)
+            .map(|i| if i % 2 == 0 { Some(true) } else { None })
+            .collect();
+        let probes = [
+            format!("v{:04}", 0),
+            format!("v{:04}", width / 2),
+            format!("v{:04}", width - 1),
+        ];
+        group.bench_with_input(BenchmarkId::from_parameter(width), &width, |b, _| {
+            b.iter(|| {
+                // Fresh tables each iter so construction is included alongside the use.
+                let sa = Symbols::new(Arc::clone(&names_a));
+                let sb = Symbols::new(Arc::clone(&names_b));
+                let ma = Minterm::from_symbols(sa, vals.iter().copied());
+                let mb = Minterm::from_symbols(sb, vals.iter().copied());
+                black_box(ma.is_subset_of(&mb)); // merge-join => sorted_order on both
+                for p in &probes {
+                    black_box(ma.value_of(p.as_str())); // => index_of
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
@@ -371,6 +413,7 @@ criterion_group!(
     bench_full_pipeline,
     bench_by_category,
     bench_cube_iteration,
-    bench_symbols_construction
+    bench_symbols_construction,
+    bench_named_align
 );
 criterion_main!(benches);
