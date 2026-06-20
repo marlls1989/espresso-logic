@@ -24,6 +24,11 @@ pub enum PLAError {
         /// The invalid value string
         value: Arc<str>,
     },
+    /// Invalid (unrecognised or missing) value in .type directive
+    InvalidTypeDirective {
+        /// The invalid value string
+        value: Arc<str>,
+    },
     /// Invalid character in input portion of a cube
     InvalidInputCharacter {
         /// The invalid character
@@ -76,6 +81,9 @@ impl fmt::Display for PLAError {
             }
             PLAError::InvalidOutputDirective { value } => {
                 write!(f, "Invalid .o directive value: '{}'", value)
+            }
+            PLAError::InvalidTypeDirective { value } => {
+                write!(f, "Invalid .type directive value: '{}'", value)
             }
             PLAError::InvalidInputCharacter { character, position } => {
                 write!(f, "Invalid input character '{}' at position {}", character, position)

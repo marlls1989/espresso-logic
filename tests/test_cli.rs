@@ -110,3 +110,25 @@ fn exact_command_runs_and_minimises() {
     );
     let _ = fs::remove_file(&input);
 }
+
+#[test]
+fn exact_flag_is_alias_for_exact_command() {
+    // `-e` must select the exact algorithm (equivalent to `-D exact`), not merely toggle fast mode.
+    let input = temp_pla("exact_flag", REDUCIBLE);
+    let via_flag = Command::new(ESPRESSO)
+        .arg("-e")
+        .arg(&input)
+        .output()
+        .expect("run espresso -e");
+    let via_command = Command::new(ESPRESSO)
+        .args(["-D", "exact"])
+        .arg(&input)
+        .output()
+        .expect("run espresso -D exact");
+    assert!(via_flag.status.success() && via_command.status.success());
+    assert_eq!(
+        via_flag.stdout, via_command.stdout,
+        "`-e` and `-D exact` should produce identical output"
+    );
+    let _ = fs::remove_file(&input);
+}

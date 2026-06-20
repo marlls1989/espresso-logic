@@ -1014,6 +1014,45 @@ fn pla_cover_minimize_exact_preserves_variant() {
 }
 
 #[test]
+fn try_minimize_surfaces_instance_conflict() {
+    use crate::error::MinimizationError;
+    use crate::espresso::Espresso;
+
+    // Hold a live low-level Espresso of dimensions (3,1) on this thread.
+    let _held = Espresso::new(3, 1, &crate::EspressoConfig::default());
+
+    // A cover of *different* dimensions (2,1) cannot create its instance while `_held` is alive.
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+
+    // try_minimize returns the conflict as an error rather than panicking.
+    let err = cover.try_minimize().unwrap_err();
+    assert!(matches!(err, MinimizationError::Instance(_)));
+    let err = cover.try_minimize_exact().unwrap_err();
+    assert!(matches!(err, MinimizationError::Instance(_)));
+}
+
+#[test]
+#[should_panic(expected = "instance conflict")]
+fn minimize_panics_on_instance_conflict() {
+    use crate::espresso::Espresso;
+
+    let _held = Espresso::new(3, 1, &crate::EspressoConfig::default());
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+    // The panicking entry point raises the same conflict loudly.
+    let _ = cover.minimize();
+}
+
+#[test]
 fn malformed_pla_other_errors() {
     use super::pla::{PLAError, PLAReadError};
 
@@ -1056,6 +1095,11 @@ fn malformed_pla_other_errors() {
     assert!(matches!(
         err(".o 1\n.e\n"),
         PLAReadError::PLA(PLAError::MissingInputDirective)
+    ));
+    // Unrecognised .type value is rejected (consistent with bad .i/.o), not silently defaulted.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.type bogus\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::InvalidTypeDirective { .. })
     ));
 }
 

@@ -17,7 +17,7 @@ const VERSION: &str = concat!(
 enum Command {
     /// Run the Espresso heuristic minimisation algorithm (default)
     Espresso,
-    /// Exact minimisation (note: uses same algorithm for now)
+    /// Exact minimisation (guarantees a minimal result; slower on large inputs)
     Exact,
     /// Echo the PLA without modification
     Echo,
@@ -101,6 +101,14 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
+    // `-e/--exact` is shorthand for the exact algorithm — equivalent to `-D exact`. (Without this it
+    // would only toggle single-expand and still run the heuristic path.)
+    let command = if args.exact && args.command == Command::Espresso {
+        Command::Exact
+    } else {
+        args.command.clone()
+    };
+
     if args.summary {
         eprintln!("{}", VERSION);
         eprintln!();
@@ -133,12 +141,12 @@ fn main() {
         verbose_debug: args.verbose_debug,
         trace: args.trace,
         summary: args.summary,
-        single_expand: args.single_expand || args.command == Command::Exact || args.exact,
+        single_expand: args.single_expand || command == Command::Exact,
         ..Default::default()
     };
 
     // Execute the command using the Cover trait
-    match args.command {
+    match command {
         Command::Espresso => {
             if args.summary {
                 eprintln!("Running Espresso minimization (process-isolated)...");

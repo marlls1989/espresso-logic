@@ -114,8 +114,10 @@ pub trait PLAWriter {
     fn to_pla_string(&self, pla_type: CoverType) -> Result<String, PLAWriteError> {
         let mut buffer = Vec::new();
         self.write_pla(&mut buffer, pla_type)?;
-        // PLA format is ASCII, so this conversion is safe
-        Ok(String::from_utf8(buffer).unwrap())
+        // `write_pla` only ever writes formatted Rust strings (directives, `0/1/-` cube chars, and
+        // each label's `Display` output), so every byte originates from valid UTF-8 — the conversion
+        // cannot fail.
+        Ok(String::from_utf8(buffer).expect("PLA output is built from UTF-8 Rust strings"))
     }
 
     /// Write this cover to a PLA file
@@ -342,15 +344,20 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     num_outputs = Some(val);
                 }
                 Some(".type") => {
-                    if let Some(type_str) = parts.get(1) {
-                        cover_type = match *type_str {
-                            "f" => CoverType::F,
-                            "fd" => CoverType::FD,
-                            "fr" => CoverType::FR,
-                            "fdr" => CoverType::FDR,
-                            _ => CoverType::F,
-                        };
-                    }
+                    // An unrecognised or missing `.type` value is rejected, mirroring how bad
+                    // `.i`/`.o` values error (rather than silently falling back to a default).
+                    cover_type = match parts.get(1).copied() {
+                        Some("f") => CoverType::F,
+                        Some("fd") => CoverType::FD,
+                        Some("fr") => CoverType::FR,
+                        Some("fdr") => CoverType::FDR,
+                        other => {
+                            return Err(PLAError::InvalidTypeDirective {
+                                value: Arc::from(other.unwrap_or("")),
+                            }
+                            .into())
+                        }
+                    };
                 }
                 Some(".ilb") => {
                     // Parse input labels: .ilb label1 label2 label3 ...
@@ -449,30 +456,19 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     }
                 }
 
-                // Check if we have the right amount of data
-                if accumulated.len() < ni + no {
-                    // Truncated cube: ran out of input before reaching the declared width.
+                // Guard `split_at(ni)` against a too-short accumulation (which would panic). An
+                // *over-long* accumulation is intentionally not special-cased: splitting at `ni`
+                // yields an output wider than `no`, which the shared dimension check below rejects
+                // with the same payload — so single-line and multi-line cubes validate identically.
+                if accumulated.len() < ni {
                     return Err(PLAError::CubeDimensionMismatch {
                         expected_inputs: ni,
-                        actual_inputs: accumulated.len().min(ni),
+                        actual_inputs: accumulated.len(),
                         expected_outputs: no,
-                        actual_outputs: accumulated.len().saturating_sub(ni),
+                        actual_outputs: 0,
                     }
                     .into());
                 }
-
-                // An over-long multi-line cube (more characters than the declared width) is rejected
-                // here too, mirroring the single-line path, rather than silently truncating the excess.
-                if accumulated.len() > ni + no {
-                    return Err(PLAError::CubeDimensionMismatch {
-                        expected_inputs: ni,
-                        actual_inputs: ni,
-                        expected_outputs: no,
-                        actual_outputs: accumulated.len() - ni,
-                    }
-                    .into());
-                }
-                // Split accumulated data at the input/output boundary (now exactly `ni + no` wide).
                 let (inp, out) = accumulated.split_at(ni);
                 (inp.to_string(), out.to_string())
             }
@@ -760,16 +756,18 @@ impl<S: PlaLabel> PLAWriter for PlaCover<S> {
     }
 }
 
-/// Minimisation preserves which sides are named (the label types are carried through).
+/// Minimisation preserves which sides are named (the label types are carried through). The fallible
+/// `try_*` primitives delegate to the inner cover; the panicking `minimize*` methods are the trait
+/// defaults built on top.
 impl<S> Minimizable for PlaCover<S> {
-    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
-        Ok(map_inner_cover!(self, c => c.minimize_with_config(config)?))
+    fn try_minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
+        Ok(map_inner_cover!(self, c => c.try_minimize_with_config(config)?))
     }
 
-    fn minimize_exact_with_config(
+    fn try_minimize_exact_with_config(
         &self,
         config: &EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        Ok(map_inner_cover!(self, c => c.minimize_exact_with_config(config)?))
+        Ok(map_inner_cover!(self, c => c.try_minimize_exact_with_config(config)?))
     }
 }

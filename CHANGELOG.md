@@ -27,6 +27,10 @@ Product-term representation:
 - **`Cover::add_expr` now takes `&BoolExpr`** instead of a generic `&T: Into<Dnf>`.
 - **`Minimizable` is implemented concretely for `Cover` and `BoolExpr`** instead of via a blanket
   `impl<T> where &T: Into<Dnf>, T: From<Dnf>`.
+- **`Minimizable`'s required methods are now `try_minimize_with_config` and
+  `try_minimize_exact_with_config`** (the fallible primitives); the panicking `minimize_with_config` /
+  `minimize_exact_with_config` are now default methods layered on top. Callers are unaffected;
+  downstream *implementors* of the trait must rename their two methods.
 - **`BoolExpr::to_cubes()` now returns `Arc<[Minterm]>`** (was `Vec<BTreeMap<Arc<str>, bool>>`).
 - **`EspressoCover::to_cubes()` now returns `Arc<[Cube]>`** (was `Vec<Cube>`).
 - **Removed the `LabelManager` type;** `Cover` owns its canonical input/output headers directly.
@@ -78,6 +82,12 @@ Label types & cover construction:
 - `PartialEq`/`Eq` for `Cover`/`Cube`/`PlaCover`, `Hash` for `Minterm`, `Debug` for `Symbols`.
 - Malformed PLA input now reports `PLAError::CubeDimensionMismatch` / `MissingDimensions` instead of
   being silently skipped; `.end` is accepted as a read terminator alongside `.e`.
+- **Non-panicking minimisation:** `Minimizable::try_minimize`, `try_minimize_with_config`,
+  `try_minimize_exact`, and `try_minimize_exact_with_config`, which return
+  `MinimizationError::Instance` on a cross-dimension Espresso instance conflict instead of panicking.
+  The panicking `minimize*` methods now panic *only* on that conflict (a usage error) and document it.
+- **`PLAError::InvalidTypeDirective`** — an unrecognised or missing `.type` value is now rejected
+  (consistent with bad `.i`/`.o` values), rather than silently falling back to `F`.
 
 ### Changed
 
@@ -99,6 +109,8 @@ Label types & cover construction:
   than by variable, so it no longer misses variables that appear only in some branches.
 - **`BoolExpr::equivalent_to` no longer swallows an internal error as `false`** — equivalence is an
   exact canonical-BDD root comparison (identical to `==`).
+- **CLI `-e`/`--exact` now runs exact minimisation.** It previously only toggled fast single-expand
+  mode while still running the heuristic algorithm; it is now an alias for `-D exact`.
 
 ## [3.1.2] - 2025-11-12
 
