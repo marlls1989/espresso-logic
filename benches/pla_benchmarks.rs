@@ -406,6 +406,48 @@ fn bench_named_align(c: &mut Criterion) {
     group.finish();
 }
 
+/// Stress the **real** conversion machinery on real PLA inputs: `Cover -> exprs` (`to_exprs`) and
+/// `exprs -> Cover` (`add_expr`), round-tripped. Unlike the synthetic `named_align` microbench, this is
+/// an actual usage path, and it shows how small a slice `Symbols` construction/lookup is of the real
+/// work (BDD build + factorisation dominate) — the honest way to weigh eager vs lazy.
+fn bench_pla_expr_roundtrip(c: &mut Criterion) {
+    use espresso_logic::{BoolExpr, Cover, CoverType};
+
+    let files = discover_pla_files();
+    // `to_exprs` needs named outputs, so use the fully-named (`.ilb` + `.ob`) small/medium files.
+    let named: Vec<(String, Cover<Symbol, Symbol>)> = files
+        .iter()
+        .filter(|f| matches!(f.category, Category::Small | Category::Medium))
+        .filter_map(|f| match PlaCover::<Symbol>::from_pla_file(&f.path) {
+            Ok(PlaCover::InputsOutputsNamed(cover)) => Some((f.name.clone(), cover)),
+            _ => None,
+        })
+        .take(6)
+        .collect();
+
+    if named.is_empty() {
+        return;
+    }
+
+    let mut group = c.benchmark_group("pla_expr_roundtrip");
+    for (name, cover) in &named {
+        group.bench_with_input(BenchmarkId::from_parameter(name), cover, |b, cover| {
+            b.iter(|| {
+                // Cover -> BoolExprs (one per output).
+                let exprs: Vec<(Symbol, BoolExpr)> =
+                    cover.to_exprs().map(|(n, e)| (n.clone(), e)).collect();
+                // BoolExprs -> fresh named Cover (builds named Symbols, unions headers, re-points cubes).
+                let mut rebuilt = Cover::<Symbol, Symbol>::new(CoverType::F);
+                for (n, e) in &exprs {
+                    rebuilt.add_expr(e, n.as_ref()).unwrap();
+                }
+                black_box(rebuilt);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
@@ -414,6 +456,7 @@ criterion_group!(
     bench_by_category,
     bench_cube_iteration,
     bench_symbols_construction,
-    bench_named_align
+    bench_named_align,
+    bench_pla_expr_roundtrip
 );
 criterion_main!(benches);
