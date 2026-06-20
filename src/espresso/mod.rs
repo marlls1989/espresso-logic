@@ -594,6 +594,17 @@ impl EspressoCover {
 
         // Add each cube to the cover
         for &(inputs, outputs) in cubes {
+            // Reject mismatched slice lengths up front: writing more bits than the cube reserves for
+            // each side would corrupt the C set-family memory (the bit positions are derived from the
+            // slice indices, not bounded by num_inputs/num_outputs).
+            if inputs.len() != num_inputs || outputs.len() != num_outputs {
+                return Err(MinimizationError::Cube(CubeError::DimensionMismatch {
+                    expected_inputs: num_inputs,
+                    actual_inputs: inputs.len(),
+                    expected_outputs: num_outputs,
+                    actual_outputs: outputs.len(),
+                }));
+            }
             unsafe {
                 let cf = *(*sys::get_cube()).temp.add(0);
                 sys::set_clear(cf, cube_size as c_int);

@@ -96,6 +96,9 @@ Label types & cover construction:
   `Hash` for `EspressoConfig`, and `FromStr` for `Symbol`.
 - **`PlaCover::into_anonymous`** — recover the inner cover as a positional
   `Cover<Anonymous, Anonymous>`, a uniform escape hatch across all variants.
+- **`CubeError::DimensionMismatch`** — `EspressoCover::from_cubes` now validates that each cube's
+  input/output slice length matches the declared dimensions, returning this error instead of writing
+  out of the cube's bit region on a mismatched slice.
 
 ### Changed
 

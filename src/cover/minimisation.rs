@@ -323,7 +323,10 @@ where
         super::repoint(cube, &input_symbols, &output_symbols)
     };
 
-    // Bind the three decoded sets so their cubes outlive the chained iterator below.
+    // Keep all three computed sets. They are NOT inert: the cover carries them so it can later be
+    // written in a richer output format than its declared `.type` (e.g. a CLI `-o fdr` on an FD cover
+    // emits the computed OFF-set). `cubes()`/`num_cubes()` filter by cover type for reads, but the PLA
+    // writer emits by the requested format, which is why the D/R cubes must be retained.
     let f_cubes = f_result.to_cubes(ni, no, CubeType::F);
     let d_cubes = d_result.to_cubes(ni, no, CubeType::D);
     let r_cubes = r_result.to_cubes(ni, no, CubeType::R);

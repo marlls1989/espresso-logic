@@ -77,6 +77,20 @@ pub enum CubeError {
         /// The position in the input vector where the invalid value occurred
         position: usize,
     },
+    /// A cube's input or output slice length did not match the declared dimensions
+    ///
+    /// Each cube passed to `EspressoCover::from_cubes` must have exactly `num_inputs` input values
+    /// and `num_outputs` output values.
+    DimensionMismatch {
+        /// Declared number of inputs
+        expected_inputs: usize,
+        /// Length of the offending cube's input slice
+        actual_inputs: usize,
+        /// Declared number of outputs
+        expected_outputs: usize,
+        /// Length of the offending cube's output slice
+        actual_outputs: usize,
+    },
 }
 
 impl fmt::Display for CubeError {
@@ -86,6 +100,16 @@ impl fmt::Display for CubeError {
                 f,
                 "Invalid cube value {} at position {}. Expected 0 (low), 1 (high), or 2 (don't care).",
                 value, position
+            ),
+            CubeError::DimensionMismatch {
+                expected_inputs,
+                actual_inputs,
+                expected_outputs,
+                actual_outputs,
+            } => write!(
+                f,
+                "Cube dimensions (inputs: {}, outputs: {}) don't match declared dimensions (inputs: {}, outputs: {}).",
+                actual_inputs, actual_outputs, expected_inputs, expected_outputs
             ),
         }
     }

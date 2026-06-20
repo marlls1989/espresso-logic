@@ -149,6 +149,13 @@ impl BoolExpr {
     /// `and(f, g) = ite(f, g, false)`
     #[must_use]
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
+        // `other.root` is a NodeId valid in `other.manager`; feeding it into `self.manager` is sound
+        // only because every live BoolExpr shares the one global manager (its `Weak` can't have
+        // expired while `other` is alive). Guard that load-bearing invariant.
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
+            "BoolExpr operands must share the same BDD manager"
+        );
         // and(f, g) = ite(f, g, false)
         self.op(|mgr, root| mgr.ite(root, other.root, FALSE_NODE))
     }
@@ -159,6 +166,11 @@ impl BoolExpr {
     /// `or(f, g) = ite(f, true, g)`
     #[must_use]
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
+        // See `and`: operands must share the one global BDD manager for `other.root` to be valid here.
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
+            "BoolExpr operands must share the same BDD manager"
+        );
         // or(f, g) = ite(f, true, g)
         self.op(|mgr, root| mgr.ite(root, TRUE_NODE, other.root))
     }
