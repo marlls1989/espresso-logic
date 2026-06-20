@@ -1528,10 +1528,79 @@ mod tests {
 
     use super::*;
     use crate::cover::Minimizable;
+    use crate::espresso::error::{CubeError, InstanceError};
     use crate::EspressoConfig;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
+
+    #[test]
+    fn from_cubes_rejects_invalid_value() {
+        // A value outside {0,1,2} in the input field is rejected with its position.
+        let err = EspressoCover::from_cubes(&[(&[3u8, 0][..], &[1u8][..])], 2, 1)
+            .expect_err("value 3 must be rejected");
+        assert!(matches!(
+            err,
+            MinimizationError::Cube(CubeError::InvalidValue {
+                value: 3,
+                position: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn from_cubes_rejects_length_mismatch() {
+        // An input slice wider than the declared inputs is rejected (would otherwise write out of the
+        // cube's bit region).
+        let err = EspressoCover::from_cubes(&[(&[0u8, 1, 0][..], &[1u8][..])], 2, 1)
+            .expect_err("over-long input slice must be rejected");
+        assert!(matches!(
+            err,
+            MinimizationError::Cube(CubeError::DimensionMismatch {
+                expected_inputs: 2,
+                actual_inputs: 3,
+                expected_outputs: 1,
+                actual_outputs: 1,
+            })
+        ));
+        // Likewise a mismatched output slice.
+        let err = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8, 0][..])], 2, 1)
+            .expect_err("over-long output slice must be rejected");
+        assert!(matches!(
+            err,
+            MinimizationError::Cube(CubeError::DimensionMismatch {
+                actual_outputs: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn try_new_reports_dimension_and_config_mismatch() {
+        // A live (3,1) instance makes a (2,1) request fail with DimensionMismatch.
+        let _held = Espresso::new(3, 1, &EspressoConfig::default());
+        let err = Espresso::try_new(2, 1, None).expect_err("dimension conflict expected");
+        assert!(matches!(
+            err,
+            MinimizationError::Instance(InstanceError::DimensionMismatch {
+                requested: (2, 1),
+                existing: (3, 1),
+            })
+        ));
+        // Same dimensions but a different (specified) config fails with ConfigMismatch.
+        let other = EspressoConfig {
+            single_expand: true,
+            ..EspressoConfig::default()
+        };
+        let err = Espresso::try_new(3, 1, Some(&other)).expect_err("config conflict expected");
+        assert!(matches!(
+            err,
+            MinimizationError::Instance(InstanceError::ConfigMismatch {
+                requested: (3, 1),
+                existing: (3, 1),
+            })
+        ));
+    }
 
     /// Test 1: Basic concurrent access
     /// Spawns multiple threads, each creates its own Espresso instance

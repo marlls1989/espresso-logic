@@ -2,8 +2,9 @@
 //!
 //! These drive the *built* binary (`CARGO_BIN_EXE_espresso`) end-to-end via `std::process::Command`,
 //! covering behaviours the shell regression harness does not: the `-O`/`-x`/`-s` flags, error exit
-//! codes, and the exact (`-D exact`) path. The whole file is gated on the `cli` feature, since the
-//! binary is `required-features = ["cli"]`.
+//! codes, the exact (`-D exact` / `-e`) path, the `echo`/`stats` subcommands, and a Rust-only `-o`
+//! format self-consistency check. The whole file is gated on the `cli` feature, since the binary is
+//! `required-features = ["cli"]`.
 #![cfg(feature = "cli")]
 
 use std::fs;
@@ -130,5 +131,71 @@ fn exact_flag_is_alias_for_exact_command() {
         via_flag.stdout, via_command.stdout,
         "`-e` and `-D exact` should produce identical output"
     );
+    let _ = fs::remove_file(&input);
+}
+
+#[test]
+fn echo_passes_pla_through() {
+    let input = temp_pla("echo", REDUCIBLE);
+    let output = Command::new(ESPRESSO)
+        .args(["-D", "echo"])
+        .arg(&input)
+        .output()
+        .expect("run espresso -D echo");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Echo emits the cover unmodified: the two original cube rows survive, un-minimised.
+    assert!(stdout.contains("00 1"), "echo dropped a cube:\n{stdout}");
+    assert!(stdout.contains("01 1"), "echo dropped a cube:\n{stdout}");
+    let _ = fs::remove_file(&input);
+}
+
+#[test]
+fn stats_reports_counts() {
+    let input = temp_pla("stats", REDUCIBLE);
+    let output = Command::new(ESPRESSO)
+        .args(["-D", "stats", "-x"])
+        .arg(&input)
+        .output()
+        .expect("run espresso -D stats -x");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PLA Statistics:"), "no stats:\n{stdout}");
+    assert!(
+        stdout.contains("Inputs:  2"),
+        "wrong input count:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Outputs: 1"),
+        "wrong output count:\n{stdout}"
+    );
+    // `-x` suppresses the PLA body — stats stdout carries no cube row.
+    assert!(
+        !stdout.contains("0- 1") && !stdout.contains("00 1"),
+        "body not suppressed:\n{stdout}"
+    );
+    let _ = fs::remove_file(&input);
+}
+
+#[test]
+fn output_formats_are_distinct_and_well_formed() {
+    // Rust-only self-consistency for the -o matrix (independent of the C oracle): every format runs,
+    // and fr/fdr (which carry the OFF-set) differ from plain f.
+    let input = temp_pla("formats", REDUCIBLE);
+    let run = |fmt: &str| {
+        let out = Command::new(ESPRESSO)
+            .args(["-o", fmt])
+            .arg(&input)
+            .output()
+            .unwrap_or_else(|_| panic!("run espresso -o {fmt}"));
+        assert!(out.status.success(), "-o {fmt} failed");
+        out.stdout
+    };
+    let f = run("f");
+    let _fd = run("fd");
+    let fr = run("fr");
+    let fdr = run("fdr");
+    assert_ne!(f, fr, "-o fr should add the OFF-set, differing from -o f");
+    assert_ne!(f, fdr, "-o fdr should differ from -o f");
     let _ = fs::remove_file(&input);
 }

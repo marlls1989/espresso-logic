@@ -97,7 +97,7 @@ fn test_consistent_results() {
         &[true],
         CubeType::F,
     ));
-    cover1.minimize().unwrap();
+    let min1 = cover1.minimize().unwrap();
 
     // Second execution
     let mut cover2 = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
@@ -116,13 +116,18 @@ fn test_consistent_results() {
         &[true],
         CubeType::F,
     ));
-    cover2.minimize().unwrap();
+    let min2 = cover2.minimize().unwrap();
 
-    // Results should be consistent
+    // The *minimised* covers (not the untouched inputs) must match — same cube count and, by value,
+    // the same cubes. Comparing the inputs would be tautological.
     assert_eq!(
-        cover1.num_cubes(),
-        cover2.num_cubes(),
+        min1.num_cubes(),
+        min2.num_cubes(),
         "Results should have same number of cubes"
+    );
+    assert_eq!(
+        min1, min2,
+        "identical inputs must minimise to identical covers"
     );
 }
 

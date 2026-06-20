@@ -969,6 +969,54 @@ fn large_cover_builds_and_drops() {
 }
 
 #[test]
+fn wide_minimise_crosses_word_boundary() {
+    // 36 inputs (> 32 → multi-word C cube vectors). Two cubes differing only in input 0 merge to a
+    // single cube with input 0 = don't-care — the only path exercising the multi-word FFI bit-packing
+    // (`(bit >> 5) + 1`) under real minimisation.
+    const N: usize = 36;
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    let a = vec![Some(true); N];
+    let mut b = vec![Some(true); N];
+    b[0] = Some(false);
+    cover.push(Cube::anonymous(&a, &[true], CubeType::F));
+    cover.push(Cube::anonymous(&b, &[true], CubeType::F));
+
+    let min = cover.minimize().unwrap();
+    assert_eq!(min.num_cubes(), 1);
+    let cube = min.cubes().next().unwrap();
+    let inputs: Vec<_> = cube.inputs().iter().collect();
+    assert_eq!(inputs[0], None, "input 0 should become don't-care");
+    assert!(
+        inputs[1..].iter().all(|&v| v == Some(true)),
+        "the other 35 inputs should stay 1"
+    );
+}
+
+#[test]
+fn write_pla_surfaces_io_error() {
+    use super::pla::PLAWriteError;
+    use std::io::{self, Write};
+
+    // A writer that always fails: write_pla must surface PLAWriteError::Io, not panic.
+    struct FailingWriter;
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "boom"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(&[Some(false), None], &[true], CubeType::F));
+    let err = cover
+        .write_pla(&mut FailingWriter, CoverType::F)
+        .expect_err("writing to a failing writer should error");
+    assert!(matches!(err, PLAWriteError::Io(_)));
+}
+
+#[test]
 fn cover_minimize_exact_reduces_and_preserves() {
     // f(a,b,c) = 1 exactly when a == 0 (minterms 000,001,010,011). The unique exact
     // minimum is the single prime implicant `0--`.
