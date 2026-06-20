@@ -2,7 +2,7 @@
 
 ## Overview
 
-The PLA (Programmable Logic Array) format is a text-based format for representing Boolean functions. It was developed at UC Berkeley and is the standard input/output format for the Espresso logic minimizer.
+The PLA (Programmable Logic Array) format is a text-based format for representing Boolean functions. It was developed at UC Berkeley and is the standard input/output format for the Espresso logic minimiser.
 
 ## File Structure
 

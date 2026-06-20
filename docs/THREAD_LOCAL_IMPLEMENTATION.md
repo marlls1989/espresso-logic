@@ -7,7 +7,7 @@
 
 All global variables in the Espresso C library have been converted to use C11 thread-local storage (`_Thread_local`), making the library inherently thread-safe at the C level. Each thread gets its own independent copy of all global state.
 
-This implementation is used directly by the library since version 2.6.2 for all minimization operations.
+This implementation is used directly by the library since version 2.6.2 for all minimisation operations.
 
 ## Implementation Status
 
@@ -57,7 +57,7 @@ This implementation is used directly by the library since version 2.6.2 for all 
    - Library now uses direct C calls with thread-local storage
    - All tests pass with concurrent execution
    - ~10-20ms performance improvement per operation
-   - Eliminated serialization overhead
+   - Eliminated serialisation overhead
 
 2. **Ongoing monitoring**:
    - Long-duration tests continue to validate memory stability

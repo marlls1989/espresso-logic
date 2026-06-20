@@ -298,15 +298,17 @@ fn main() -> std::io::Result<()> {
     // Hold region: XOR of activation and negation of deactivation
     let hold = xor(&activation, &deactivation.not());
     
-    // Next state function (set on activation, hold when not deactivating)
-    let next_q = expr!(activation + "q" * !deactivation);
+    // Next-state function, two equivalent formulations (set on activation, hold when not deactivating)
+    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    let next_q_v2 = expr!(activation + "q" * hold);
     
     // Add all functions to a single cover
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&activation, "activation")?;
     cover.add_expr(&deactivation, "deactivation")?;
     cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q, "next_q")?;
+    cover.add_expr(&next_q_v1, "next_q_v1")?;
+    cover.add_expr(&next_q_v2, "next_q_v2")?;
     
     let minimized = cover.minimize()?;
     
@@ -325,7 +327,7 @@ fn main() -> std::io::Result<()> {
 **Key points:**
 - **Helper function `xor()`**: Returns `BoolExpr` for clean composition
 - **Complex expressions**: `hold` starts with 22 terms, minimizes to 10
-- **Stateful logic**: `next_q` efficiently combines activation with feedback
+- **Stateful logic**: `next_q_v1`/`next_q_v2` efficiently combine activation with feedback
 - **No early minimisation**: Compose all expressions first, minimize once
 - **Multiple outputs**: All four functions optimised together in one call
 
@@ -568,7 +570,7 @@ fn main() {
     
     println!("Original expression: {}", expr);
     
-    // BDD automatically recognizes redundancy
+    // BDD automatically recognises redundancy
     let cubes = expr.to_cubes();
     
     println!("BDD has {} cubes (redundancy eliminated)", cubes.len());

@@ -22,10 +22,13 @@ pset_family sf_append(A, B);             // Appends B to A, FREES B
 ```rust
 pub struct EspressoCover {
     ptr: sys::pset_family,           // Raw C pointer
-    _espresso: Rc<InnerEspresso>,    // Keeps Espresso alive
-    _marker: PhantomData<*mut ()>,   // !Send + !Sync marker
+    _espresso: Rc<InnerEspresso>,    // Keeps Espresso alive; also makes the type !Send + !Sync
 }
 ```
+
+The `Rc<InnerEspresso>` field both keeps the thread's Espresso instance alive and — because `Rc`
+is neither `Send` nor `Sync` — makes `EspressoCover` `!Send + !Sync`, pinning it to its thread. No
+separate `PhantomData` marker is needed.
 
 **Memory Rules:**
 - **Drop**: Calls `sf_free(self.ptr)` if ptr is not null
@@ -121,7 +124,7 @@ The original ptr is transferred to C or re-wrapped elsewhere.
 ### ⚠️ Thread Safety
 
 - Espresso uses thread-local storage for global state
-- `EspressoCover` is `!Send + !Sync` (marked with `PhantomData<*mut ()>`)
+- `EspressoCover` is `!Send + !Sync` (via its non-`Send`/`Sync` `Rc<InnerEspresso>` field)
 - Covers cannot be shared between threads
 - Each thread has independent C state
 

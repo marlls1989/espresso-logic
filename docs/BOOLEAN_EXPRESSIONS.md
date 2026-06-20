@@ -1178,15 +1178,18 @@ fn main() -> std::io::Result<()> {
     // Hold region is XOR of activation and negation of deactivation
     let hold = xor(&activation, &deactivation.not());
     
-    // Next state function (set on activation, hold when not deactivating)
-    let next_q = expr!(activation + "q" * !deactivation);
+    // Next-state function, two equivalent formulations (set on activation, hold when not
+    // deactivating). v1 gates the OR by !deactivation; v2 holds via the `hold` region.
+    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    let next_q_v2 = expr!(activation + "q" * hold);
     
     // Create a single cover with all functions as separate outputs
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&activation, "activation")?;
     cover.add_expr(&deactivation, "deactivation")?;
     cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q, "next_q")?;
+    cover.add_expr(&next_q_v1, "next_q_v1")?;
+    cover.add_expr(&next_q_v2, "next_q_v2")?;
     
     // Single minimize call optimizes ALL outputs together
     let minimized = cover.minimize()?;
@@ -1203,7 +1206,8 @@ fn main() -> std::io::Result<()> {
     //   activation:   6 AND clauses OR'd together (in DNF)
     //   deactivation: 6 AND clauses OR'd together (in DNF)
     //   hold:         xor(activation, !deactivation) - NOT in DNF
-    //   next_q:       activation + q * !deactivation - NOT in DNF
+    //   next_q_v1:    (activation + q) * !deactivation - NOT in DNF
+    //   next_q_v2:    activation + q * hold            - NOT in DNF
     //
     // Stage 1b - Naive DNF expansion (if using De Morgan's laws directly):
     //   activation:   6 cubes
@@ -1245,7 +1249,7 @@ fn main() -> std::io::Result<()> {
 **Why this example is powerful:**
 - **Demonstrates BDD vs naive De Morgan expansion**: Direct comparison of efficiency with actual measurements
 - **BDD is dramatically superior**: `hold` would be **375,840 cubes** with naive expansion, BDD produces only 14 (26,845x improvement!)
-- **Avoids exponential blowup**: `next_q` would be **7,006 cubes** naively, BDD produces 19 (369x improvement)
+- **Avoids exponential blowup**: `next_q_v1` would be **20,220 cubes** naively, BDD produces 19 (1,064x improvement)
 - **Three-stage process visible**: Complex expressions → BDD canonical form → Espresso optimisation
 - **Complex composition**: XOR function with negations demonstrates BDD's strengths
 - **No early minimisation**: All expressions composed first, minimized once at the end

@@ -11,7 +11,7 @@ Rust bindings to the UC Berkeley Espresso heuristic logic minimiser. A `build.rs
 ```bash
 cargo build                      # builds C + bindgen + Rust
 cargo build --features cli       # also builds the `espresso` CLI binary (needs clap)
-cargo test                       # unit + integration + ~238 doctests
+cargo test                       # unit + integration + ~235 doctests
 cargo test --test test_integration         # single integration test file
 cargo test --test test_memory_safety -- --nocapture --test-threads=1
 cargo test name_of_test          # single test by name substring
@@ -56,4 +56,4 @@ Two crates: the root `espresso-logic` and `espresso-logic-macros/` (proc-macro p
 ## Conventions
 
 - British spelling ("minimise", "optimisation") is used in prose and docs throughout; match it in new documentation.
-- Doctests are part of the suite (~238 of them) — code examples in `//!`/`///` comments must compile and pass.
+- Doctests are part of the suite (~235 of them) — code examples in `//!`/`///` comments must compile and pass.

@@ -31,7 +31,7 @@ The binary will be at `target/release/espresso`.
 Assuming you've installed via `cargo install espresso-logic --features cli`:
 
 ```bash
-# Minimize a PLA file
+# Minimise a PLA file
 espresso input.pla > output.pla
 
 # With summary
@@ -40,7 +40,7 @@ espresso -s input.pla
 # With trace information
 espresso -t input.pla
 
-# Exact minimization
+# Exact minimisation
 espresso --do exact input.pla
 
 # Output to file
@@ -54,8 +54,8 @@ If building locally, use `./target/release/espresso` after running `cargo build 
 ### Main Options
 
 - `-D, --do <COMMAND>` - Select algorithm
-  - `espresso` - Heuristic minimization (default, fast)
-  - `exact` - Exact minimization (currently runs the same algorithm as `espresso`; reserved for a future exact path)
+  - `espresso` - Heuristic minimisation (default, fast)
+  - `exact` - Exact minimisation (guarantees a minimal result; slower on large inputs)
   - `echo` - Echo input without modification
   - `stats` - Print statistics only
 
@@ -68,6 +68,7 @@ If building locally, use `./target/release/espresso` after running `cargo build 
 ### Espresso Options
 
 - `--fast` - Use fast mode (single expand)
+- `-e, --exact` - Use exact minimisation (alias for `--do exact`)
 
 ### Output Control
 
@@ -79,36 +80,37 @@ If building locally, use `./target/release/espresso` after running `cargo build 
 ### Other Options
 
 - `-d, --debug` - Enable debugging
+- `-v, --verbose` - Enable verbose debug output
 - `-h, --help` - Show help
 - `-V, --version` - Show version
 
 ## Examples
 
-### Basic Minimization
+### Basic Minimisation
 
 ```bash
-# Minimize a Boolean function
-espresso examples/ex5 > output.pla
+# Minimise a Boolean function
+espresso pla/ex5 > output.pla
 ```
 
 ### With Options
 
 ```bash
 # Fast mode with summary
-espresso --fast -s examples/ex5
+espresso --fast -s pla/ex5
 
-# Exact minimization with trace
-espresso --do exact -t examples/ex5
+# Exact minimisation with trace
+espresso --do exact -t pla/ex5
 
 # Output both F and D sets
-espresso -o fd examples/ex5
+espresso -o fd pla/ex5
 ```
 
 ### Using in Scripts
 
 ```bash
 #!/bin/bash
-# Minimize all PLA files in a directory
+# Minimise all PLA files in a directory
 
 for file in *.pla; do
     echo "Processing $file..."
@@ -122,8 +124,8 @@ The Rust CLI aims to be compatible with the original C version:
 
 | Feature | Original C | Rust Wrapper | Status |
 |---------|-----------|--------------|---------|
-| Basic minimization | ✅ | ✅ | Working |
-| Exact minimization | ✅ | ⚠️  | Partial |
+| Basic minimisation | ✅ | ✅ | Working |
+| Exact minimisation | ✅ | ✅ | Working |
 | Output formats | ✅ | ✅ | Working |
 | Espresso options | ✅ | ✅ | Working |
 | Summary/trace | ✅ | ✅ | Working |
@@ -135,7 +137,7 @@ The Rust CLI aims to be compatible with the original C version:
 
 1. **Stdin not supported** - Must specify input file
 2. **Single file only** - Cannot process multiple files at once
-3. **Some subcommands incomplete** - verify, so, so_both need work
+3. **Some C subcommands not implemented** - the reference tool's `verify`, `so`, and `so_both` modes have no Rust equivalent (only `espresso`, `exact`, `echo`, and `stats` are provided)
 4. **No backward compatibility mode** - Old -do/-out syntax not supported
 
 ## Programmatic API Alternative
