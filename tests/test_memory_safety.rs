@@ -32,7 +32,16 @@ fn get_memory_usage() -> Option<usize> {
 }
 
 /// Test that basic operations don't leak memory by measuring RSS growth
+// RSS-based leak checks are meaningful only where `get_memory_usage` can read RSS (macOS). Off
+// macOS the measurement is `None` and the assertion would silently no-op — so mark these `ignore`
+// there rather than report a misleading pass. Linux leak coverage is via valgrind/heaptrack and the
+// scripts (see docs/MEMORY_SAFETY.md). The double-free / `into_raw` tests below are platform-
+// independent and always run.
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_memory_usage_stability() {
     // Warm up to stabilize memory allocations
     for _ in 0..10 {
@@ -158,6 +167,10 @@ fn test_minimize_with_explicit_covers() {
 
 /// Stress test: repeated operations to amplify leaks
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_repeated_operations_amplify_leaks() {
     const ITERATIONS: usize = 1000;
 
@@ -227,6 +240,10 @@ fn test_coverbuilder_memory_management() {
 
 /// Test memory management with dimension changes
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_dimension_changes_no_leak() {
     use espresso_logic::{Cover, CoverType};
 
@@ -279,6 +296,10 @@ fn test_dimension_changes_no_leak() {
 
 /// Test with larger covers to stress allocation/deallocation
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_large_cover_allocations() {
     use espresso_logic::{Cover, CoverType};
 

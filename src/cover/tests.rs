@@ -955,6 +955,65 @@ fn pla_cover_minimize_preserves_variant() {
 }
 
 #[test]
+fn large_cover_builds_and_drops() {
+    // A wide cover with many cubes builds and drops without issue. `Minterm`/`Cube` own flat
+    // `Arc<[…]>` storage (no recursive ownership), so Drop is iterative by construction — this guards
+    // that a future change to the ownership shape doesn't reintroduce deep recursive teardown.
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    for i in 0..5000u32 {
+        cover.push(Cube::anonymous(
+            &[Some(i & 1 == 0), None, Some(i & 2 == 0)],
+            &[true],
+            CubeType::F,
+        ));
+    }
+    assert_eq!(cover.num_cubes(), 5000);
+    drop(cover); // exercised explicitly; no stack overflow on teardown
+}
+
+#[test]
+fn cover_minimize_exact_reduces_and_preserves() {
+    // f(a,b,c) = 1 exactly when a == 0 (minterms 000,001,010,011). The unique exact
+    // minimum is the single prime implicant `0--`.
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    for b in [false, true] {
+        for c in [false, true] {
+            cover.push(Cube::anonymous(
+                &[Some(false), Some(b), Some(c)],
+                &[true],
+                CubeType::F,
+            ));
+        }
+    }
+    assert_eq!(cover.num_cubes(), 4);
+
+    // Exact minimisation collapses the four minterms to one cube `0--`. This exercises the
+    // distinct `esp.minimize_exact` path (not heuristic `minimize`); a regression that broke or
+    // silently aliased it would change this result or fail to return.
+    let exact = cover.minimize_exact().unwrap();
+    assert_eq!(exact.num_cubes(), 1);
+    let cube = exact.cubes().next().unwrap();
+    // `0--` covers exactly {000,001,010,011} — i.e. logically equivalent to the input by construction.
+    assert_eq!(
+        cube.inputs().iter().collect::<Vec<_>>(),
+        vec![Some(false), None, None]
+    );
+}
+
+#[test]
+fn pla_cover_minimize_exact_preserves_variant() {
+    let src = ".i 3\n.o 1\n.ilb a b c\n.ob f\n000 1\n001 1\n010 1\n011 1\n.e\n";
+    let cover = PlaCover::<Symbol>::from_pla_string(src).unwrap();
+    let exact = cover.minimize_exact().unwrap();
+    // Exact minimisation dispatches through the same variant arms as heuristic minimisation and
+    // preserves which sides are named.
+    match &exact {
+        PlaCover::InputsOutputsNamed(c) => assert_eq!(c.num_cubes(), 1),
+        _ => panic!("variant not preserved by exact minimisation"),
+    }
+}
+
+#[test]
 fn malformed_pla_other_errors() {
     use super::pla::{PLAError, PLAReadError};
 
@@ -992,6 +1051,11 @@ fn malformed_pla_other_errors() {
     assert!(matches!(
         err(".i 2\n.e\n"),
         PLAReadError::PLA(PLAError::MissingOutputDirective)
+    ));
+    // .o present but no .i (and nothing to infer it from).
+    assert!(matches!(
+        err(".o 1\n.e\n"),
+        PLAReadError::PLA(PLAError::MissingInputDirective)
     ));
 }
 

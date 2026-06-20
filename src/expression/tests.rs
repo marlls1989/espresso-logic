@@ -191,6 +191,20 @@ fn test_constants_formatting() {
 // ========== Operator Overloading Tests ==========
 
 #[test]
+fn boolexpr_minimize_exact_equivalent_and_reduced() {
+    use crate::Minimizable;
+
+    // (a * b) + (a * !b) is logically `a`; exact minimisation must collapse it.
+    let expr = BoolExpr::parse("(a * b) + (a * !b)").unwrap();
+    let exact = expr.minimize_exact().unwrap();
+
+    // Exercises the BoolExpr -> Cover -> esp.minimize_exact -> BoolExpr round-trip (distinct from the
+    // heuristic path). The result is equivalent to the input and to the irreducible `a`.
+    assert!(expr.equivalent_to(&exact));
+    assert!(exact.equivalent_to(&BoolExpr::variable("a")));
+}
+
+#[test]
 fn test_operator_overloading_basic() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");

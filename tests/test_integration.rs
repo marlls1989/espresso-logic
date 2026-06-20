@@ -28,14 +28,10 @@ fn test_pla_from_file() {
         .expect("Failed to write temp file");
     temp.flush().expect("Failed to flush temp file");
 
-    // Test with new Cover API
-    let result = PlaCover::<Symbol>::from_pla_file(temp.path());
-
-    // Should successfully parse the PLA file
-    assert!(result.is_ok());
-    if let Ok(cover) = result {
-        assert_eq!(cover.num_cubes(), 2); // 2 cubes in the PLA
-    }
+    // Test with new Cover API — unconditionally assert the cube count so a parse failure can't
+    // slip past as a vacuously-true conditional.
+    let cover = PlaCover::<Symbol>::from_pla_file(temp.path()).expect("Failed to parse PLA file");
+    assert_eq!(cover.num_cubes(), 2); // 2 cubes in the PLA
 }
 
 #[test]
