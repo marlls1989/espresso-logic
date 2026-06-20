@@ -3,6 +3,7 @@
 //! These tests verify end-to-end functionality including file I/O,
 //! PLA format handling, and complete minimization workflows.
 
+use espresso_logic::Anonymous;
 use espresso_logic::{Minimizable, *};
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -27,14 +28,10 @@ fn test_pla_from_file() {
         .expect("Failed to write temp file");
     temp.flush().expect("Failed to flush temp file");
 
-    // Test with new Cover API
-    let result = Cover::from_pla_file(temp.path());
-
-    // Should successfully parse the PLA file
-    assert!(result.is_ok());
-    if let Ok(cover) = result {
-        assert_eq!(cover.num_cubes(), 2); // 2 cubes in the PLA
-    }
+    // Test with new Cover API — unconditionally assert the cube count so a parse failure can't
+    // slip past as a vacuously-true conditional.
+    let cover = PlaCover::<Symbol>::from_pla_file(temp.path()).expect("Failed to parse PLA file");
+    assert_eq!(cover.num_cubes(), 2); // 2 cubes in the PLA
 }
 
 #[test]
@@ -42,7 +39,7 @@ fn test_create_cover_from_pla() {
     // Create PLA content programmatically for XOR function
     let pla_str = ".i 2\n.o 1\n.p 2\n01 1\n10 1\n.e\n";
 
-    let cover = Cover::from_pla_string(pla_str).expect("Failed to parse PLA");
+    let cover = PlaCover::<Symbol>::from_pla_string(pla_str).expect("Failed to parse PLA");
     assert_eq!(cover.num_cubes(), 2);
 
     let cover = cover.minimize().unwrap();
@@ -54,16 +51,33 @@ fn test_create_cover_from_pla() {
 #[test]
 fn test_pla_roundtrip() {
     // Create a cover programmatically
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_cube(&[Some(false), Some(true)], &[Some(true)]); // 01 -> 1
-    cover.add_cube(&[Some(true), Some(false)], &[Some(true)]); // 10 -> 1
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    )); // 01 -> 1
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    )); // 10 -> 1
+
+    // PLA serialisation is string-labelled; give the anonymous cover real input/output names.
+    let cover = cover
+        .relabel(
+            Symbols::new(vec![Symbol::from("x0"), Symbol::from("x1")].into()),
+            Symbols::new(vec![Symbol::from("y0")].into()),
+        )
+        .expect("relabel arity matches");
 
     // Convert to PLA format using the trait
-    let pla_str =
-        <Cover as PLAWriter>::to_pla_string(&cover, CoverType::F).expect("Failed to serialize");
+    let pla_str = cover
+        .to_pla_string(CoverType::F)
+        .expect("Failed to serialize");
 
     // Parse it back using Cover
-    let parsed_cover = Cover::from_pla_string(&pla_str).expect("Failed to parse");
+    let parsed_cover = PlaCover::<Symbol>::from_pla_string(&pla_str).expect("Failed to parse");
     assert_eq!(parsed_cover.num_cubes(), 2);
 
     // Minimize and verify XOR cannot be reduced

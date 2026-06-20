@@ -3,7 +3,7 @@
 //! This shows how to use the low-level espresso module for direct access
 //! to the Espresso algorithm with maximum control and performance.
 
-use espresso_logic::espresso::EspressoCover;
+use espresso_logic::espresso::{CubeType, EspressoCover};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Direct Espresso API Example ===\n");
@@ -26,12 +26,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (minimized, _d, _r) = f.minimize(None, None);
 
     // Extract and display results
-    let result_cubes = minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+    let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
 
     println!("Minimized cover ({} cubes):", result_cubes.len());
-    for cube in &result_cubes {
+    for cube in result_cubes.iter() {
         print!("  ");
-        for input in cube.inputs() {
+        for input in cube.inputs().iter() {
             match input {
                 Some(false) => print!("0"),
                 Some(true) => print!("1"),
@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         print!(" -> ");
-        for output in cube.outputs() {
-            print!("{}", if *output { "1" } else { "0" });
+        for output in cube.outputs().iter() {
+            print!("{}", if output == Some(true) { "1" } else { "0" });
         }
         println!();
     }
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
                     let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
                     let (result, _, _) = f.minimize(None, None);
-                    let result_cubes = result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+                    let result_cubes = result.to_cubes(2, 1, CubeType::F);
                     Ok((thread_id, result_cubes.len()))
                 },
             )

@@ -1,21 +1,22 @@
-//! Minimizable trait and implementations for Boolean function minimization
+//! Minimizable trait and implementations for Boolean function minimisation
 //!
 //! This module provides the [`Minimizable`] trait which defines a uniform interface
-//! for minimizing Boolean functions using the Espresso algorithm, along with implementations
-//! for [`Cover`] and a blanket implementation for types convertible to/from [`Dnf`].
+//! for minimising Boolean functions using the Espresso algorithm, along with implementations
+//! for [`Cover`] and [`BoolExpr`].
 
-use super::cubes::CubeType;
-use super::dnf::Dnf;
+use super::cubes::{Cube, CubeType};
+use super::label::Anonymous;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
+use crate::expression::BoolExpr;
 use crate::EspressoConfig;
-use std::collections::BTreeMap;
+use crate::Symbol;
 use std::sync::Arc;
 
-/// Public trait for types that can be minimized using Espresso
+/// Public trait for types that can be minimised using Espresso
 ///
-/// This trait provides a **transparent, uniform interface** for minimizing boolean functions
-/// using the Espresso algorithm. All methods take `&self` and return a new minimized instance,
+/// This trait provides a **transparent, uniform interface** for minimising boolean functions
+/// using the Espresso algorithm. All methods take `&self` and return a new minimised instance,
 /// following an immutable functional style.
 ///
 /// **Note (v3.1+):** You must explicitly import this trait to use its methods:
@@ -27,10 +28,10 @@ use std::sync::Arc;
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
-/// # Transparent Minimization
+/// # Transparent Minimisation
 ///
-/// The beauty of this trait is that minimization works the same way regardless of input type.
-/// Just call `.minimize()` on any supported type and get back a minimized version of the same type:
+/// The beauty of this trait is that minimisation works the same way regardless of input type.
+/// Just call `.minimize()` on any supported type and get back a minimised version of the same type:
 ///
 /// ```
 /// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
@@ -58,18 +59,17 @@ use std::sync::Arc;
 ///
 /// # Implementations
 ///
-/// - **[`Cover`]**: Direct implementation - minimizes cubes directly with Espresso
-/// - **Blanket implementation** (v3.1+): For `T where &T: Into<Dnf>, T: From<Dnf>`
-///   - Automatically covers [`BoolExpr`] (v3.1.1+)
-///   - Workflow: Expression → Dnf (from internal BDD representation) → Cover cubes → Espresso → minimized Cover → Dnf → Expression
-///   - DNF is extracted from the internal BDD representation, minimized, then used to create a new expression
+/// - **[`Cover`]**: Direct implementation - minimises cubes directly with Espresso
+/// - **[`BoolExpr`]**: Extracts the expression's product terms (from its internal BDD) into a
+///   single-output [`Cover`], minimises it with Espresso, then rebuilds an expression from the
+///   minimised product terms. Workflow: Expression → Cover → Espresso → minimised Cover → Expression
 ///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
 ///
 /// # Immutable Design
 ///
-/// All minimization methods preserve the original and return a new minimized instance:
+/// All minimisation methods preserve the original and return a new minimised instance:
 ///
 /// ```
 /// use espresso_logic::{BoolExpr, Minimizable};
@@ -92,62 +92,140 @@ use std::sync::Arc;
 /// # }
 /// ```
 pub trait Minimizable {
-    /// Minimize using the heuristic Espresso algorithm
+    /// Minimise using the heuristic Espresso algorithm, surfacing an instance conflict as an error.
     ///
-    /// Returns a new minimized instance without modifying the original.
-    /// This is fast and produces near-optimal results (~99% optimal in practice).
+    /// Like [`minimize`](Self::minimize), but returns [`MinimizationError::Instance`] instead of
+    /// panicking when a low-level [`Espresso`](crate::espresso::Espresso) instance of *different*
+    /// dimensions is already live on this thread. Prefer this when you deliberately mix the
+    /// low-level [`espresso`](crate::espresso) API with the high-level covers on one thread and want
+    /// to handle the conflict rather than crash.
     ///
-    /// Default implementation calls `minimize_with_config` with default config.
-    fn minimize(&self) -> Result<Self, MinimizationError>
+    /// Defaults to [`try_minimize_with_config`](Self::try_minimize_with_config) with the default
+    /// configuration.
+    fn try_minimize(&self) -> Result<Self, MinimizationError>
     where
         Self: Sized,
     {
-        let config = EspressoConfig::default();
-        self.minimize_with_config(&config)
+        self.try_minimize_with_config(&EspressoConfig::default())
     }
 
-    /// Minimize using the heuristic algorithm with custom configuration
+    /// [`try_minimize`](Self::try_minimize) with a custom configuration.
     ///
-    /// Returns a new minimized instance without modifying the original.
-    ///
-    /// This is the primary method that implementations must provide.
-    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
+    /// This is one of the two primary methods an implementation must provide.
+    fn try_minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
     where
         Self: Sized;
 
-    /// Minimize using exact minimization
+    /// Exact counterpart of [`try_minimize`](Self::try_minimize): never panics on an instance
+    /// conflict, returning [`MinimizationError::Instance`] instead.
     ///
-    /// Returns a new minimized instance without modifying the original.
-    /// This guarantees minimal results but may be slower for large expressions.
-    ///
-    /// Default implementation calls `minimize_exact_with_config` with default config.
-    fn minimize_exact(&self) -> Result<Self, MinimizationError>
+    /// Defaults to [`try_minimize_exact_with_config`](Self::try_minimize_exact_with_config) with the
+    /// default configuration.
+    fn try_minimize_exact(&self) -> Result<Self, MinimizationError>
     where
         Self: Sized,
     {
-        let config = EspressoConfig::default();
-        self.minimize_exact_with_config(&config)
+        self.try_minimize_exact_with_config(&EspressoConfig::default())
     }
 
-    /// Minimize using exact minimization with custom configuration
+    /// [`try_minimize_exact`](Self::try_minimize_exact) with a custom configuration.
     ///
-    /// Returns a new minimized instance without modifying the original.
-    ///
-    /// This is the primary method that implementations must provide.
-    fn minimize_exact_with_config(
+    /// This is one of the two primary methods an implementation must provide.
+    fn try_minimize_exact_with_config(
         &self,
         config: &EspressoConfig,
     ) -> Result<Self, MinimizationError>
     where
         Self: Sized;
+
+    /// Minimise using the heuristic Espresso algorithm.
+    ///
+    /// Returns a new minimised instance without modifying the original. Fast and near-optimal
+    /// (~99% optimal in practice).
+    ///
+    /// # Panics
+    ///
+    /// Panics if a low-level [`Espresso`](crate::espresso::Espresso) / `EspressoCover` of a
+    /// *different* dimension is already live on the current thread — a usage error, since the
+    /// high-level API otherwise manages the instance lifecycle automatically. Use
+    /// [`try_minimize`](Self::try_minimize) to handle that case as a recoverable error instead.
+    fn minimize(&self) -> Result<Self, MinimizationError>
+    where
+        Self: Sized,
+    {
+        self.minimize_with_config(&EspressoConfig::default())
+    }
+
+    /// [`minimize`](Self::minimize) with a custom configuration.
+    ///
+    /// # Panics
+    ///
+    /// See [`minimize`](Self::minimize).
+    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
+    where
+        Self: Sized,
+    {
+        panic_on_instance_conflict(self.try_minimize_with_config(config))
+    }
+
+    /// Minimise using exact minimisation.
+    ///
+    /// Returns a new minimised instance without modifying the original. Guarantees a minimal result
+    /// but can be slower for large inputs.
+    ///
+    /// # Panics
+    ///
+    /// See [`minimize`](Self::minimize); use [`try_minimize_exact`](Self::try_minimize_exact) to
+    /// handle an instance conflict as an error.
+    fn minimize_exact(&self) -> Result<Self, MinimizationError>
+    where
+        Self: Sized,
+    {
+        self.minimize_exact_with_config(&EspressoConfig::default())
+    }
+
+    /// [`minimize_exact`](Self::minimize_exact) with a custom configuration.
+    ///
+    /// # Panics
+    ///
+    /// See [`minimize`](Self::minimize).
+    fn minimize_exact_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError>
+    where
+        Self: Sized,
+    {
+        panic_on_instance_conflict(self.try_minimize_exact_with_config(config))
+    }
 }
 
-/// Private helper function to minimize a Cover using either heuristic or exact algorithm
-fn minimize_cover_with<F>(
-    cover: &Cover,
-    config: &EspressoConfig,
+/// Convert an instance-conflict error into a panic, passing every other result through unchanged.
+///
+/// Backs the panicking `minimize*` methods: a [`MinimizationError::Instance`] means a low-level
+/// Espresso of different dimensions is live on this thread — a usage error, not a recoverable
+/// condition — so it is raised loudly. All other errors (cube validation, IO) are returned as-is.
+fn panic_on_instance_conflict<T>(
+    result: Result<T, MinimizationError>,
+) -> Result<T, MinimizationError> {
+    if let Err(MinimizationError::Instance(e)) = &result {
+        panic!(
+            "Espresso instance conflict during minimisation: {e}. A low-level Espresso/EspressoCover \
+             of different dimensions is live on this thread; drop it first, or use the try_minimize* \
+             methods to handle this as an error."
+        );
+    }
+    result
+}
+
+/// Private helper function to minimise a Cover using either heuristic or exact algorithm.
+///
+/// The caller constructs the [`Espresso`](crate::espresso::Espresso) instance (via `new` to panic on
+/// an instance conflict, or `try_new` to surface it as an error) and passes it in — keeping the
+/// panic-vs-error policy at the trait boundary, not buried here. `esp` must stay live for the whole
+/// call since [`EspressoCover::from_cubes`] reads the thread's current instance.
+fn minimize_cover_with<F, I, O>(
+    cover: &Cover<I, O>,
+    esp: &crate::espresso::Espresso,
     minimize_fn: F,
-) -> Result<Cover, MinimizationError>
+) -> Result<Cover<I, O>, MinimizationError>
 where
     F: FnOnce(
         &crate::espresso::Espresso,
@@ -160,7 +238,7 @@ where
         crate::espresso::EspressoCover,
     ),
 {
-    use crate::espresso::{Espresso, EspressoCover};
+    use crate::espresso::EspressoCover;
 
     // Split cubes into F, D, R sets based on cube type
     let mut f_cubes = Vec::new();
@@ -171,21 +249,19 @@ where
         let input_vec: Vec<u8> = cube
             .inputs()
             .iter()
-            .map(|&opt| match opt {
+            .map(|opt| match opt {
                 Some(false) => 0,
                 Some(true) => 1,
                 None => 2,
             })
             .collect();
 
-        // Convert outputs: true → 1, false → 0
-        let output_vec: Vec<u8> = cube
-            .outputs()
-            .iter()
-            .map(|&b| if b { 1 } else { 0 })
+        // Output mask: 1 where this cube asserts the output, 0 otherwise.
+        let output_vec: Vec<u8> = (0..cover.num_outputs())
+            .map(|i| if cube.asserts(i) { 1 } else { 0 })
             .collect();
 
-        // Send to appropriate set based on cube type
+        // Send to appropriate set based on the cube's set.
         match cube.cube_type() {
             CubeType::F => f_cubes.push((input_vec, output_vec)),
             CubeType::D => d_cubes.push((input_vec, output_vec)),
@@ -193,8 +269,8 @@ where
         }
     }
 
-    // Direct C calls - thread-safe via thread-local storage
-    let esp = Espresso::new(cover.num_inputs(), cover.num_outputs(), config);
+    // `esp` (the thread's Espresso instance) is supplied by the caller. Direct C calls below are
+    // thread-safe via thread-local storage.
 
     // Build covers from cube data - convert Vec to slices
     let f_cubes_refs: Vec<(&[u8], &[u8])> = f_cubes
@@ -233,146 +309,116 @@ where
 
     // Call the provided minimize function (heuristic or exact)
     let (f_result, d_result, r_result) =
-        minimize_fn(&esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
+        minimize_fn(esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
 
-    // Extract minimized cubes
-    let mut minimized_cubes = Vec::new();
-    minimized_cubes.extend(f_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::F));
-    minimized_cubes.extend(d_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::D));
-    minimized_cubes.extend(r_result.to_cubes(cover.num_inputs(), cover.num_outputs(), CubeType::R));
+    // Extract minimised cubes back onto the cover's shared symbol tables.
+    let ni = cover.num_inputs();
+    let no = cover.num_outputs();
+    let input_symbols = Arc::clone(cover.input_symbols());
+    let output_symbols = Arc::clone(cover.output_symbols());
+    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the
+    // cover's real `Symbols<L>` tables by reading values positionally (variable order is preserved across
+    // the boundary). Same operation as building any cover from anonymous cubes — see `repoint`.
+    let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
+        super::repoint(cube, &input_symbols, &output_symbols)
+    };
 
-    // Build new cover with minimized cubes - only clone labels (Arc, cheap)
+    // Keep all three computed sets. They are NOT inert: the cover carries them so it can later be
+    // written in a richer output format than its declared `.type` (e.g. a CLI `-o fdr` on an FD cover
+    // emits the computed OFF-set). `cubes()`/`num_cubes()` filter by cover type for reads, but the PLA
+    // writer emits by the requested format, which is why the D/R cubes must be retained.
+    let f_cubes = f_result.to_cubes(ni, no, CubeType::F);
+    let d_cubes = d_result.to_cubes(ni, no, CubeType::D);
+    let r_cubes = r_result.to_cubes(ni, no, CubeType::R);
+
+    // Build new cover with minimised cubes - reuse the cover's symbol tables (Arc, cheap)
     Ok(Cover {
-        num_inputs: cover.num_inputs,
-        num_outputs: cover.num_outputs,
-        input_labels: cover.input_labels.clone(),
-        output_labels: cover.output_labels.clone(),
-        cubes: minimized_cubes,
+        input_symbols: Arc::clone(cover.input_symbols()),
+        output_symbols: Arc::clone(cover.output_symbols()),
+        cubes: f_cubes
+            .iter()
+            .chain(d_cubes.iter())
+            .chain(r_cubes.iter())
+            .map(rehome)
+            .collect(),
         cover_type: cover.cover_type,
     })
 }
 
-// Implement public Minimizable trait for Cover
-impl Minimizable for Cover {
-    fn minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
-        minimize_cover_with(self, config, |esp, f, d, r| esp.minimize(f, d, r))
+// Implement public Minimizable trait for Cover (any label type — minimisation is positional).
+//
+// The fallible `try_*` primitives construct the thread's Espresso via `try_new` (instance conflict
+// → error); the panicking `minimize*` methods are the trait defaults wrapping these.
+impl<I, O> Minimizable for Cover<I, O> {
+    fn try_minimize_with_config(&self, config: &EspressoConfig) -> Result<Self, MinimizationError> {
+        let esp = crate::espresso::Espresso::try_new(
+            self.num_inputs(),
+            self.num_outputs(),
+            Some(config),
+        )?;
+        minimize_cover_with(self, &esp, |esp, f, d, r| esp.minimize(f, d, r))
     }
 
-    fn minimize_exact_with_config(
+    fn try_minimize_exact_with_config(
         &self,
         config: &EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        minimize_cover_with(self, config, |esp, f, d, r| esp.minimize_exact(f, d, r))
+        let esp = crate::espresso::Espresso::try_new(
+            self.num_inputs(),
+            self.num_outputs(),
+            Some(config),
+        )?;
+        minimize_cover_with(self, &esp, |esp, f, d, r| esp.minimize_exact(f, d, r))
     }
 }
 
-/// Helper function to minimize via Cover conversion
+/// Minimize a `BoolExpr` by round-tripping through a single-output [`Cover`].
 ///
-/// Used by Minimizable implementations to convert DNF → Cover → minimize → DNF
-pub(crate) fn minimize_via_cover<F>(
-    dnf: &Dnf,
+/// Workflow: `BoolExpr` → single-output `Cover` (product terms extracted from the internal
+/// BDD) → Espresso minimisation → rebuild a `BoolExpr` from the minimised product terms. The
+/// minimised cubes are cached on the result so subsequent cube extraction reflects them.
+fn minimize_expr_with<F>(
+    expr: &BoolExpr,
     config: &EspressoConfig,
     minimize_fn: F,
-) -> Result<Dnf, MinimizationError>
+) -> Result<BoolExpr, MinimizationError>
 where
-    F: FnOnce(&Cover, &EspressoConfig) -> Result<Cover, MinimizationError>,
+    F: FnOnce(
+        &Cover<Symbol, Anonymous>,
+        &EspressoConfig,
+    ) -> Result<Cover<Symbol, Anonymous>, MinimizationError>,
 {
-    // Use cached variables (already sorted alphabetically)
-    let var_list = dnf.variables();
-    let var_refs: Vec<&str> = var_list.iter().map(|s| s.as_ref()).collect();
+    // Build a single-output, anonymous-output cover from the expression (canonical via the BDD).
+    let cover: Cover<Symbol, Anonymous> = expr.into();
 
-    // Create cover with proper dimensions and labels
-    let mut cover = crate::Cover::with_labels(crate::CoverType::F, &var_refs, &["out"]);
+    // Minimise it with the provided (heuristic or exact) algorithm.
+    let minimized = minimize_fn(&cover, config)?;
 
-    // Add cubes to cover
-    for cube in dnf.cubes() {
-        let mut inputs = vec![None; var_list.len()];
-        for (i, var) in var_list.iter().enumerate() {
-            if let Some(&polarity) = cube.get(var) {
-                inputs[i] = Some(polarity);
-            }
-        }
-        cover.add_cube(&inputs, &[Some(true)]);
-    }
-
-    // Minimize the cover using the provided function
-    let minimized_cover = minimize_fn(&cover, config)?;
-
-    // Convert back to Dnf
-    Ok(cover_to_dnf(&minimized_cover))
+    // Rebuild a BoolExpr from the minimised product terms of the single output.
+    let terms = minimized.output_product_terms(0);
+    Ok(BoolExpr::from_cubes(terms))
 }
 
-/// Helper function to convert a Cover back to Dnf
-pub(crate) fn cover_to_dnf(cover: &Cover) -> Dnf {
-    let mut cubes = Vec::new();
-
-    for cube in cover.cubes() {
-        let mut product = BTreeMap::new();
-
-        // Get input labels
-        let input_labels = cover.input_labels();
-
-        for (i, &literal) in cube.inputs().iter().enumerate() {
-            if let Some(polarity) = literal {
-                let var_name = if i < input_labels.len() {
-                    Arc::clone(&input_labels[i])
-                } else {
-                    Arc::from(format!("x{}", i).as_str())
-                };
-                product.insert(var_name, polarity);
-            }
-        }
-
-        cubes.push(product);
-    }
-
-    Dnf::from_cubes(&cubes)
-}
-
-/// Blanket implementation of Minimizable for types convertible to/from Dnf
+/// Implement the public [`Minimizable`] trait for [`BoolExpr`].
 ///
-/// This provides automatic minimization support for any type that can convert
-/// to and from [`Dnf`]. The implementation follows this workflow:
-///
-/// 1. Convert `&T` to `Dnf` (via `Into<Dnf>`)
-/// 2. Convert Dnf to Cover with labeled variables
-/// 3. Minimize Cover using Espresso
-/// 4. Convert minimized Cover back to Dnf
-/// 5. Convert Dnf back to original type (via `From<Dnf>`)
-///
-/// The DNF serves as the intermediary representation between boolean expressions
-/// and covers, ensuring all conversions go through the efficient BDD path.
-impl<T> Minimizable for T
-where
-    for<'a> &'a T: Into<Dnf>,
-    T: From<Dnf>,
-{
-    fn minimize_with_config(
+/// Boolean expressions minimise by extracting their product terms (from the internal BDD) into a
+/// single-output [`Cover`], running Espresso, and reconstructing an expression from the result.
+impl Minimizable for BoolExpr {
+    fn try_minimize_with_config(
         &self,
         config: &crate::EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the heuristic algorithm
-        let minimized_dnf =
-            minimize_via_cover(&dnf, config, |cover, cfg| cover.minimize_with_config(cfg))?;
-
-        Ok(T::from(minimized_dnf))
+        minimize_expr_with(self, config, |cover, cfg| {
+            cover.try_minimize_with_config(cfg)
+        })
     }
 
-    fn minimize_exact_with_config(
+    fn try_minimize_exact_with_config(
         &self,
         config: &crate::EspressoConfig,
     ) -> Result<Self, MinimizationError> {
-        // Convert to Dnf (goes through BDD for canonical representation)
-        let dnf: Dnf = self.into();
-
-        // Minimize via cover using the exact algorithm
-        let minimized_dnf = minimize_via_cover(&dnf, config, |cover, cfg| {
-            cover.minimize_exact_with_config(cfg)
-        })?;
-
-        Ok(T::from(minimized_dnf))
+        minimize_expr_with(self, config, |cover, cfg| {
+            cover.try_minimize_exact_with_config(cfg)
+        })
     }
 }

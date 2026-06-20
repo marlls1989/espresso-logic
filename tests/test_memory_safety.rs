@@ -6,7 +6,8 @@
 //! - macOS: `./scripts/check_memory_leaks.sh`
 //! - Linux: Use valgrind or heaptrack (see docs/MEMORY_SAFETY.md)
 
-use espresso_logic::espresso::{CubeType, Espresso, EspressoCover};
+use espresso_logic::espresso::{Cube, CubeType, Espresso, EspressoCover};
+use espresso_logic::Anonymous;
 use espresso_logic::{EspressoConfig, Minimizable};
 
 /// Helper to get current memory usage on macOS
@@ -31,7 +32,16 @@ fn get_memory_usage() -> Option<usize> {
 }
 
 /// Test that basic operations don't leak memory by measuring RSS growth
+// RSS-based leak checks are meaningful only where `get_memory_usage` can read RSS (macOS). Off
+// macOS the measurement is `None` and the assertion would silently no-op — so mark these `ignore`
+// there rather than report a misleading pass. Linux leak coverage is via valgrind/heaptrack and the
+// scripts (see docs/MEMORY_SAFETY.md). The double-free / `into_raw` tests below are platform-
+// independent and always run.
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_memory_usage_stability() {
     // Warm up to stabilize memory allocations
     for _ in 0..10 {
@@ -157,6 +167,10 @@ fn test_minimize_with_explicit_covers() {
 
 /// Stress test: repeated operations to amplify leaks
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_repeated_operations_amplify_leaks() {
     const ITERATIONS: usize = 1000;
 
@@ -202,9 +216,17 @@ fn test_coverbuilder_memory_management() {
     use espresso_logic::{Cover, CoverType};
 
     for _ in 0..100 {
-        let mut cover = Cover::new(CoverType::F);
-        cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-        cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+        cover.push(Cube::anonymous(
+            &[Some(false), Some(true)],
+            &[true],
+            CubeType::F,
+        ));
+        cover.push(Cube::anonymous(
+            &[Some(true), Some(false)],
+            &[true],
+            CubeType::F,
+        ));
 
         // minimize() internally creates EspressoCover and frees it
         cover = cover.minimize().unwrap();
@@ -218,6 +240,10 @@ fn test_coverbuilder_memory_management() {
 
 /// Test memory management with dimension changes
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_dimension_changes_no_leak() {
     use espresso_logic::{Cover, CoverType};
 
@@ -227,21 +253,30 @@ fn test_dimension_changes_no_leak() {
     for i in 0..100 {
         match i % 3 {
             0 => {
-                let mut cover = Cover::new(CoverType::F);
-                cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+                cover.push(Cube::anonymous(
+                    &[Some(false), Some(true)],
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             1 => {
-                let mut cover = Cover::new(CoverType::F);
-                cover.add_cube(&[Some(false), Some(true), Some(false)], &[Some(true)]);
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+                cover.push(Cube::anonymous(
+                    &[Some(false), Some(true), Some(false)],
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             2 => {
-                let mut cover = Cover::new(CoverType::F);
-                cover.add_cube(
+                let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+                cover.push(Cube::anonymous(
                     &[Some(false), Some(true), Some(false), Some(true)],
-                    &[Some(true)],
-                );
+                    &[true],
+                    CubeType::F,
+                ));
                 let _ = cover.minimize().unwrap();
             }
             _ => unreachable!(),
@@ -261,6 +296,10 @@ fn test_dimension_changes_no_leak() {
 
 /// Test with larger covers to stress allocation/deallocation
 #[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "RSS-based leak check is macOS-only; use valgrind/heaptrack on Linux"
+)]
 fn test_large_cover_allocations() {
     use espresso_logic::{Cover, CoverType};
 
@@ -268,7 +307,7 @@ fn test_large_cover_allocations() {
 
     // Create and minimize large covers repeatedly
     for _ in 0..50 {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
         // Add many cubes
         for i in 0..64 {
@@ -278,8 +317,8 @@ fn test_large_cover_allocations() {
                 Some((i & 8) != 0),
                 Some((i & 4) != 0),
             ];
-            let outputs = [Some((i & 2) != 0), Some((i & 1) != 0)];
-            cover.add_cube(&inputs, &outputs);
+            let membership = [(i & 2) != 0, (i & 1) != 0];
+            cover.push(Cube::anonymous(&inputs, &membership, CubeType::F));
         }
 
         // This allocates significant C memory

@@ -159,18 +159,16 @@ fn main() -> std::io::Result<()> {
 ### Building from Truth Tables
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
-    
-    // XOR function: a XOR b
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+
+    // XOR function: a XOR b (ON-set only)
     // Inputs: [a, b], Output: [f]
-    cover.add_cube(&[Some(false), Some(false)], &[Some(false)]); // 00 -> 0
-    cover.add_cube(&[Some(false), Some(true)],  &[Some(true)]);  // 01 -> 1
-    cover.add_cube(&[Some(true),  Some(false)], &[Some(true)]);  // 10 -> 1
-    cover.add_cube(&[Some(true),  Some(true)],  &[Some(false)]); // 11 -> 0
-    
+    cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
+    cover.push(Cube::anonymous(&[Some(true),  Some(false)], &[true], CubeType::F));  // 10 -> 1
+
     cover = cover.minimize()?;
     println!("Minimized to {} cubes", cover.num_cubes());
     
@@ -181,14 +179,14 @@ fn main() -> std::io::Result<()> {
 ### Using Don't Cares
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     
     // Use None for don't care values
-    cover.add_cube(&[Some(true), None], &[Some(true)]);  // 1- -> 1
-    cover.add_cube(&[None, Some(true)], &[Some(true)]);  // -1 -> 1
+    cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -> 1
+    cover.push(Cube::anonymous(&[None, Some(true)], &[true], CubeType::F));  // -1 -> 1
     
     cover = cover.minimize()?;
     
@@ -262,7 +260,7 @@ fn main() -> std::io::Result<()> {
 
 ### Real-World Example: 5-Input Threshold Gate
 
-A threshold gate with complex activation/deactivation regions demonstrates dramatic minimization and proper expression composition.
+A threshold gate with complex activation/deactivation regions demonstrates dramatic minimisation and proper expression composition.
 
 Run with: `cargo run --example threshold_gate_example`
 
@@ -300,15 +298,17 @@ fn main() -> std::io::Result<()> {
     // Hold region: XOR of activation and negation of deactivation
     let hold = xor(&activation, &deactivation.not());
     
-    // Next state function (set on activation, hold when not deactivating)
-    let next_q = expr!(activation + "q" * !deactivation);
+    // Next-state function, two equivalent formulations (set on activation, hold when not deactivating)
+    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    let next_q_v2 = expr!(activation + "q" * hold);
     
     // Add all functions to a single cover
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&activation, "activation")?;
     cover.add_expr(&deactivation, "deactivation")?;
     cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q, "next_q")?;
+    cover.add_expr(&next_q_v1, "next_q_v1")?;
+    cover.add_expr(&next_q_v2, "next_q_v2")?;
     
     let minimized = cover.minimize()?;
     
@@ -316,7 +316,7 @@ fn main() -> std::io::Result<()> {
     //
     // Naive DNF (De Morgan's laws): hold 375,840 cubes, next_q 20,220-375,846 cubes (exponential!)
     // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (26,845x and 1,064x better!)
-    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimized)
+    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimised)
     //
     // BDD avoids exponential blowup while providing canonical representation
     
@@ -326,21 +326,21 @@ fn main() -> std::io::Result<()> {
 
 **Key points:**
 - **Helper function `xor()`**: Returns `BoolExpr` for clean composition
-- **Complex expressions**: `hold` starts with 22 terms, minimizes to 10
-- **Stateful logic**: `next_q` efficiently combines activation with feedback
-- **No early minimization**: Compose all expressions first, minimize once
-- **Multiple outputs**: All four functions optimized together in one call
+- **Complex expressions**: `hold` (an XOR of compound terms) reduces to 10 cubes after minimisation
+- **Stateful logic**: `next_q_v1`/`next_q_v2` efficiently combine activation with feedback
+- **No early minimisation**: Compose all expressions first, minimize once
+- **Multiple outputs**: All five functions optimised together in one call
 
 ## PLA Files
 
 ### Reading and Writing
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read from file
-    let mut cover = Cover::from_pla_file("input.pla")?;
+    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
     println!("Inputs: {}", cover.num_inputs());
     println!("Outputs: {}", cover.num_outputs());
@@ -438,89 +438,71 @@ fn main() {
 
 ## Binary Decision Diagrams (BDDs)
 
-**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. All boolean expressions use BDD as their internal representation, providing canonical form, efficient operations, and automatic simplification.
-
-Binary Decision Diagrams provide canonical representation with efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally.
+Every `BoolExpr` **is** a Binary Decision Diagram internally: a canonical reduced-ordered BDD, giving canonical form, efficient operations, and automatic simplification. There is no separate BDD type to convert to or from.
 
 ### Basic BDD Construction
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
-use std::sync::Arc;
+use espresso_logic::BoolExpr;
 
 fn main() {
     // Create expressions (already BDDs internally)
     let true_expr = BoolExpr::constant(true);
     let false_expr = BoolExpr::constant(false);
-    
+
     // Create from variable (already a BDD)
     let a = BoolExpr::variable("a");
-    
+
     // Build expression (uses BDD operations internally)
     let expr = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
-    
+
     // All expressions ARE BDDs - no conversion needed
     println!("BDD has {} nodes", expr.node_count());
-    
-    // Bdd is just a type alias now (v3.1.1+)
-    let bdd: Bdd = expr.clone();
 }
 ```
 
 ### BDD Operations
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
-use std::sync::Arc;
+use espresso_logic::BoolExpr;
 
 fn main() {
-    // BoolExpr and Bdd are the same (v3.1.1+)
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
-    
+
     // All operations use efficient BDD algorithms
     let a_and_b = a.and(&b);
     let a_or_b = a.or(&b);
     let not_a = a.not();
-    
+
     // Complex expression: (a AND b) OR (NOT a AND c)
     let complex = a.and(&b).or(&a.not().and(&c));
-    
+
     // All expressions ARE BDDs with canonical representation
     println!("Complex BDD has {} nodes", complex.node_count());
     println!("Uses {} variables", complex.var_count());
 }
 ```
 
-### Working with BDD Representation (v3.1.1+)
-
-**Note:** Conversion methods `to_bdd()`, `from_expr()`, and `to_expr()` are deprecated as they're no-ops (return clones). BoolExpr IS a BDD.
+### Working with the BDD Representation
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd, Minimizable};
+use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
+fn main() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let c = BoolExpr::variable("c");
-    
+
     // Create expression (already a BDD internally)
     let expr = a.and(&b).or(&b.and(&c));
-    
+
     // Already in canonical BDD form
     println!("BDD has {} nodes", expr.node_count());
-    
-    // Display uses algebraic factorisation (v3.1.1+)
+
+    // Display uses algebraic factorisation
     println!("Expression: {}", expr);
-    
-    // Can assign to Bdd type (it's just an alias)
-    let bdd: Bdd = expr.clone();
-    
-    // Verify they're the same
-    assert_eq!(expr.node_count(), bdd.node_count());
-    
-    Ok(())
 }
 ```
 
@@ -537,16 +519,10 @@ fn main() {
     let expr1 = a.and(&b);
     let expr2 = b.and(&a);
     
-    // BDD canonical representation means equivalent expressions
-    // have identical internal structure (v3.1.1+)
-    
-    // Convert to BDDs
-    let bdd1 = expr1.to_bdd();
-    let bdd2 = expr2.to_bdd();
-    
-    // BDDs are identical for equivalent expressions (canonical representation)
-    assert_eq!(bdd1, bdd2);
-    assert_eq!(bdd1.node_count(), bdd2.node_count());
+    // BoolExpr is BDD-backed: equivalent expressions share the same
+    // canonical internal structure, so they compare equal directly.
+    assert_eq!(expr1, expr2);
+    assert_eq!(expr1.node_count(), expr2.node_count());
     
     println!("Expressions are equivalent!");
 }
@@ -555,35 +531,33 @@ fn main() {
 ### BDD Properties and Inspection
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd, Dnf};
+use espresso_logic::BoolExpr;
 
 fn main() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
     let expr = a.and(&b).or(&a.not());
     
-    let bdd = expr.to_bdd();
-    
     // Check BDD properties
-    println!("Is terminal: {}", bdd.is_terminal());
-    println!("Is true: {}", bdd.is_true());
-    println!("Is false: {}", bdd.is_false());
-    println!("Node count: {}", bdd.node_count());
-    println!("Variable count: {}", bdd.var_count());
+    println!("Is terminal: {}", expr.is_terminal());
+    println!("Is true: {}", expr.is_true());
+    println!("Is false: {}", expr.is_false());
+    println!("Node count: {}", expr.node_count());
+    println!("Variable count: {}", expr.var_count());
     
-    // Extract cubes (paths to TRUE)
-    let dnf = Dnf::from(&bdd);
-    println!("Number of cubes: {}", dnf.len());
-    for cube in dnf.cubes() {
+    // Extract cubes (paths to TRUE) as minterms
+    let cubes = expr.to_cubes();
+    println!("Number of cubes: {}", cubes.len());
+    for cube in cubes.iter() {
         println!("  Cube: {:?}", cube);
     }
 }
 ```
 
-### BDD Automatic Optimization
+### BDD Automatic Optimisation
 
 ```rust
-use espresso_logic::{BoolExpr, Dnf};
+use espresso_logic::BoolExpr;
 
 fn main() {
     let a = BoolExpr::variable("a");
@@ -596,20 +570,18 @@ fn main() {
     
     println!("Original expression: {}", expr);
     
-    // BDD automatically recognizes redundancy
-    let bdd = expr.to_bdd();
-    let dnf = Dnf::from(&bdd);
+    // BDD automatically recognises redundancy
+    let cubes = expr.to_cubes();
     
-    println!("BDD has {} cubes (redundancy eliminated)", dnf.len());
+    println!("BDD has {} cubes (redundancy eliminated)", cubes.len());
     // Outputs: 2 cubes (b*c was redundant and eliminated)
     
-    // Convert back to see simplified form
-    let simplified = bdd.to_expr();
-    println!("Simplified: {}", simplified);
+    // The factored display already shows the simplified form
+    println!("Simplified: {}", expr);
 }
 ```
 
-### Using BDDs for Efficient Minimization
+### Using BDDs for Efficient Minimisation
 
 ```rust
 use espresso_logic::{BoolExpr, Minimizable};
@@ -624,7 +596,7 @@ fn main() -> std::io::Result<()> {
     
     // Minimization workflow (introduced in v3.1 with BDDs):
     // 1. Expression → BDD (efficient canonical form)
-    // 2. BDD → Cover cubes (optimized extraction)
+    // 2. BDD → Cover cubes (optimised extraction)
     // 3. Cover → Minimized cover (Espresso algorithm)
     
     let minimized = expr.minimize()?;
@@ -711,7 +683,7 @@ fn main() -> std::io::Result<()> {
 ### Parallel Cover Processing
 
 ```rust,no_run
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Cover, Minimizable, PlaCover, Symbol};
 use std::thread;
 
 fn main() -> std::io::Result<()> {
@@ -719,7 +691,7 @@ fn main() -> std::io::Result<()> {
     
     let handles: Vec<_> = files.into_iter().map(|file| {
         thread::spawn(move || -> std::io::Result<usize> {
-            let mut cover = Cover::from_pla_file(file)?;
+            let mut cover = PlaCover::<Symbol>::from_pla_file(file)?;
             cover = cover.minimize()?;
             Ok(cover.num_cubes())
         })
@@ -738,10 +710,10 @@ fn main() -> std::io::Result<()> {
 ### Inspecting Cubes
 
 ```rust,no_run
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Minimizable, PlaCover, Symbol};
 
 fn main() -> std::io::Result<()> {
-    let mut cover = Cover::from_pla_file("input.pla")?;
+    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
     // Get cubes before minimization
     let before_count = cover.num_cubes();
@@ -753,9 +725,12 @@ fn main() -> std::io::Result<()> {
     let after_count = cover.num_cubes();
     println!("After: {} cubes", after_count);
     
-    // Inspect individual cubes
-    for cube in cover.cubes() {
-        println!("Cube: {:?}", cube);
+    // `PlaCover` is a sum type over which label sections the file carried; match to reach the
+    // concrete `Cover` and inspect its cubes.
+    if let PlaCover::InputsOutputsNamed(c) = &cover {
+        for cube in c.cubes() {
+            println!("Cube: {:?}", cube);
+        }
     }
     
     Ok(())
@@ -803,6 +778,6 @@ cargo run --example c_element_example
 The following examples demonstrate new features in v3.1:
 
 - **expression_composition.rs** - Shows how to compose expressions from parsed functions, variables, and minimized results
-- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimization and proper composition of complex functions
+- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimisation and proper composition of complex functions
 - **c_element_example.rs** - C-element (Muller C-element) demonstrating proper asynchronous circuit design with set/reset logic
 

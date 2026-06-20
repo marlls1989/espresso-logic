@@ -173,7 +173,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    Expression: a * b + ~a * c");
     println!("    Cubes:");
 
-    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
+    for (i, cube) in cover.cubes().enumerate() {
+        let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
+        let outputs: Vec<Option<bool>> = cube.outputs().iter().collect();
         print!("      Cube {}: inputs=[", i + 1);
         for input in &inputs {
             match input {

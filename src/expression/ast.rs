@@ -3,6 +3,7 @@
 //! This module contains the AST types and fold operations for boolean expressions.
 
 use super::BoolExpr;
+use crate::Symbol;
 use std::sync::Arc;
 
 /// Node type for expression tree folding
@@ -13,8 +14,9 @@ use std::sync::Arc;
 ///
 /// # Generic Parameter
 ///
-/// - For [`BoolExpr::fold`]: `T` represents the accumulated result from child nodes (bottom-up)
-/// - For [`BoolExpr::fold_with_context`]: `T` is `()` since context flows top-down via closures
+/// - For [`BoolExpr::fold`]: `T` is the accumulated result carried up from child nodes (bottom-up).
+/// - For [`BoolExpr::fold_with_context`]: the `descend` closure sees `ExprNode<()>` (shape only, on
+///   the way down) and the `combine` closure sees `ExprNode<T>` (child results, on the way up).
 ///
 /// # Examples
 ///
@@ -43,7 +45,7 @@ pub enum ExprNode<'a, T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BoolExprAst {
     /// A named variable
-    Variable(Arc<str>),
+    Variable(Symbol),
     /// Logical AND of two expressions
     And(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical OR of two expressions
@@ -54,6 +56,45 @@ pub(crate) enum BoolExprAst {
     Constant(bool),
 }
 
+/// Drop a `BoolExprAst` iteratively so a very deep tree can't overflow the stack.
+///
+/// A factorised AST can be a long `And`/`Or` chain; the compiler-derived recursive drop of its nested
+/// `Arc<BoolExprAst>` children would recurse to the tree's full depth and overflow on such inputs (the
+/// same depth hazard the traversals were rewritten to avoid). Instead, move each node's children onto a
+/// heap work-stack, leaving a shared childless placeholder behind, so every node that actually drops has
+/// only leaf children and cannot recurse further.
+impl Drop for BoolExprAst {
+    fn drop(&mut self) {
+        // One process-wide placeholder `Constant`; replacing a child with a clone of it is a refcount
+        // bump (no allocation), and the static keeps a reference so the placeholder's own drop never
+        // fires through these clones.
+        fn placeholder() -> Arc<BoolExprAst> {
+            static P: std::sync::OnceLock<Arc<BoolExprAst>> = std::sync::OnceLock::new();
+            Arc::clone(P.get_or_init(|| Arc::new(BoolExprAst::Constant(false))))
+        }
+        fn take_children(node: &mut BoolExprAst, stack: &mut Vec<Arc<BoolExprAst>>) {
+            match node {
+                BoolExprAst::Not(a) => stack.push(std::mem::replace(a, placeholder())),
+                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) => {
+                    stack.push(std::mem::replace(a, placeholder()));
+                    stack.push(std::mem::replace(b, placeholder()));
+                }
+                BoolExprAst::Variable(_) | BoolExprAst::Constant(_) => {}
+            }
+        }
+
+        let mut stack: Vec<Arc<BoolExprAst>> = Vec::new();
+        take_children(self, &mut stack);
+        while let Some(child) = stack.pop() {
+            // Only the sole owner dismantles further; a shared child just decrements its refcount. The
+            // unwrapped node's children were just taken, so its drop here sees only placeholders.
+            if let Ok(mut node) = Arc::try_unwrap(child) {
+                take_children(&mut node, &mut stack);
+            }
+        }
+    }
+}
+
 impl BoolExpr {
     /// Get or create the AST representation from the BDD
     ///
@@ -61,49 +102,37 @@ impl BoolExpr {
     ///
     /// Uses factorisation-based reconstruction for beautiful, compact expressions.
     pub(super) fn get_or_create_ast(&self) -> Arc<BoolExprAst> {
-        // Check if we have a cached AST
+        // The single place that reads and populates `ast_cache`.
         if let Some(ast) = self.ast_cache.get() {
             return Arc::clone(ast);
         }
 
-        // Need to reconstruct from BDD using factorisation
-        let ast = self.to_ast_optimised();
+        // Need to reconstruct from BDD using factorisation.
+        let ast = self.to_ast_uncached();
 
-        // Try to store it (may fail if another thread beat us to it, that's fine)
+        // Try to store it (may fail if another thread beat us to it, that's fine).
         let _ = self.ast_cache.set(Arc::clone(&ast));
 
         ast
     }
 
-    /// Convert BDD to optimised AST representation using factorisation
+    /// Reconstruct an optimised AST from the BDD (pure compute, no caching).
     ///
-    /// Extracts cubes from the BDD and applies algebraic factorisation to produce
-    /// a compact, readable expression.
-    ///
-    /// Uses local caching for both DNF and AST.
-    pub(super) fn to_ast_optimised(&self) -> Arc<BoolExprAst> {
-        // Check local AST cache first
-        if let Some(ast) = self.ast_cache.get() {
-            return Arc::clone(ast);
-        }
+    /// Extracts cubes from the BDD and applies algebraic factorisation to produce a compact, readable
+    /// expression. Caching is owned solely by [`get_or_create_ast`](Self::get_or_create_ast), its only
+    /// caller.
+    fn to_ast_uncached(&self) -> Arc<BoolExprAst> {
+        // Get cubes and factorise.
+        let cubes = self.get_or_create_cubes();
 
-        // AST not cached, get DNF and factorise
-        let dnf = self.get_or_create_dnf();
-
-        // Convert DNF cubes to the format expected by factorisation
-        let cube_terms: Vec<(std::collections::BTreeMap<Arc<str>, bool>, bool)> = dnf
-            .cubes()
+        // Convert cubes to the (literals, include) format expected by factorisation
+        let cube_terms: Vec<(std::collections::BTreeMap<Symbol, bool>, bool)> = cubes
             .iter()
-            .map(|cube| (cube.clone(), true))
+            .map(|cube| (super::minterm_literals(cube), true))
             .collect();
 
-        // Use factorisation to build a nice AST
-        let ast = crate::expression::factorization::factorise_cubes_to_ast(cube_terms);
-
-        // Cache locally
-        let _ = self.ast_cache.set(Arc::clone(&ast));
-
-        ast
+        // Use factorisation to build a nice AST (caching is the caller's responsibility).
+        crate::expression::factorization::factorise_cubes_to_ast(cube_terms)
     }
 
     /// Fold the expression tree depth-first from leaves to root
@@ -149,44 +178,41 @@ impl BoolExpr {
         Self::fold_ast(&ast, f)
     }
 
-    /// Fold over an AST (helper for fold_impl)
-    fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
+    /// Fold over an AST bottom-up (helper for `fold_impl`).
+    ///
+    /// The no-top-down-context special case of [`fold_with_context_ast`](Self::fold_with_context_ast):
+    /// a unit context flows down (a trivial `descend`) and `f` is the bottom-up `combine`. Routing
+    /// through the one iterative work-stack keeps the de-recursion logic in a single place. `pub(super)`
+    /// so sibling modules (e.g. factorisation's `ast_to_expr`) can reuse it.
+    pub(super) fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
     where
         F: Fn(ExprNode<T>) -> T,
     {
-        match ast {
-            BoolExprAst::Variable(name) => f(ExprNode::Variable(name)),
-            BoolExprAst::And(left, right) => {
-                let left_result = Self::fold_ast(left, f);
-                let right_result = Self::fold_ast(right, f);
-                f(ExprNode::And(left_result, right_result))
-            }
-            BoolExprAst::Or(left, right) => {
-                let left_result = Self::fold_ast(left, f);
-                let right_result = Self::fold_ast(right, f);
-                f(ExprNode::Or(left_result, right_result))
-            }
-            BoolExprAst::Not(inner) => {
-                let inner_result = Self::fold_ast(inner, f);
-                f(ExprNode::Not(inner_result))
-            }
-            BoolExprAst::Constant(val) => f(ExprNode::Constant(*val)),
-        }
+        Self::fold_with_context_ast(ast, (), &|_node, _ctx| ((), ()), &|node, ()| f(node))
     }
 
-    /// Fold with context parameter passed top-down through the tree
+    /// Fold with a context that flows **top-down** through the tree.
     ///
-    /// Unlike [`fold`], which passes results bottom-up from children to parents,
-    /// this method passes a context parameter top-down from parents to children.
-    /// The function `f` receives the current node type, context from parent,
-    /// and closures to recursively process children with modified context.
+    /// Unlike [`fold`], which only carries results bottom-up from children to parents, this carries
+    /// information in *both* directions, split across two closures:
     ///
-    /// This is useful for operations like applying De Morgan's laws where negations
-    /// need to be pushed down through the tree.
+    /// - **`descend`** runs on the way *down*. Given an internal node's shape ([`ExprNode<()>`] —
+    ///   `And`/`Or`/`Not`) and its own context, it returns the `(left, right)` contexts to hand to
+    ///   that node's children. (For `Not` only the left context is used; it is never called on a
+    ///   leaf.) This is where, e.g., a negation flag gets flipped or a depth counter incremented.
+    /// - **`combine`** runs on the way *back up*. Given a node whose children already hold their
+    ///   folded results ([`ExprNode<T>`]) plus that node's own context, it produces this node's
+    ///   result. This is where the per-node value — and any context-dependent reshaping, like
+    ///   choosing AND vs OR under a De Morgan negation — is decided.
+    ///
+    /// This split is what lets the fold run **iteratively** (explicit work-stack, no recursion), so
+    /// arbitrarily deep expressions can't overflow the call stack. It replaces the older
+    /// continuation-passing form (which handed the closure raw `recurse` callbacks); the same
+    /// problems are expressible, but the top-down and bottom-up halves are now separated.
     ///
     /// # Examples
     ///
-    /// Count depth with context tracking current level:
+    /// Track depth top-down and take the maximum bottom-up:
     ///
     /// ```
     /// use espresso_logic::{BoolExpr, ExprNode};
@@ -195,114 +221,161 @@ impl BoolExpr {
     /// let b = BoolExpr::variable("b");
     /// let expr = a.and(&b).not();
     ///
-    /// // Count depth with context tracking current level
-    /// let max_depth = expr.fold_with_context(0, |node, depth, recurse_left, recurse_right| {
-    ///     match node {
+    /// let max_depth = expr.fold_with_context(
+    ///     0,
+    ///     // descend: every child sits one level deeper than its parent.
+    ///     |_node, &depth| (depth + 1, depth + 1),
+    ///     // combine: leaves report their own depth; internal nodes take the deeper child.
+    ///     |node, depth| match node {
     ///         ExprNode::Variable(_) | ExprNode::Constant(_) => depth,
-    ///         ExprNode::Not(_) => recurse_left(depth + 1),
-    ///         ExprNode::And(_, _) | ExprNode::Or(_, _) => {
-    ///             let left_depth = recurse_left(depth + 1);
-    ///             let right_depth = recurse_right(depth + 1);
-    ///             left_depth.max(right_depth)
-    ///         }
-    ///     }
-    /// });
+    ///         ExprNode::Not(inner) => inner,
+    ///         ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
+    ///     },
+    /// );
+    /// // The fold runs over the canonical (BDD-reconstructed) tree, so the exact depth depends on
+    /// // that form; for a two-variable expression it is at least one level deep.
+    /// assert!(max_depth >= 1);
     /// ```
     ///
-    /// Apply De Morgan's laws to push negations down:
+    /// Push negations down with De Morgan's laws: `descend` flips the flag through `Not`, and
+    /// `combine` turns an `And` under negation into an `Or` (and vice versa):
     ///
     /// ```
-    /// use espresso_logic::{BoolExpr, ExprNode};
+    /// use espresso_logic::{Symbol, BoolExpr, ExprNode};
     /// use std::collections::BTreeMap;
-    /// use std::sync::Arc;
     ///
-    /// fn to_dnf_naive(expr: &BoolExpr) -> Vec<BTreeMap<Arc<str>, bool>> {
-    ///     expr.fold_with_context(false, |node, negate, recurse_left, recurse_right| {
-    ///         match node {
+    /// // Lower an expression to a (very naive) DNF: a list of cubes, each a map of literal->polarity.
+    /// fn to_dnf_naive(expr: &BoolExpr) -> Vec<BTreeMap<Symbol, bool>> {
+    ///     expr.fold_with_context(
+    ///         false, // root context: not negated
+    ///         // descend: Not flips the negation for its child; And/Or pass it straight through
+    ///         // (De Morgan negates the operands, the reshaping itself happens in `combine`).
+    ///         |node, &negate| match node {
+    ///             ExprNode::Not(()) => (!negate, !negate),
+    ///             _ => (negate, negate),
+    ///         },
+    ///         // combine: build cubes bottom-up, choosing the operator by the negation flag.
+    ///         |node, negate| match node {
     ///             ExprNode::Variable(name) => {
     ///                 let mut cube = BTreeMap::new();
-    ///                 cube.insert(Arc::from(name), !negate);
+    ///                 cube.insert(Symbol::from(name), !negate);
     ///                 vec![cube]
     ///             }
-    ///             ExprNode::Not(()) => recurse_left(!negate), // Flip negation
-    ///             ExprNode::And((), ()) if negate => {
-    ///                 // De Morgan: ~(A * B) = ~A + ~B
-    ///                 let mut result = recurse_left(true);
-    ///                 result.extend(recurse_right(true));
-    ///                 result
+    ///             ExprNode::Constant(_) => vec![],
+    ///             ExprNode::Not(inner) => inner, // flag was already flipped on the way down
+    ///             // OR (or AND under negation): union the cube lists.
+    ///             ExprNode::Or(mut l, r) | ExprNode::And(mut l, r) if negate => {
+    ///                 l.extend(r);
+    ///                 l
     ///             }
-    ///             ExprNode::Or((), ()) if negate => {
-    ///                 // De Morgan: ~(A + B) = ~A * ~B (cross product)
-    ///                 vec![] // Simplified for example
+    ///             // AND (or OR under negation): cross-product the cube lists.
+    ///             ExprNode::And(l, r) | ExprNode::Or(l, r) => {
+    ///                 let mut out = Vec::new();
+    ///                 for lc in &l {
+    ///                     for rc in &r {
+    ///                         let mut merged = lc.clone();
+    ///                         merged.extend(rc.clone());
+    ///                         out.push(merged);
+    ///                     }
+    ///                 }
+    ///                 out
     ///             }
-    ///             _ => vec![] // Other cases omitted
-    ///         }
-    ///     })
+    ///         },
+    ///     )
     /// }
+    ///
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// // ~(a*b) is satisfiable, so its DNF has at least one cube. (The exact cube list depends on
+    /// // the canonical form the fold walks, so we only check it is non-empty here.)
+    /// let dnf = to_dnf_naive(&a.and(&b).not());
+    /// assert!(!dnf.is_empty());
     /// ```
     ///
     /// [`fold`]: BoolExpr::fold
-    pub fn fold_with_context<C, T, F>(&self, context: C, f: F) -> T
+    /// [`ExprNode<()>`]: ExprNode
+    /// [`ExprNode<T>`]: ExprNode
+    pub fn fold_with_context<C, T, D, G>(&self, root_context: C, descend: D, combine: G) -> T
     where
-        C: Copy,
-        F: Fn(
-                ExprNode<()>,
-                C,
-                &dyn Fn(C) -> T, // recurse_left/inner
-                &dyn Fn(C) -> T, // recurse_right
-            ) -> T
-            + Copy,
-    {
-        self.fold_with_context_impl(context, &f)
-    }
-
-    fn fold_with_context_impl<C, T, F>(&self, context: C, f: &F) -> T
-    where
-        C: Copy,
-        F: Fn(ExprNode<()>, C, &dyn Fn(C) -> T, &dyn Fn(C) -> T) -> T,
+        D: Fn(ExprNode<()>, &C) -> (C, C),
+        G: Fn(ExprNode<T>, C) -> T,
     {
         let ast = self.get_or_create_ast();
-        Self::fold_with_context_ast(&ast, context, f)
+        Self::fold_with_context_ast(&ast, root_context, &descend, &combine)
     }
 
-    /// Fold with context over an AST (helper for fold_with_context_impl)
-    fn fold_with_context_ast<C, T, F>(ast: &BoolExprAst, context: C, f: &F) -> T
+    /// Iterative top-down/bottom-up fold over an AST (helper for [`fold_with_context`]).
+    ///
+    /// Walks the tree on an explicit work-stack so depth is bounded by heap, not the call stack.
+    /// Each node is `Enter`ed once carrying its context: leaves combine immediately, internal nodes
+    /// call `descend` to derive their children's contexts, push an `Exit` marker holding their own
+    /// context, then push their children. The `Exit` marker fires `combine` once the children's
+    /// results sit on the `results` stack. Both stacks are O(AST height) deep.
+    ///
+    /// [`fold_with_context`]: BoolExpr::fold_with_context
+    fn fold_with_context_ast<C, T, D, G>(
+        ast: &BoolExprAst,
+        root_context: C,
+        descend: &D,
+        combine: &G,
+    ) -> T
     where
-        C: Copy,
-        F: Fn(ExprNode<()>, C, &dyn Fn(C) -> T, &dyn Fn(C) -> T) -> T,
+        D: Fn(ExprNode<()>, &C) -> (C, C),
+        G: Fn(ExprNode<T>, C) -> T,
     {
-        match ast {
-            BoolExprAst::Variable(name) => f(
-                ExprNode::Variable(name),
-                context,
-                &|_| unreachable!(),
-                &|_| unreachable!(),
-            ),
-            BoolExprAst::Constant(val) => f(
-                ExprNode::Constant(*val),
-                context,
-                &|_| unreachable!(),
-                &|_| unreachable!(),
-            ),
-            BoolExprAst::Not(inner) => {
-                let recurse = |ctx: C| Self::fold_with_context_ast(inner, ctx, f);
-                f(ExprNode::Not(()), context, &recurse, &|_| unreachable!())
-            }
-            BoolExprAst::And(left, right) => {
-                let recurse_left = |ctx: C| Self::fold_with_context_ast(left, ctx, f);
-                let recurse_right = |ctx: C| Self::fold_with_context_ast(right, ctx, f);
-                f(
-                    ExprNode::And((), ()),
-                    context,
-                    &recurse_left,
-                    &recurse_right,
-                )
-            }
-            BoolExprAst::Or(left, right) => {
-                let recurse_left = |ctx: C| Self::fold_with_context_ast(left, ctx, f);
-                let recurse_right = |ctx: C| Self::fold_with_context_ast(right, ctx, f);
-                f(ExprNode::Or((), ()), context, &recurse_left, &recurse_right)
+        enum Work<'a, C> {
+            Enter(&'a BoolExprAst, C),
+            ExitAnd(C),
+            ExitOr(C),
+            ExitNot(C),
+        }
+        let mut work = vec![Work::Enter(ast, root_context)];
+        let mut results: Vec<T> = Vec::new();
+        while let Some(frame) = work.pop() {
+            match frame {
+                Work::Enter(node, ctx) => match node {
+                    BoolExprAst::Variable(name) => {
+                        results.push(combine(ExprNode::Variable(name), ctx));
+                    }
+                    BoolExprAst::Constant(val) => {
+                        results.push(combine(ExprNode::Constant(*val), ctx));
+                    }
+                    BoolExprAst::Not(inner) => {
+                        let (child_ctx, _) = descend(ExprNode::Not(()), &ctx);
+                        work.push(Work::ExitNot(ctx));
+                        work.push(Work::Enter(inner, child_ctx));
+                    }
+                    // Push Exit, then children so they pop (and produce results) first; left pushed
+                    // last so it pops first → results end up [.., left, right].
+                    BoolExprAst::And(left, right) => {
+                        let (left_ctx, right_ctx) = descend(ExprNode::And((), ()), &ctx);
+                        work.push(Work::ExitAnd(ctx));
+                        work.push(Work::Enter(right, right_ctx));
+                        work.push(Work::Enter(left, left_ctx));
+                    }
+                    BoolExprAst::Or(left, right) => {
+                        let (left_ctx, right_ctx) = descend(ExprNode::Or((), ()), &ctx);
+                        work.push(Work::ExitOr(ctx));
+                        work.push(Work::Enter(right, right_ctx));
+                        work.push(Work::Enter(left, left_ctx));
+                    }
+                },
+                Work::ExitAnd(ctx) => {
+                    let right = results.pop().expect("And right result");
+                    let left = results.pop().expect("And left result");
+                    results.push(combine(ExprNode::And(left, right), ctx));
+                }
+                Work::ExitOr(ctx) => {
+                    let right = results.pop().expect("Or right result");
+                    let left = results.pop().expect("Or left result");
+                    results.push(combine(ExprNode::Or(left, right), ctx));
+                }
+                Work::ExitNot(ctx) => {
+                    let inner = results.pop().expect("Not inner result");
+                    results.push(combine(ExprNode::Not(inner), ctx));
+                }
             }
         }
+        results.pop().expect("fold_with_context produced a result")
     }
 }

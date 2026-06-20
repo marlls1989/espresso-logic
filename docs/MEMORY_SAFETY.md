@@ -22,10 +22,13 @@ pset_family sf_append(A, B);             // Appends B to A, FREES B
 ```rust
 pub struct EspressoCover {
     ptr: sys::pset_family,           // Raw C pointer
-    _espresso: Rc<Espresso>,         // Keeps Espresso alive
-    _marker: PhantomData<*mut ()>,   // !Send + !Sync marker
+    _espresso: Rc<InnerEspresso>,    // Keeps Espresso alive; also makes the type !Send + !Sync
 }
 ```
+
+The `Rc<InnerEspresso>` field both keeps the thread's Espresso instance alive and — because `Rc`
+is neither `Send` nor `Sync` — makes `EspressoCover` `!Send + !Sync`, pinning it to its thread. No
+separate `PhantomData` marker is needed.
 
 **Memory Rules:**
 - **Drop**: Calls `sf_free(self.ptr)` if ptr is not null
@@ -36,12 +39,15 @@ pub struct EspressoCover {
 
 ```rust
 pub fn minimize(
-    self: &Rc<Self>,
-    f: EspressoCover,
-    d: Option<EspressoCover>,
-    r: Option<EspressoCover>,
+    &self,
+    f: &EspressoCover,
+    d: Option<&EspressoCover>,
+    r: Option<&EspressoCover>,
 ) -> (EspressoCover, EspressoCover, EspressoCover)
 ```
+
+The inputs are **borrowed**; the cloning below happens internally so the caller's covers are left
+intact.
 
 **Memory Flow:**
 
@@ -80,9 +86,9 @@ pub fn minimize(
 4. **Returns**:
    ```rust
    (
-       EspressoCover::from_raw(f_result, self),  // Minimized F
-       EspressoCover::from_raw(d_ptr, self),     // D (same pointer)
-       EspressoCover::from_raw(r_ptr, self),     // R (same pointer)
+       EspressoCover::from_raw(f_result, espresso),  // Minimised F
+       EspressoCover::from_raw(d_ptr, espresso),     // D (same pointer)
+       EspressoCover::from_raw(r_ptr, espresso),     // R (same pointer)
    )
    ```
    - All wrapped in `EspressoCover`
@@ -114,14 +120,14 @@ The original ptr is transferred to C or re-wrapped elsewhere.
 
 ### ✅ No Use-After-Free
 
-- `EspressoCover` holds `Rc<Espresso>`, keeping Espresso alive
+- `EspressoCover` holds `Rc<InnerEspresso>`, keeping Espresso alive
 - Espresso can't be dropped while covers exist
 - Global C state (cube structure) remains valid
 
 ### ⚠️ Thread Safety
 
 - Espresso uses thread-local storage for global state
-- `EspressoCover` is `!Send + !Sync` (marked with `PhantomData<*mut ()>`)
+- `EspressoCover` is `!Send + !Sync` (via its non-`Send`/`Sync` `Rc<InnerEspresso>` field)
 - Covers cannot be shared between threads
 - Each thread has independent C state
 
@@ -152,16 +158,15 @@ heaptrack cargo test --test test_memory_safety
 
 ### Issue 1: Global C State
 
-The C code uses thread-local global variables (`cube`, `cdata`, etc.). These are cleaned up in `Espresso::drop()`:
+The C code uses thread-local global variables (`cube`, `cdata`, etc.). These are cleaned up when the
+last `Rc<InnerEspresso>` is dropped — `Drop` lives on `InnerEspresso` (not `Espresso`, which is just a
+ref-counted handle) and delegates to the shared `teardown_cube_state()` helper:
 
 ```rust
-impl Drop for Espresso {
+impl Drop for InnerEspresso {
     fn drop(&mut self) {
         if self.initialized {
-            unsafe {
-                sys::setdown_cube();  // Frees cube.*, cdata.*
-                // ... free part_size ...
-            }
+            unsafe { teardown_cube_state(); }  // setdown_cube() + free/null part_size
         }
     }
 }
@@ -169,7 +174,7 @@ impl Drop for Espresso {
 
 This is safe because:
 - Each thread has its own C globals
-- `EspressoCover` holds `Rc<Espresso>`
+- `EspressoCover` holds `Rc<InnerEspresso>`
 - C globals can't be freed while covers exist
 
 ## Conclusion

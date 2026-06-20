@@ -8,6 +8,7 @@ use std::sync::Arc;
 ///
 /// These errors occur when reading or parsing PLA files with invalid format.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PLAError {
     /// PLA file is missing the .i (inputs) directive
     MissingInputDirective,
@@ -20,6 +21,11 @@ pub enum PLAError {
     },
     /// Invalid value in .o directive
     InvalidOutputDirective {
+        /// The invalid value string
+        value: Arc<str>,
+    },
+    /// Invalid (unrecognised or missing) value in .type directive
+    InvalidTypeDirective {
         /// The invalid value string
         value: Arc<str>,
     },
@@ -76,6 +82,9 @@ impl fmt::Display for PLAError {
             PLAError::InvalidOutputDirective { value } => {
                 write!(f, "Invalid .o directive value: '{}'", value)
             }
+            PLAError::InvalidTypeDirective { value } => {
+                write!(f, "Invalid .type directive value: '{}'", value)
+            }
             PLAError::InvalidInputCharacter { character, position } => {
                 write!(f, "Invalid input character '{}' at position {}", character, position)
             }
@@ -116,6 +125,7 @@ impl From<PLAError> for io::Error {
 ///
 /// This error type is returned by `Cover::from_pla_*` methods.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PLAReadError {
     /// PLA format error
     PLA(PLAError),
@@ -168,6 +178,7 @@ impl From<PLAReadError> for io::Error {
 ///
 /// This error type is returned by `Cover::to_pla_*` methods.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PLAWriteError {
     /// IO error during writing
     Io(io::Error),

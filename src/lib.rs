@@ -24,6 +24,9 @@
 //!
 //! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, and the `expr!` macro
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
+//! - **[`Cube`]** / **[`Minterm`]** - A `Cover`'s product terms: a [`Cube`] pairs two
+//!   [`Minterm`]s (a [`Minterm`] is a label-carrying row of tri-state values, `1`/`0`/`-`).
+//!   [`Cube::inputs`] and [`Cube::outputs`] return `&Minterm`.
 //!
 //! **Benefits:**
 //! - ✅ Automatic memory management
@@ -137,22 +140,22 @@
 //! Build covers by manually adding cubes (dimensions grow automatically):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Create a cover (dimensions grow automatically)
-//! let mut cover = Cover::new(CoverType::F);
+//! let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 //!
 //! // Build the ON-set (truth table)
-//! cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);  // 01 -> 1
-//! cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);  // 10 -> 1
+//! cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
+//! cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));  // 10 -> 1
 //!
 //! // Minimize (returns new instance)
 //! cover = cover.minimize()?;
 //!
 //! // Iterate over minimized cubes
-//! for (inputs, outputs) in cover.cubes_iter() {
-//!     println!("Cube: {:?} -> {:?}", inputs, outputs);
+//! for cube in cover.cubes() {
+//!     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
 //! }
 //! # Ok(())
 //! # }
@@ -163,7 +166,7 @@
 //! Covers can be read from and written to PLA format files (compatible with original Espresso):
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable, PLAReader, PLAWriter};
+//! use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 //! # use std::io::Write;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -171,8 +174,8 @@
 //! # temp.write_all(b".i 2\n.o 1\n.p 1\n01 1\n.e\n")?;
 //! # temp.flush()?;
 //! # let input_path = temp.path();
-//! // Read from PLA file (PLAReader trait)
-//! let mut cover = Cover::from_pla_file(input_path)?;
+//! // Read from a PLA file into a `PlaCover` (the variant reflects which label sections were present)
+//! let mut cover = PlaCover::<Symbol>::from_pla_file(input_path)?;
 //!
 //! // Minimize
 //! cover = cover.minimize()?;
@@ -189,7 +192,7 @@
 //!
 //! // Similarly, you can read from any BufRead implementation
 //! let reader = BufReader::new(buffer.as_slice());
-//! let cover2 = Cover::from_pla_reader(reader)?;
+//! let cover2 = PlaCover::<Symbol>::from_pla_reader(reader)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -204,17 +207,17 @@
 //! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // F type (ON-set only)
-//! let mut f_cover = Cover::new(CoverType::F);
-//! f_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);
+//! let mut f_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+//! f_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));
 //!
 //! // FD type (ON-set + Don't-cares)
-//! let mut fd_cover = Cover::new(CoverType::FD);
-//! fd_cover.add_cube(&[Some(true), Some(true)], &[Some(true)]);  // ON
-//! fd_cover.add_cube(&[Some(false), Some(false)], &[None]);      // Don't-care
+//! let mut fd_cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FD);
+//! fd_cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));  // ON
+//! fd_cover.push(Cube::anonymous(&[Some(false), Some(false)], &[true], CubeType::D));  // Don't-care
 //! # Ok(())
 //! # }
 //! ```
@@ -228,16 +231,16 @@
 //! `.minimize()` is called, the thread-local Espresso instance is created for that thread.
 //!
 //! ```
-//! use espresso_logic::{Cover, CoverType, Minimizable};
+//! use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 //! use std::thread;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! // Covers can be freely moved between threads
 //! let handles: Vec<_> = (0..4).map(|_| {
 //!     thread::spawn(move || {
-//!         let mut cover = Cover::new(CoverType::F);
-//!         cover.add_cube(&[Some(false), Some(true)], &[Some(true)]);
-//!         cover.add_cube(&[Some(true), Some(false)], &[Some(true)]);
+//!         let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+//!         cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
+//!         cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
 //!         
 //!         // Creates thread-local Espresso instance on first minimize()
 //!         cover = cover.minimize()?;
@@ -264,7 +267,7 @@
 //! For maximum performance and fine-grained control, use the [`espresso`] module directly:
 //!
 //! ```
-//! use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+//! use espresso_logic::espresso::{Espresso, EspressoCover};
 //! use espresso_logic::EspressoConfig;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -283,9 +286,9 @@
 //! // Minimize and get all three covers (F, D, R)
 //! let (f_result, d_result, r_result) = cover.minimize(None, None);
 //!
-//! println!("ON-set: {} cubes", f_result.to_cubes(2, 1, CubeType::F).len());
-//! println!("Don't-care: {} cubes", d_result.to_cubes(2, 1, CubeType::F).len());
-//! println!("OFF-set: {} cubes", r_result.to_cubes(2, 1, CubeType::F).len());
+//! println!("ON-set: {} cubes", f_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
+//! println!("Don't-care: {} cubes", d_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
+//! println!("OFF-set: {} cubes", r_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
 //! # Ok(())
 //! # }
 //! ```
@@ -329,6 +332,13 @@ pub mod cover;
 pub mod error;
 pub mod espresso;
 pub mod expression;
+pub mod symbol;
+/// Raw bindgen-generated FFI bindings to the vendored C Espresso sources.
+///
+/// Hidden from the documented public surface: these are unsafe, ABI-level types whose shape is dictated
+/// by bindgen and the C headers, not part of the stable API. Use the safe [`espresso`] wrappers
+/// instead. Kept reachable only for the low-level wrapper layer.
+#[doc(hidden)]
 pub mod sys;
 
 // Documentation-only module
@@ -336,12 +346,14 @@ pub mod sys;
 pub mod examples;
 
 // Re-export high-level public API
-pub use cover::pla::{PLAReader, PLAWriter};
-pub use cover::{Cover, CoverType, Cube, CubeType, Dnf, Minimizable};
+pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
+pub use cover::{
+    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, ReconcilableLabel,
+    StringLabel, Symbols,
+};
 pub use espresso::EspressoConfig;
-#[allow(deprecated)]
-pub use expression::Bdd;
 pub use expression::{BoolExpr, ExprNode};
+pub use symbol::Symbol;
 
 // Re-export procedural macro
 pub use espresso_logic_macros::expr;

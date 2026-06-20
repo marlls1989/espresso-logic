@@ -7,7 +7,7 @@
 
 All global variables in the Espresso C library have been converted to use C11 thread-local storage (`_Thread_local`), making the library inherently thread-safe at the C level. Each thread gets its own independent copy of all global state.
 
-This implementation is used directly by the library since version 2.6.2 for all minimization operations.
+This implementation is used directly by the library since version 2.6.2 for all minimisation operations.
 
 ## Implementation Status
 
@@ -29,12 +29,12 @@ This implementation is used directly by the library since version 2.6.2 for all 
    - Rust FFI uses these functions instead of accessing globals directly
 
 4. **Comprehensive test suite created and passing**
-   - 8 multi-threaded tests in `src/unsafe.rs`
-   - Tests cover: concurrent access, state isolation, config isolation, stress testing (640 operations), rapid creation/destruction, long-running threads (400 operations), memory cleanup, different problem sizes
+   - Multi-threaded tests in `src/espresso/mod.rs`
+   - Tests cover: concurrent access, state isolation, config isolation, stress testing, rapid creation/destruction, long-running threads, memory cleanup, different problem sizes
    - **All tests pass successfully**
 
 5. **Rust FFI layer updated**
-   - `src/unsafe.rs` uses accessor functions: `(*sys::get_cube()).size` instead of `sys::cube.size`
+   - `src/espresso/mod.rs` uses accessor functions: `(*sys::get_cube()).size` instead of `sys::cube.size`
    - All configuration set via `sys::set_*()` functions
    - Proper thread-safe access to thread-local variables
 
@@ -57,7 +57,7 @@ This implementation is used directly by the library since version 2.6.2 for all 
    - Library now uses direct C calls with thread-local storage
    - All tests pass with concurrent execution
    - ~10-20ms performance improvement per operation
-   - Eliminated serialization overhead
+   - Eliminated serialisation overhead
 
 2. **Ongoing monitoring**:
    - Long-duration tests continue to validate memory stability
@@ -175,7 +175,7 @@ All global and static variables converted to `_Thread_local`:
 ### Rust Files Modified (2 files)
 
 1. `build.rs` - Added `-std=c11` compiler flag, configured accessor function bindings
-2. `src/unsafe.rs` - Updated to use accessor functions, added comprehensive multi-threaded test suite (387 lines)
+2. `src/espresso/mod.rs` - Updated to use accessor functions, added comprehensive multi-threaded test suite
 
 ## Benefits of Thread-Local Approach
 
@@ -233,19 +233,14 @@ Each thread calling `get_cube()` gets a pointer to its own independent `cube` st
 
 ## Test Results
 
-✅ **All 102 tests pass:**
-- 8 thread-local multi-threaded tests in `src/unsafe.rs`
-- 25 library unit tests  
-- 16 boolean expression tests
-- 3 cover builder tests
-- 4 integration tests
-- 5 process isolation tests
-- 2 programmatic tests
-- 7 safe API tests
-- 12 doc tests
-- 20 boolean expression integration tests
+✅ **The full suite passes**, covering thread-local multi-threaded tests in
+`src/espresso/mod.rs` alongside library unit tests, boolean expression tests,
+cover builder tests, integration tests, safe API tests, doctests, and boolean
+expression integration tests. (The historical per-category counts that once
+appeared here are omitted, as they drift with the suite; run `cargo test` for
+the current totals.)
 
-**Stress test highlights:**
+**Stress test highlights (illustrative figures from earlier validation runs):**
 - 32 threads × 20 operations = 640 concurrent operations - PASSED
 - 4 threads × 100 operations = 400 long-running operations - PASSED
 - 4 threads × 100 covers = 400 cover create/destroy cycles - PASSED

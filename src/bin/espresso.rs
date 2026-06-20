@@ -3,18 +3,21 @@
 //! A clean Rust implementation using the safe Cover API with process isolation
 
 use clap::{Parser, ValueEnum};
-use espresso_logic::{Cover, CoverType, EspressoConfig, Minimizable, PLAReader, PLAWriter};
+use espresso_logic::{CoverType, EspressoConfig, Minimizable, PLAWriter, PlaCover, Symbol};
 use std::path::PathBuf;
 use std::process;
 
-const VERSION: &str =
-    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper 3.0.0)";
+const VERSION: &str = concat!(
+    "UC Berkeley, Espresso Version #2.3, Release date 01/31/88 (Rust wrapper ",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
 #[derive(Debug, Clone, PartialEq, ValueEnum)]
 enum Command {
-    /// Run the Espresso heuristic minimization algorithm (default)
+    /// Run the Espresso heuristic minimisation algorithm (default)
     Espresso,
-    /// Exact minimization (note: uses same algorithm for now)
+    /// Exact minimisation (guarantees a minimal result; slower on large inputs)
     Exact,
     /// Echo the PLA without modification
     Echo,
@@ -90,7 +93,7 @@ struct Args {
     #[arg(long = "fast")]
     single_expand: bool,
 
-    /// Use exact minimization (slower, but guarantees minimal result)
+    /// Use exact minimisation (slower, but guarantees minimal result)
     #[arg(short = 'e', long = "exact")]
     exact: bool,
 }
@@ -98,13 +101,21 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
+    // `-e/--exact` is shorthand for the exact algorithm — equivalent to `-D exact`. (Without this it
+    // would only toggle single-expand and still run the heuristic path.)
+    let command = if args.exact && args.command == Command::Espresso {
+        Command::Exact
+    } else {
+        args.command.clone()
+    };
+
     if args.summary {
         eprintln!("{}", VERSION);
         eprintln!();
     }
 
     // Read the input PLA using Cover API
-    let mut cover = match Cover::from_pla_file(&args.input) {
+    let mut cover = match PlaCover::<Symbol>::from_pla_file(&args.input) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading PLA file '{}': {}", args.input.display(), e);
@@ -130,12 +141,12 @@ fn main() {
         verbose_debug: args.verbose_debug,
         trace: args.trace,
         summary: args.summary,
-        single_expand: args.single_expand || args.command == Command::Exact || args.exact,
+        single_expand: args.single_expand || command == Command::Exact,
         ..Default::default()
     };
 
     // Execute the command using the Cover trait
-    match args.command {
+    match command {
         Command::Espresso => {
             if args.summary {
                 eprintln!("Running Espresso minimization (process-isolated)...");

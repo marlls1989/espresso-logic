@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the new `write_pla` method that writes
 //! directly to any `Write` implementation for efficient serialization.
 
-use espresso_logic::{Cover, PLAReader, PLAWriter};
+use espresso_logic::{PLAWriter, PlaCover, Symbol};
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 .e
 "#;
 
-    let cover = Cover::from_pla_string(pla_content)?;
+    let cover = PlaCover::<Symbol>::from_pla_string(pla_content)?;
 
     println!("Original cover:");
     println!("  Inputs:  {}", cover.num_inputs());

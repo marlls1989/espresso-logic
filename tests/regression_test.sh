@@ -126,6 +126,11 @@ if [ -d "tlex" ]; then
 	for file in tlex/*.pla; do
 		if [ -f "$file" ]; then
 			basename=$(basename "$file" .pla)
+			# The reference C binary crashes/times out on these inputs, so it cannot serve as
+			# an oracle — exclude them rather than counting perpetual skips.
+			case "$basename" in
+			o64) continue ;;
+			esac
 			run_test "$file" "pla_${basename}" ""
 		fi
 	done
@@ -139,6 +144,10 @@ if [ -d "tlex" ]; then
 	for file in tlex/*.pla; do
 		if [ -f "$file" ]; then
 			basename=$(basename "$file" .pla)
+			# Excluded: the reference C binary crashes/times out on these inputs (no oracle).
+			case "$basename" in
+			o64) continue ;;
+			esac
 			run_test "$file" "pla_${basename}_f" "-o f"
 			run_test "$file" "pla_${basename}_fd" "-o fd"
 			run_test "$file" "pla_${basename}_fr" "-o fr"
@@ -146,6 +155,29 @@ if [ -d "tlex" ]; then
 		fi
 	done
 fi
+
+# Test exact minimization (-Dexact) against the C oracle.
+#
+# Exact minimisation is exponential, so this is restricted to a curated set of small inputs that
+# both binaries complete in well under a second; larger PLAs (ex5 and up) time out under exact mode
+# for *both* C and Rust and so cannot serve as an oracle. Rust's `-Dexact` calls the same vendored C
+# exact algorithm via FFI, so the output is expected byte-identical — this loop guards that the CLI
+# wiring and PLA writer reproduce the C exact path exactly, across every output format.
+echo ""
+echo "Testing exact minimization (-Dexact, small inputs only)..."
+echo "─────────────────────────────────────────────────────────────────────"
+
+for file in pla/mytest pla/mytest2 pla/mytest3 pla/newtpla1 pla/newapla2 pla/newbyte \
+	pla/newill pla/newtag pla/newtpla2 pla/newapla1 pla/dc1 pla/newcwp pla/wim pla/check \
+	tlex/con1.pla tlex/xor5.pla tlex/rd53.pla tlex/squar5.pla tlex/inc.pla tlex/misex1.pla; do
+	if [ -f "$file" ]; then
+		basename=$(basename "$file" .pla)
+		run_test "$file" "exact_${basename}" "-Dexact"
+		run_test "$file" "exact_${basename}_fd" "-Dexact -o fd"
+		run_test "$file" "exact_${basename}_fr" "-Dexact -o fr"
+		run_test "$file" "exact_${basename}_fdr" "-Dexact -o fdr"
+	fi
+done
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════════════╗"

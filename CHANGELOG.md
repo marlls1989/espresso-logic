@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-06-19
+
+A breaking release with two themes: unifying the crate's four parallel product-term representations
+onto a single label-carrying `Minterm` type, and reworking the cover layer around generic, first-class
+variable **label types** (with no privileged default). It also modernises the internals (write-once
+data returned as `Arc<[T]>`, iterator pipelines, recursion replaced by explicit work-stacks) and
+tightens the public API.
+
+### Breaking
+
+Product-term representation:
+
+- **Removed `Dnf`.** A disjunctive normal form is now just a single-output `Cover`; the
+  `BTreeMap<Arc<str>, bool>` cube representation and the `BoolExpr ↔ Dnf` conversions are gone.
+  Minimise a `BoolExpr` directly (`expr.minimize()`), or go through `Cover`.
+- **Removed `Cover::cubes_iter()` and the `CubeData` tuple alias.** Use `Cover::cubes()`, which
+  yields `&Cube`; read its set with `Cube::cube_type()`.
+- **`Cube::inputs()` / `Cube::outputs()` now return `&Minterm`** (were `&[Option<bool>]` and
+  `&[bool]`). Read individual values with `Minterm::value_at(i)` / `value_of(name)` or `iter()`.
+- **`Cover::add_expr` now takes `&BoolExpr`** instead of a generic `&T: Into<Dnf>`.
+- **`Minimizable` is implemented concretely for `Cover` and `BoolExpr`** instead of via a blanket
+  `impl<T> where &T: Into<Dnf>, T: From<Dnf>`.
+- **`Minimizable`'s required methods are now `try_minimize_with_config` and
+  `try_minimize_exact_with_config`** (the fallible primitives); the panicking `minimize_with_config` /
+  `minimize_exact_with_config` are now default methods layered on top. Callers are unaffected;
+  downstream *implementors* of the trait must rename their two methods.
+- **`BoolExpr::to_cubes()` now returns `Arc<[Minterm]>`** (was `Vec<BTreeMap<Arc<str>, bool>>`).
+- **`EspressoCover::to_cubes()` now returns `Arc<[Cube]>`** (was `Vec<Cube>`).
+- **Removed the `LabelManager` type;** `Cover` owns its canonical input/output headers directly.
+
+Label types & cover construction:
+
+- **`Symbol` is now the variable-name type** — a small-string-optimised, interned string — replacing
+  `Arc<str>` as the default name representation.
+- **`Cover`, `Cube`, `Minterm`, `Symbols` are generic over their label type(s) with no default type
+  parameter.** `Cover<I, O>` and `Cube<I, O>` carry **separate input/output label types**, so `Symbol`
+  is no more privileged than `String`/`Arc<str>`/`u32`. `Cover::new(..)` consequently needs a type
+  annotation, e.g. `Cover::<Symbol, Symbol>::new(..)`.
+- **Positional covers use the zero-sized `Anonymous` label** instead of `()`; build them with
+  `Cover::<Anonymous, Anonymous>::anonymous(..)`.
+- **Removed `Cover::add_cube(...)`.** Construct cubes explicitly with
+  `Cube::anonymous(inputs, outputs, CubeType)` + `Cover::push`, or `Cover::from_cubes`.
+- **`Cover::relabel` / `relabel_inputs` / `relabel_outputs` now return `Result<_, ArityMismatch>`**
+  instead of panicking on a wrong-arity table. `anonymize()` stays infallible.
+- **PLA reading now yields a `PlaCover<S>`** — a sum type whose variant records which `.ilb`/`.ob`
+  label sections the file carried — via `PlaCover::from_pla_string` / `from_pla_file`. The old
+  `Cover::from_pla_*` methods and the `PLAReader` trait are removed; writing still goes through
+  `PLAWriter`.
+- **`BoolExpr::fold_with_context` redesigned** from continuation-passing callbacks to a
+  `(descend, combine)` pair (top-down context, bottom-up results), enabling an iterative walk.
+- **`BoolExpr::collect_variables()` returns `BTreeSet<Symbol>`** (was `BTreeSet<Arc<str>>`).
+- **All public error enums are `#[non_exhaustive]`;** `INLINE_CAP` is no longer public.
+- **Removed the deprecated `Bdd` type alias and the `to_bdd` / `from_expr` / `to_expr` methods**
+  (all no-op `clone()` shims). A `BoolExpr` is already a BDD; use it directly (and `clone()` where a
+  copy is wanted).
+- **Minimum supported Rust version is now 1.82.**
+
+### Added
+
+- **`Symbol`** (`src/symbol.rs`): a compact, interned variable-name type — inline for short names,
+  pooled and shared for longer ones.
+- **`Minterm`** (`src/cover/minterm.rs`): a new label-carrying row of tri-state values
+  (`Some(true)`/`Some(false)`/`None`), bit-packed two bits per variable — the single representation
+  that replaces the crate's former four parallel product-term types. Carries its variable header so
+  comparisons align by variable identity, with a pointer-equality fast path for same-cover cubes.
+  Set operations `is_subset_of` / `is_superset_of` / `is_disjoint_with`, plus `Ord`/`Eq`/`Hash`.
+- **`Cube` and `CubeType` are public**, each cube being a pair of `Minterm`s plus an F/D/R set tag.
+- **`Anonymous` label** and the sealed **`Label` / `StringLabel` / `PlaLabel` / `ReconcilableLabel`**
+  trait family. Label-presence is **type-level**: a label is a *name* iff it is `Display`, so a
+  `Cover<Anonymous, _>` cannot emit input names by construction.
+- **`PlaCover<S>` PLA reader** with variants `InputsOutputsNamed` / `InputsNamed` / `OutputsNamed` /
+  `Positional`.
+- **`Cover::extend` and `Cover::merge`** for combining covers (append vs identity-overlay of outputs),
+  renaming output-column collisions via `ReconcilableLabel`.
+- **Non-panicking minimisation:** `Minimizable::try_minimize` / `try_minimize_exact` (and their
+  `_with_config` forms) return `MinimizationError::Instance` on a cross-dimension Espresso instance
+  conflict instead of panicking. The panicking `minimize*` methods now panic *only* on that conflict.
+
+### Changed
+
+- Write-once collections are returned as `Arc<[T]>` rather than `Vec<T>`; internal construction uses
+  iterator pipelines instead of intermediate `Vec` buffers.
+- **Recursive BDD/AST traversals are now explicit work-stack iteration** (the BDD `ite` apply, cube
+  extraction, evaluation, the AST folds, and factorisation), removing the call-stack depth ceiling on
+  deep inputs while preserving memoisation.
+- **Malformed PLA input now errors instead of being silently skipped** (e.g. dimension mismatches,
+  missing dimensions, and an unrecognised `.type` value); `.end` is accepted as a read terminator
+  alongside `.e`.
+- **The raw FFI `sys` module is now `#[doc(hidden)]`** — still reachable for the low-level layer, but
+  off the documented public surface (its bindgen-generated types are not part of the stable API).
+
+### Fixed
+
+- BDD variable collection (`collect_variables` / `var_count`) now deduplicates by **node** rather
+  than by variable, so it no longer misses variables that appear only in some branches.
+- **`BoolExpr::equivalent_to` no longer swallows an internal error as `false`** — equivalence is an
+  exact canonical-BDD root comparison (identical to `==`).
+- **CLI `-e`/`--exact` now runs exact minimisation.** It previously only toggled fast single-expand
+  mode while still running the heuristic algorithm; it is now an alias for `-D exact`.
+- **`EspressoCover::from_cubes` now validates cube slice lengths** (new `CubeError::DimensionMismatch`)
+  instead of writing out of the cube's bit region when a slice doesn't match the declared dimensions.
+
 ## [3.1.2] - 2025-11-12
 
 ### Documentation

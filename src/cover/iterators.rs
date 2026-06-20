@@ -5,7 +5,7 @@
 
 use super::Cover;
 use crate::expression::BoolExpr;
-use std::sync::Arc;
+use std::fmt;
 
 /// Iterator over filtered cubes with generic yield type
 ///
@@ -13,6 +13,13 @@ use std::sync::Arc;
 /// depending on how the cubes are transformed (references, owned data, etc.).
 pub struct CubesIter<'a, T> {
     pub(super) iter: Box<dyn Iterator<Item = T> + 'a>,
+}
+
+/// The wrapped trait-object iterator can't be introspected, so this is opaque.
+impl<T> fmt::Debug for CubesIter<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CubesIter").finish_non_exhaustive()
+    }
 }
 
 impl<'a, T> Iterator for CubesIter<'a, T> {
@@ -23,37 +30,42 @@ impl<'a, T> Iterator for CubesIter<'a, T> {
     }
 }
 
-/// Iterator over output expressions from a Cover
+/// Iterator over output expressions from a [`Cover`], created by [`Cover::to_exprs`].
 ///
-/// This iterator uses the visitor pattern to generate boolean expressions
-/// on-demand for each output in the cover. It maintains state (current index)
-/// and calls the cover's conversion method during iteration.
-pub struct ToExprs<'a> {
-    pub(super) cover: &'a Cover,
+/// Generates boolean expressions on-demand for each output, yielding the output label (borrowed from
+/// the cover) paired with the rebuilt expression. Generic over the cover's input label `I` (which must
+/// be string-like to name the variables) and output label `O`.
+pub struct ToExprs<'a, I, O> {
+    pub(super) cover: &'a Cover<I, O>,
     pub(super) current_idx: usize,
 }
 
-impl<'a> Iterator for ToExprs<'a> {
-    type Item = (Arc<str>, BoolExpr);
+/// Reports progress without requiring the label types to be `Debug` (the borrowed cover is elided).
+impl<I, O> fmt::Debug for ToExprs<'_, I, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToExprs")
+            .field("current_idx", &self.current_idx)
+            .field("num_outputs", &self.cover.num_outputs())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, I: AsRef<str>, O> Iterator for ToExprs<'a, I, O> {
+    type Item = (&'a O, BoolExpr);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_idx >= self.cover.num_outputs {
+        if self.current_idx >= self.cover.num_outputs() {
             return None;
         }
         let idx = self.current_idx;
         self.current_idx += 1;
 
-        // Use provided label or generate default
-        let name = if let Some(label) = self.cover.output_labels.get(idx) {
-            Arc::clone(label)
-        } else {
-            Arc::from(format!("y{}", idx).as_str())
-        };
-
+        // The output label at this position (one label per output — `Symbols` is never partial).
+        let label = &self.cover.output_symbols().labels()[idx];
         let expr = self
             .cover
             .to_expr_by_index(idx)
             .unwrap_or_else(|_| BoolExpr::constant(false));
-        Some((name, expr))
+        Some((label, expr))
     }
 }

@@ -6,7 +6,7 @@
 //! For efficiency, randomly selects 10 files from each size category.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use espresso_logic::{Cover, Minimizable, PLAReader};
+use espresso_logic::{Minimizable, PlaCover, Symbol};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -60,7 +60,7 @@ fn discover_pla_files() -> Vec<PLATestFile> {
 
                 if is_pla {
                     // Try to parse the file to get cube count
-                    if let Ok(cover) = Cover::from_pla_file(&path) {
+                    if let Ok(cover) = PlaCover::<Symbol>::from_pla_file(&path) {
                         let num_cubes = cover.num_cubes();
 
                         // Categorize by size
@@ -90,7 +90,7 @@ fn discover_pla_files() -> Vec<PLATestFile> {
     }
 
     // Sort by category and then by number of cubes
-    files.sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
+    files.sort_by_key(|f| (f.category as u32, f.num_cubes));
 
     files
 }
@@ -126,8 +126,7 @@ fn select_balanced_files(files: Vec<PLATestFile>, per_category: usize) -> Vec<PL
     }
 
     // Sort by category and size for consistent benchmark ordering
-    selected
-        .sort_by(|a, b| (a.category as u32, a.num_cubes).cmp(&(b.category as u32, b.num_cubes)));
+    selected.sort_by_key(|f| (f.category as u32, f.num_cubes));
 
     selected
 }
@@ -162,7 +161,7 @@ fn bench_parse(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     black_box(cover);
                 });
             },
@@ -202,7 +201,7 @@ fn bench_minimize(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     let cover = cover.minimize().unwrap();
                     black_box(cover);
                 });
@@ -243,7 +242,7 @@ fn bench_full_pipeline(c: &mut Criterion) {
             &file.path,
             |b, path| {
                 b.iter(|| {
-                    let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                    let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                     let cover = cover.minimize().unwrap();
                     let result = cover.num_cubes();
                     black_box(result);
@@ -285,7 +284,7 @@ fn bench_by_category(c: &mut Criterion) {
                 &file.path,
                 |b, path| {
                     b.iter(|| {
-                        let cover = Cover::from_pla_file(black_box(path)).unwrap();
+                        let cover = PlaCover::<Symbol>::from_pla_file(black_box(path)).unwrap();
                         let cover = cover.minimize().unwrap();
                         black_box(cover);
                     });
@@ -312,15 +311,27 @@ fn bench_cube_iteration(c: &mut Criterion) {
         .iter()
         .find(|f| matches!(f.category, Category::Medium))
     {
-        let cover = Cover::from_pla_file(&file.path).unwrap();
+        let cover = PlaCover::<Symbol>::from_pla_file(&file.path).unwrap();
 
         group.throughput(Throughput::Elements(file.num_cubes as u64));
+        // `PlaCover` is a sum type over which sides are named; match once to get a concrete cover to
+        // iterate. (These bench PLAs carry both label sections.)
         group.bench_function("iterate_cubes", |b| {
             b.iter(|| {
                 let mut count = 0;
-                for cube in cover.cubes_iter() {
-                    black_box(cube);
-                    count += 1;
+                macro_rules! count_cubes {
+                    ($c:expr) => {
+                        for cube in $c.cubes() {
+                            black_box(cube);
+                            count += 1;
+                        }
+                    };
+                }
+                match &cover {
+                    PlaCover::InputsOutputsNamed(c) => count_cubes!(c),
+                    PlaCover::InputsNamed(c) => count_cubes!(c),
+                    PlaCover::OutputsNamed(c) => count_cubes!(c),
+                    PlaCover::Positional(c) => count_cubes!(c),
                 }
                 black_box(count);
             });
@@ -330,12 +341,122 @@ fn bench_cube_iteration(c: &mut Criterion) {
     group.finish();
 }
 
+/// Isolate the eager identity-sort done by `Symbols::new` for **named** tables (anonymous tables skip
+/// it). Labels are built once; each iteration measures only the sort + table construction.
+fn bench_symbols_construction(c: &mut Criterion) {
+    use espresso_logic::Symbols;
+    use std::sync::Arc;
+
+    let mut group = c.benchmark_group("symbols_new_named");
+    for &width in &[16usize, 64, 256] {
+        // Reverse-ordered names, so the sort genuinely permutes (not an already-sorted fast path).
+        let labels: Arc<[Symbol]> = (0..width)
+            .rev()
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        group.bench_with_input(BenchmarkId::from_parameter(width), &labels, |b, labels| {
+            b.iter(|| {
+                let syms = Symbols::new(Arc::clone(labels));
+                black_box(syms);
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Realistic named lifecycle: construct two differently-ordered named headers, then *use* them —
+/// a name-aligned merge-join (`is_subset_of`) plus name lookups (`value_of`). This is where eager and
+/// lazy `Symbols` actually differ: lazy defers the sort to the first alignment and builds a HashMap on
+/// the first lookup, so a fair comparison must include the alignment/lookups, not just construction.
+fn bench_named_align(c: &mut Criterion) {
+    use espresso_logic::{Minterm, Symbols};
+    use std::sync::Arc;
+
+    let mut group = c.benchmark_group("named_align");
+    for &width in &[16usize, 64] {
+        let names_a: Arc<[Symbol]> = (0..width)
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        let names_b: Arc<[Symbol]> = (0..width)
+            .rev()
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        let vals: Vec<Option<bool>> = (0..width)
+            .map(|i| if i % 2 == 0 { Some(true) } else { None })
+            .collect();
+        let probes = [
+            format!("v{:04}", 0),
+            format!("v{:04}", width / 2),
+            format!("v{:04}", width - 1),
+        ];
+        group.bench_with_input(BenchmarkId::from_parameter(width), &width, |b, _| {
+            b.iter(|| {
+                // Fresh tables each iter so construction is included alongside the use.
+                let sa = Symbols::new(Arc::clone(&names_a));
+                let sb = Symbols::new(Arc::clone(&names_b));
+                let ma = Minterm::from_symbols(sa, vals.iter().copied());
+                let mb = Minterm::from_symbols(sb, vals.iter().copied());
+                black_box(ma.is_subset_of(&mb)); // merge-join => sorted_order on both
+                for p in &probes {
+                    black_box(ma.value_of(p.as_str())); // => index_of
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Stress the **real** conversion machinery on real PLA inputs: `Cover -> exprs` (`to_exprs`) and
+/// `exprs -> Cover` (`add_expr`), round-tripped. Unlike the synthetic `named_align` microbench, this is
+/// an actual usage path, and it shows how small a slice `Symbols` construction/lookup is of the real
+/// work (BDD build + factorisation dominate) — the honest way to weigh eager vs lazy.
+fn bench_pla_expr_roundtrip(c: &mut Criterion) {
+    use espresso_logic::{BoolExpr, Cover, CoverType};
+
+    let files = discover_pla_files();
+    // `to_exprs` needs named outputs, so use the fully-named (`.ilb` + `.ob`) small/medium files.
+    let named: Vec<(String, Cover<Symbol, Symbol>)> = files
+        .iter()
+        .filter(|f| matches!(f.category, Category::Small | Category::Medium))
+        .filter_map(|f| match PlaCover::<Symbol>::from_pla_file(&f.path) {
+            Ok(PlaCover::InputsOutputsNamed(cover)) => Some((f.name.clone(), cover)),
+            _ => None,
+        })
+        .take(6)
+        .collect();
+
+    if named.is_empty() {
+        return;
+    }
+
+    let mut group = c.benchmark_group("pla_expr_roundtrip");
+    for (name, cover) in &named {
+        group.bench_with_input(BenchmarkId::from_parameter(name), cover, |b, cover| {
+            b.iter(|| {
+                // Cover -> BoolExprs (one per output).
+                let exprs: Vec<(Symbol, BoolExpr)> =
+                    cover.to_exprs().map(|(n, e)| (n.clone(), e)).collect();
+                // BoolExprs -> fresh named Cover (builds named Symbols, unions headers, re-points cubes).
+                let mut rebuilt = Cover::<Symbol, Symbol>::new(CoverType::F);
+                for (n, e) in &exprs {
+                    rebuilt.add_expr(e, n.as_ref()).unwrap();
+                }
+                black_box(rebuilt);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
     bench_minimize,
     bench_full_pipeline,
     bench_by_category,
-    bench_cube_iteration
+    bench_cube_iteration,
+    bench_symbols_construction,
+    bench_named_align,
+    bench_pla_expr_roundtrip
 );
 criterion_main!(benches);

@@ -1,7 +1,8 @@
 [package]
 name = "espresso-logic"
-version = "3.1.3"
+version = "4.0.0"
 edition = "2021"
+rust-version = "1.82"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Rust bindings for the Espresso heuristic logic minimizer (UC Berkeley)"
 license = "MIT"
@@ -11,9 +12,10 @@ categories = ["algorithms", "science"]
 
 [dependencies]
 libc = "0.2"
+weak-table = "0.3"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 clap = { version = "4.4", features = ["derive"], optional = true }
-espresso-logic-macros = { version = "3.1.0", path = "./espresso-logic-macros" }
+espresso-logic-macros = { version = "4.0.0", path = "./espresso-logic-macros" }
 
 [features]
 cli = ["dep:clap"]
@@ -71,6 +73,18 @@ path = "examples/c_element_example.rs"
 [[example]]
 name = "threshold_gate_example"
 path = "examples/threshold_gate_example.rs"
+
+[[example]]
+name = "expr_macro_demo"
+path = "examples/expr_macro_demo.rs"
+
+[[example]]
+name = "inspect_cubes"
+path = "examples/inspect_cubes.rs"
+
+[[example]]
+name = "expression_composition"
+path = "examples/expression_composition.rs"
 
 [[bench]]
 name = "pla_benchmarks"

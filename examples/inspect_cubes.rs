@@ -1,22 +1,39 @@
 //! Example: Inspect cubes after minimization
 
-use espresso_logic::{Cover, CoverType, Minimizable};
+use espresso_logic::Anonymous;
+use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Cube Inspection Example ===\n");
 
     // Create a cover with a simple function
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
     // Add 4 cubes that can be minimized
     println!("Adding 4 input cubes:");
-    cover.add_cube(&[Some(false), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  001 -> 1");
-    cover.add_cube(&[Some(false), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(false), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  011 -> 1");
-    cover.add_cube(&[Some(true), Some(false), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  101 -> 1");
-    cover.add_cube(&[Some(true), Some(true), Some(true)], &[Some(true)]);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
     println!("  111 -> 1");
 
     println!("\nBefore minimization:");
@@ -30,7 +47,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Inspect the minimized cubes
     println!("\nMinimized cubes:");
-    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
+    for (i, cube) in cover.cubes().enumerate() {
+        let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
+        let outputs: Vec<Option<bool>> = cube.outputs().iter().collect();
         print!("  Cube {}: ", i + 1);
         for input in inputs {
             match input {

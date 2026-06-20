@@ -151,7 +151,7 @@ fn main() -> std::io::Result<()> {
 
 #### Complete Example: Mixing Expressions with String Literals
 
-Combine expressions (from parsing, minimization, etc.) with string literals seamlessly:
+Combine expressions (from parsing, minimisation, etc.) with string literals seamlessly:
 
 ```rust
 use espresso_logic::{BoolExpr, expr, Minimizable};
@@ -257,7 +257,7 @@ fn main() -> std::io::Result<()> {
 
 #### Constants
 
-The parser recognizes boolean constants:
+The parser recognises boolean constants:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -394,9 +394,9 @@ for var_name in ["b", "c", "d"] {
 println!("{}", expr);
 ```
 
-## Minimization
+## Minimisation
 
-### Direct Minimization (Heuristic)
+### Direct Minimisation (Heuristic)
 
 The simplest way to minimize an expression using the fast heuristic algorithm:
 
@@ -420,7 +420,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Exact Minimization (Guaranteed Minimal)
+### Exact Minimisation (Guaranteed Minimal)
 
 For provably minimal results, use `minimize_exact()`:
 
@@ -456,7 +456,7 @@ fn main() -> std::io::Result<()> {
 
 ### Using Cover for More Control
 
-For more control over the minimization process:
+For more control over the minimisation process:
 
 ```rust
 use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
@@ -571,11 +571,9 @@ let expr4 = expr!(!"a" * !"b");
 
 ## Working with BDDs
 
-**Important Change in v3.1.1:** `BoolExpr` and `Bdd` are now unified—`Bdd` is a type alias for `BoolExpr`. 
-All boolean expressions use BDD as their internal representation, not as a separate conversion step.
-
 Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
-efficient operations. Starting in v3.1.1, every `BoolExpr` IS a BDD internally, providing:
+efficient operations. Every `BoolExpr` **is** a BDD internally — there is no separate BDD type and no
+conversion step — providing:
 
 - **Canonical representation**: Equivalent expressions have identical internal structure
 - **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation  
@@ -600,16 +598,14 @@ When you minimise a `BoolExpr`, the library:
 
 **Caching Architecture (v3.1.1+):**
 - **BDD Representation**: Every expression has a canonical BDD (core representation)
-- **DNF Cache**: Lazily cached Arc-wrapped Dnf for cube extraction
+- **Cube Cache**: Lazily cached product-term cubes (minterms) for cube extraction
 - **AST Cache**: Lazily cached factored AST for beautiful display
 - All caches are local per-expression with cheap Arc cloning
 
 ### Direct BDD Usage
 
-**Note (v3.1.1+):** `Bdd` is now a type alias for `BoolExpr`. The types are unified—all expressions are BDDs.
-
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
+use espresso_logic::BoolExpr;
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -626,20 +622,13 @@ println!("Variables: {}", expr.var_count());
 let d = BoolExpr::variable("d");
 let combined = expr.and(&d);
 
-// Display uses algebraic factorisation (v3.1.1+)
+// Display uses algebraic factorisation
 println!("Result: {}", combined);
 ```
 
-**Deprecated Methods (v3.1.1+):**
-- `to_bdd()` - Returns `self.clone()` (expression IS a BDD)
-- `from_expr()` - Returns `expr.clone()` (redundant)
-- `to_expr()` - Returns `self.clone()` (redundant)
-
-These remain for backwards compatibility but are no-ops.
-
 ### BDD Advantages
 
-Since v3.1.1, all expressions automatically benefit from BDD optimisations during construction:
+All expressions automatically benefit from BDD optimisations during construction:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -661,7 +650,7 @@ let expr2 = a.and(&b).or(&a.not().and(&c));
 println!("Same function: {}", expr == expr2);  // May be true due to canonical form
 ```
 
-### Benefits of Unified BDD Architecture (v3.1.1+)
+### Benefits of the BDD Architecture
 
 All `BoolExpr` instances automatically get BDD benefits:
 
@@ -671,7 +660,7 @@ All `BoolExpr` instances automatically get BDD benefits:
 - **Fast equality**: O(1) comparison for equivalent expressions
 
 ```rust
-use espresso_logic::{BoolExpr, Bdd};
+use espresso_logic::BoolExpr;
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
@@ -701,8 +690,8 @@ fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&expr, "out")?;
     
-    for (i, (inputs, outputs)) in cover.cubes_iter().enumerate() {
-        println!("Cube {}: inputs={:?}, outputs={:?}", i, inputs, outputs);
+    for (i, cube) in cover.cubes().enumerate() {
+        println!("Cube {}: inputs={:?}, outputs={:?}", i, cube.inputs(), cube.outputs());
     }
     
     Ok(())
@@ -769,10 +758,10 @@ match BoolExpr::parse("a * * b") {
 
 Common parse errors:
 - Syntax errors: `"a * * b"`, `"a +"`, `"(a * b"`
-- Invalid tokens: `"a & b"`, `"a | b"`, `"a ^ b"`
+- Invalid tokens: `"a ^ b"` (XOR is not supported; `&`/`|` are accepted as AND/OR)
 - Empty input: `""`
 
-### Minimization Errors
+### Minimisation Errors
 
 ```rust
 use espresso_logic::{BoolExpr, Minimizable};
@@ -801,19 +790,19 @@ fn main() -> std::io::Result<()> {
 
 **Binary Decision Diagrams (BDDs) for Cover Generation:**
 - Version 3.1 introduced BDDs; expressions are now converted to BDDs before cube extraction
-- BDDs provide canonical representation with automatic optimization
+- BDDs provide canonical representation with automatic optimisation
 - Hash consing ensures identical subexpressions are shared
 - Operations (AND, OR, NOT) are memoized for efficiency
-- **Note:** The minimization itself is still performed by Espresso, not the BDD
+- **Note:** The minimisation itself is still performed by Espresso, not the BDD
 
 **Performance characteristics:**
 - BDD construction: Polynomial for most practical expressions (vs exponential DNF)
 - Canonical representation: Equivalent expressions produce identical BDDs
 - Automatic simplification: Redundant terms eliminated during BDD construction
 - Memory efficient: Structural sharing via hash consing
-- Global singleton manager: All BDDs share one manager (thread-safe via Mutex)
+- Global singleton manager: All BDDs share one manager (thread-safe via `RwLock`)
 
-**Minimization workflow:**
+**Minimisation workflow:**
 1. Expression → BDD (fast, polynomial time, cached)
 2. BDD → DNF cubes (extraction, linear in BDD size) **← Avoids exponential De Morgan expansion**
 3. DNF → Cover (cube mapping)
@@ -826,23 +815,23 @@ fn main() -> std::io::Result<()> {
 - More efficient cover generation from complex expressions
 - Reduced redundancy in generated covers (better Espresso input)
 
-**BDD Pre-Minimization (Automatic during BDD construction):**
+**BDD Pre-Minimisation (Automatic during BDD construction):**
 - **BDD construction provides automatic redundancy elimination** - equivalent subexpressions are shared via hash consing
 - **Reduces cube count before Espresso** - BDD-to-DNF extraction produces fewer, more canonical cubes than direct conversion
 - **BDD caching eliminates redundant conversions** (introduced in v3.1) - same subexpression converted once, cached for reuse
-- **Pre-minimization is automatic** - Happens during BDD construction, NOT from user calling `.minimize()` early
-- **User-level minimization only matters at final output** - Intermediate minimizations don't reduce the final BDD cube count
+- **Pre-minimisation is automatic** - Happens during BDD construction, NOT from user calling `.minimize()` early
+- **User-level minimisation only matters at final output** - Intermediate minimisations don't reduce the final BDD cube count
 - **Composing expressions via BDD:**
   - OR operations: efficient in BDD representation (polynomial time)
   - AND operations: efficient in BDD representation (polynomial time)
   - NOT operations: efficient in BDD representation (just flip terminal nodes)
-- **Implementation:** All conversions go through BDD: `BoolExpr -> Bdd -> Dnf` (avoids exponential complexity)
+- **Implementation:** Cubes are extracted from the expression's internal BDD: `BoolExpr (BDD) -> cubes` (avoids exponential complexity)
 
 **Why Both BDD and Espresso?**
-- **BDD minimization is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)
+- **BDD minimisation is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)
 - **Optimal BDD variable ordering is NP-complete** - Cannot guarantee minimal BDD size
-- **Espresso is ordering-independent** - Provides true logic minimization regardless of variable order
-- **Complementary strengths:** BDD provides canonical form and redundancy elimination; Espresso provides optimal logic minimization
+- **Espresso is ordering-independent** - Provides true logic minimisation regardless of variable order
+- **Complementary strengths:** BDD provides canonical form and redundancy elimination; Espresso provides optimal logic minimisation
 - **Two-step process is necessary** - BDD reduces problem size, Espresso achieves minimal result
 
 **Measured Impact (threshold_gate_example.rs):**
@@ -863,7 +852,7 @@ We measured the actual cube counts at three stages using a threshold gate exampl
    - `next_q_v2`: **19 cubes** (19,781x reduction from naive!)
    - **Total: 62 unique cubes** in cover (12,450x overall reduction!)
 
-3. **Espresso Minimization** (final optimal form):
+3. **Espresso Minimisation** (final optimal form):
    - Simple expressions: 5 cubes each (already optimal)
    - `hold`: **10 cubes** (29% further reduction from BDD)
    - `next_q_v1`: **15 cubes** (21% further reduction from BDD)
@@ -873,7 +862,7 @@ We measured the actual cube counts at three stages using a threshold gate exampl
 **Key Findings:**
 - **BDD is ESSENTIAL**: Without BDD, Espresso would receive 771,918 cubes (intractable). With BDD: 62 cubes (99.99% reduction!)
 - **Espresso is STILL NEEDED**: BDD provides canonical form but not minimal form. Espresso achieves additional 52% reduction.
-- **The pipeline is complementary**: BDD prevents exponential blowup from negations; Espresso achieves optimal minimization through heuristic search.
+- **The pipeline is complementary**: BDD prevents exponential blowup from negations; Espresso achieves optimal minimisation through heuristic search.
 
 ### Memory
 
@@ -949,24 +938,11 @@ assert!(!and_expr.equivalent_to(&or_expr));
 
 **Performance Note:**
 
-The `equivalent_to()` method uses a two-phase BDD-based approach (introduced in v3.1):
-
-1. **Fast BDD equality check**: Convert both expressions to BDDs and compare. BDDs use canonical 
-   representation, so equal BDDs guarantee equivalence. This is very fast (O(e) where e is expression size).
-2. **Exact minimization fallback**: If BDDs differ, use exact minimization for thorough verification.
-
-Previous approach (v3.0 and earlier):
-- **Before v3.1**: Exhaustive truth table evaluation - O(2^n) where n = number of variables
-  - Generated all 2^n possible variable assignments
-  - Evaluated both expressions for each assignment
-  - Completely impractical for expressions with many variables
-
-This makes equivalency checking **dramatically faster** for expressions with many variables:
-- 10 variables: 1,024x faster
-- 20 variables: 1,048,576x faster  
-- 30 variables: Previously impossible, now feasible
-
-The method combines both expressions into a single cover with two outputs, minimizes exactly once, and checks if all cubes have identical output patterns.
+`equivalent_to()` is an exact, constant-time check — identical to the `==` operator. Every `BoolExpr`
+is a root into one shared, canonical reduced-ordered BDD (all expressions live in the same global
+manager), so two expressions denote the same function **iff their BDD roots are equal**. There is no
+truth-table evaluation and no minimisation fallback: equivalence is a single pointer/identifier
+comparison, independent of the number of variables.
 
 ### Evaluation
 
@@ -1007,7 +983,7 @@ use espresso_logic::{BoolExpr, expr, Minimizable};
 let expr = expr!("x" * "y" + "z");
 
 let vars = expr.collect_variables();
-// Returns BTreeSet<Arc<str>> in alphabetical order
+// Returns BTreeSet<Symbol> in alphabetical order
 for var in vars {
     println!("Variable: {}", var);
 }
@@ -1102,15 +1078,15 @@ fn main() -> std::io::Result<()> {
 ```
 
 **Why minimizing early doesn't help (and may harm):**
-- **Minimization creates a NEW `BoolExpr`** - Result is constructed from minimized DNF cubes, not from the original expression
+- **Minimisation creates a NEW `BoolExpr`** - Result is constructed from minimized DNF cubes, not from the original expression
 - **Expression-level BDD cache is not preserved** - The new expression has an empty cache (created with fresh `OnceLock::new()`)
 - **Requires BDD recomputation** - When composing with a minimized expression, its BDD must be computed from the DNF
 - **Note:** Global BDD manager caches (ITE cache, unique table) persist, but expression-level cache is lost
 - **BDD may introduce new terms in minimized expressions** - Not guaranteed to be smaller; depends on variable ordering
 - **BDD constructs the full composed expression anyway** - The final BDD represents the entire function in canonical form
-- **Minimization structure is not preserved in BDD** - BDD represents the logical function, not the minimized form
-- **No cube reduction benefit** - Final cube count to Espresso depends on the composed BDD, not intermediate minimizations
-- **Unnecessary overhead** - You pay for minimization without benefit for the final composition
+- **Minimisation structure is not preserved in BDD** - BDD represents the logical function, not the minimized form
+- **No cube reduction benefit** - Final cube count to Espresso depends on the composed BDD, not intermediate minimisations
+- **Unnecessary overhead** - You pay for minimisation without benefit for the final composition
 
 **When you need multiple minimized expressions: Use multiple outputs**
 
@@ -1142,11 +1118,11 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-**Key insight:** BDD construction creates a canonical representation of the entire composed expression. Minimization only matters at the final output stage. For multiple minimized outputs, use `Cover` with multiple named outputs and minimize once.
+**Key insight:** BDD construction creates a canonical representation of the entire composed expression. Minimisation only matters at the final output stage. For multiple minimized outputs, use `Cover` with multiple named outputs and minimize once.
 
 #### Real-World Example: 5-Input Threshold Gate
 
-A threshold gate with complex activation/deactivation regions shows the real power of expression composition and minimization:
+A threshold gate with complex activation/deactivation regions shows the real power of expression composition and minimisation:
 
 ```rust
 use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
@@ -1189,15 +1165,18 @@ fn main() -> std::io::Result<()> {
     // Hold region is XOR of activation and negation of deactivation
     let hold = xor(&activation, &deactivation.not());
     
-    // Next state function (set on activation, hold when not deactivating)
-    let next_q = expr!(activation + "q" * !deactivation);
+    // Next-state function, two equivalent formulations (set on activation, hold when not
+    // deactivating). v1 gates the OR by !deactivation; v2 holds via the `hold` region.
+    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    let next_q_v2 = expr!(activation + "q" * hold);
     
     // Create a single cover with all functions as separate outputs
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&activation, "activation")?;
     cover.add_expr(&deactivation, "deactivation")?;
     cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q, "next_q")?;
+    cover.add_expr(&next_q_v1, "next_q_v1")?;
+    cover.add_expr(&next_q_v2, "next_q_v2")?;
     
     // Single minimize call optimizes ALL outputs together
     let minimized = cover.minimize()?;
@@ -1214,7 +1193,8 @@ fn main() -> std::io::Result<()> {
     //   activation:   6 AND clauses OR'd together (in DNF)
     //   deactivation: 6 AND clauses OR'd together (in DNF)
     //   hold:         xor(activation, !deactivation) - NOT in DNF
-    //   next_q:       activation + q * !deactivation - NOT in DNF
+    //   next_q_v1:    (activation + q) * !deactivation - NOT in DNF
+    //   next_q_v2:    activation + q * hold            - NOT in DNF
     //
     // Stage 1b - Naive DNF expansion (if using De Morgan's laws directly):
     //   activation:   6 cubes
@@ -1256,11 +1236,11 @@ fn main() -> std::io::Result<()> {
 **Why this example is powerful:**
 - **Demonstrates BDD vs naive De Morgan expansion**: Direct comparison of efficiency with actual measurements
 - **BDD is dramatically superior**: `hold` would be **375,840 cubes** with naive expansion, BDD produces only 14 (26,845x improvement!)
-- **Avoids exponential blowup**: `next_q` would be **7,006 cubes** naively, BDD produces 19 (369x improvement)
-- **Three-stage process visible**: Complex expressions → BDD canonical form → Espresso optimization
+- **Avoids exponential blowup**: `next_q_v1` would be **20,220 cubes** naively, BDD produces 19 (1,064x improvement)
+- **Three-stage process visible**: Complex expressions → BDD canonical form → Espresso optimisation
 - **Complex composition**: XOR function with negations demonstrates BDD's strengths
-- **No early minimization**: All expressions composed first, minimized once at the end
-- **Multiple outputs**: Four different functions optimized simultaneously
+- **No early minimisation**: All expressions composed first, minimized once at the end
+- **Multiple outputs**: Four different functions optimised simultaneously
 - **Helper function**: Shows using `xor()` helper that returns `BoolExpr` for clean composition
 
 **Key insights (with measured data)**: 
@@ -1268,8 +1248,8 @@ fn main() -> std::io::Result<()> {
 - **BDD provides canonical representation**: Eliminates redundancy during construction (activation 6→5, deactivation 6→5)
 - **This is why we use BDD instead of De Morgan's laws**: Polynomial time vs exponential blowup (12,450x overall reduction: 771,918→62 cubes)
 - **Espresso still necessary**: BDD gave us 14 cubes for `hold`, Espresso reduced to 10 (optimal, 29% further reduction)
-- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimization (additional 52%)
-- **This is why "minimize early" doesn't help**: BDD reconstructs the full composed expression in canonical DNF regardless of intermediate minimizations
+- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimisation (additional 52%)
+- **This is why "minimize early" doesn't help**: BDD reconstructs the full composed expression in canonical DNF regardless of intermediate minimisations
 - **Run the example yourself**: `cargo run --example threshold_gate_example` to see the actual cube counts at each stage
 
 This pattern scales to any number of intermediate and final expressions.
@@ -1285,7 +1265,7 @@ fn main() -> std::io::Result<()> {
     
     // The type system prevents mistakes
     let expr: BoolExpr = expr!(a * b);  // Type-safe
-    let mut cover: Cover = Cover::new(CoverType::F);  // Clear types
+    let mut cover = Cover::new(CoverType::F);  // type inferred from add_expr below
     cover.add_expr(&expr, "output")?;  // Explicit conversion
     
     Ok(())
@@ -1299,7 +1279,7 @@ See `examples/boolean_expressions.rs` for comprehensive examples including:
 1. Programmatic construction with expr! macro
 2. Parsing from strings
 3. Complex expressions with negation
-4. Minimization examples
+4. Minimisation examples
 5. XNOR function
 6. Three-variable majority function
 7. PLA format export

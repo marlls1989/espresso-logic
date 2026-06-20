@@ -191,6 +191,20 @@ fn test_constants_formatting() {
 // ========== Operator Overloading Tests ==========
 
 #[test]
+fn boolexpr_minimize_exact_equivalent_and_reduced() {
+    use crate::Minimizable;
+
+    // (a * b) + (a * !b) is logically `a`; exact minimisation must collapse it.
+    let expr = BoolExpr::parse("(a * b) + (a * !b)").unwrap();
+    let exact = expr.minimize_exact().unwrap();
+
+    // Exercises the BoolExpr -> Cover -> esp.minimize_exact -> BoolExpr round-trip (distinct from the
+    // heuristic path). The result is equivalent to the input and to the irreducible `a`.
+    assert!(expr.equivalent_to(&exact));
+    assert!(exact.equivalent_to(&BoolExpr::variable("a")));
+}
+
+#[test]
 fn test_operator_overloading_basic() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
@@ -441,7 +455,6 @@ fn test_bdd_subexpression_caching() {
 }
 
 // ========== BDD-specific Tests (merged from bdd module) ==========
-// Note: Bdd is now a type alias for BoolExpr
 
 #[test]
 fn test_terminal_nodes() {
@@ -672,8 +685,8 @@ fn test_to_cubes_simple() {
     let ab = a.and(&b);
     let cubes = ab.to_cubes();
     assert_eq!(cubes.len(), 1);
-    assert_eq!(cubes[0].get(&Arc::from("a")), Some(&true));
-    assert_eq!(cubes[0].get(&Arc::from("b")), Some(&true));
+    assert_eq!(cubes[0].value_of("a"), Some(true));
+    assert_eq!(cubes[0].value_of("b"), Some(true));
 }
 
 #[test]
@@ -692,10 +705,10 @@ fn test_to_cubes_constant() {
     let t = BoolExpr::constant(true);
     let f = BoolExpr::constant(false);
 
-    // TRUE should produce one empty cube (tautology)
+    // TRUE should produce one empty cube (tautology): a minterm with no variables.
     let cubes = t.to_cubes();
     assert_eq!(cubes.len(), 1);
-    assert!(cubes[0].is_empty());
+    assert_eq!(cubes[0].num_vars(), 0);
 
     // FALSE should produce no cubes
     let cubes = f.to_cubes();
@@ -718,22 +731,6 @@ fn test_to_cubes_complex() {
     // Should produce 3 cubes for the three products
     assert!(cubes.len() >= 2); // BDD may optimise this
     assert!(cubes.len() <= 3);
-}
-
-#[test]
-fn test_roundtrip_bdd_expr() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let expr = a.and(&b);
-
-    // Convert to BDD and back (note: now they're the same type, so this is just cloning)
-    #[allow(deprecated)]
-    let bdd = expr.to_bdd();
-    #[allow(deprecated)]
-    let expr2 = bdd.to_expr();
-
-    // Should be logically equivalent
-    assert!(expr.equivalent_to(&expr2));
 }
 
 #[test]
@@ -762,11 +759,6 @@ fn test_bdd_xor() {
 
     // Should produce 2 cubes
     assert_eq!(cubes.len(), 2);
-
-    // Convert back and verify equivalence (deprecated method, but test for compatibility)
-    #[allow(deprecated)]
-    let expr2 = xor.to_expr();
-    assert!(xor.equivalent_to(&expr2));
 }
 
 #[test]
@@ -972,4 +964,90 @@ fn test_dnf_cache_updates_with_better_version() {
 
     // Verify equivalence
     assert!(redundant.equivalent_to(&minimized));
+}
+
+/// The BDD/AST traversals were converted from recursion to explicit work-stacks specifically so a deep
+/// input can't overflow the call stack. Build a tall expression and exercise every iterative consumer
+/// on a deliberately small thread stack, so a regression back to recursion fails **deterministically**
+/// (stack overflow → the join returns `Err`) instead of silently passing on the default ~8 MiB stack.
+///
+/// Covers every traversal that was de-recursed: the BDD walks (`var_count`, `collect_variables`,
+/// `node_count`, `to_cubes`), the AST folds (`fold`, `fold_with_context`), `Display`
+/// (`fmt_with_context`), and `to_expr_by_index` (`ast_to_expr`).
+#[test]
+fn deep_chain_does_not_overflow() {
+    const N: usize = 2000;
+    // 256 KiB comfortably holds the iterative (heap-backed) walks, but is far too small for ~N frames
+    // of recursion, so a recursive regression overflows here rather than passing.
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            // Left-associated AND chain over N distinct variables: its BDD is an N-node chain and its
+            // factorised AST is N deep — both would blow a recursive traversal at this stack size.
+            let mut expr = BoolExpr::variable("v0000");
+            for i in 1..N {
+                expr = expr.and(&BoolExpr::variable(&format!("v{i:04}")));
+            }
+
+            // BDD-side iterative consumers.
+            assert_eq!(expr.var_count(), N);
+            assert_eq!(expr.collect_variables().len(), N);
+            assert!(expr.node_count() >= N); // a chain of N decision nodes (+ terminals)
+            assert_eq!(expr.to_cubes().len(), 1); // AND of all vars => one all-true cube
+
+            // AST-side iterative folds.
+            let op_count = expr.fold(|node| match node {
+                ExprNode::Variable(_) | ExprNode::Constant(_) => 0usize,
+                ExprNode::Not(inner) => inner,
+                ExprNode::And(l, r) | ExprNode::Or(l, r) => l + r + 1,
+            });
+            assert_eq!(op_count, N - 1); // N-1 AND operators over N literals
+
+            let depth = expr.fold_with_context(
+                0usize,
+                |_node, &d| (d + 1, d + 1),
+                |node, d| match node {
+                    ExprNode::Variable(_) | ExprNode::Constant(_) => d,
+                    ExprNode::Not(inner) => inner,
+                    ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
+                },
+            );
+            assert!(depth >= N / 2); // genuinely deep (exact shape depends on factorisation)
+
+            // Display routes through the now-iterative `fmt_with_context`.
+            let rendered = format!("{expr}");
+            assert!(rendered.len() >= N); // ~N variable names rendered
+
+            // to_expr_by_index -> cubes_to_expr -> factorise_cubes -> ast_to_expr (now iterative).
+            let cover = crate::Cover::<crate::Symbol, crate::Anonymous>::from(&expr);
+            let back = cover
+                .to_expr_by_index(0)
+                .expect("to_expr_by_index on the deep cover");
+            assert!(back.equivalent_to(&expr));
+        })
+        .expect("spawn deep-chain thread");
+    handle
+        .join()
+        .expect("deep-chain traversals must not overflow the stack");
+}
+
+#[test]
+fn from_str_and_hash() {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+
+    // FromStr: `"...".parse::<BoolExpr>()` works and matches the builder API.
+    let parsed: BoolExpr = "a + b".parse().unwrap();
+    assert_eq!(parsed, BoolExpr::variable("a").or(&BoolExpr::variable("b")));
+    assert!("a +".parse::<BoolExpr>().is_err());
+
+    // Eq + Hash contract: equal (canonical) expressions hash equal, even when built differently.
+    // Checked by hashing directly rather than via a HashSet: a BoolExpr owns the shared *mutable* BDD
+    // manager, so it trips clippy::mutable_key_type as a map key. The Hash uses only the stable
+    // (manager pointer, root node), so it is sound — but a map isn't needed to verify the contract.
+    let ab = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
+    let ba = BoolExpr::variable("b").and(&BoolExpr::variable("a"));
+    assert_eq!(ab, ba);
+    let rs = RandomState::new();
+    assert_eq!(rs.hash_one(&ab), rs.hash_one(&ba));
 }

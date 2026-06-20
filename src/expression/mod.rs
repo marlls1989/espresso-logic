@@ -26,11 +26,6 @@
 //! The BDD implementation makes the high-level API practical for complex expressions,
 //! but the primary purpose remains **Boolean function minimisation via Espresso**.
 //!
-//! **Deprecated methods:**
-//! - `to_bdd()` - Returns `self.clone()` (expression already uses BDD internally)
-//! - `Bdd::from_expr()` - Returns `expr.clone()` (redundant conversion)
-//! - `Bdd::to_expr()` - Returns `self.clone()` (redundant conversion)
-//!
 //! # Quick Start
 //!
 //! ## Using the `expr!` Macro (Recommended)
@@ -110,7 +105,6 @@
 // Submodules
 mod ast;
 mod bdd;
-mod conversions;
 mod display;
 pub mod error;
 mod eval;
@@ -126,6 +120,7 @@ pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
 
 // Re-export manager types for internal use
+use crate::Symbol;
 use manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
 
 use std::sync::{Arc, OnceLock, RwLock};
@@ -159,7 +154,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// Each `BoolExpr` contains:
 /// - **Node ID** - Reference to BDD structure in global manager
 /// - **Manager Reference** - Shared access to global singleton BDD manager
-/// - **DNF Cache** - Lazily cached cubes for Espresso minimisation
+/// - **Cube Cache** - Lazily cached cubes for Espresso minimisation
 /// - **AST Cache** - Lazily cached syntax tree for display
 ///
 /// The BDD manager is a global singleton (protected by `RwLock`) shared by all
@@ -175,6 +170,26 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// Thread-safe via global BDD manager with `RwLock` protection. Multiple threads
 /// can safely create and manipulate expressions concurrently.
+///
+/// # Memory
+///
+/// The shared manager's node table and operation caches **grow monotonically and are never evicted**
+/// while any `BoolExpr` is alive (node IDs must stay stable for lock-free traversal). The manager is
+/// dropped — reclaiming everything — only once the last live `BoolExpr` is dropped. A long-running
+/// program that builds very many distinct expressions over its lifetime will therefore see the
+/// manager's memory grow until that point; this is intentional, not a leak.
+///
+/// # Using as a `HashMap` / `HashSet` key
+///
+/// `BoolExpr` is a sound map key: its `Eq`/`Hash` use only the canonical BDD root (a stable value).
+/// Clippy's [`clippy::mutable_key_type`] lint *will* fire at such call sites, because a `BoolExpr`
+/// embeds inline `OnceLock` cache cells (the lazily-filled cube and AST caches) — interior mutability
+/// directly in the value. (The `Arc`-shared BDD manager does *not* count: interior mutability behind a
+/// pointer is fine.) Here the lint is a **false positive**: the hash never reads those caches (only the
+/// stable `(manager pointer, root)` pair), so a key's hash cannot change while it sits in the map. It
+/// is therefore safe to `#[allow(clippy::mutable_key_type)]` at those sites.
+///
+/// [`clippy::mutable_key_type`]: https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
 ///
 /// # Examples
 ///
@@ -219,108 +234,140 @@ pub struct BoolExpr {
     manager: Arc<RwLock<BddManager>>,
     /// Root node ID in the BDD
     root: NodeId,
-    /// Cached DNF (cubes) for this BDD
-    /// This avoids expensive BDD traversal when converting to DNF
-    /// OnceLock's Clone copies the content, so clones share cached data via Arc
-    dnf_cache: OnceLock<crate::cover::Dnf>,
+    /// Cached product-term cubes (input minterms) for this BDD.
+    /// This avoids expensive BDD traversal when extracting cubes or minimising.
+    /// OnceLock's Clone copies the content, so clones share cached data via Arc.
+    cube_cache: OnceLock<Arc<[crate::cover::Minterm<crate::Symbol>]>>,
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
     /// OnceLock's Clone copies the content, so clones share cached data via Arc
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
 }
 
 impl BoolExpr {
-    /// Create a variable expression with the given name
-    pub fn variable(name: &str) -> Self {
-        let manager = BddManager::get_or_create();
-        let mut mgr = manager.write().unwrap();
-        let var_id = mgr.get_or_create_var(name);
-        let node = mgr.make_node(var_id, FALSE_NODE, TRUE_NODE);
-        drop(mgr); // Explicitly release the lock
+    /// Build a `BoolExpr` from a manager and root node, with fresh (empty) caches. The single place the
+    /// struct is constructed, so the cache fields are initialised in exactly one spot.
+    fn from_root(manager: Arc<RwLock<BddManager>>, root: NodeId) -> Self {
         BoolExpr {
             manager,
-            root: node,
-            dnf_cache: OnceLock::new(),
+            root,
+            cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
         }
+    }
+
+    /// Apply a BDD operation to this expression's root under one write lock, returning the result as a
+    /// fresh `BoolExpr` sharing the same manager. Shared by `and`/`or`/`not`.
+    fn op(&self, f: impl FnOnce(&mut BddManager, NodeId) -> NodeId) -> BoolExpr {
+        let manager = Arc::clone(&self.manager);
+        let root = f(&mut manager.write().unwrap(), self.root);
+        BoolExpr::from_root(manager, root)
+    }
+
+    /// Create a variable expression with the given name
+    #[must_use]
+    pub fn variable(name: &str) -> Self {
+        let manager = BddManager::get_or_create();
+        let node = {
+            let mut mgr = manager.write().unwrap();
+            let var_id = mgr.get_or_create_var(name);
+            mgr.make_node(var_id, FALSE_NODE, TRUE_NODE)
+        };
+        BoolExpr::from_root(manager, node)
     }
 
     /// Create a constant expression (true or false)
+    #[must_use]
     pub fn constant(value: bool) -> Self {
         let manager = BddManager::get_or_create();
-        BoolExpr {
-            manager,
-            root: if value { TRUE_NODE } else { FALSE_NODE },
-            dnf_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        let root = if value { TRUE_NODE } else { FALSE_NODE };
+        BoolExpr::from_root(manager, root)
     }
 
-    /// Convert this boolean expression to a Binary Decision Diagram
+    /// Get or create the cached product-term cubes with local caching.
     ///
-    /// **Deprecated:** `BoolExpr` is now implemented as a BDD internally.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::BoolExpr;
-    ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let expr = a.and(&b);
-    ///
-    /// let bdd = expr.to_bdd();  // Just returns a clone
-    /// ```
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr is now a BDD internally. Use clone() instead."
-    )]
-    pub fn to_bdd(&self) -> Self {
-        self.clone()
-    }
-
-    /// Create a BoolExpr from a BDD (actually the same type)
-    ///
-    /// **Deprecated:** `BoolExpr` and `Bdd` are now the same type.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr and Bdd are now the same type. Use clone() instead."
-    )]
-    pub fn from_expr(expr: &BoolExpr) -> Self {
-        expr.clone()
-    }
-
-    /// Convert this BDD to a BoolExpr (actually the same type)
-    ///
-    /// **Deprecated:** `BoolExpr` and `Bdd` are now the same type.
-    /// This method simply clones the expression and exists for backwards compatibility.
-    #[deprecated(
-        since = "3.1.1",
-        note = "BoolExpr and Bdd are now the same type. Use clone() instead."
-    )]
-    pub fn to_expr(&self) -> Self {
-        self.clone()
-    }
-
-    /// Get or create the DNF representation with local caching
-    ///
-    /// Extracts cubes from BDD on first access and caches for subsequent calls.
-    fn get_or_create_dnf(&self) -> crate::cover::Dnf {
+    /// Extracts cubes (input [`Minterm`](crate::cover::Minterm)s) from the BDD on first
+    /// access and caches them for subsequent calls.
+    pub(crate) fn get_or_create_cubes(&self) -> Arc<[crate::cover::Minterm<crate::Symbol>]> {
         // Check local cache
-        if let Some(dnf) = self.dnf_cache.get() {
-            return dnf.clone(); // Cheap Arc clone
+        if let Some(cubes) = self.cube_cache.get() {
+            return Arc::clone(cubes); // Cheap Arc clone
         }
 
         // Not cached - extract from BDD
-        let cubes = self.extract_cubes_from_bdd();
-        let dnf = crate::cover::Dnf::from_cubes(&cubes);
+        let cubes: Arc<[crate::cover::Minterm<crate::Symbol>]> = self.extract_cubes_from_bdd();
 
         // Cache it locally
-        let _ = self.dnf_cache.set(dnf.clone());
+        let _ = self.cube_cache.set(Arc::clone(&cubes));
 
-        dnf
+        cubes
     }
+
+    /// Build a `BoolExpr` from a set of product-term cubes (sum of products).
+    ///
+    /// Each [`Minterm`](crate::cover::Minterm) becomes an AND of its fixed literals; the
+    /// expression is their OR. An empty cube is a tautology (`true`); an empty cube set is
+    /// `false`. The supplied cubes are cached on the result so later cube extraction /
+    /// minimisation reporting reflects exactly these terms (e.g. an Espresso-minimised set).
+    ///
+    /// **Precondition:** the cubes must describe the same function as the built expression — i.e.
+    /// the cubes must fix every variable the function depends on. This holds for the only caller
+    /// (a single-output `Cover` derived from the same variable namespace); passing an unrelated cube
+    /// set would desync [`to_cubes`](Self::to_cubes) from the BDD. Checked with a `debug_assert!`.
+    pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm<crate::Symbol>]>) -> BoolExpr {
+        if cubes.is_empty() {
+            return BoolExpr::constant(false);
+        }
+
+        // OR the product terms, each an AND of its fixed literals (empty cube = tautology).
+        let expr = cubes
+            .iter()
+            .map(|cube| {
+                cube.vars()
+                    .iter()
+                    .zip(cube.iter())
+                    .filter_map(|(name, val)| match val {
+                        Some(true) => Some(BoolExpr::variable(name)),
+                        Some(false) => Some(BoolExpr::variable(name).not()),
+                        None => None,
+                    })
+                    .reduce(|acc, f| acc.and(&f))
+                    .unwrap_or_else(|| BoolExpr::constant(true))
+            })
+            .reduce(|acc, t| acc.or(&t))
+            .unwrap();
+
+        // The cached cubes must cover every variable the resulting function depends on, otherwise
+        // `to_cubes()` would report a SOP inconsistent with the BDD.
+        debug_assert!(
+            {
+                let cube_vars: std::collections::BTreeSet<&str> =
+                    cubes[0].vars().iter().map(|s| s.as_ref()).collect();
+                expr.collect_variables()
+                    .iter()
+                    .all(|v| cube_vars.contains(v.as_ref()))
+            },
+            "from_cubes: cached cubes omit a variable the BDD depends on"
+        );
+
+        // Cache the source cubes (typically minimised from Espresso).
+        let _ = expr.cube_cache.set(cubes);
+
+        expr
+    }
+}
+
+/// Collect a minterm's fixed literals as a `name -> polarity` map (don't-cares omitted).
+///
+/// This is the scratch format consumed by the algebraic factoriser; don't-care variables
+/// (`None`) are simply absent from the map.
+pub(crate) fn minterm_literals(
+    cube: &crate::cover::Minterm<crate::Symbol>,
+) -> std::collections::BTreeMap<Symbol, bool> {
+    cube.vars()
+        .iter()
+        .zip(cube.iter())
+        .filter_map(|(name, val)| val.map(|polarity| (name.clone(), polarity)))
+        .collect()
 }
 
 /// PartialEq implementation that compares BDDs for canonical equality
@@ -337,37 +384,14 @@ impl PartialEq for BoolExpr {
 
 impl Eq for BoolExpr {}
 
-/// Type alias for backwards compatibility.
-///
-/// **Deprecated:** Use [`BoolExpr`] directly instead.
-///
-/// `Bdd` and `BoolExpr` are now the same type in the unified architecture (v3.1.1+).
-/// This alias exists for backwards compatibility but should not be used in new code.
-///
-/// # Migration
-///
-/// Old code using `Bdd`:
-/// ```
-/// use espresso_logic::Bdd;
-///
-/// let a = Bdd::variable("a");
-/// let b = Bdd::variable("b");
-/// let result = a.and(&b);
-/// ```
-///
-/// Should be updated to use [`BoolExpr`] directly:
-/// ```
-/// use espresso_logic::BoolExpr;
-///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let result = a.and(&b);
-/// ```
-#[deprecated(
-    since = "3.1.1",
-    note = "Use `BoolExpr` directly. `Bdd` is now just a type alias for backwards compatibility."
-)]
-pub type Bdd = BoolExpr;
+/// Hashes the same identity the [`PartialEq`] impl compares — the shared manager's pointer and the BDD
+/// root node — so the `Hash`/`Eq` contract holds and a `BoolExpr` can be a `HashMap`/`HashSet` key.
+impl std::hash::Hash for BoolExpr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.manager) as *const ()).hash(state);
+        self.root.hash(state);
+    }
+}
 
 #[cfg(test)]
 mod tests;

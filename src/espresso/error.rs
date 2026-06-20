@@ -1,5 +1,6 @@
 //! Error types for Espresso instance management and cube operations
 
+use crate::cover::error::CoverError;
 use std::fmt;
 use std::io;
 
@@ -8,6 +9,7 @@ use std::io;
 /// These errors occur when trying to create or use Espresso instances with
 /// conflicting dimensions or configurations on the same thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InstanceError {
     /// The requested dimensions don't match the existing thread-local instance
     DimensionMismatch {
@@ -64,6 +66,7 @@ impl From<InstanceError> for io::Error {
 ///
 /// These errors occur when invalid cube values are provided during cover creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CubeError {
     /// Invalid cube value encountered
     ///
@@ -74,6 +77,20 @@ pub enum CubeError {
         /// The position in the input vector where the invalid value occurred
         position: usize,
     },
+    /// A cube's input or output slice length did not match the declared dimensions
+    ///
+    /// Each cube passed to `EspressoCover::from_cubes` must have exactly `num_inputs` input values
+    /// and `num_outputs` output values.
+    DimensionMismatch {
+        /// Declared number of inputs
+        expected_inputs: usize,
+        /// Length of the offending cube's input slice
+        actual_inputs: usize,
+        /// Declared number of outputs
+        expected_outputs: usize,
+        /// Length of the offending cube's output slice
+        actual_outputs: usize,
+    },
 }
 
 impl fmt::Display for CubeError {
@@ -83,6 +100,16 @@ impl fmt::Display for CubeError {
                 f,
                 "Invalid cube value {} at position {}. Expected 0 (low), 1 (high), or 2 (don't care).",
                 value, position
+            ),
+            CubeError::DimensionMismatch {
+                expected_inputs,
+                actual_inputs,
+                expected_outputs,
+                actual_outputs,
+            } => write!(
+                f,
+                "Cube dimensions (inputs: {}, outputs: {}) don't match declared dimensions (inputs: {}, outputs: {}).",
+                actual_inputs, actual_outputs, expected_inputs, expected_outputs
             ),
         }
     }
@@ -96,17 +123,26 @@ impl From<CubeError> for io::Error {
     }
 }
 
-/// Errors that can occur during minimization operations
+/// Errors that can occur during minimisation operations
 ///
 /// This error type is returned by `Cover::minimize()` and `BoolExpr::minimize()`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MinimizationError {
     /// Instance management error
     Instance(InstanceError),
     /// Cube validation error
     Cube(CubeError),
-    /// IO error during minimization
+    /// Cover operation error
+    Cover(CoverError),
+    /// IO error during minimisation
     Io(io::Error),
+}
+
+impl From<CoverError> for MinimizationError {
+    fn from(err: CoverError) -> Self {
+        MinimizationError::Cover(err)
+    }
 }
 
 impl fmt::Display for MinimizationError {
@@ -115,6 +151,7 @@ impl fmt::Display for MinimizationError {
             MinimizationError::Instance(e) => write!(f, "Instance error: {}", e),
             MinimizationError::Cube(e) => write!(f, "Cube error: {}", e),
             MinimizationError::Io(e) => write!(f, "IO error: {}", e),
+            MinimizationError::Cover(e) => write!(f, "Cover error: {}", e),
         }
     }
 }
@@ -125,6 +162,7 @@ impl std::error::Error for MinimizationError {
             MinimizationError::Instance(e) => Some(e),
             MinimizationError::Cube(e) => Some(e),
             MinimizationError::Io(e) => Some(e),
+            MinimizationError::Cover(e) => Some(e),
         }
     }
 }
@@ -155,6 +193,7 @@ impl From<MinimizationError> for io::Error {
             // Otherwise, wrap it as Other
             MinimizationError::Instance(e) => io::Error::other(e),
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+            MinimizationError::Cover(e) => io::Error::new(io::ErrorKind::InvalidData, e),
         }
     }
 }

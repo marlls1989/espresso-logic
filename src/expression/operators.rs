@@ -3,7 +3,6 @@
 use super::manager::{FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use std::ops::{Add, Mul, Not};
-use std::sync::{Arc, OnceLock};
 
 /// Logical AND operator for references: `&a * &b`
 ///
@@ -148,56 +147,41 @@ impl BoolExpr {
     ///
     /// Computes the conjunction using the BDD ITE operation:
     /// `and(f, g) = ite(f, g, false)`
+    #[must_use]
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
-        // Use ITE: and(f, g) = ite(f, g, false)
-        let manager = Arc::clone(&self.manager);
-        let result = manager
-            .write()
-            .unwrap()
-            .ite(self.root, other.root, FALSE_NODE);
-        BoolExpr {
-            manager,
-            root: result,
-            dnf_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        // `other.root` is a NodeId valid in `other.manager`; feeding it into `self.manager` is sound
+        // only because every live BoolExpr shares the one global manager (its `Weak` can't have
+        // expired while `other` is alive). Guard that load-bearing invariant.
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
+            "BoolExpr operands must share the same BDD manager"
+        );
+        // and(f, g) = ite(f, g, false)
+        self.op(|mgr, root| mgr.ite(root, other.root, FALSE_NODE))
     }
 
     /// Logical OR: create a new expression that is the disjunction of this and another
     ///
     /// Computes the disjunction using the BDD ITE operation:
     /// `or(f, g) = ite(f, true, g)`
+    #[must_use]
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
-        // Use ITE: or(f, g) = ite(f, true, g)
-        let manager = Arc::clone(&self.manager);
-        let result = manager
-            .write()
-            .unwrap()
-            .ite(self.root, TRUE_NODE, other.root);
-        BoolExpr {
-            manager,
-            root: result,
-            dnf_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        // See `and`: operands must share the one global BDD manager for `other.root` to be valid here.
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
+            "BoolExpr operands must share the same BDD manager"
+        );
+        // or(f, g) = ite(f, true, g)
+        self.op(|mgr, root| mgr.ite(root, TRUE_NODE, other.root))
     }
 
     /// Logical NOT: create a new expression that is the negation of this one
     ///
     /// Computes the negation using the BDD ITE operation:
     /// `not(f) = ite(f, false, true)`
+    #[must_use]
     pub fn not(&self) -> BoolExpr {
-        // Use ITE: not(f) = ite(f, false, true)
-        let manager = Arc::clone(&self.manager);
-        let result = manager
-            .write()
-            .unwrap()
-            .ite(self.root, FALSE_NODE, TRUE_NODE);
-        BoolExpr {
-            manager,
-            root: result,
-            dnf_cache: OnceLock::new(),
-            ast_cache: OnceLock::new(),
-        }
+        // not(f) = ite(f, false, true)
+        self.op(|mgr, root| mgr.ite(root, FALSE_NODE, TRUE_NODE))
     }
 }

@@ -6,7 +6,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "3.0"
+espresso-logic = "4.0"
 ```
 
 The library has **minimal dependencies** (only `libc` and `lalrpop-util` for core functionality).
@@ -23,7 +23,7 @@ This installs the `espresso` binary to your cargo bin directory (usually `~/.car
 
 ## Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.82 or later
 - C compiler (gcc, clang, or msvc)
 - libclang (for bindgen during build)
 
