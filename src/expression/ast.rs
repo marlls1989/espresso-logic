@@ -102,33 +102,27 @@ impl BoolExpr {
     ///
     /// Uses factorisation-based reconstruction for beautiful, compact expressions.
     pub(super) fn get_or_create_ast(&self) -> Arc<BoolExprAst> {
-        // Check if we have a cached AST
+        // The single place that reads and populates `ast_cache`.
         if let Some(ast) = self.ast_cache.get() {
             return Arc::clone(ast);
         }
 
-        // Need to reconstruct from BDD using factorisation
-        let ast = self.to_ast_optimised();
+        // Need to reconstruct from BDD using factorisation.
+        let ast = self.to_ast_uncached();
 
-        // Try to store it (may fail if another thread beat us to it, that's fine)
+        // Try to store it (may fail if another thread beat us to it, that's fine).
         let _ = self.ast_cache.set(Arc::clone(&ast));
 
         ast
     }
 
-    /// Convert BDD to optimised AST representation using factorisation
+    /// Reconstruct an optimised AST from the BDD (pure compute, no caching).
     ///
-    /// Extracts cubes from the BDD and applies algebraic factorisation to produce
-    /// a compact, readable expression.
-    ///
-    /// Uses local caching for both DNF and AST.
-    pub(super) fn to_ast_optimised(&self) -> Arc<BoolExprAst> {
-        // Check local AST cache first
-        if let Some(ast) = self.ast_cache.get() {
-            return Arc::clone(ast);
-        }
-
-        // AST not cached, get cubes and factorise
+    /// Extracts cubes from the BDD and applies algebraic factorisation to produce a compact, readable
+    /// expression. Caching is owned solely by [`get_or_create_ast`](Self::get_or_create_ast), its only
+    /// caller.
+    fn to_ast_uncached(&self) -> Arc<BoolExprAst> {
+        // Get cubes and factorise.
         let cubes = self.get_or_create_cubes();
 
         // Convert cubes to the (literals, include) format expected by factorisation
@@ -137,13 +131,8 @@ impl BoolExpr {
             .map(|cube| (super::minterm_literals(cube), true))
             .collect();
 
-        // Use factorisation to build a nice AST
-        let ast = crate::expression::factorization::factorise_cubes_to_ast(cube_terms);
-
-        // Cache locally
-        let _ = self.ast_cache.set(Arc::clone(&ast));
-
-        ast
+        // Use factorisation to build a nice AST (caching is the caller's responsibility).
+        crate::expression::factorization::factorise_cubes_to_ast(cube_terms)
     }
 
     /// Fold the expression tree depth-first from leaves to root
@@ -191,61 +180,15 @@ impl BoolExpr {
 
     /// Fold over an AST bottom-up (helper for `fold_impl`).
     ///
-    /// Iterative postorder over an explicit work-stack (so a deep AST can't overflow the call
-    /// stack): each node is `Enter`ed once — pushing an `Exit` marker then its children — and the
-    /// closure `f` runs at `Exit` time, consuming the children's results off a result stack. Result-
-    /// and work-stack depth are O(AST height).
-    fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
+    /// The no-top-down-context special case of [`fold_with_context_ast`](Self::fold_with_context_ast):
+    /// a unit context flows down (a trivial `descend`) and `f` is the bottom-up `combine`. Routing
+    /// through the one iterative work-stack keeps the de-recursion logic in a single place. `pub(super)`
+    /// so sibling modules (e.g. factorisation's `ast_to_expr`) can reuse it.
+    pub(super) fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
     where
         F: Fn(ExprNode<T>) -> T,
     {
-        enum Frame<'a> {
-            Enter(&'a BoolExprAst),
-            ExitAnd,
-            ExitOr,
-            ExitNot,
-        }
-        let mut work = vec![Frame::Enter(ast)];
-        let mut results: Vec<T> = Vec::new();
-        while let Some(frame) = work.pop() {
-            match frame {
-                Frame::Enter(node) => match node {
-                    BoolExprAst::Variable(name) => results.push(f(ExprNode::Variable(name))),
-                    BoolExprAst::Constant(val) => results.push(f(ExprNode::Constant(*val))),
-                    // Push Exit, then children so they pop (and produce results) first; left pushed
-                    // last so it pops first → results end up [.., left, right].
-                    BoolExprAst::And(left, right) => {
-                        work.push(Frame::ExitAnd);
-                        work.push(Frame::Enter(right));
-                        work.push(Frame::Enter(left));
-                    }
-                    BoolExprAst::Or(left, right) => {
-                        work.push(Frame::ExitOr);
-                        work.push(Frame::Enter(right));
-                        work.push(Frame::Enter(left));
-                    }
-                    BoolExprAst::Not(inner) => {
-                        work.push(Frame::ExitNot);
-                        work.push(Frame::Enter(inner));
-                    }
-                },
-                Frame::ExitAnd => {
-                    let right = results.pop().expect("And right result");
-                    let left = results.pop().expect("And left result");
-                    results.push(f(ExprNode::And(left, right)));
-                }
-                Frame::ExitOr => {
-                    let right = results.pop().expect("Or right result");
-                    let left = results.pop().expect("Or left result");
-                    results.push(f(ExprNode::Or(left, right)));
-                }
-                Frame::ExitNot => {
-                    let inner = results.pop().expect("Not inner result");
-                    results.push(f(ExprNode::Not(inner)));
-                }
-            }
-        }
-        results.pop().expect("fold produced a result")
+        Self::fold_with_context_ast(ast, (), &|_node, _ctx| ((), ()), &|node, ()| f(node))
     }
 
     /// Fold with a context that flows **top-down** through the tree.

@@ -11,7 +11,7 @@
 //!
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
-use super::{BoolExpr, BoolExprAst};
+use super::{BoolExpr, BoolExprAst, ExprNode};
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -346,57 +346,17 @@ pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Symbol, bool>, bool)>) -> Boo
 
 /// Convert AST to BoolExpr for semantic operations.
 ///
-/// Iterative postorder over an explicit work-stack (so a deep factorised AST can't overflow the call
-/// stack): each node is `Enter`ed once — pushing an `Exit` marker then its children — and the matching
-/// `BoolExpr` operation runs at `Exit` time, consuming the children's results off a result stack.
+/// Reuses [`BoolExpr::fold_ast`] (the shared iterative postorder walk) so a deep factorised AST can't
+/// overflow the call stack: each node's matching `BoolExpr` operation runs bottom-up as the fold
+/// combines children's results.
 fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
-    enum Frame<'a> {
-        Enter(&'a BoolExprAst),
-        ExitAnd,
-        ExitOr,
-        ExitNot,
-    }
-    let mut work = vec![Frame::Enter(ast)];
-    let mut results: Vec<BoolExpr> = Vec::new();
-    while let Some(frame) = work.pop() {
-        match frame {
-            Frame::Enter(node) => match node {
-                BoolExprAst::Constant(val) => results.push(BoolExpr::constant(*val)),
-                BoolExprAst::Variable(name) => results.push(BoolExpr::variable(name)),
-                // Push Exit, then children so they pop (and produce results) first; left pushed last so
-                // it pops first → results end up [.., left, right].
-                BoolExprAst::And(left, right) => {
-                    work.push(Frame::ExitAnd);
-                    work.push(Frame::Enter(right));
-                    work.push(Frame::Enter(left));
-                }
-                BoolExprAst::Or(left, right) => {
-                    work.push(Frame::ExitOr);
-                    work.push(Frame::Enter(right));
-                    work.push(Frame::Enter(left));
-                }
-                BoolExprAst::Not(inner) => {
-                    work.push(Frame::ExitNot);
-                    work.push(Frame::Enter(inner));
-                }
-            },
-            Frame::ExitAnd => {
-                let right = results.pop().expect("And right result");
-                let left = results.pop().expect("And left result");
-                results.push(left.and(&right));
-            }
-            Frame::ExitOr => {
-                let right = results.pop().expect("Or right result");
-                let left = results.pop().expect("Or left result");
-                results.push(left.or(&right));
-            }
-            Frame::ExitNot => {
-                let inner = results.pop().expect("Not inner result");
-                results.push(inner.not());
-            }
-        }
-    }
-    results.pop().expect("ast_to_expr produced a result")
+    BoolExpr::fold_ast(ast, &|node: ExprNode<BoolExpr>| match node {
+        ExprNode::Constant(val) => BoolExpr::constant(val),
+        ExprNode::Variable(name) => BoolExpr::variable(name),
+        ExprNode::And(left, right) => left.and(&right),
+        ExprNode::Or(left, right) => left.or(&right),
+        ExprNode::Not(inner) => inner.not(),
+    })
 }
 
 #[cfg(test)]

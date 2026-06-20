@@ -565,8 +565,9 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     d_outputs.push(false);
                     r_outputs.push(false);
                 }
-                '1' | '4' | '0' | '3' => {
-                    // Type flag not set, don't set bits
+                '0' | '3' => {
+                    // R-set disabled (cover_type has no R): an OFF bit sets nothing. ('1'/'4' can't
+                    // reach here — has_f() is always true, so they always match the first arm.)
                     f_outputs.push(false);
                     d_outputs.push(false);
                     r_outputs.push(false);

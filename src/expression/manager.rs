@@ -278,7 +278,7 @@ impl BddManager {
     }
 
     /// Get the variable of a node (usize::MAX for terminals)
-    pub(super) fn node_var(node: &BddNode) -> VarId {
+    fn node_var(node: &BddNode) -> VarId {
         match node {
             BddNode::Terminal(_) => usize::MAX,
             BddNode::Decision { var, .. } => *var,
@@ -286,7 +286,7 @@ impl BddManager {
     }
 
     /// Get cofactors (low and high children) for Shannon expansion
-    pub(super) fn cofactors(
+    fn cofactors(
         node: &BddNode,
         node_var: VarId,
         split_var: VarId,

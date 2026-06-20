@@ -442,23 +442,6 @@ pub struct EspressoCover {
 }
 
 impl EspressoCover {
-    /// Create a new empty cover with the specified capacity and cube size
-    ///
-    /// Requires that an Espresso instance exists on the current thread.
-    /// Normally you don't need to call this directly - use `from_cubes()` instead.
-    #[allow(dead_code)]
-    pub(crate) fn new(capacity: usize, cube_size: usize) -> Self {
-        let espresso = Espresso::current().expect(
-            "EspressoCover::new requires an Espresso instance. Use EspressoCover::from_cubes() instead.",
-        );
-
-        let ptr = unsafe { sys::sf_new(capacity as c_int, cube_size as c_int) };
-        EspressoCover {
-            ptr,
-            _espresso: espresso.inner,
-        }
-    }
-
     /// Create from raw pointer with Espresso reference (internal use)
     pub(crate) unsafe fn from_raw(ptr: sys::pset_family, espresso: &Espresso) -> Self {
         EspressoCover {
@@ -615,32 +598,22 @@ impl EspressoCover {
                 let cf = *(*sys::get_cube()).temp.add(0);
                 sys::set_clear(cf, cube_size as c_int);
 
-                // Set input values
+                // Set the bit at `bit_pos` in the cube word vector. The cube bit-layout convention
+                // (word `(bit_pos >> 5) + 1`, bit `bit_pos & 31`) lives here, mirroring the read-side
+                // `bit_at` in `to_cubes`.
+                let set_bit = |bit_pos: usize| {
+                    *cf.add((bit_pos >> 5) + 1) |= 1 << (bit_pos & 31);
+                };
+
+                // Set input values. Each binary variable occupies two bits at `var * 2` (value 0) and
+                // `var * 2 + 1` (value 1); a don't-care sets both.
                 for (var, &val) in inputs.iter().enumerate() {
                     match val {
-                        0 => {
-                            let bit_pos = var * 2;
-                            let word = (bit_pos >> 5) + 1;
-                            let bit = bit_pos & 31;
-                            *cf.add(word) |= 1 << bit;
-                        }
-                        1 => {
-                            let bit_pos = var * 2 + 1;
-                            let word = (bit_pos >> 5) + 1;
-                            let bit = bit_pos & 31;
-                            *cf.add(word) |= 1 << bit;
-                        }
+                        0 => set_bit(var * 2),
+                        1 => set_bit(var * 2 + 1),
                         2 => {
-                            // Don't care: set both bits
-                            let bit0 = var * 2;
-                            let word0 = (bit0 >> 5) + 1;
-                            let b0 = bit0 & 31;
-                            *cf.add(word0) |= 1 << b0;
-
-                            let bit1 = var * 2 + 1;
-                            let word1 = (bit1 >> 5) + 1;
-                            let b1 = bit1 & 31;
-                            *cf.add(word1) |= 1 << b1;
+                            set_bit(var * 2);
+                            set_bit(var * 2 + 1);
                         }
                         _ => {
                             return Err(MinimizationError::Cube(CubeError::InvalidValue {
@@ -657,10 +630,7 @@ impl EspressoCover {
 
                 for (i, &val) in outputs.iter().enumerate() {
                     if val == 1 {
-                        let bit_pos = output_first + i;
-                        let word = (bit_pos >> 5) + 1;
-                        let bit = bit_pos & 31;
-                        *cf.add(word) |= 1 << bit;
+                        set_bit(output_first + i);
                     }
                 }
 
@@ -1020,16 +990,30 @@ pub struct Espresso {
 
 // InnerEspresso has no methods except Drop - all logic is in Espresso wrapper
 
+/// Tear down the thread's current Espresso cube state: run the C `setdown_cube`, then free the
+/// hand-allocated `part_size` array and null it so a subsequent setup or `Drop` cannot double-free.
+///
+/// Shared by [`InnerEspresso::drop`] and the re-init guard in [`Espresso::try_new`] so the
+/// safety-critical cleanup sequence lives in one place.
+///
+/// # Safety
+///
+/// Must run on the thread owning the cube state, after a prior `setup_cube`/init (so `setdown_cube`
+/// is correctly paired). The `part_size` free is null-checked, so it is idempotent on that field.
+unsafe fn teardown_cube_state() {
+    sys::setdown_cube();
+    let cube = sys::get_cube();
+    if !(*cube).part_size.is_null() {
+        libc::free((*cube).part_size as *mut libc::c_void);
+        (*cube).part_size = ptr::null_mut();
+    }
+}
+
 impl Drop for InnerEspresso {
     fn drop(&mut self) {
         if self.initialized {
             unsafe {
-                sys::setdown_cube();
-                let cube = sys::get_cube();
-                if !(*cube).part_size.is_null() {
-                    libc::free((*cube).part_size as *mut libc::c_void);
-                    (*cube).part_size = ptr::null_mut();
-                }
+                teardown_cube_state();
             }
         }
     }
@@ -1189,11 +1173,7 @@ impl Espresso {
 
                 // Always tear down existing cube state to avoid interference
                 if !(*cube).fullset.is_null() {
-                    sys::setdown_cube();
-                    if !(*cube).part_size.is_null() {
-                        libc::free((*cube).part_size as *mut libc::c_void);
-                        (*cube).part_size = ptr::null_mut();
-                    }
+                    teardown_cube_state();
                 }
 
                 // Initialize the cube structure
@@ -1230,6 +1210,8 @@ impl Espresso {
                 sys::set_single_expand(if actual_config.single_expand { 1 } else { 0 });
                 sys::set_use_super_gasp(if actual_config.use_super_gasp { 1 } else { 0 });
                 sys::set_use_random_order(if actual_config.use_random_order { 1 } else { 0 });
+                // Deliberately forced off (not an `EspressoConfig` field): the safe wrappers always
+                // emit a fully sparse result, matching the reference CLI's default behaviour.
                 sys::set_skip_make_sparse(0);
             }
 
