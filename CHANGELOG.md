@@ -56,7 +56,6 @@ Label types & cover construction:
 - **`BoolExpr::fold_with_context` redesigned** from continuation-passing callbacks to a
   `(descend, combine)` pair (top-down context, bottom-up results), enabling an iterative walk.
 - **`BoolExpr::collect_variables()` returns `BTreeSet<Symbol>`** (was `BTreeSet<Arc<str>>`).
-- **`Minterm::value_of` / `Symbols::index_of` query bound is now `Q: Ord`** (was `Q: Hash + Eq`).
 - **All public error enums are `#[non_exhaustive]`;** `INLINE_CAP` is no longer public.
 - **Removed the deprecated `Bdd` type alias and the `to_bdd` / `from_expr` / `to_expr` methods**
   (all no-op `clone()` shims). A `BoolExpr` is already a BDD; use it directly (and `clone()` where a
@@ -67,10 +66,11 @@ Label types & cover construction:
 
 - **`Symbol`** (`src/symbol.rs`): a compact, interned variable-name type — inline for short names,
   pooled and shared for longer ones.
-- **Unified `Minterm` type** (`src/cover/minterm.rs`): a label-carrying row of tri-state values
-  (`Some(true)`/`Some(false)`/`None`), bit-packed two bits per variable. Carries its variable header
-  so comparisons align by variable identity, with a pointer-equality fast path for same-cover cubes.
-  Public set operations: `is_subset_of`, `is_superset_of`, `is_disjoint_with`, plus `Ord`/`Eq`/`Hash`.
+- **`Minterm`** (`src/cover/minterm.rs`): a new label-carrying row of tri-state values
+  (`Some(true)`/`Some(false)`/`None`), bit-packed two bits per variable — the single representation
+  that replaces the crate's former four parallel product-term types. Carries its variable header so
+  comparisons align by variable identity, with a pointer-equality fast path for same-cover cubes.
+  Set operations `is_subset_of` / `is_superset_of` / `is_disjoint_with`, plus `Ord`/`Eq`/`Hash`.
 - **`Cube` and `CubeType` are public**, each cube being a pair of `Minterm`s plus an F/D/R set tag.
 - **`Anonymous` label** and the sealed **`Label` / `StringLabel` / `PlaLabel` / `ReconcilableLabel`**
   trait family. Label-presence is **type-level**: a label is a *name* iff it is `Display`, so a
@@ -79,47 +79,22 @@ Label types & cover construction:
   `Positional`.
 - **`Cover::extend` and `Cover::merge`** for combining covers (append vs identity-overlay of outputs),
   renaming output-column collisions via `ReconcilableLabel`.
-- `PartialEq`/`Eq` for `Cover`/`Cube`/`PlaCover`, `Hash` for `Minterm`, `Debug` for `Symbols`.
-- Malformed PLA input now reports `PLAError::CubeDimensionMismatch` / `MissingDimensions` instead of
-  being silently skipped; `.end` is accepted as a read terminator alongside `.e`.
-- **Non-panicking minimisation:** `Minimizable::try_minimize`, `try_minimize_with_config`,
-  `try_minimize_exact`, and `try_minimize_exact_with_config`, which return
-  `MinimizationError::Instance` on a cross-dimension Espresso instance conflict instead of panicking.
-  The panicking `minimize*` methods now panic *only* on that conflict (a usage error) and document it.
-- **`PLAError::InvalidTypeDirective`** — an unrecognised or missing `.type` value is now rejected
-  (consistent with bad `.i`/`.o` values), rather than silently falling back to `F`.
-- **`Display` for `Minterm`, `Cube`, and `Cover`** — the bare `1`/`0`/`-` row, a PLA-style
-  `<inputs> <outputs>` cube, and the line-joined cover body respectively.
-- **`IntoIterator` for `&Cover`** (yields `&Cube`) and **`&Minterm`** (yields `Option<bool>`, via the
-  new `MintermIter`), so `for cube in &cover` / `for value in &minterm` work.
-- **More common traits:** `Debug`/`Clone`/`Hash` for `PlaCover`, `Debug` for `CubesIter`/`ToExprs`,
-  `Hash` for `EspressoConfig`, and `FromStr` for `Symbol`.
-- **`PlaCover::into_anonymous`** — recover the inner cover as a positional
-  `Cover<Anonymous, Anonymous>`, a uniform escape hatch across all variants.
-- **`CubeError::DimensionMismatch`** — `EspressoCover::from_cubes` now validates that each cube's
-  input/output slice length matches the declared dimensions, returning this error instead of writing
-  out of the cube's bit region on a mismatched slice.
-- **`Default` for `CoverType` and `CubeType`** (both default to `F`), and **`Clone` for `Symbols`**.
-- `Minterm::iter` now returns the nameable `MintermIter` (matching `IntoIterator for &Minterm`), and
-  more pure `Minterm`/`Cube` accessors are `#[must_use]`.
+- **Non-panicking minimisation:** `Minimizable::try_minimize` / `try_minimize_exact` (and their
+  `_with_config` forms) return `MinimizationError::Instance` on a cross-dimension Espresso instance
+  conflict instead of panicking. The panicking `minimize*` methods now panic *only* on that conflict.
 
 ### Changed
 
 - Write-once collections are returned as `Arc<[T]>` rather than `Vec<T>`; internal construction uses
   iterator pipelines instead of intermediate `Vec` buffers.
-- `Minterm` has a readable `Debug` (e.g. `Minterm { a: 1, b: -, c: 0 }`) instead of exposing the
-  packed words.
 - **Recursive BDD/AST traversals are now explicit work-stack iteration** (the BDD `ite` apply, cube
   extraction, evaluation, the AST folds, and factorisation), removing the call-stack depth ceiling on
   deep inputs while preserving memoisation.
-- **`Symbols` is fully immutable** — its identity-sorted order is computed eagerly at construction
-  rather than memoised behind an `OnceLock`, so `Minterm`/`Cube`/`Cover`/`Symbols` are sound
-  `HashMap`/`HashSet` keys.
-- Consolidated duplicated cover-layer logic (header union by identity, cube re-pointing).
+- **Malformed PLA input now errors instead of being silently skipped** (e.g. dimension mismatches,
+  missing dimensions, and an unrecognised `.type` value); `.end` is accepted as a read terminator
+  alongside `.e`.
 - **The raw FFI `sys` module is now `#[doc(hidden)]`** — still reachable for the low-level layer, but
   off the documented public surface (its bindgen-generated types are not part of the stable API).
-- **`ArityMismatch` is re-exported from the top-level `error` module** (it was only reachable via
-  `cover::`), and more pure constructors/queries are `#[must_use]`.
 
 ### Fixed
 
@@ -129,6 +104,8 @@ Label types & cover construction:
   exact canonical-BDD root comparison (identical to `==`).
 - **CLI `-e`/`--exact` now runs exact minimisation.** It previously only toggled fast single-expand
   mode while still running the heuristic algorithm; it is now an alias for `-D exact`.
+- **`EspressoCover::from_cubes` now validates cube slice lengths** (new `CubeError::DimensionMismatch`)
+  instead of writing out of the cube's bit region when a slice doesn't match the declared dimensions.
 
 ## [3.1.2] - 2025-11-12
 
