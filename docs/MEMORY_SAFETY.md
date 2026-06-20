@@ -39,12 +39,15 @@ separate `PhantomData` marker is needed.
 
 ```rust
 pub fn minimize(
-    self: &Rc<Self>,
-    f: EspressoCover,
-    d: Option<EspressoCover>,
-    r: Option<EspressoCover>,
+    &self,
+    f: &EspressoCover,
+    d: Option<&EspressoCover>,
+    r: Option<&EspressoCover>,
 ) -> (EspressoCover, EspressoCover, EspressoCover)
 ```
+
+The inputs are **borrowed**; the cloning below happens internally so the caller's covers are left
+intact.
 
 **Memory Flow:**
 
@@ -83,9 +86,9 @@ pub fn minimize(
 4. **Returns**:
    ```rust
    (
-       EspressoCover::from_raw(f_result, self),  // Minimized F
-       EspressoCover::from_raw(d_ptr, self),     // D (same pointer)
-       EspressoCover::from_raw(r_ptr, self),     // R (same pointer)
+       EspressoCover::from_raw(f_result, espresso),  // Minimised F
+       EspressoCover::from_raw(d_ptr, espresso),     // D (same pointer)
+       EspressoCover::from_raw(r_ptr, espresso),     // R (same pointer)
    )
    ```
    - All wrapped in `EspressoCover`
@@ -155,16 +158,15 @@ heaptrack cargo test --test test_memory_safety
 
 ### Issue 1: Global C State
 
-The C code uses thread-local global variables (`cube`, `cdata`, etc.). These are cleaned up in `Espresso::drop()`:
+The C code uses thread-local global variables (`cube`, `cdata`, etc.). These are cleaned up when the
+last `Rc<InnerEspresso>` is dropped — `Drop` lives on `InnerEspresso` (not `Espresso`, which is just a
+ref-counted handle) and delegates to the shared `teardown_cube_state()` helper:
 
 ```rust
-impl Drop for Espresso {
+impl Drop for InnerEspresso {
     fn drop(&mut self) {
         if self.initialized {
-            unsafe {
-                sys::setdown_cube();  // Frees cube.*, cdata.*
-                // ... free part_size ...
-            }
+            unsafe { teardown_cube_state(); }  // setdown_cube() + free/null part_size
         }
     }
 }

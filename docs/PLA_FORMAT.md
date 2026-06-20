@@ -73,9 +73,10 @@ Specifies how many product terms (cubes) follow.
 
 Indicates 4 product terms will be listed.
 
-### `.e` - End of File
+### `.e` / `.end` - End of File
 
-Marks the end of the PLA description.
+Marks the end of the PLA description. Both `.e` and `.end` are accepted on read; the writer emits
+`.e` for an `f`-type cover and `.end` for `fd`/`fr`/`fdr` covers.
 
 ```text
 .e
@@ -99,15 +100,22 @@ Each input position can have one of three values:
 | `1` | Input must be 1 | Variable is true |
 | `-` | Don't care | Variable can be either 0 or 1 |
 
+The reader also accepts `~`, `x`, and `X` as don't-care synonyms for `-`, and an optional `|` may
+separate the input and output fields (whitespace within a row is ignored).
+
 ### Output Pattern Encoding
 
 Each output position can have:
 
 | Symbol | Meaning |
 |--------|---------|
-| `1` | Output is 1 (ON) |
-| `0` | Output is 0 (OFF) |
-| `~` | Output is complemented (rarely used) |
+| `1` (or `4`) | Output is in the ON-set (F) |
+| `0` (or `3`) | Output is in the OFF-set (R) |
+| `-` (or `2`) | Output is a don't-care (D) |
+| `~` | Output belongs to none of the F/D/R sets — no cube is created for it |
+
+Whether `0`/`-` actually produce R/D cubes depends on the cover `.type` (e.g. an `f`-only cover ignores
+them). A bare `~` never creates a cube.
 
 ## Examples
 
@@ -186,7 +194,8 @@ The default type. Lists only the conditions where outputs are 1.
 
 ### FD Type (ON-set + Don't-cares)
 
-Includes both ON conditions and don't-care conditions. Don't-care product terms have `~` in output positions.
+Includes both ON conditions and don't-care conditions. Don't-care product terms use `-` (or `2`) in
+output positions — a bare `~` would instead create *no* cube.
 
 ```text
 .i 2
@@ -195,8 +204,8 @@ Includes both ON conditions and don't-care conditions. Don't-care product terms 
 .p 3
 00 1        # ON-set
 11 1        # ON-set
-01 ~        # Don't-care
-.e
+01 -        # Don't-care
+.end
 ```
 
 ### FR Type (ON-set + OFF-set)
@@ -303,8 +312,10 @@ The minimal valid PLA file requires only `.i`, `.o`, `.p`, and `.e`:
 Can include additional directives for documentation:
 
 - `.type` - Specify cover type (f, fd, fr, fdr)
-- `.phase` - Output phase information
+- `.phase` - Output phase information — **not interpreted** by this reader (silently ignored)
 - Comments for documentation
+
+Note: `.p` (product-term count) is advisory — it is ignored on read and recomputed on write.
 
 ## References
 

@@ -172,7 +172,8 @@ Usage:
 
 ```bash
 espresso input.pla > output.pla
-espresso -s input.pla  # Show statistics
+espresso -s input.pla        # Minimise with an execution summary on stderr
+espresso -D stats input.pla  # Print PLA statistics only
 ```
 
 See [docs/CLI.md](docs/CLI.md) for more options.

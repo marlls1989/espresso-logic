@@ -316,7 +316,7 @@ fn main() -> std::io::Result<()> {
     //
     // Naive DNF (De Morgan's laws): hold 375,840 cubes, next_q 20,220-375,846 cubes (exponential!)
     // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (26,845x and 1,064x better!)
-    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimized)
+    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimised)
     //
     // BDD avoids exponential blowup while providing canonical representation
     
@@ -326,10 +326,10 @@ fn main() -> std::io::Result<()> {
 
 **Key points:**
 - **Helper function `xor()`**: Returns `BoolExpr` for clean composition
-- **Complex expressions**: `hold` starts with 22 terms, minimizes to 10
+- **Complex expressions**: `hold` (an XOR of compound terms) reduces to 10 cubes after minimisation
 - **Stateful logic**: `next_q_v1`/`next_q_v2` efficiently combine activation with feedback
 - **No early minimisation**: Compose all expressions first, minimize once
-- **Multiple outputs**: All four functions optimised together in one call
+- **Multiple outputs**: All five functions optimised together in one call
 
 ## PLA Files
 
@@ -596,7 +596,7 @@ fn main() -> std::io::Result<()> {
     
     // Minimization workflow (introduced in v3.1 with BDDs):
     // 1. Expression → BDD (efficient canonical form)
-    // 2. BDD → Cover cubes (optimized extraction)
+    // 2. BDD → Cover cubes (optimised extraction)
     // 3. Cover → Minimized cover (Espresso algorithm)
     
     let minimized = expr.minimize()?;

@@ -65,7 +65,7 @@ fn test_memory_stability() {
 **Cons:**
 - Less precise than dedicated tools
 - May miss small leaks
-- Can have false positives from allocator behavior
+- Can have false positives from allocator behaviour
 
 ### Method 2: AddressSanitizer (ASan) - Most Reliable
 
@@ -223,7 +223,15 @@ Contains tests that measure memory usage and verify proper cleanup:
 - `test_clone_independence_no_double_free` - Verifies clone creates independent memory
 - `test_repeated_operations_amplify_leaks` - Amplifies small leaks through iteration
 - `test_large_cover_allocations` - Tests with substantial allocations
-- `test_multithreaded_memory_isolation` - Multi-threaded leak detection
+- `test_multithreaded_memory_isolation` - Multi-threaded liveness under load
+- plus `test_into_raw_ownership_transfer`, `test_minimize_with_explicit_covers`,
+  `test_coverbuilder_memory_management`, `test_dimension_changes_no_leak`,
+  `test_cover_keeps_espresso_alive`
+
+The four RSS-measuring tests (`test_memory_usage_stability`, `test_repeated_operations_amplify_leaks`,
+`test_dimension_changes_no_leak`, `test_large_cover_allocations`) read RSS via `ps`, which only works
+on macOS — they are `#[ignore]`d on other platforms (use valgrind/heaptrack there). The double-free /
+`into_raw` tests are platform-independent and always run.
 
 **Run:** `cargo test --test test_memory_safety -- --nocapture`
 

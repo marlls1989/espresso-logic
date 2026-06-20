@@ -800,7 +800,7 @@ fn main() -> std::io::Result<()> {
 - Canonical representation: Equivalent expressions produce identical BDDs
 - Automatic simplification: Redundant terms eliminated during BDD construction
 - Memory efficient: Structural sharing via hash consing
-- Global singleton manager: All BDDs share one manager (thread-safe via Mutex)
+- Global singleton manager: All BDDs share one manager (thread-safe via `RwLock`)
 
 **Minimisation workflow:**
 1. Expression → BDD (fast, polynomial time, cached)
@@ -938,24 +938,11 @@ assert!(!and_expr.equivalent_to(&or_expr));
 
 **Performance Note:**
 
-The `equivalent_to()` method uses a two-phase BDD-based approach (introduced in v3.1):
-
-1. **Fast BDD equality check**: Convert both expressions to BDDs and compare. BDDs use canonical 
-   representation, so equal BDDs guarantee equivalence. This is very fast (O(e) where e is expression size).
-2. **Exact minimisation fallback**: If BDDs differ, use exact minimisation for thorough verification.
-
-Previous approach (v3.0 and earlier):
-- **Before v3.1**: Exhaustive truth table evaluation - O(2^n) where n = number of variables
-  - Generated all 2^n possible variable assignments
-  - Evaluated both expressions for each assignment
-  - Completely impractical for expressions with many variables
-
-This makes equivalency checking **dramatically faster** for expressions with many variables:
-- 10 variables: 1,024x faster
-- 20 variables: 1,048,576x faster  
-- 30 variables: Previously impossible, now feasible
-
-The method combines both expressions into a single cover with two outputs, minimizes exactly once, and checks if all cubes have identical output patterns.
+`equivalent_to()` is an exact, constant-time check — identical to the `==` operator. Every `BoolExpr`
+is a root into one shared, canonical reduced-ordered BDD (all expressions live in the same global
+manager), so two expressions denote the same function **iff their BDD roots are equal**. There is no
+truth-table evaluation and no minimisation fallback: equivalence is a single pointer/identifier
+comparison, independent of the number of variables.
 
 ### Evaluation
 

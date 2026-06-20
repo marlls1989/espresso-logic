@@ -74,6 +74,18 @@ path = "examples/c_element_example.rs"
 name = "threshold_gate_example"
 path = "examples/threshold_gate_example.rs"
 
+[[example]]
+name = "expr_macro_demo"
+path = "examples/expr_macro_demo.rs"
+
+[[example]]
+name = "inspect_cubes"
+path = "examples/inspect_cubes.rs"
+
+[[example]]
+name = "expression_composition"
+path = "examples/expression_composition.rs"
+
 [[bench]]
 name = "pla_benchmarks"
 harness = false

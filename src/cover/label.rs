@@ -107,12 +107,12 @@ impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}
 /// When `extend` stacks `b`'s columns after `a`'s, an appended label may clash with one already in the
 /// header. This trait resolves that clash, per label type:
 /// - **string-like** labels keep their name, suffixing a number on collision (`x` → `x0` → `x1`, …);
-/// - **integer** labels keep their value, taking the first unused number on collision;
 /// - [`Anonymous`] appends a fresh position (its identity is its index, so it never clashes).
 ///
 /// `merge`, which overlays by identity rather than appending, needs only [`Label`]; `extend` requires
-/// this. Label types with no sensible collision policy (an arbitrary struct key) get neither blanket
-/// impl below and so cannot be `extend`ed — only `merge`d.
+/// this. Only the two impls below exist — integer (and other non-string) label types have no
+/// `ReconcilableLabel` impl (an integer impl would overlap the string blanket), so a `Cover<u32, …>`
+/// can be `merge`d but not `extend`ed.
 pub trait ReconcilableLabel: Label {
     /// Given the labels already in `header`, return one label per entry of `additions`, each distinct
     /// from the header and from the others returned (renaming/renumbering on collision).
