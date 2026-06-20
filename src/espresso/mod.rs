@@ -2537,6 +2537,12 @@ mod tests {
 /// 4. **Lastgasp** - Final optimisation pass
 ///
 /// The configuration controls how aggressively each phase operates.
+///
+/// Deliberately an open (non-`#[non_exhaustive]`) struct: the ergonomic
+/// `EspressoConfig { single_expand: true, ..Default::default() }` literal is worth keeping, and the
+/// vintage Espresso algorithm is unlikely to grow new options — so the narrow break of adding a field
+/// later (only for downstream code that constructs it exhaustively without `..Default::default()`) is
+/// an acceptable trade.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EspressoConfig {
     /// Enable debugging output to stderr

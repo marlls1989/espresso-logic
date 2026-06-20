@@ -132,9 +132,10 @@ use std::sync::Arc;
 /// - FD: ON-set + Don't-care set
 /// - FR: ON-set + OFF-set  
 /// - FDR: ON-set + Don't-care set + OFF-set
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CoverType {
     /// On-set only (F)
+    #[default]
     F = 1,
     /// On-set and don't-care set (FD)
     FD = 3,

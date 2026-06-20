@@ -167,16 +167,19 @@ impl<L> Minterm<L> {
     }
 
     /// The shared symbol table this minterm is defined over.
+    #[must_use]
     pub fn symbols(&self) -> &Arc<Symbols<L>> {
         &self.symbols
     }
 
     /// The variables this minterm is defined over (its shared header), in index order.
+    #[must_use]
     pub fn vars(&self) -> &[L] {
         self.symbols.labels()
     }
 
     /// The number of variables defined in this minterm.
+    #[must_use]
     pub fn num_vars(&self) -> usize {
         self.symbols.arity()
     }
@@ -184,6 +187,7 @@ impl<L> Minterm<L> {
     /// The value at positional index `i` in this minterm's own variable order.
     ///
     /// Returns `None` (don't-care) for indices beyond the minterm's width.
+    #[must_use]
     pub fn value_at(&self, i: usize) -> Option<bool> {
         if i < self.num_vars() {
             decode(field_at(&self.values, i))
@@ -193,8 +197,11 @@ impl<L> Minterm<L> {
     }
 
     /// Iterate over the values in this minterm's own variable order.
-    pub fn iter(&self) -> impl Iterator<Item = Option<bool>> + '_ {
-        (0..self.num_vars()).map(move |i| decode(field_at(&self.values, i)))
+    ///
+    /// Returns the same [`MintermIter`] as `(&minterm).into_iter()`.
+    #[must_use]
+    pub fn iter(&self) -> MintermIter<'_, L> {
+        self.into_iter()
     }
 }
 
@@ -259,6 +266,7 @@ impl<L: Label> Minterm<L> {
     /// The value of a named variable (`None` if the variable is absent → implicitly don't-care).
     ///
     /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be queried with `&str`).
+    #[must_use]
     pub fn value_of<Q>(&self, label: &Q) -> Option<bool>
     where
         L: Borrow<Q>,

@@ -969,6 +969,20 @@ fn large_cover_builds_and_drops() {
 }
 
 #[test]
+fn defaults_and_symbols_clone() {
+    use std::sync::Arc;
+
+    assert_eq!(CoverType::default(), CoverType::F);
+    assert_eq!(CubeType::default(), CubeType::F);
+
+    // Symbols is Clone with no `L: Clone` bound (it shares the Arc-backed label storage).
+    let table = Symbols::<Symbol>::new(Arc::from([Symbol::new("a"), Symbol::new("b")]));
+    let cloned: Symbols<Symbol> = (*table).clone();
+    assert_eq!(cloned.arity(), 2);
+    assert_eq!(*table, cloned);
+}
+
+#[test]
 fn wide_minimise_crosses_word_boundary() {
     // 36 inputs (> 32 → multi-word C cube vectors). Two cubes differing only in input 0 merge to a
     // single cube with input 0 = don't-care — the only path exercising the multi-word FFI bit-packing

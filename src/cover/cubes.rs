@@ -18,9 +18,10 @@ use super::symbols::Symbols;
 use std::fmt;
 
 /// Which of a cover's three sets a cube belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CubeType {
     /// ON-set (the function is 1).
+    #[default]
     F,
     /// Don't-care set (the function is `-`).
     D,
@@ -96,6 +97,7 @@ impl<I, O> Cube<I, O> {
     }
 
     /// The input pattern of this cube.
+    #[must_use]
     pub fn inputs(&self) -> &Minterm<I> {
         &self.inputs
     }
@@ -106,11 +108,13 @@ impl<I, O> Cube<I, O> {
     /// means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))" and
     /// `Some(false)` means "it does not". For an FR/FDR cover, a given input pattern can therefore
     /// appear in more than one cube (e.g. an F cube and an R cube), each with its own mask.
+    #[must_use]
     pub fn outputs(&self) -> &Minterm<O> {
         &self.outputs
     }
 
     /// Which set (F/D/R) this cube belongs to.
+    #[must_use]
     pub fn cube_type(&self) -> CubeType {
         self.set
     }

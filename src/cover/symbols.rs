@@ -81,6 +81,18 @@ impl<L: Label + fmt::Debug> fmt::Debug for Symbols<L> {
     }
 }
 
+/// Cloning shares the label storage (`Arc<[L]>` is reference-counted) and copies the small `sorted`
+/// permutation, so no `L: Clone` bound is needed. Tables are normally shared behind an `Arc`, but a
+/// standalone `Symbols<L>` is `Clone` for the cases that hold one by value.
+impl<L> Clone for Symbols<L> {
+    fn clone(&self) -> Self {
+        Symbols {
+            labels: Arc::clone(&self.labels),
+            sorted: self.sorted.clone(),
+        }
+    }
+}
+
 impl<L> Symbols<L> {
     /// Build a table whose labels are **already in [`identity`](Label::identity) order**, so the
     /// sorted order is just `0..arity` — no comparison sort, and no `L: Label` bound needed.

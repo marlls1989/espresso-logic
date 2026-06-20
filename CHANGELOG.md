@@ -99,6 +99,9 @@ Label types & cover construction:
 - **`CubeError::DimensionMismatch`** — `EspressoCover::from_cubes` now validates that each cube's
   input/output slice length matches the declared dimensions, returning this error instead of writing
   out of the cube's bit region on a mismatched slice.
+- **`Default` for `CoverType` and `CubeType`** (both default to `F`), and **`Clone` for `Symbols`**.
+- `Minterm::iter` now returns the nameable `MintermIter` (matching `IntoIterator for &Minterm`), and
+  more pure `Minterm`/`Cube` accessors are `#[must_use]`.
 
 ### Changed
 
