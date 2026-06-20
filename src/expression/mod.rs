@@ -179,6 +179,18 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// program that builds very many distinct expressions over its lifetime will therefore see the
 /// manager's memory grow until that point; this is intentional, not a leak.
 ///
+/// # Using as a `HashMap` / `HashSet` key
+///
+/// `BoolExpr` is a sound map key: its `Eq`/`Hash` use only the canonical BDD root (a stable value).
+/// Clippy's [`clippy::mutable_key_type`] lint *will* fire at such call sites, because a `BoolExpr`
+/// embeds inline `OnceLock` cache cells (the lazily-filled cube and AST caches) — interior mutability
+/// directly in the value. (The `Arc`-shared BDD manager does *not* count: interior mutability behind a
+/// pointer is fine.) Here the lint is a **false positive**: the hash never reads those caches (only the
+/// stable `(manager pointer, root)` pair), so a key's hash cannot change while it sits in the map. It
+/// is therefore safe to `#[allow(clippy::mutable_key_type)]` at those sites.
+///
+/// [`clippy::mutable_key_type`]: https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
+///
 /// # Examples
 ///
 /// ## Method-based API
