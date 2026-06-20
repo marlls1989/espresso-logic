@@ -284,6 +284,65 @@ impl<S: Label> PartialEq for PlaCover<S> {
 
 impl<S: Label> Eq for PlaCover<S> {}
 
+/// Shows the variant and its inner [`Cover`]. (A manual impl rather than `derive`, which would demand
+/// the wrong `S: Debug` placement across the mixed `Cover<S, Anonymous>` etc. variants.)
+impl<S: fmt::Debug> fmt::Debug for PlaCover<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (name, cover): (&str, &dyn fmt::Debug) = match self {
+            Self::InputsOutputsNamed(c) => ("InputsOutputsNamed", c),
+            Self::InputsNamed(c) => ("InputsNamed", c),
+            Self::OutputsNamed(c) => ("OutputsNamed", c),
+            Self::Positional(c) => ("Positional", c),
+        };
+        f.debug_tuple(name).field(cover).finish()
+    }
+}
+
+/// Clones the inner cover, preserving the variant.
+impl<S: Clone> Clone for PlaCover<S> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::InputsOutputsNamed(c) => Self::InputsOutputsNamed(c.clone()),
+            Self::InputsNamed(c) => Self::InputsNamed(c.clone()),
+            Self::OutputsNamed(c) => Self::OutputsNamed(c.clone()),
+            Self::Positional(c) => Self::Positional(c.clone()),
+        }
+    }
+}
+
+/// Hashes the variant discriminant then the inner cover, matching [`PartialEq`]'s variant-aware
+/// equality (a named and a positional cover never compare equal, so they must not collide by content).
+impl<S: Label> std::hash::Hash for PlaCover<S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::InputsOutputsNamed(c) => c.hash(state),
+            Self::InputsNamed(c) => c.hash(state),
+            Self::OutputsNamed(c) => c.hash(state),
+            Self::Positional(c) => c.hash(state),
+        }
+    }
+}
+
+impl<S> PlaCover<S> {
+    /// Recover the inner cover as a positional [`Cover<Anonymous, Anonymous>`](Cover), dropping the
+    /// label sections — a uniform escape hatch that works for every variant (unlike matching, where
+    /// each arm yields a differently-typed cover). Use a `match` when you need to keep the labels.
+    ///
+    /// To build a `PlaCover` from a typed cover, construct the variant directly (the variants are
+    /// public) — e.g. `PlaCover::InputsOutputsNamed(cover)`. A blanket `From` is impossible: when
+    /// `S = Anonymous` all four variants share the same inner type, so the conversions would overlap.
+    #[must_use]
+    pub fn into_anonymous(self) -> Cover<Anonymous, Anonymous> {
+        match self {
+            Self::InputsOutputsNamed(c) => c.anonymize(),
+            Self::InputsNamed(c) => c.anonymize(),
+            Self::OutputsNamed(c) => c.anonymize(),
+            Self::Positional(c) => c.anonymize(),
+        }
+    }
+}
+
 /// Raw PLA components from [`parse_pla`]: label sections kept as the strings read from the file (an
 /// absent section is `None`), to be turned into a concrete label type by [`PlaCover`].
 struct ParsedPla {

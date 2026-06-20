@@ -333,6 +333,12 @@ pub mod error;
 pub mod espresso;
 pub mod expression;
 pub mod symbol;
+/// Raw bindgen-generated FFI bindings to the vendored C Espresso sources.
+///
+/// Hidden from the documented public surface: these are unsafe, ABI-level types whose shape is dictated
+/// by bindgen and the C headers, not part of the stable API. Use the safe [`espresso`] wrappers
+/// instead. Kept reachable only for the low-level wrapper layer.
+#[doc(hidden)]
 pub mod sys;
 
 // Documentation-only module

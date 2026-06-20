@@ -5,6 +5,7 @@
 
 use super::Cover;
 use crate::expression::BoolExpr;
+use std::fmt;
 
 /// Iterator over filtered cubes with generic yield type
 ///
@@ -12,6 +13,13 @@ use crate::expression::BoolExpr;
 /// depending on how the cubes are transformed (references, owned data, etc.).
 pub struct CubesIter<'a, T> {
     pub(super) iter: Box<dyn Iterator<Item = T> + 'a>,
+}
+
+/// The wrapped trait-object iterator can't be introspected, so this is opaque.
+impl<T> fmt::Debug for CubesIter<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CubesIter").finish_non_exhaustive()
+    }
 }
 
 impl<'a, T> Iterator for CubesIter<'a, T> {
@@ -30,6 +38,16 @@ impl<'a, T> Iterator for CubesIter<'a, T> {
 pub struct ToExprs<'a, I, O> {
     pub(super) cover: &'a Cover<I, O>,
     pub(super) current_idx: usize,
+}
+
+/// Reports progress without requiring the label types to be `Debug` (the borrowed cover is elided).
+impl<I, O> fmt::Debug for ToExprs<'_, I, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToExprs")
+            .field("current_idx", &self.current_idx)
+            .field("num_outputs", &self.cover.num_outputs())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a, I: AsRef<str>, O> Iterator for ToExprs<'a, I, O> {

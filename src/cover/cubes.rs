@@ -50,6 +50,20 @@ impl<I: Label + fmt::Debug, O: Label + fmt::Debug> fmt::Debug for Cube<I, O> {
     }
 }
 
+/// Renders the cube as a PLA-style row — `<inputs> <outputs>` (each a bare `1`/`0`/`-` string from
+/// [`Minterm`]'s `Display`) — annotating the set tag for don't-care/off-set cubes (`F` is the default
+/// and left unmarked). Needs no bound on the label types.
+impl<I, O> fmt::Display for Cube<I, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.inputs, self.outputs)?;
+        match self.set {
+            CubeType::F => Ok(()),
+            CubeType::D => write!(f, " (D)"),
+            CubeType::R => write!(f, " (R)"),
+        }
+    }
+}
+
 /// Two cubes are equal when they belong to the same set and their input and output patterns are
 /// equal. The pattern comparison is [`Minterm`]'s identity-based equality, so cubes align by variable
 /// name (ignoring header order) and treat absent variables as don't-cares.

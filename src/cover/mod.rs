@@ -119,7 +119,7 @@ pub use error::{AddExprError, ArityMismatch, CoverError, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
-pub use minterm::Minterm;
+pub use minterm::{Minterm, MintermIter};
 pub use symbols::Symbols;
 
 use std::collections::HashMap;
@@ -593,6 +593,17 @@ impl<I, O> Cover<I, O> {
                     }),
             ),
         }
+    }
+}
+
+/// `for cube in &cover` iterates the cover's cubes by reference, same as [`Cover::cubes`] (so it
+/// honours the cover-type filter).
+impl<'a, I, O> IntoIterator for &'a Cover<I, O> {
+    type Item = &'a Cube<I, O>;
+    type IntoIter = CubesIter<'a, &'a Cube<I, O>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.cubes()
     }
 }
 

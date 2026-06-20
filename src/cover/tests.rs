@@ -716,9 +716,8 @@ fn malformed_pla_cube_dimension_mismatch_errors() {
     // A cube line wider than the declared dimensions is no longer silently dropped: it surfaces a
     // CubeDimensionMismatch (3 chars where .i 2 / .o 1 expects 2 inputs + 1 output).
     let too_wide = ".i 2\n.o 1\n0111 1\n.e\n";
-    let err = PlaCover::<Symbol>::from_pla_string(too_wide)
-        .err()
-        .expect("too-wide cube should error");
+    let err =
+        PlaCover::<Symbol>::from_pla_string(too_wide).expect_err("too-wide cube should error");
     assert!(
         matches!(
             err,
@@ -729,9 +728,8 @@ fn malformed_pla_cube_dimension_mismatch_errors() {
 
     // A truncated final cube (fewer chars than ni + no, nothing left to accumulate) also errors.
     let truncated = ".i 4\n.o 2\n01\n.e\n";
-    let err = PlaCover::<Symbol>::from_pla_string(truncated)
-        .err()
-        .expect("truncated cube should error");
+    let err =
+        PlaCover::<Symbol>::from_pla_string(truncated).expect_err("truncated cube should error");
     assert!(
         matches!(
             err,
@@ -744,8 +742,7 @@ fn malformed_pla_cube_dimension_mismatch_errors() {
     // expects 6) — previously the excess was silently truncated, unlike the single-line path.
     let over_long_multiline = ".i 4\n.o 2\n0101\n111\n.e\n";
     let err = PlaCover::<Symbol>::from_pla_string(over_long_multiline)
-        .err()
-        .expect("over-long multi-line cube should error");
+        .expect_err("over-long multi-line cube should error");
     assert!(
         matches!(
             err,
@@ -1053,14 +1050,50 @@ fn minimize_panics_on_instance_conflict() {
 }
 
 #[test]
+fn display_and_into_iter_surface() {
+    use std::collections::HashSet;
+
+    // Minterm Display is the bare 1/0/- row; Cube adds the output field; Cover joins cubes by line.
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(&[Some(false), None], &[true], CubeType::F));
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(true)],
+        &[true],
+        CubeType::F,
+    ));
+    let cube = cover.cubes().next().unwrap();
+    assert_eq!(cube.inputs().to_string(), "0-");
+    assert_eq!(cube.to_string(), "0- 1");
+    assert_eq!(format!("{cover}"), "0- 1\n11 1");
+
+    // `for cube in &cover` mirrors cover.cubes().
+    let by_ref: Vec<_> = (&cover).into_iter().collect();
+    assert_eq!(by_ref.len(), 2);
+    // `for value in &minterm` mirrors minterm.iter().
+    let values: Vec<_> = cube.inputs().into_iter().collect();
+    assert_eq!(values, vec![Some(false), None]);
+
+    // PlaCover is Hash/Clone/Debug; equal covers (same variant) share a HashSet bucket.
+    let pla =
+        PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n.ilb a b\n.ob f\n01 1\n.e\n").unwrap();
+    let mut set = HashSet::new();
+    set.insert(pla.clone());
+    assert!(set.contains(&pla));
+    assert!(format!("{pla:?}").contains("InputsOutputsNamed"));
+}
+
+#[test]
+fn symbol_from_str() {
+    use std::str::FromStr;
+    assert_eq!(Symbol::from_str("xyz").unwrap(), Symbol::new("xyz"));
+    assert_eq!("abc".parse::<Symbol>().unwrap().as_str(), "abc");
+}
+
+#[test]
 fn malformed_pla_other_errors() {
     use super::pla::{PLAError, PLAReadError};
 
-    let err = |s: &str| {
-        PlaCover::<Symbol>::from_pla_string(s)
-            .err()
-            .expect("should error")
-    };
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
     // .ilb declares fewer labels than .i inputs.
     assert!(matches!(
         err(".i 2\n.o 1\n.ilb a\n01 1\n.e\n"),

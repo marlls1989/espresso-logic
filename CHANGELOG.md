@@ -88,6 +88,14 @@ Label types & cover construction:
   The panicking `minimize*` methods now panic *only* on that conflict (a usage error) and document it.
 - **`PLAError::InvalidTypeDirective`** — an unrecognised or missing `.type` value is now rejected
   (consistent with bad `.i`/`.o` values), rather than silently falling back to `F`.
+- **`Display` for `Minterm`, `Cube`, and `Cover`** — the bare `1`/`0`/`-` row, a PLA-style
+  `<inputs> <outputs>` cube, and the line-joined cover body respectively.
+- **`IntoIterator` for `&Cover`** (yields `&Cube`) and **`&Minterm`** (yields `Option<bool>`, via the
+  new `MintermIter`), so `for cube in &cover` / `for value in &minterm` work.
+- **More common traits:** `Debug`/`Clone`/`Hash` for `PlaCover`, `Debug` for `CubesIter`/`ToExprs`,
+  `Hash` for `EspressoConfig`, and `FromStr` for `Symbol`.
+- **`PlaCover::into_anonymous`** — recover the inner cover as a positional
+  `Cover<Anonymous, Anonymous>`, a uniform escape hatch across all variants.
 
 ### Changed
 
@@ -102,6 +110,10 @@ Label types & cover construction:
   rather than memoised behind an `OnceLock`, so `Minterm`/`Cube`/`Cover`/`Symbols` are sound
   `HashMap`/`HashSet` keys.
 - Consolidated duplicated cover-layer logic (header union by identity, cube re-pointing).
+- **The raw FFI `sys` module is now `#[doc(hidden)]`** — still reachable for the low-level layer, but
+  off the documented public surface (its bindgen-generated types are not part of the stable API).
+- **`ArityMismatch` is re-exported from the top-level `error` module** (it was only reachable via
+  `cover::`), and more pure constructors/queries are `#[must_use]`.
 
 ### Fixed
 

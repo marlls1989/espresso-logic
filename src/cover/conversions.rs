@@ -129,3 +129,18 @@ impl<I: fmt::Debug, O: fmt::Debug> fmt::Debug for Cover<I, O> {
             .finish()
     }
 }
+
+/// Renders the cover as its sum-of-products body: one [`Cube`] per line, in order, each a
+/// PLA-style `<inputs> <outputs>` row. No `.i`/`.o` header is emitted — use the
+/// [`PLAWriter`](crate::PLAWriter) for a complete PLA file. Needs no bound on the label types.
+impl<I, O> fmt::Display for Cover<I, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, cube) in self.cubes().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{cube}")?;
+        }
+        Ok(())
+    }
+}

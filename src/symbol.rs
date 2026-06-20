@@ -135,6 +135,15 @@ impl From<&String> for Symbol {
     }
 }
 
+impl std::str::FromStr for Symbol {
+    type Err = std::convert::Infallible;
+
+    /// Interning a string into a [`Symbol`] never fails, so `"x".parse::<Symbol>()` is infallible.
+    fn from_str(s: &str) -> Result<Symbol, Self::Err> {
+        Ok(Symbol::new(s))
+    }
+}
+
 impl Default for Symbol {
     fn default() -> Symbol {
         Symbol::new("")

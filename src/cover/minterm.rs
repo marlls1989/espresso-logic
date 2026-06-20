@@ -133,6 +133,22 @@ impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
     }
 }
 
+/// Renders the tri-state values as a bare `1`/`0`/`-` row (true/false/don't-care), in index order —
+/// the cube body of a PLA line. Unlike the `Debug` form, no variable labels are shown, so this
+/// needs no bound on `L`.
+impl<L> fmt::Display for Minterm<L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for value in self.iter() {
+            f.write_str(match value {
+                Some(true) => "1",
+                Some(false) => "0",
+                None => "-",
+            })?;
+        }
+        Ok(())
+    }
+}
+
 impl<L> Minterm<L> {
     /// Build a minterm from values against a shared [`Symbols`] table.
     ///
@@ -179,6 +195,39 @@ impl<L> Minterm<L> {
     /// Iterate over the values in this minterm's own variable order.
     pub fn iter(&self) -> impl Iterator<Item = Option<bool>> + '_ {
         (0..self.num_vars()).map(move |i| decode(field_at(&self.values, i)))
+    }
+}
+
+/// Iterator over a minterm's tri-state values in index order, created by `(&minterm).into_iter()`
+/// (i.e. `for value in &minterm`). Mirrors [`Minterm::iter`].
+pub struct MintermIter<'a, L> {
+    minterm: &'a Minterm<L>,
+    pos: usize,
+}
+
+impl<L> Iterator for MintermIter<'_, L> {
+    type Item = Option<bool>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos < self.minterm.num_vars() {
+            let value = self.minterm.value_at(self.pos);
+            self.pos += 1;
+            Some(value)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, L> IntoIterator for &'a Minterm<L> {
+    type Item = Option<bool>;
+    type IntoIter = MintermIter<'a, L>;
+
+    fn into_iter(self) -> MintermIter<'a, L> {
+        MintermIter {
+            minterm: self,
+            pos: 0,
+        }
     }
 }
 
@@ -229,6 +278,7 @@ impl<L: Label> Minterm<L> {
     /// `target` are dropped. The result shares `target` as its symbol table. Alignment is by variable
     /// [`identity`](Label::identity): by name for labelled headers, by position for anonymous ones —
     /// one path for every `L: Label`.
+    #[must_use]
     pub fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
         // Same index space (pointer-equal, or structurally-equal identities) → reuse values as-is.
         if &self.symbols == target {

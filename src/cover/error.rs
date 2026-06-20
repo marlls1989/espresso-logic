@@ -59,6 +59,10 @@ impl From<CoverError> for io::Error {
 /// Errors that can occur when adding an expression to a cover
 ///
 /// This error type is returned by `Cover::add_expr()`.
+///
+/// Kept distinct from [`ToExprError`] (both are currently single `Cover` wrappers) on purpose: they
+/// name different operations and are `#[non_exhaustive]`, so either can grow operation-specific
+/// variants without churning the other's call sites.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum AddExprError {

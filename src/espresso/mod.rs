@@ -714,6 +714,7 @@ impl EspressoCover {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn to_cubes(
         &self,
         num_inputs: usize,
@@ -1079,6 +1080,7 @@ impl Espresso {
     /// // This PANICS - different dimensions!
     /// let esp2 = Espresso::new(3, 1, &EspressoConfig::default());
     /// ```
+    #[must_use]
     pub fn new(num_inputs: usize, num_outputs: usize, config: &EspressoConfig) -> Self {
         Self::try_new(num_inputs, num_outputs, Some(config))
             .expect("Failed to create Espresso instance")
@@ -1258,6 +1260,7 @@ impl Espresso {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn current() -> Option<Self> {
         ESPRESSO_INSTANCE
             .with(|instance| instance.borrow().upgrade().map(|inner| Espresso { inner }))
@@ -2454,7 +2457,7 @@ mod tests {
 /// 4. **Lastgasp** - Final optimisation pass
 ///
 /// The configuration controls how aggressively each phase operates.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EspressoConfig {
     /// Enable debugging output to stderr
     ///
@@ -2555,6 +2558,7 @@ impl Default for EspressoConfig {
 
 impl EspressoConfig {
     /// Create a new configuration with defaults
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
