@@ -341,12 +341,36 @@ fn bench_cube_iteration(c: &mut Criterion) {
     group.finish();
 }
 
+/// Isolate the eager identity-sort done by `Symbols::new` for **named** tables (anonymous tables skip
+/// it). Labels are built once; each iteration measures only the sort + table construction.
+fn bench_symbols_construction(c: &mut Criterion) {
+    use espresso_logic::Symbols;
+    use std::sync::Arc;
+
+    let mut group = c.benchmark_group("symbols_new_named");
+    for &width in &[16usize, 64, 256] {
+        // Reverse-ordered names, so the sort genuinely permutes (not an already-sorted fast path).
+        let labels: Arc<[Symbol]> = (0..width)
+            .rev()
+            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .collect();
+        group.bench_with_input(BenchmarkId::from_parameter(width), &labels, |b, labels| {
+            b.iter(|| {
+                let syms = Symbols::new(Arc::clone(labels));
+                black_box(syms);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
     bench_minimize,
     bench_full_pipeline,
     bench_by_category,
-    bench_cube_iteration
+    bench_cube_iteration,
+    bench_symbols_construction
 );
 criterion_main!(benches);
