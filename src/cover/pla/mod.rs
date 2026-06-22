@@ -367,13 +367,17 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
     let mut input_labels: Option<Vec<String>> = None;
     let mut output_labels: Option<Vec<String>> = None;
 
-    // Read all lines into memory since we need lookahead for multi-line format
     let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
-    let mut i = 0;
 
-    while i < lines.len() {
-        let line = lines[i].trim();
-        i += 1;
+    // C's `parse_pla` (cvrin.c) reads cube data as a single character stream: space, tab, `|` and
+    // *newlines* are all insignificant, and one cube is exactly `ni + no` significant characters —
+    // there are no cube separators. We mirror that by accumulating significant cube characters and
+    // draining complete `ni + no` chunks as they form, instead of treating each line as a cube.
+    let is_pla_delimiter = |c: char| c.is_whitespace() || c == '|';
+    let mut cube_stream: Vec<char> = Vec::new();
+
+    for raw_line in &lines {
+        let line = raw_line.trim();
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
@@ -440,219 +444,40 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
             continue;
         }
 
-        // Parse cube line(s) - supports both single-line and multi-line formats
-        // Some PLA files use | as separator between inputs and outputs
-        let (input_part, output_part) = if line.contains('|') {
-            let parts: Vec<&str> = line.splitn(2, '|').collect();
-            (
-                parts.first().copied().unwrap_or(""),
-                parts.get(1).copied().unwrap_or(""),
-            )
-        } else {
-            (line, "")
+        // Cube-data line. Dimensions must already be declared: there is no inference, because
+        // space/tab/`|`/newlines are all insignificant, so cube data alone cannot locate the
+        // input/output split (C requires `.i`/`.o` before any cube — cvrin.c).
+        let (ni, no) = match (num_inputs, num_outputs) {
+            (Some(ni), Some(no)) => (ni, no),
+            _ => {
+                return Err(match (num_inputs.is_none(), num_outputs.is_none()) {
+                    (true, true) => PLAError::MissingDimensions,
+                    (true, false) => PLAError::MissingInputDirective,
+                    (false, true) => PLAError::MissingOutputDirective,
+                    (false, false) => unreachable!("both-declared is the Some/Some arm above"),
+                }
+                .into());
+            }
         };
 
-        // Remove ALL whitespace to handle column-based formatting
-        // (e.g., files where inputs/outputs are formatted in columns with spaces)
-        let line_no_spaces: String = if !output_part.is_empty() {
-            // Format with |: remove spaces from each part separately
-            let inp = input_part
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>();
-            let out = output_part
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>();
-            format!("{}{}", inp, out)
-        } else {
-            // No |: remove all spaces from whole line
-            line.chars().filter(|c| !c.is_whitespace()).collect()
-        };
-
-        if line_no_spaces.is_empty() {
-            continue;
-        }
-
-        // Determine input and output strings based on declared dimensions
-        let (input_str, output_str) = if let (Some(ni), Some(no)) = (num_inputs, num_outputs) {
-            // We know the dimensions, so split at the boundary
-            if line_no_spaces.len() >= ni + no {
-                // Line has enough characters - split at boundary
-                let (inp, out) = line_no_spaces.split_at(ni);
-                (inp.to_string(), out.to_string())
-            } else {
-                // Line too short, might be multi-line format
-                let mut accumulated = line_no_spaces.clone();
-
-                // Look ahead to accumulate more lines until we have enough characters
-                while accumulated.len() < ni + no && i < lines.len() {
-                    let next_line = lines[i].trim();
-
-                    // Skip empty lines
-                    if next_line.is_empty() || next_line.starts_with('#') {
-                        i += 1;
-                        continue;
-                    }
-
-                    // Stop at directives
-                    if next_line.starts_with('.') {
-                        break;
-                    }
-
-                    // Remove whitespace from next line and append
-                    let next_no_spaces: String =
-                        next_line.chars().filter(|c| !c.is_whitespace()).collect();
-                    if next_no_spaces.is_empty() {
-                        i += 1;
-                        continue;
-                    }
-
-                    accumulated.push_str(&next_no_spaces);
-                    i += 1; // Consume this line
-
-                    if accumulated.len() >= ni + no {
-                        break;
-                    }
-                }
-
-                // Guard `split_at(ni)` against a too-short accumulation (which would panic). An
-                // *over-long* accumulation is intentionally not special-cased: splitting at `ni`
-                // yields an output wider than `no`, which the shared dimension check below rejects
-                // with the same payload — so single-line and multi-line cubes validate identically.
-                if accumulated.len() < ni {
-                    return Err(PLAError::CubeDimensionMismatch {
-                        expected_inputs: ni,
-                        actual_inputs: accumulated.len(),
-                        expected_outputs: no,
-                        actual_outputs: 0,
-                    }
-                    .into());
-                }
-                let (inp, out) = accumulated.split_at(ni);
-                (inp.to_string(), out.to_string())
+        // Append this line's significant characters to the stream, then drain every complete
+        // `ni + no` cube now available. A cube may span several lines, and several cubes may share a
+        // line — exactly as C reads it.
+        cube_stream.extend(line.chars().filter(|c| !is_pla_delimiter(*c)));
+        let width = ni + no;
+        // `checked_div` yields `None` only for a degenerate zero-width cover (`.i 0 .o 0`), where no
+        // cube can ever form; skip draining in that case rather than dividing by zero.
+        if let Some(complete) = cube_stream.len().checked_div(width) {
+            for k in 0..complete {
+                let chunk = &cube_stream[k * width..(k + 1) * width];
+                push_cube(&chunk[..ni], &chunk[ni..], cover_type, &mut cubes)?;
             }
-        } else {
-            // Dimensions not yet known - use whitespace splitting as before
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 2 {
-                // No .i/.o directive declared the dimensions, and this line can't be split into
-                // input/output halves to infer them.
-                return Err(PLAError::MissingDimensions.into());
-            }
-            (parts[0].to_string(), parts[1].to_string())
-        };
-
-        // Infer dimensions from first cube if not specified
-        if num_inputs.is_none() {
-            num_inputs = Some(input_str.len());
-        }
-        if num_outputs.is_none() {
-            num_outputs = Some(output_str.len());
-        }
-
-        let ni = num_inputs.unwrap();
-        let no = num_outputs.unwrap();
-
-        // Verify dimensions are consistent with the declared/inferred width.
-        if input_str.len() != ni || output_str.len() != no {
-            return Err(PLAError::CubeDimensionMismatch {
-                expected_inputs: ni,
-                actual_inputs: input_str.len(),
-                expected_outputs: no,
-                actual_outputs: output_str.len(),
-            }
-            .into());
-        }
-
-        // Parse inputs
-        let mut inputs = Vec::with_capacity(ni);
-        for (pos, ch) in input_str.chars().enumerate() {
-            inputs.push(match ch {
-                '0' => Some(false),
-                '1' => Some(true),
-                '-' | '~' | 'x' | 'X' => None,
-                _ => {
-                    return Err(PLAError::InvalidInputCharacter {
-                        character: ch,
-                        position: pos,
-                    }
-                    .into())
-                }
-            });
-        }
-
-        // Parse outputs following Espresso C convention (cvrin.c lines 176-199)
-        // The C code creates separate F, D, R cubes from a single line:
-        // - '1' or '4' → bit set in F cube
-        // - '0' or '3' → bit set in R cube
-        // - '-' or '2' → bit set in D cube (if pla_type includes D_type)
-        // - '~' → does NOTHING (cvrin.c line 190: just breaks)
-        //
-        // Simplified: outputs are Vec<bool> where true = bit set in this cube
-        let mut f_outputs = Vec::with_capacity(no);
-        let mut d_outputs = Vec::with_capacity(no);
-        let mut r_outputs = Vec::with_capacity(no);
-        let mut has_f = false;
-        let mut has_d = false;
-        let mut has_r = false;
-
-        for (pos, ch) in output_str.chars().enumerate() {
-            match ch {
-                '1' | '4' if cover_type.has_f() => {
-                    f_outputs.push(true); // Bit set in F cube
-                    d_outputs.push(false); // Not in D cube
-                    r_outputs.push(false); // Not in R cube
-                    has_f = true;
-                }
-                '0' | '3' if cover_type.has_r() => {
-                    f_outputs.push(false); // Not in F cube
-                    d_outputs.push(false); // Not in D cube
-                    r_outputs.push(true); // Bit set in R cube
-                    has_r = true;
-                }
-                '-' | '2' if cover_type.has_d() => {
-                    // Only '-' and '2' create D cubes, NOT '~'
-                    f_outputs.push(false); // Not in F cube
-                    d_outputs.push(true); // Bit set in D cube
-                    r_outputs.push(false); // Not in R cube
-                    has_d = true;
-                }
-                '~' | '-' | '2' => {
-                    // '~' does nothing (C code line 190)
-                    // If '-' or '2' but D_type not set, also do nothing
-                    f_outputs.push(false);
-                    d_outputs.push(false);
-                    r_outputs.push(false);
-                }
-                '0' | '3' => {
-                    // R-set disabled (cover_type has no R): an OFF bit sets nothing. ('1'/'4' can't
-                    // reach here — has_f() is always true, so they always match the first arm.)
-                    f_outputs.push(false);
-                    d_outputs.push(false);
-                    r_outputs.push(false);
-                }
-                _ => {
-                    return Err(PLAError::InvalidOutputCharacter {
-                        character: ch,
-                        position: pos,
-                    }
-                    .into())
-                }
-            }
-        }
-
-        // Add cubes only if they have meaningful outputs
-        if has_f {
-            cubes.push((inputs.clone(), f_outputs, CubeType::F));
-        }
-        if has_d {
-            cubes.push((inputs.clone(), d_outputs, CubeType::D));
-        }
-        if has_r {
-            cubes.push((inputs, r_outputs, CubeType::R));
+            cube_stream.drain(..complete * width);
         }
     }
+
+    // Any trailing characters that do not complete a final `ni + no` cube are ignored, matching C
+    // (which warns about and skips an incomplete final product term).
 
     // Verify we got dimensions
     let num_inputs = num_inputs.ok_or(PLAError::MissingInputDirective)?;
@@ -690,6 +515,96 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
         cubes,
         cover_type,
     })
+}
+
+/// Parse one cube's worth of significant characters — already split at the input/output boundary, so
+/// `input_chars` is exactly `ni` long and `output_chars` exactly `no` — and append the resulting
+/// F/D/R raw cubes. Mirrors C's `read_cube` output convention (cvrin.c).
+fn push_cube(
+    input_chars: &[char],
+    output_chars: &[char],
+    cover_type: CoverType,
+    cubes: &mut Vec<RawCube>,
+) -> Result<(), PLAError> {
+    // Parse the input field.
+    let mut inputs = Vec::with_capacity(input_chars.len());
+    for (pos, &ch) in input_chars.iter().enumerate() {
+        inputs.push(match ch {
+            '0' => Some(false),
+            '1' => Some(true),
+            '-' | '~' | 'x' | 'X' => None,
+            _ => {
+                return Err(PLAError::InvalidInputCharacter {
+                    character: ch,
+                    position: pos,
+                })
+            }
+        });
+    }
+
+    // Parse the output field following the Espresso C convention (cvrin.c lines 176-199): the one
+    // line yields separate F, D, R cubes — '1'/'4' set an F bit, '0'/'3' an R bit, '-'/'2' a D bit
+    // (when the cover type carries that set), and '~' contributes nothing.
+    let mut f_outputs = Vec::with_capacity(output_chars.len());
+    let mut d_outputs = Vec::with_capacity(output_chars.len());
+    let mut r_outputs = Vec::with_capacity(output_chars.len());
+    let mut has_f = false;
+    let mut has_d = false;
+    let mut has_r = false;
+
+    for (pos, &ch) in output_chars.iter().enumerate() {
+        match ch {
+            '1' | '4' if cover_type.has_f() => {
+                f_outputs.push(true);
+                d_outputs.push(false);
+                r_outputs.push(false);
+                has_f = true;
+            }
+            '0' | '3' if cover_type.has_r() => {
+                f_outputs.push(false);
+                d_outputs.push(false);
+                r_outputs.push(true);
+                has_r = true;
+            }
+            '-' | '2' if cover_type.has_d() => {
+                f_outputs.push(false);
+                d_outputs.push(true);
+                r_outputs.push(false);
+                has_d = true;
+            }
+            '~' | '-' | '2' => {
+                // '~' contributes nothing; '-'/'2' with the D set disabled also contribute nothing.
+                f_outputs.push(false);
+                d_outputs.push(false);
+                r_outputs.push(false);
+            }
+            '0' | '3' => {
+                // R-set disabled: an OFF bit sets nothing. ('1'/'4' can't reach here — has_f() is
+                // always true, so they always match the first arm.)
+                f_outputs.push(false);
+                d_outputs.push(false);
+                r_outputs.push(false);
+            }
+            _ => {
+                return Err(PLAError::InvalidOutputCharacter {
+                    character: ch,
+                    position: pos,
+                })
+            }
+        }
+    }
+
+    // Add cubes only if they carry meaningful outputs.
+    if has_f {
+        cubes.push((inputs.clone(), f_outputs, CubeType::F));
+    }
+    if has_d {
+        cubes.push((inputs.clone(), d_outputs, CubeType::D));
+    }
+    if has_r {
+        cubes.push((inputs, r_outputs, CubeType::R));
+    }
+    Ok(())
 }
 
 /// Run `$c` (bound to the inner [`Cover`]) for every [`PlaCover`] variant — used by the accessors and

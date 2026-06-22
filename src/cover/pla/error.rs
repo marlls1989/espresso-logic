@@ -63,7 +63,8 @@ pub enum PLAError {
         /// Actual number of labels provided
         actual: usize,
     },
-    /// PLA file has no dimension information (no .i/.o and no cubes to infer from)
+    /// PLA file declares no dimensions: a cube appears before both `.i` and `.o` (which are required
+    /// up front — dimensions are never inferred from the cube data)
     MissingDimensions,
 }
 

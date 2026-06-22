@@ -710,52 +710,44 @@ fn pla_cover_variant_tracks_label_sections() {
 }
 
 #[test]
-fn malformed_pla_cube_dimension_mismatch_errors() {
-    use super::pla::{PLAError, PLAReadError};
+fn pla_cube_stream_chunks_by_char_count_like_c() {
+    // C reads cube data as a continuous stream of significant characters (space/tab/`|`/newline all
+    // insignificant) and takes exactly `ni + no` characters per cube — there are no cube separators.
+    // We mirror that: extra characters spill into the next cube, and a trailing partial is ignored,
+    // rather than erroring. Each case below is asserted equal to its canonical one-cube-per-line form.
+    let parse = |s: &str| {
+        PlaCover::<Symbol>::from_pla_string(s)
+            .unwrap_or_else(|e| panic!("{s:?} should parse, got {e:?}"))
+            .to_pla_string(CoverType::FD)
+            .expect("serialise")
+    };
 
-    // A cube line wider than the declared dimensions is no longer silently dropped: it surfaces a
-    // CubeDimensionMismatch (3 chars where .i 2 / .o 1 expects 2 inputs + 1 output).
-    let too_wide = ".i 2\n.o 1\n0111 1\n.e\n";
-    let err =
-        PlaCover::<Symbol>::from_pla_string(too_wide).expect_err("too-wide cube should error");
-    assert!(
-        matches!(
-            err,
-            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
-        ),
-        "expected CubeDimensionMismatch, got {err:?}"
+    // 5 significant chars at width 3: one cube `011` (01|1), trailing `11` ignored.
+    assert_eq!(
+        parse(".i 2\n.o 1\n0111 1\n.e\n"),
+        parse(".i 2\n.o 1\n01 1\n.e\n")
     );
 
-    // A truncated final cube (fewer chars than ni + no, nothing left to accumulate) also errors.
-    let truncated = ".i 4\n.o 2\n01\n.e\n";
-    let err =
-        PlaCover::<Symbol>::from_pla_string(truncated).expect_err("truncated cube should error");
-    assert!(
-        matches!(
-            err,
-            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
-        ),
-        "expected CubeDimensionMismatch, got {err:?}"
+    // 2 chars at width 6: no complete cube — an empty cover, not an error.
+    assert_eq!(parse(".i 4\n.o 2\n01\n.e\n"), parse(".i 4\n.o 2\n.e\n"));
+
+    // 7 chars across two lines at width 6: one cube `010111` (0101|11), trailing `1` ignored.
+    assert_eq!(
+        parse(".i 4\n.o 2\n0101\n111\n.e\n"),
+        parse(".i 4\n.o 2\n0101 11\n.e\n")
     );
 
-    // An over-long cube that spans multiple lines errors too (accumulated 7 chars where .i 4 / .o 2
-    // expects 6) — previously the excess was silently truncated, unlike the single-line path.
-    let over_long_multiline = ".i 4\n.o 2\n0101\n111\n.e\n";
-    let err = PlaCover::<Symbol>::from_pla_string(over_long_multiline)
-        .expect_err("over-long multi-line cube should error");
-    assert!(
-        matches!(
-            err,
-            PLAReadError::PLA(PLAError::CubeDimensionMismatch { .. })
-        ),
-        "expected CubeDimensionMismatch, got {err:?}"
+    // Two cubes packed onto one line (6 chars at width 3) read as two cubes.
+    assert_eq!(
+        parse(".i 2\n.o 1\n01 1 10 1\n.e\n"),
+        parse(".i 2\n.o 1\n01 1\n10 1\n.e\n")
     );
 
-    // A well-formed multi-line cube (split across lines, exactly ni + no wide) still parses.
-    assert!(PlaCover::<Symbol>::from_pla_string(".i 4\n.o 2\n0101\n11\n.e\n").is_ok());
-
-    // Well-formed input still parses cleanly (the stricter checks don't reject valid covers).
-    assert!(PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n11 1\n.e\n").is_ok());
+    // A single cube split across lines (exactly ni + no wide) reads as one cube.
+    assert_eq!(
+        parse(".i 4\n.o 2\n0101\n11\n.e\n"),
+        parse(".i 4\n.o 2\n0101 11\n.e\n")
+    );
 
     // `.end` is accepted as a terminator alongside `.e`.
     assert!(PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n.end\n").is_ok());
@@ -1161,9 +1153,16 @@ fn malformed_pla_other_errors() {
         err(".i 2\n.o 1\n.ilb a\n01 1\n.e\n"),
         PLAReadError::PLA(PLAError::LabelCountMismatch { .. })
     ));
-    // No .i/.o and a single-token line can't infer the dimensions.
+    // A cube before any `.i`/`.o` is rejected: dimensions are required up front (as in C), never
+    // inferred from the cube. A single-token line...
     assert!(matches!(
         err("0101\n.e\n"),
+        PLAReadError::PLA(PLAError::MissingDimensions)
+    ));
+    // ...and a two-token line (which an earlier whitespace-inference path wrongly *accepted*) are
+    // both rejected now.
+    assert!(matches!(
+        err("01 1\n.e\n"),
         PLAReadError::PLA(PLAError::MissingDimensions)
     ));
     // Invalid character in the input field.
@@ -1186,12 +1185,12 @@ fn malformed_pla_other_errors() {
         err(".i 2\n.o two\n01 1\n.e\n"),
         PLAReadError::PLA(PLAError::InvalidOutputDirective { .. })
     ));
-    // .i present but no .o (and nothing to infer it from).
+    // .i present but no .o.
     assert!(matches!(
         err(".i 2\n.e\n"),
         PLAReadError::PLA(PLAError::MissingOutputDirective)
     ));
-    // .o present but no .i (and nothing to infer it from).
+    // .o present but no .i. (Order between .i and .o does not matter; only that both are present.)
     assert!(matches!(
         err(".o 1\n.e\n"),
         PLAReadError::PLA(PLAError::MissingInputDirective)
@@ -1201,6 +1200,50 @@ fn malformed_pla_other_errors() {
         err(".i 2\n.o 1\n.type bogus\n01 1\n.e\n"),
         PLAReadError::PLA(PLAError::InvalidTypeDirective { .. })
     ));
+}
+
+#[test]
+fn pla_delimiters_match_c_positional_reading() {
+    // C's read_cube (cvrin.c) treats space, tab and '|' as insignificant delimiters that may appear
+    // anywhere; the input/output boundary is positional, fixed by .i/.o. So '|' is NOT a boundary
+    // marker — multiple '|' (and spaces) mid-line are skipped and the field is split at .i.
+    let serialise = |pla: &str| {
+        PlaCover::<Symbol>::from_pla_string(pla)
+            .unwrap_or_else(|e| panic!("{pla:?} should parse, got {e:?}"))
+            .to_pla_string(CoverType::FD)
+            .expect("serialise")
+    };
+    let canonical = serialise(".i 4\n.o 2\n0110 11\n.e\n");
+
+    // Same cube with '|' sprinkled through both fields (and inner spaces) must read to the identical
+    // cover, exactly as the C reader would read it character by character.
+    for variant in [
+        ".i 4\n.o 2\n01|10|11\n.e\n",
+        ".i 4\n.o 2\n0 1 1 0 | 1 1\n.e\n",
+        ".i 4\n.o 2\n|0110|11|\n.e\n",
+    ] {
+        assert_eq!(
+            serialise(variant),
+            canonical,
+            "variant {variant:?} should read positionally like C"
+        );
+    }
+}
+
+#[test]
+fn accepts_i_and_o_directives_in_either_order() {
+    // C forbids `.o` before `.i`, but this crate intentionally accepts the two directives in any
+    // order — only that both are present before the first cube matters.
+    let normal = PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n.e\n").unwrap();
+    let swapped = PlaCover::<Symbol>::from_pla_string(".o 1\n.i 2\n01 1\n.e\n")
+        .expect(".o before .i is accepted");
+    assert_eq!(swapped.num_inputs(), 2);
+    assert_eq!(swapped.num_outputs(), 1);
+    assert_eq!(
+        swapped.to_pla_string(CoverType::FD).unwrap(),
+        normal.to_pla_string(CoverType::FD).unwrap(),
+        "directive order must not affect the parsed cover"
+    );
 }
 
 #[test]
