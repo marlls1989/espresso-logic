@@ -1181,6 +1181,11 @@ fn malformed_pla_other_errors() {
         err(".i two\n.o 1\n01 1\n.e\n"),
         PLAReadError::PLA(PLAError::InvalidInputDirective { .. })
     ));
+    // Non-numeric .o directive value (symmetric to the .i case above).
+    assert!(matches!(
+        err(".i 2\n.o two\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::InvalidOutputDirective { .. })
+    ));
     // .i present but no .o (and nothing to infer it from).
     assert!(matches!(
         err(".i 2\n.e\n"),
@@ -1196,6 +1201,33 @@ fn malformed_pla_other_errors() {
         err(".i 2\n.o 1\n.type bogus\n01 1\n.e\n"),
         PLAReadError::PLA(PLAError::InvalidTypeDirective { .. })
     ));
+}
+
+#[test]
+fn from_pla_file_missing_path_is_io_error() {
+    use super::pla::PLAReadError;
+
+    // A nonexistent path surfaces as the IO variant (not a PLA-format error), so callers can
+    // distinguish "couldn't open the file" from "the file's contents are malformed".
+    let result = PlaCover::<Symbol>::from_pla_file("/no/such/espresso_input.pla");
+    assert!(
+        matches!(result, Err(PLAReadError::Io(_))),
+        "missing file should be PLAReadError::Io, got {result:?}"
+    );
+}
+
+#[test]
+fn minimise_empty_cover_is_ok_with_no_cubes() {
+    // A declared-but-empty cover (labels set, zero cubes) must minimise without panicking on the
+    // degenerate 0-cube FFI path, returning an equally-empty cover.
+    let cover: Cover<Symbol, Symbol> = Cover::with_labels(CoverType::F, &["a"], &["o"]);
+    assert_eq!(cover.num_cubes(), 0);
+    let minimised = cover
+        .minimize()
+        .expect("empty cover should minimise cleanly");
+    assert_eq!(minimised.num_cubes(), 0);
+    assert_eq!(minimised.num_inputs(), 1);
+    assert_eq!(minimised.num_outputs(), 1);
 }
 
 #[test]
@@ -1455,6 +1487,27 @@ fn extend_renames_colliding_named_outputs() {
     assert_eq!(a.output_labels()[0].as_ref(), "f");
     assert_eq!(a.output_labels()[1].as_ref(), "f0"); // reconciled
     assert_eq!(a.num_inputs(), 2); // union {x, y}
+}
+
+#[test]
+fn extend_reconciles_repeated_output_collisions() {
+    // Three covers all output "f"; each extend reconciles against the names already present, so the
+    // suffixes advance f -> f0 -> f1 rather than colliding again.
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    let mut b = Cover::new(CoverType::F);
+    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+    let mut c = Cover::new(CoverType::F);
+    c.add_expr(&crate::BoolExpr::variable("z"), "f").unwrap();
+
+    a.extend(&b);
+    a.extend(&c);
+
+    assert_eq!(a.num_outputs(), 3);
+    assert_eq!(a.output_labels()[0].as_ref(), "f");
+    assert_eq!(a.output_labels()[1].as_ref(), "f0");
+    assert_eq!(a.output_labels()[2].as_ref(), "f1");
+    assert_eq!(a.num_inputs(), 3); // union {x, y, z}
 }
 
 #[test]

@@ -17,6 +17,7 @@ use std::ops::{Add, Mul, Not};
 /// let a = BoolExpr::variable("a");
 /// let b = BoolExpr::variable("b");
 /// let result = &a * &b;  // Equivalent to a.and(&b)
+/// assert!(result.equivalent_to(&a.and(&b)));
 /// ```
 impl Mul for &BoolExpr {
     type Output = BoolExpr;
@@ -108,6 +109,7 @@ impl Add for BoolExpr {
 ///
 /// let a = BoolExpr::variable("a");
 /// let result = !&a;  // Equivalent to a.not()
+/// assert!(result.equivalent_to(&a.not()));
 /// ```
 impl Not for &BoolExpr {
     type Output = BoolExpr;
