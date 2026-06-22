@@ -64,6 +64,12 @@ use std::sync::Arc;
 ///   single-output [`Cover`], minimises it with Espresso, then rebuilds an expression from the
 ///   minimised product terms. Workflow: Expression → Cover → Espresso → minimised Cover → Expression
 ///
+/// This trait is **not sealed**: it is intentionally open so downstream crates may implement it for
+/// their own types (for example, to forward minimisation through a wrapper). An implementation only
+/// needs to provide [`try_minimize_with_config`](Self::try_minimize_with_config) and
+/// [`try_minimize_exact_with_config`](Self::try_minimize_exact_with_config); the remaining methods
+/// have defaults.
+///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
 ///

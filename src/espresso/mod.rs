@@ -1278,16 +1278,19 @@ impl Espresso {
     }
 
     /// Get the number of inputs for this Espresso instance
+    #[must_use]
     pub fn num_inputs(&self) -> usize {
         self.inner.num_inputs
     }
 
     /// Get the number of outputs for this Espresso instance
+    #[must_use]
     pub fn num_outputs(&self) -> usize {
         self.inner.num_outputs
     }
 
     /// Get the configuration of this Espresso instance
+    #[must_use]
     pub fn config(&self) -> &EspressoConfig {
         &self.inner.config
     }

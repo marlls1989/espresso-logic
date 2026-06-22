@@ -224,7 +224,15 @@ impl<L> Iterator for MintermIter<'_, L> {
             None
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.minterm.num_vars() - self.pos;
+        (remaining, Some(remaining))
+    }
 }
+
+// The length is known exactly (and O(1)): it is the number of variables still to yield.
+impl<L> ExactSizeIterator for MintermIter<'_, L> {}
 
 impl<'a, L> IntoIterator for &'a Minterm<L> {
     type Item = Option<bool>;

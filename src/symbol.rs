@@ -145,6 +145,9 @@ impl std::str::FromStr for Symbol {
 }
 
 impl Default for Symbol {
+    /// The default `Symbol` is the **empty name** (`""`), stored inline. This is a valid, comparable
+    /// `Symbol` — handy as a placeholder — but note it is not a meaningful variable name; an all-empty
+    /// label table would make distinct positions compare equal.
     fn default() -> Symbol {
         Symbol::new("")
     }
@@ -162,9 +165,29 @@ impl PartialEq for Symbol {
 
 impl Eq for Symbol {}
 
+// String comparison is symmetric and works against both `str` and `&str` in either order, mirroring
+// the way `std`'s `String` compares against string slices.
 impl PartialEq<str> for Symbol {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Symbol {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Symbol> for str {
+    fn eq(&self, other: &Symbol) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<Symbol> for &str {
+    fn eq(&self, other: &Symbol) -> bool {
+        *self == other.as_str()
     }
 }
 
@@ -183,6 +206,30 @@ impl Ord for Symbol {
 impl PartialOrd for Symbol {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl PartialOrd<str> for Symbol {
+    fn partial_cmp(&self, other: &str) -> Option<std::cmp::Ordering> {
+        self.as_str().partial_cmp(other)
+    }
+}
+
+impl PartialOrd<&str> for Symbol {
+    fn partial_cmp(&self, other: &&str) -> Option<std::cmp::Ordering> {
+        self.as_str().partial_cmp(*other)
+    }
+}
+
+impl PartialOrd<Symbol> for str {
+    fn partial_cmp(&self, other: &Symbol) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other.as_str())
+    }
+}
+
+impl PartialOrd<Symbol> for &str {
+    fn partial_cmp(&self, other: &Symbol) -> Option<std::cmp::Ordering> {
+        (*self).partial_cmp(other.as_str())
     }
 }
 
@@ -275,6 +322,27 @@ mod tests {
         let mut bt = std::collections::BTreeMap::new();
         bt.insert(Symbol::new(LONG), 7);
         assert_eq!(bt.get(LONG), Some(&7));
+    }
+
+    #[test]
+    fn compares_against_str_in_both_directions() {
+        use std::cmp::Ordering;
+        let sym = Symbol::new("m");
+
+        // Equality, both orders, against `&str` and `str`.
+        assert!(sym == "m");
+        assert!("m" == sym);
+        assert!(*"m" == sym);
+        assert!(sym != "n");
+        assert!("n" != sym);
+
+        // Ordering, both orders, against `&str`.
+        assert!(sym < "n");
+        assert!(sym > "a");
+        assert!("a" < sym);
+        assert!("n" > sym);
+        assert_eq!(sym.partial_cmp("m"), Some(Ordering::Equal));
+        assert_eq!("m".partial_cmp(&sym), Some(Ordering::Equal));
     }
 
     #[test]

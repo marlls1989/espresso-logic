@@ -350,10 +350,10 @@ where
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
     #[must_use]
-    pub fn with_labels<S: AsRef<str>>(
+    pub fn with_labels<SI: AsRef<str>, SO: AsRef<str>>(
         cover_type: CoverType,
-        input_labels: &[S],
-        output_labels: &[S],
+        input_labels: &[SI],
+        output_labels: &[SO],
     ) -> Self {
         let input_vars: Arc<[I]> = input_labels.iter().map(|s| I::from(s.as_ref())).collect();
         let output_vars: Arc<[O]> = output_labels.iter().map(|s| O::from(s.as_ref())).collect();

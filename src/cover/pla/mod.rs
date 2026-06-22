@@ -766,21 +766,25 @@ impl<S: StringLabel> PlaCover<S> {
 
 impl<S> PlaCover<S> {
     /// The number of input variables.
+    #[must_use]
     pub fn num_inputs(&self) -> usize {
         on_inner_cover!(self, c => c.num_inputs())
     }
 
     /// The number of output variables.
+    #[must_use]
     pub fn num_outputs(&self) -> usize {
         on_inner_cover!(self, c => c.num_outputs())
     }
 
     /// The number of cubes (counted per the cover type).
+    #[must_use]
     pub fn num_cubes(&self) -> usize {
         on_inner_cover!(self, c => c.num_cubes())
     }
 
     /// The cover type (F/FD/FR/FDR).
+    #[must_use]
     pub fn cover_type(&self) -> CoverType {
         on_inner_cover!(self, c => c.cover_type())
     }
@@ -788,6 +792,7 @@ impl<S> PlaCover<S> {
 
 impl<S: AsRef<str>> PlaCover<S> {
     /// The input labels, or `&[]` when the inputs are positional (no `.ilb` in the file).
+    #[must_use]
     pub fn input_labels(&self) -> &[S] {
         match self {
             PlaCover::InputsOutputsNamed(c) => c.input_labels(),
@@ -797,6 +802,7 @@ impl<S: AsRef<str>> PlaCover<S> {
     }
 
     /// The output labels, or `&[]` when the outputs are positional (no `.ob` in the file).
+    #[must_use]
     pub fn output_labels(&self) -> &[S] {
         match self {
             PlaCover::InputsOutputsNamed(c) => c.output_labels(),

@@ -106,11 +106,13 @@ impl<L> Symbols<L> {
     }
 
     /// An empty symbol table (arity 0).
+    #[must_use]
     pub fn empty() -> Arc<Symbols<L>> {
         Symbols::from_identity_sorted(Arc::from([]))
     }
 
     /// The number of variables (positions) this table describes.
+    #[must_use]
     pub fn arity(&self) -> usize {
         self.labels.len()
     }
@@ -118,6 +120,7 @@ impl<L> Symbols<L> {
     /// The variable labels in index order. Whether these are *names* is the label type's business —
     /// for a positional ([`Anonymous`]) table they are the zero-sized `Anonymous` placeholders, and a
     /// named table (e.g. `Symbols<Symbol>`) holds real names. There is no separate "is it labelled" flag.
+    #[must_use]
     pub fn labels(&self) -> &[L] {
         &self.labels
     }
@@ -129,6 +132,7 @@ impl Symbols<Anonymous> {
     ///
     /// An anonymous label's identity is its position, so the labels are already in identity order and
     /// the sorted order is `0..arity` for free — no comparison sort.
+    #[must_use]
     pub fn anonymous(arity: usize) -> Arc<Symbols<Anonymous>> {
         Symbols::from_identity_sorted((0..arity).map(|_| Anonymous).collect())
     }
@@ -139,6 +143,7 @@ impl<L: Label> Symbols<L> {
     ///
     /// Computes the identity-sorted order eagerly (one O(n log n) sort). When the labels are already
     /// in identity order, the crate-internal `from_identity_sorted` skips it.
+    #[must_use]
     pub fn new(labels: Arc<[L]>) -> Arc<Symbols<L>> {
         let mut order: Vec<u32> = (0..labels.len() as u32).collect();
         // Unstable sort: a header's identities are unique, so there are no equal keys for a stable
@@ -159,6 +164,7 @@ impl<L: Label> Symbols<L> {
     /// order (which, for a real label type, *is* sorted by the label).
     ///
     /// Accepts any borrowed form of the label (so a `Symbols<Symbol>` can be queried with `&str`).
+    #[must_use]
     pub fn index_of<Q>(&self, label: &Q) -> Option<u32>
     where
         L: Borrow<Q>,

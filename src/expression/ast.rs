@@ -24,7 +24,7 @@ use std::sync::Arc;
 ///
 /// [`BoolExpr::fold`]: BoolExpr::fold
 /// [`BoolExpr::fold_with_context`]: BoolExpr::fold_with_context
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExprNode<'a, T> {
     /// A variable with the given name
     Variable(&'a str),
