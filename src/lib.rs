@@ -341,10 +341,6 @@ pub mod symbol;
 #[doc(hidden)]
 pub mod sys;
 
-// Documentation-only module
-#[cfg(doc)]
-pub mod examples;
-
 // Re-export high-level public API
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{

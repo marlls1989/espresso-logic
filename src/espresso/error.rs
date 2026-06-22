@@ -108,7 +108,7 @@ impl fmt::Display for CubeError {
                 actual_outputs,
             } => write!(
                 f,
-                "Cube dimensions (inputs: {}, outputs: {}) don't match declared dimensions (inputs: {}, outputs: {}).",
+                "Cube dimensions (inputs: {}, outputs: {}) don't match declared dimensions (inputs: {}, outputs: {})",
                 actual_inputs, actual_outputs, expected_inputs, expected_outputs
             ),
         }
@@ -150,8 +150,8 @@ impl fmt::Display for MinimizationError {
         match self {
             MinimizationError::Instance(e) => write!(f, "Instance error: {}", e),
             MinimizationError::Cube(e) => write!(f, "Cube error: {}", e),
-            MinimizationError::Io(e) => write!(f, "IO error: {}", e),
             MinimizationError::Cover(e) => write!(f, "Cover error: {}", e),
+            MinimizationError::Io(e) => write!(f, "IO error: {}", e),
         }
     }
 }
@@ -161,8 +161,8 @@ impl std::error::Error for MinimizationError {
         match self {
             MinimizationError::Instance(e) => Some(e),
             MinimizationError::Cube(e) => Some(e),
-            MinimizationError::Io(e) => Some(e),
             MinimizationError::Cover(e) => Some(e),
+            MinimizationError::Io(e) => Some(e),
         }
     }
 }

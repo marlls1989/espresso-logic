@@ -295,7 +295,11 @@ impl BddManager {
         if node_var == split_var {
             match node {
                 BddNode::Decision { low, high, .. } => (*low, *high),
-                BddNode::Terminal(_) => unreachable!(),
+                // A terminal's `node_var` is `usize::MAX`; `split_var` is always a real variable,
+                // so `node_var == split_var` cannot hold for a terminal node.
+                BddNode::Terminal(_) => {
+                    unreachable!("terminal node cannot match a real split variable")
+                }
             }
         } else {
             // Variable doesn't appear in this branch

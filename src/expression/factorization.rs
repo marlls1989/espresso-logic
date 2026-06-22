@@ -252,18 +252,12 @@ fn find_best_factor(terms: &[ProductTerm]) -> Option<(Symbol, bool)> {
     let mut best_var_name: Symbol = Symbol::from("");
 
     for (var, polarity) in common {
-        let terms_with_literal = terms
+        // Score: number of terms we can factor (higher is better). `find_common_divisors` only
+        // returns literals shared by ≥2 terms, so this count is always ≥2.
+        let score = terms
             .iter()
             .filter(|t| t.contains_literal(&var, polarity))
             .count();
-
-        // Only factor if at least 2 terms have this literal
-        if terms_with_literal < 2 {
-            continue;
-        }
-
-        // Score: number of terms we can factor (higher is better)
-        let score = terms_with_literal;
 
         // Tie-breaker: prefer lexicographically later variables
         if score > best_score || (score == best_score && var.as_ref() > best_var_name.as_ref()) {
@@ -274,18 +268,6 @@ fn find_best_factor(terms: &[ProductTerm]) -> Option<(Symbol, bool)> {
     }
 
     best_factor
-}
-
-/// Apply single-pass factorisation, returning AST directly.
-///
-/// Working directly with the AST already preserves the factored structure, so a single pass is all
-/// this needs (an earlier multi-pass iteration count was never used).
-fn factorise_single_pass(terms: Vec<ProductTerm>) -> Arc<BoolExprAst> {
-    if terms.is_empty() {
-        return Arc::new(BoolExprAst::Constant(false));
-    }
-
-    factorise_once(terms)
 }
 
 /// Count the number of operators in an expression (as a rough size metric)
@@ -318,8 +300,9 @@ pub(crate) fn factorise_cubes_to_ast(
         .map(|(literals, _)| ProductTerm::new(literals))
         .collect();
 
-    // Factorise and return AST
-    factorise_single_pass(terms)
+    // Factorise and return AST. `factorise_once` already maps an empty term set to the `false`
+    // constant, so no separate empty-case guard is needed here.
+    factorise_once(terms)
 }
 
 /// Convert cubes (from Cover) directly to factored expression
