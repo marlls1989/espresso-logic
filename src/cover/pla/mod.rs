@@ -97,8 +97,9 @@ impl PlaLabel for Anonymous {
 
 /// Trait for types that support PLA serialisation (writing)
 ///
-/// This trait provides methods for serialising covers to PLA format.
-/// It is automatically implemented for all types that implement `PLASerialisable`.
+/// This trait provides methods for serialising covers to PLA format. It is implemented for
+/// [`Cover<I, O>`](crate::Cover) and [`PlaCover<S>`](crate::PlaCover) whose label types implement
+/// [`PlaLabel`].
 pub trait PLAWriter {
     /// Write this cover to PLA format using a writer
     ///

@@ -1051,9 +1051,9 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### 3. Always Minimize Late (Not Early)
+### 3. Always Minimise Late (Not Early)
 
-**Correct approach: Compose first, minimize last**
+**Correct approach: Compose first, minimise last**
 
 ```rust
 use espresso_logic::*;
@@ -1062,29 +1062,29 @@ fn main() -> std::io::Result<()> {
     let large_expr = expr!("a" * "b" + "c" * "d" + "e" * "f");
     let other_term = expr!("x" * "y");
     
-    // CORRECT: Compose then minimize
+    // CORRECT: Compose then minimise
     let final_expr = expr!(large_expr * other_term).minimize()?;
     
-    // INCORRECT: Minimizing early is actively harmful!
-    // 1. large_expr.minimize() creates NEW BoolExpr from minimized DNF cubes
+    // INCORRECT: Minimising early is actively harmful!
+    // 1. large_expr.minimize() creates NEW BoolExpr from minimised DNF cubes
     // 2. 'intermediate' has empty BDD cache (not copied from large_expr)
     // 3. Composing with 'intermediate' requires fresh BDD construction
     let intermediate = large_expr.minimize()?;  // Harmful! Creates new expr, loses cache
     let final_expr2 = expr!(intermediate * other_term).minimize()?;
-    // You lose the caching benefit AND pay for an unnecessary minimization
+    // You lose the caching benefit AND pay for an unnecessary minimisation
     
     Ok(())
 }
 ```
 
-**Why minimizing early doesn't help (and may harm):**
-- **Minimisation creates a NEW `BoolExpr`** - Result is constructed from minimized DNF cubes, not from the original expression
+**Why minimising early doesn't help (and may harm):**
+- **Minimisation creates a NEW `BoolExpr`** - Result is constructed from minimised DNF cubes, not from the original expression
 - **Expression-level BDD cache is not preserved** - The new expression has an empty cache (created with fresh `OnceLock::new()`)
 - **Requires BDD recomputation** - When composing with a minimized expression, its BDD must be computed from the DNF
 - **Note:** Global BDD manager caches (ITE cache, unique table) persist, but expression-level cache is lost
-- **BDD may introduce new terms in minimized expressions** - Not guaranteed to be smaller; depends on variable ordering
+- **BDD may introduce new terms in minimised expressions** - Not guaranteed to be smaller; depends on variable ordering
 - **BDD constructs the full composed expression anyway** - The final BDD represents the entire function in canonical form
-- **Minimisation structure is not preserved in BDD** - BDD represents the logical function, not the minimized form
+- **Minimisation structure is not preserved in BDD** - BDD represents the logical function, not the minimised form
 - **No cube reduction benefit** - Final cube count to Espresso depends on the composed BDD, not intermediate minimisations
 - **Unnecessary overhead** - You pay for minimisation without benefit for the final composition
 
@@ -1178,7 +1178,7 @@ fn main() -> std::io::Result<()> {
     cover.add_expr(&next_q_v1, "next_q_v1")?;
     cover.add_expr(&next_q_v2, "next_q_v2")?;
     
-    // Single minimize call optimizes ALL outputs together
+    // Single minimise call optimises ALL outputs together
     let minimized = cover.minimize()?;
     
     // Display results

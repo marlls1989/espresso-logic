@@ -237,7 +237,7 @@ Lines starting with `#` are comments and are ignored:
 ### Reading PLA Files
 
 ```rust
-use espresso_logic::{Cover, Minimizable, PlaCover, Symbol};
+use espresso_logic::{PlaCover, Symbol};
 
 fn main() -> std::io::Result<()> {
     // Read from string
@@ -253,7 +253,7 @@ fn main() -> std::io::Result<()> {
 ### Writing PLA Files
 
 ```rust
-use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
+use espresso_logic::{CoverType, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Create or load a cover
@@ -270,7 +270,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-### Minimizing PLA Files
+### Minimising PLA Files
 
 ```rust,no_run
 use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};

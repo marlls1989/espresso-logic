@@ -158,14 +158,14 @@ All global and static variables converted to `_Thread_local`:
 
 1. `globals.c` - Added `_Thread_local` to all global variable definitions
 2. `espresso.h` - Added `_Thread_local` to all extern declarations
-3. `main.c` - Made static variables thread-local, modified to use runtime initialization instead of static initialization (thread-local variables cannot use static initializers with complex values)
+3. `main.c` - Made static variables thread-local, modified to use runtime initialisation instead of static initialisation (thread-local variables cannot use static initialisers with complex values)
 4. `main.h` - Updated header declarations
 5. `matrix.c` - Made freelists thread-local
 6. `sparse_int.h` - Updated freelist declarations
 7. `essentiality.c` - Made static variables thread-local
 8. `signature.c`, `set.c`, `reduce.c`, `pair.c`, `opo.c`, `map.c`, `irred.c`, `cvrm.c`, `cvrin.c`, `black_white.c` - Made file-static variables thread-local
 
-**Note:** C code has been synchronized with reference implementation while preserving all thread-local modifications.
+**Note:** C code has been synchronised with reference implementation while preserving all thread-local modifications.
 
 ### C Files Created (2 files)
 
@@ -179,7 +179,7 @@ All global and static variables converted to `_Thread_local`:
 
 ## Benefits of Thread-Local Approach
 
-1. **Native thread safety**: No need for mutexes or other synchronization
+1. **Native thread safety**: No need for mutexes or other synchronisation
 2. **Better performance**: Eliminates fork/exec and IPC overhead (once working)
 3. **Simpler architecture**: Direct function calls instead of worker processes
 4. **Standard approach**: Uses standard C11 features

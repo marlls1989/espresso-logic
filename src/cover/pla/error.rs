@@ -123,7 +123,7 @@ impl From<PLAError> for io::Error {
 
 /// Errors that can occur when reading PLA format data
 ///
-/// This error type is returned by `Cover::from_pla_*` methods.
+/// This error type is returned by the `PlaCover::from_pla_*` methods.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PLAReadError {
@@ -176,7 +176,8 @@ impl From<PLAReadError> for io::Error {
 
 /// Errors that can occur when writing PLA format data
 ///
-/// This error type is returned by `Cover::to_pla_*` methods.
+/// This error type is returned by the [`PLAWriter`](crate::PLAWriter) methods
+/// (`write_pla`, `to_pla_string`, `to_pla_file`).
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PLAWriteError {

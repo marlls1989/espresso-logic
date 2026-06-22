@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document analyzes the memory safety of the Rust-C FFI interface, specifically how we handle C-allocated memory from the Espresso library.
+This document analyses the memory safety of the Rust-C FFI interface, specifically how we handle C-allocated memory from the Espresso library.
 
 ## C Memory Management
 

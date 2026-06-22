@@ -214,7 +214,7 @@ fn main() -> std::io::Result<()> {
     cover.add_expr(&expr!(a + c), "or_output")?;
     cover.add_expr(&expr!(a * b + b * c), "complex_output")?;
     
-    // Minimize all together (single call minimizes ALL outputs efficiently)
+    // Minimise all together (single call minimises ALL outputs efficiently)
     cover = cover.minimize()?;
     
     // Retrieve minimized expressions
@@ -336,7 +336,7 @@ fn main() -> std::io::Result<()> {
 ### Reading and Writing
 
 ```rust,no_run
-use espresso_logic::{Cover, CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
+use espresso_logic::{CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
 fn main() -> std::io::Result<()> {
     // Read from file

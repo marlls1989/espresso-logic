@@ -3,8 +3,8 @@
 //! Variable names flow through every layer of the crate (BDD manager, cover labels, cubes). `Symbol`
 //! is the storage we use for them, tuned for that workload:
 //!
-//! - **Small-string optimised.** A name of up to `INLINE_CAP` bytes (which is virtually every real
-//!   variable name — `a`, `x0`, `carry_in`, …) lives **inline**, with no heap allocation and an O(1),
+//! - **Small-string optimised.** A name of up to 22 bytes (the inline capacity) — which is virtually every
+//!   real variable name (`a`, `x0`, `carry_in`, …) — lives **inline**, with no heap allocation and an O(1),
 //!   `memcpy`-cheap [`Clone`]. An `Arc<str>` would heap-allocate a refcount header plus the bytes even
 //!   for `"a"`.
 //! - **Interned.** Longer names are deduplicated through a process-global pool, so equal names share

@@ -149,7 +149,7 @@ valgrind \
 **What Valgrind detects:**
 - ✅ Memory leaks (definitely lost, possibly lost, still reachable)
 - ✅ Invalid reads/writes
-- ✅ Use of uninitialized values
+- ✅ Use of uninitialised values
 - ✅ Double-free
 
 **Example output on success:**
