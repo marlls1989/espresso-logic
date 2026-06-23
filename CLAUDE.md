@@ -37,7 +37,7 @@ Two API levels sit over the C FFI. Re-exports at the crate root are defined in `
 
 **FFI layer**
 - `src/sys.rs` — raw bindgen output (`include!` of `OUT_DIR/bindings.rs`), all `unsafe`. Don't use directly outside the wrappers.
-- `src/espresso/` — low-level safe wrapper (`Espresso`, `EspressoCover`, `EspressoConfig`). Thread-local singleton with reference counting. **Critical constraint:** all covers/instances on a thread must share the same dimensions (#inputs, #outputs); creating different dimensions fails until every `EspressoCover` is dropped. Use this layer for access to separate ON/DC/OFF-set covers or ~5-10% more speed.
+- `src/espresso/` — low-level safe wrapper (`Espresso`, `EspressoCover`, `EspressoConfig`). Thread-local singleton with reference counting. **Critical constraint:** all covers/instances on a thread must share the same dimensions (#inputs, #outputs); creating different dimensions fails until every `EspressoCover` is dropped. Use this layer for access to separate ON/DC/OFF-set covers, or for lower per-call overhead (the high-level API also validates the cover and rebuilds an output `Cover`): measured ~12–16% faster on small covers but only ~1–5% / within noise on large ones — see the `api_overhead` group in `benches/pla_benchmarks.rs`.
 
 **High-level layer (the recommended/default API)**
 - `src/expression/` — `BoolExpr`, the `expr!` macro (from the `espresso-logic-macros` proc-macro crate), and string parsing via a lalrpop grammar (`parser`). Backed internally by BDDs (`bdd.rs`, `manager.rs`) for canonical form and cheap AND/OR/NOT; `factorization.rs`, `eval.rs`, `operators.rs`, `display.rs` round it out. Single-output, expression-oriented.

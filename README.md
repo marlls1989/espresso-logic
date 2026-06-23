@@ -141,7 +141,10 @@ cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -
 
 Use the `espresso` module directly when you need:
 - Access to intermediate covers (ON-set, don't-care, OFF-set)
-- Maximum performance (~5-10% faster)
+- Lower per-call overhead — the high-level API additionally validates the cover and rebuilds an output
+  `Cover`, so the low-level edge is a fixed per-call cost: measured ~12–16% faster on small covers but
+  only ~1–5% (within measurement noise) on large ones, and machine-/input-dependent (see the
+  `api_overhead` group in `benches/pla_benchmarks.rs`)
 - Fine-grained control over the minimisation process
 
 See the [`espresso` module documentation](https://docs.rs/espresso-logic/latest/espresso_logic/espresso/) for details.

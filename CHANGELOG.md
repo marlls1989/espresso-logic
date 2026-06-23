@@ -54,6 +54,10 @@ and serialise byte-identically to 4.0.0.
   a reference to a nonexistent `exact` configuration option (it is `minimize_exact`); the documented
   default don't-care set (an empty set, not the complement of F ∪ R); and the BDD variable ordering
   note (first-seen, not alphabetical).
+- Replaced the unsubstantiated "~5–10% faster" low-level-API speed claim (README, crate/module docs)
+  with measured figures from a new `api_overhead` benchmark: the low-level edge is a fixed per-call
+  cost, ~12–16% on small covers but only ~1–5% (within noise) on large ones, and machine-/
+  input-dependent.
 
 ## [4.0.0] - 2026-06-19
 

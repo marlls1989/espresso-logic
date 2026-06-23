@@ -448,6 +448,176 @@ fn bench_pla_expr_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: high-level `Cover` API vs low-level `EspressoCover` API, head-to-head.
+///
+/// Parsing and input extraction happen OUTSIDE the timed region, so each series measures only its
+/// layer's minimisation path. We restrict to the parsed cover's ON-set (`F`) cubes and run an F-type
+/// minimisation: the simple low-level `from_cubes` path models a single ON-set family, so this makes
+/// both layers do exactly the same algorithmic work (both compute the OFF-set complement internally).
+/// A one-time fairness check asserts the two layers minimise to the same cube count before a file is
+/// included, so any timing delta is pure API/path difference. Three series per file:
+///
+/// - `high_level` — `Cover::minimize()` on a pre-built cover (validation + word-copy marshal + result
+///   decode), i.e. what a high-level user already holds and calls.
+/// - `low_level_raw` — `EspressoCover::from_cubes(..).minimize(None, None)`, no result decode: the
+///   "maximum performance" path the docs tout, given its best case.
+/// - `low_level_decoded` — the raw path plus `to_cubes`, so both layers yield equivalent output;
+///   isolates whether any gap is real overhead or just the skipped decode.
+fn bench_api_overhead(c: &mut Criterion) {
+    use espresso_logic::espresso::EspressoCover;
+    use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
+
+    /// Parse-excluded inputs for one file, shared by all three series.
+    struct Prepared {
+        param: String,
+        num_cubes: usize,
+        ni: usize,
+        no: usize,
+        /// The high-level cover, pre-built: the F-type ON-set the user would hold and `.minimize()`.
+        cover: Cover<Anonymous, Anonymous>,
+        /// The same ON-set in the low-level `from_cubes` u8 encoding (inputs 0/1/2, outputs 0/1).
+        low: Vec<(Vec<u8>, Vec<u8>)>,
+    }
+
+    let files = select_balanced_files(discover_pla_files(), 5);
+    if files.is_empty() {
+        eprintln!("Warning: No PLA files found for api_overhead benchmark");
+        return;
+    }
+
+    let mut prepared: Vec<Prepared> = Vec::new();
+    for file in &files {
+        // VeryLarge covers are dominated by minimisation (overhead is within noise) and slow to bench
+        // repeatedly across three series; skip them so the run stays tractable.
+        if matches!(file.category, Category::VeryLarge) {
+            continue;
+        }
+        let Ok(parsed) = PlaCover::<Symbol>::from_pla_file(&file.path) else {
+            continue;
+        };
+        let parsed = parsed.into_anonymous();
+        let ni = parsed.num_inputs();
+        let no = parsed.num_outputs();
+
+        // Extract the ON-set (F) cubes once, in both representations.
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+        let mut low: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for cube in parsed.cubes() {
+            if cube.cube_type() != CubeType::F {
+                continue;
+            }
+            let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
+            let membership: Vec<bool> = cube.outputs().iter().map(|v| v == Some(true)).collect();
+            let low_in: Vec<u8> = inputs
+                .iter()
+                .map(|v| match v {
+                    Some(false) => 0,
+                    Some(true) => 1,
+                    None => 2,
+                })
+                .collect();
+            let low_out: Vec<u8> = membership.iter().map(|&b| u8::from(b)).collect();
+            cover.push(Cube::anonymous(&inputs, &membership, CubeType::F));
+            low.push((low_in, low_out));
+        }
+        if low.is_empty() {
+            continue;
+        }
+
+        // Fairness check (one-time, outside timing): both layers must minimise to the same cube count,
+        // otherwise the timed comparison would not be apples-to-apples.
+        let hi_count = cover.minimize().ok().map(|c| c.num_cubes());
+        let refs: Vec<(&[u8], &[u8])> = low
+            .iter()
+            .map(|(a, b)| (a.as_slice(), b.as_slice()))
+            .collect();
+        let lo_count = EspressoCover::from_cubes(&refs, ni, no).ok().map(|cover| {
+            let (f, _d, _r) = cover.minimize(None, None);
+            f.to_cubes(ni, no, CubeType::F).len()
+        });
+        if hi_count.is_none() || hi_count != lo_count {
+            eprintln!(
+                "api_overhead: skipping {} (fairness check failed: high={hi_count:?} low={lo_count:?})",
+                file.name
+            );
+            continue;
+        }
+        drop(refs);
+
+        prepared.push(Prepared {
+            param: format!(
+                "{}/{}/{}",
+                file.category.as_str(),
+                file.directory,
+                file.name
+            ),
+            num_cubes: file.num_cubes,
+            ni,
+            no,
+            cover,
+            low,
+        });
+    }
+
+    if prepared.is_empty() {
+        eprintln!("Warning: api_overhead found no usable files");
+        return;
+    }
+    eprintln!(
+        "Benchmarking {} files for api_overhead (high-level vs low-level)",
+        prepared.len()
+    );
+
+    let mut group = c.benchmark_group("api_overhead");
+    // Three series over non-trivial covers is heavier than the single-series groups; trim the sample
+    // size so the whole group stays within a reasonable wall-clock budget.
+    group.sample_size(20);
+
+    for p in &prepared {
+        group.throughput(Throughput::Elements(p.num_cubes as u64));
+
+        group.bench_with_input(BenchmarkId::new("high_level", &p.param), p, |b, p| {
+            b.iter(|| {
+                let out = black_box(&p.cover).minimize().unwrap();
+                black_box(out);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("low_level_raw", &p.param), p, |b, p| {
+            b.iter(|| {
+                let refs: Vec<(&[u8], &[u8])> = p
+                    .low
+                    .iter()
+                    .map(|(a, b)| (a.as_slice(), b.as_slice()))
+                    .collect();
+                let cover = EspressoCover::from_cubes(black_box(&refs), p.ni, p.no).unwrap();
+                let (f, _d, _r) = cover.minimize(None, None);
+                black_box(f);
+            });
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("low_level_decoded", &p.param),
+            p,
+            |b, p| {
+                b.iter(|| {
+                    let refs: Vec<(&[u8], &[u8])> = p
+                        .low
+                        .iter()
+                        .map(|(a, b)| (a.as_slice(), b.as_slice()))
+                        .collect();
+                    let cover = EspressoCover::from_cubes(black_box(&refs), p.ni, p.no).unwrap();
+                    let (f, _d, _r) = cover.minimize(None, None);
+                    let cubes = f.to_cubes(p.ni, p.no, CubeType::F);
+                    black_box(cubes);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
@@ -457,6 +627,7 @@ criterion_group!(
     bench_cube_iteration,
     bench_symbols_construction,
     bench_named_align,
-    bench_pla_expr_roundtrip
+    bench_pla_expr_roundtrip,
+    bench_api_overhead
 );
 criterion_main!(benches);

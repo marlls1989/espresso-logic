@@ -9,7 +9,10 @@
 //! Use this low-level module when you need:
 //! - **Access to intermediate covers** - Get ON-set (F), don't-care (D), and OFF-set (R) separately
 //! - **Custom don't-care/off-sets** - Provide your own D and R covers to `minimize()`
-//! - **Maximum performance** - ~5-10% faster than high-level API due to minimal overhead
+//! - **Lower per-call overhead** - the high-level API additionally validates the cover and rebuilds an
+//!   output [`Cover`](crate::Cover), so this layer's edge is a fixed per-call cost: measured ~12–16%
+//!   faster on small covers but only ~1–5% (within measurement noise) on large ones (machine-/
+//!   input-dependent — see the `api_overhead` group in `benches/pla_benchmarks.rs`)
 //! - **Explicit instance control** - Manually manage Espresso instance lifecycle
 //!
 //! **For most use cases, prefer the higher-level APIs:**
