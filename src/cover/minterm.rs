@@ -233,6 +233,26 @@ impl<L> Minterm<L> {
         &self.values
     }
 
+    /// The shared handle to the packed words, for cheap re-homing onto another [`Symbols`] table of the
+    /// same arity (the packing is independent of the label type, so the words can be reused verbatim).
+    pub(crate) fn packed(&self) -> &Arc<[u64]> {
+        &self.values
+    }
+
+    /// Build a minterm from an already-packed word buffer, taking it verbatim with no re-packing — the
+    /// inverse of [`raw_words`](Self::raw_words). The buffer must hold exactly `words_for(arity)` words
+    /// with zero padding past the final variable's fields (so `Eq`/`Hash`, which compare whole words,
+    /// stay canonical). Crate-internal; used to decode an Espresso cube by direct word-copy and to
+    /// re-home a minterm onto another `Symbols` table.
+    pub(crate) fn from_packed_words(symbols: Arc<Symbols<L>>, values: Arc<[u64]>) -> Self {
+        debug_assert_eq!(
+            values.len(),
+            words_for(symbols.arity()),
+            "packed word count must match the symbols' arity"
+        );
+        Minterm { values, symbols }
+    }
+
     /// Whether any variable holds the empty literal (`00`) — i.e. the cube covers no minterm. Such a
     /// cube is vacuous and is dropped before minimisation (see the cover minimisation pipeline).
     #[must_use]

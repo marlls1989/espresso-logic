@@ -45,7 +45,7 @@
 //! - **Access to intermediate covers** - Get ON-set (F), don't-care (D), and OFF-set (R) separately
 //! - **Custom don't-care/off-sets** - Provide your own D and R covers to `minimize()`
 //! - **Lower per-call overhead** - skips the high-level validation and output-[`Cover`] construction;
-//!   measured ~12–16% faster on small covers but only ~1–5% (within measurement noise) on large ones,
+//!   measured ~10–14% faster on small covers but only ~1–5% (within measurement noise) on large ones,
 //!   since the gap is a fixed per-call cost that minimisation soon dwarfs (machine-/input-dependent —
 //!   see the `api_overhead` group in `benches/pla_benchmarks.rs`)
 //! - **Explicit instance control** - Manually manage when Espresso instances are created/destroyed

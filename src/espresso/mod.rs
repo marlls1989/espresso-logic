@@ -10,7 +10,7 @@
 //! - **Access to intermediate covers** - Get ON-set (F), don't-care (D), and OFF-set (R) separately
 //! - **Custom don't-care/off-sets** - Provide your own D and R covers to `minimize()`
 //! - **Lower per-call overhead** - the high-level API additionally validates the cover and rebuilds an
-//!   output [`Cover`](crate::Cover), so this layer's edge is a fixed per-call cost: measured ~12–16%
+//!   output [`Cover`](crate::Cover), so this layer's edge is a fixed per-call cost: measured ~10–14%
 //!   faster on small covers but only ~1–5% (within measurement noise) on large ones (machine-/
 //!   input-dependent — see the `api_overhead` group in `benches/pla_benchmarks.rs`)
 //! - **Explicit instance control** - Manually manage Espresso instance lifecycle
@@ -840,22 +840,42 @@ impl EspressoCover {
                 word < wsize && (*cube_ptr.add(word) & ((1 as c_uint) << (bit & (BPI - 1)))) != 0
             };
 
+            // The input region packs the same 2-bit fields as a minterm, so decode it by a direct
+            // word-copy — the inverse of `from_packed_cubes` — instead of reading two bits per variable.
+            let input_u64_words = num_inputs.div_ceil(32);
+            let input_cube_words = (2 * num_inputs).div_ceil(BPI);
+            let cube_words_per_u64 = 64 / BPI;
+            let total_input_bits = 2 * num_inputs;
+
             (0..count)
                 .map(|i| {
                     let cube_ptr = data.add(i * wsize);
 
-                    // Decode inputs (binary variables - 2 bits each).
-                    let inputs = (0..num_inputs).map(|var| {
-                        match (bit_at(cube_ptr, var * 2), bit_at(cube_ptr, var * 2 + 1)) {
-                            (false, false) => None,
-                            (true, false) => Some(false),
-                            (false, true) => Some(true),
-                            (true, true) => None, // don't care
+                    // Assemble each `u64` minterm word from `64 / BPI` BPI-wide cube words, bounded by the
+                    // input region so the (possibly shared) boundary word's output bits are excluded.
+                    let mut iwords = vec![0u64; input_u64_words];
+                    for (k, slot) in iwords.iter_mut().enumerate() {
+                        let mut word = 0u64;
+                        for c in 0..cube_words_per_u64 {
+                            let cw = k * cube_words_per_u64 + c;
+                            if cw < input_cube_words {
+                                let cval = (*cube_ptr.add(cw + 1) as u64) & BPI_MASK;
+                                word |= cval << (c * BPI);
+                            }
                         }
-                    });
-                    let im = Minterm::from_symbols(Arc::clone(&input_syms), inputs);
+                        // Zero any bits past the input region (the boundary cube word may carry output
+                        // bits; the last `u64` may have padding past the final variable) so the padding
+                        // stays canonical for `Eq`/`Hash`.
+                        let valid = total_input_bits.saturating_sub(k * 64).min(64);
+                        if valid < 64 {
+                            word &= (1u64 << valid) - 1;
+                        }
+                        *slot = word;
+                    }
+                    let im = Minterm::from_packed_words(Arc::clone(&input_syms), iwords.into());
 
-                    // Decode outputs (multi-valued variable - 1 bit per value).
+                    // Decode outputs (multi-valued variable - 1 bit per value); the membership encoding
+                    // differs from the C cube's single bit, so this side is built per output.
                     let outputs =
                         (0..num_outputs).map(|out| Some(bit_at(cube_ptr, output_start + out)));
                     let om = Minterm::from_symbols(Arc::clone(&output_syms), outputs);

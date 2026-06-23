@@ -6,6 +6,7 @@
 
 use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
+use super::minterm::Minterm;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::expression::BoolExpr;
@@ -331,11 +332,21 @@ where
     // Extract minimised cubes back onto the cover's shared symbol tables (`ni`/`no` from above).
     let input_symbols = Arc::clone(cover.input_symbols());
     let output_symbols = Arc::clone(cover.output_symbols());
-    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the
-    // cover's real `Symbols<L>` tables by reading values positionally (variable order is preserved across
-    // the boundary). Same operation as building any cover from anonymous cubes — see `repoint`.
+    // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`) at exactly the cover's
+    // arity, in the same packed layout. Re-home each onto the cover's real `Symbols<L>` tables by
+    // cloning the packed-word `Arc`s (the packing is independent of the label type, and variable order
+    // is preserved across the boundary) — no per-variable re-packing. Unlike `repoint`, this needs no
+    // padding/projection because the arities already match.
     let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
-        super::repoint(cube, &input_symbols, &output_symbols)
+        let im = Minterm::from_packed_words(
+            Arc::clone(&input_symbols),
+            Arc::clone(cube.inputs().packed()),
+        );
+        let om = Minterm::from_packed_words(
+            Arc::clone(&output_symbols),
+            Arc::clone(cube.outputs().packed()),
+        );
+        Cube::new(im, om, cube.cube_type())
     };
 
     // Keep all three computed sets. They are NOT inert: the cover carries them so it can later be
