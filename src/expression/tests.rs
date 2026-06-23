@@ -250,6 +250,66 @@ fn test_operator_overloading_xor_pattern() {
     assert_eq!(manual, with_ops);
 }
 
+// ========== BDD Builder Tests (BoolExpr::build) ==========
+
+#[test]
+fn test_build_matches_monadic() {
+    // The closure builder produces the same canonical BDD as chained operators, across a mix of ops.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    let built = BoolExpr::build(|bld| {
+        let a = bld.var("a");
+        let b = bld.var("b");
+        let c = bld.var("c");
+        // (a & b) | (!a ^ c)
+        bld.or(bld.and(a, b), bld.xor(bld.not(a), c))
+    });
+    let manual = a.and(&b).or(&a.not().xor(&c));
+    assert_eq!(built, manual);
+}
+
+#[test]
+fn test_build_constants() {
+    let t = BoolExpr::build(|b| b.constant(true));
+    let f = BoolExpr::build(|b| b.constant(false));
+    assert_eq!(t, BoolExpr::constant(true));
+    assert_eq!(f, BoolExpr::constant(false));
+
+    // a | true == true, a & false == false — folded by hash-consing during the build.
+    let or_true = BoolExpr::build(|b| {
+        let a = b.var("a");
+        b.or(a, b.constant(true))
+    });
+    assert_eq!(or_true, BoolExpr::constant(true));
+}
+
+#[test]
+fn test_build_graft() {
+    // graft splices an existing BoolExpr into a build.
+    let sub = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
+    let c = BoolExpr::variable("c");
+
+    let built = BoolExpr::build(|b| {
+        let sub = b.graft(&sub);
+        let c = b.graft(&c);
+        b.or(sub, c)
+    });
+    assert_eq!(built, sub.or(&c));
+}
+
+#[test]
+fn test_build_ite_method() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // a ? b : c == a*b + !a*c
+    let mux = a.ite(&b, &c);
+    assert_eq!(mux, a.and(&b).or(&a.not().and(&c)));
+}
+
 // ========== XOR Tests ==========
 
 #[test]

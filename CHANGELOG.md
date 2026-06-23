@@ -16,6 +16,11 @@ This is an intentionally **API-breaking minor release** (low 4.0 adoption does n
 - `^` is now accepted by the string parser (`BoolExpr::parse`) and the `expr!` macro, with precedence
   **between** OR and AND (`a + b ^ c` parses as `a + (b ^ c)`; `a ^ b * c` as `a ^ (b * c)`),
   left-associative.
+- A public low-level BDD builder: `BoolExpr::build(|b| ...)` composes `Bdd` handles via a `BddBuilder`
+  (`var`/`constant`/`graft`/`not`/`and`/`or`/`xor`/`ite`) under a **single** manager lock, with no
+  intermediate `BoolExpr` allocations. Handles are branded with the builder's lifetime, so they cannot
+  escape the closure (a compile-time guarantee). Results are canonical, identical to the operator API.
+- `BoolExpr::ite` — an if-then-else convenience over `build`.
 
 ## [4.0.1] - 2026-06-23
 

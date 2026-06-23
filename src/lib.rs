@@ -351,7 +351,7 @@ pub use cover::{
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-pub use expression::{BoolExpr, ExprNode};
+pub use expression::{Bdd, BddBuilder, BoolExpr, ExprNode};
 pub use symbol::Symbol;
 
 // Re-export procedural macro

@@ -105,6 +105,7 @@
 // Submodules
 mod ast;
 mod bdd;
+mod builder;
 mod display;
 pub mod error;
 mod eval;
@@ -118,6 +119,7 @@ pub use error::{ExpressionParseError, ParseBoolExprError};
 // Re-export AST types
 pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
+pub use builder::{Bdd, BddBuilder};
 
 // Re-export manager types for internal use
 use crate::Symbol;
