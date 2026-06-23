@@ -23,8 +23,8 @@ use espresso_logic::{BoolExpr, expr, Minimizable};
 fn main() -> std::io::Result<()> {
     // Three styles of building expressions
     
-    // Style 1: String literals (most concise)
-    let xor = expr!("a" * !"b" + !"a" * "b");
+    // Style 1: String literals (most concise); `^` is the built-in XOR operator
+    let xor = expr!("a" ^ "b");
     println!("XOR: {}", xor);
     
     // Style 2: Variables
@@ -79,7 +79,7 @@ fn main() -> std::io::Result<()> {
     // Mixed notation (v3.1+)
     let mixed = BoolExpr::parse("a * b | c & d")?;
     
-    // All three are equivalent for minimization
+    // All three are equivalent for minimisation
     println!("Math: {}", math);
     println!("Logical: {}", logical);
     
@@ -236,7 +236,7 @@ use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
 fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
     
-    // Define expressions (don't minimize individually!)
+    // Define expressions (don't minimise individually!)
     let expr1 = expr!("a" * "b" + "c" * "d");
     let expr2 = expr!("x" * "y" + "z");
     let composed = expr!(expr1 * expr2);
@@ -267,9 +267,10 @@ Run with: `cargo run --example threshold_gate_example`
 ```rust
 use espresso_logic::{Cover, CoverType, expr, BoolExpr, Minimizable};
 
-/// Compute XOR of two boolean expressions using expr! macro
+/// Compute XOR of two boolean expressions. `^` is a built-in operator, so this helper is just
+/// `expr!(a ^ b)` (equivalently `a.xor(b)`) — shown here only to name the operation in the example.
 fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
-    expr!(a * !b + !a * b)
+    expr!(a ^ b)
 }
 
 fn main() -> std::io::Result<()> {
@@ -328,7 +329,7 @@ fn main() -> std::io::Result<()> {
 - **Helper function `xor()`**: Returns `BoolExpr` for clean composition
 - **Complex expressions**: `hold` (an XOR of compound terms) reduces to 10 cubes after minimisation
 - **Stateful logic**: `next_q_v1`/`next_q_v2` efficiently combine activation with feedback
-- **No early minimisation**: Compose all expressions first, minimize once
+- **No early minimisation**: Compose all expressions first, minimise once
 - **Multiple outputs**: All five functions optimised together in one call
 
 ## PLA Files
@@ -716,13 +717,13 @@ use espresso_logic::{Minimizable, PlaCover, Symbol};
 fn main() -> std::io::Result<()> {
     let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
     
-    // Get cubes before minimization
+    // Get cubes before minimisation
     let before_count = cover.num_cubes();
     println!("Before: {} cubes", before_count);
     
     cover = cover.minimize()?;
     
-    // Get cubes after minimization
+    // Get cubes after minimisation
     let after_count = cover.num_cubes();
     println!("After: {} cubes", after_count);
     

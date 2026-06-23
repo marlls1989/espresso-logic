@@ -1,4 +1,4 @@
-//! Basic minimization example
+//! Basic minimisation example
 
 use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};

@@ -25,9 +25,10 @@
 //! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, the `expr!` macro, and a low-level
 //!   [`BoolExpr::build`] closure builder
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
-//! - **[`Cube`]** / **[`Minterm`]** - A `Cover`'s product terms: a [`Cube`] pairs two
-//!   [`Minterm`]s (a [`Minterm`] is a label-carrying row of tri-state values, `1`/`0`/`-`).
-//!   [`Cube::inputs`] and [`Cube::outputs`] return `&Minterm`.
+//! - **[`Cube`]** / **[`Minterm`]** / **[`OutputSet`]** - A `Cover`'s product terms: a [`Cube`] pairs an
+//!   input [`Minterm`] (a label-carrying row of tri-state values, `1`/`0`/`-`) with an [`OutputSet`]
+//!   (a binary, one-bit-per-output membership bitmap). [`Cube::inputs`] returns `&Minterm`;
+//!   [`Cube::outputs`] returns `&OutputSet`.
 //!
 //! **Benefits:**
 //! - ✅ Automatic memory management
@@ -81,9 +82,9 @@
 //! let c = BoolExpr::variable("c");
 //! let redundant = expr!(a * b + a * b * c);
 //!
-//! // Minimize it (returns a new minimized expression)
+//! // Minimise it (returns a new minimised expression)
 //! let minimized = redundant.minimize()?;
-//! println!("Minimized: {}", minimized);  // Output: a * b
+//! println!("Minimised: {}", minimized);  // Output: a * b
 //!
 //! // Check logical equivalence (create new instance for comparison)
 //! let redundant2 = expr!(a * b + a * b * c);

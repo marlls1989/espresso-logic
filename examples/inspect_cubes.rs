@@ -1,4 +1,4 @@
-//! Example: Inspect cubes after minimization
+//! Example: Inspect cubes after minimisation
 
 use espresso_logic::Anonymous;
 use espresso_logic::{Cover, CoverType, Cube, CubeType, Minimizable};

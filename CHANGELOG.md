@@ -22,6 +22,13 @@ This is an intentionally **API-breaking minor release** (low 4.0 adoption does n
   escape the closure (a compile-time guarantee). Results are canonical, identical to the operator API.
 - `BoolExpr::ite` — an if-then-else convenience over `build`.
 
+### Changed
+
+- **Breaking:** `Cube::outputs()` now returns `&OutputSet<O>` (was `&Minterm<O>`). A cube's output side is
+  a binary, one-bit-per-output membership bitmap rather than a tri-state row, so per-output iteration
+  yields `bool` instead of `Option<bool>` — migrate `out == Some(true)` to `out`. Input access via
+  `Cube::inputs()` is unchanged (still `&Minterm<I>`).
+
 ## [4.0.1] - 2026-06-23
 
 A polish and hardening release following a full code review: additive API conveniences, the PLA reader

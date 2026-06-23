@@ -1,7 +1,7 @@
-//! Example: Boolean expression minimization
+//! Example: Boolean expression minimisation
 //!
 //! This example demonstrates how to use boolean expressions with the expr! macro,
-//! method-based API, and parsing to create and minimize boolean functions.
+//! method-based API, and parsing to create and minimise boolean functions.
 
 use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 

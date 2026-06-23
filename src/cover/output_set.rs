@@ -29,6 +29,27 @@ fn words_for(num_vars: usize) -> usize {
 ///
 /// Simpler than a tri-state [`Minterm`](super::Minterm): outputs are two-state (asserted / not),
 /// positional, one bit each.
+///
+/// # Examples
+///
+/// An `OutputSet` is read from a [`Cube`](super::Cube)'s [`outputs`](super::Cube::outputs); each bit
+/// records whether the cube asserts that output column in its set.
+///
+/// ```
+/// use espresso_logic::{Cube, CubeType};
+///
+/// // Two inputs (the second a don't-care), three outputs; assert outputs 0 and 2.
+/// let cube = Cube::anonymous(&[Some(true), None], &[true, false, true], CubeType::F);
+/// let outputs = cube.outputs();
+///
+/// assert_eq!(outputs.num_vars(), 3);
+/// assert!(outputs.value_at(0));
+/// assert!(!outputs.value_at(1));
+/// assert!(outputs.value_at(2));
+/// assert!(!outputs.value_at(3)); // out-of-range reads false
+/// assert_eq!(outputs.iter().collect::<Vec<bool>>(), vec![true, false, true]);
+/// assert_eq!(outputs.to_string(), "101"); // bare 1/0 membership row
+/// ```
 #[derive(Clone)]
 pub struct OutputSet<O> {
     symbols: Arc<Symbols<O>>,
@@ -133,8 +154,11 @@ impl<O> Ord for OutputSet<O> {
     }
 }
 
-/// Renders the membership as a bare `1`/`0` row in index order — the output field of a PLA line. Needs
-/// no bound on `O` (positional).
+/// Renders the membership as a bare `1`/`0` row in index order. Needs no bound on `O` (positional).
+///
+/// This is the raw per-output membership, *not* the formatted PLA output field: the PLA writer emits
+/// `2`/`0`/`~` per [`CubeType`](super::CubeType) for `fd`/`fr`/`fdr` covers; this bare `1`/`0` row is the
+/// `f`-type rendering.
 impl<O> fmt::Display for OutputSet<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for asserted in self.iter() {

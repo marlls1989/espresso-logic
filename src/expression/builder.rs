@@ -26,10 +26,31 @@
 //! assert_eq!(expr, manual);
 //! ```
 //!
+//! # Do not re-enter the manager from inside the closure
+//!
+//! `build` holds the manager's write lock for the whole closure, so the closure must obtain its handles
+//! **only** from the [`BddBuilder`]. Do **not** call any [`BoolExpr`] constructor, operator, or
+//! [`BoolExpr::parse`] inside the closure: each re-acquires the same (non-reentrant) write lock on the
+//! current thread and will **deadlock**. To fold an existing or freshly-parsed expression in, build it
+//! *before* `build` and splice it with [`graft`](BddBuilder::graft):
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! let sub = BoolExpr::parse("a * b").unwrap(); // parse OUTSIDE the closure
+//! let expr = BoolExpr::build(|b| {
+//!     let c = b.var("c");
+//!     b.or(b.graft(&sub), c) // splice the prebuilt expression in
+//! });
+//! # let _ = expr;
+//! ```
+//!
 //! # Handles cannot escape their builder
 //!
 //! A [`Bdd`] handle is branded with the builder's invariant lifetime, so it cannot be stored outside the
-//! closure or smuggled between two `build` calls — misuse is a compile error, not a runtime panic:
+//! closure or smuggled between two `build` calls — misuse is a compile error, not a runtime panic. (The
+//! brand guards *cross-builder* handle hygiene; it is not what ties a [`graft`](BddBuilder::graft)ed
+//! expression to the manager — that rests on the single global manager, see `graft`.)
 //!
 //! ```compile_fail
 //! use espresso_logic::BoolExpr;
@@ -102,6 +123,10 @@ impl<'b> BddBuilder<'b> {
     /// the `expr!` macro's variable operands. The expression must belong to the same (global) manager;
     /// checked with a `debug_assert!`, as it always holds while the operand is alive.
     pub fn graft(&self, expr: &BoolExpr) -> Bdd<'b> {
+        // Soundness rests on the *operand's* `Arc<RwLock<BddManager>>`, not on the assert below: while any
+        // `BoolExpr` is alive the global manager cannot be freed/replaced, so `expr.root` indexes the same
+        // node table the builder writes. The `debug_assert!` is a debug-only sanity check (compiled out in
+        // release). This is why `graft` takes `&BoolExpr` (which owns that `Arc`) and never a bare node id.
         debug_assert!(
             std::ptr::eq(Arc::as_ptr(&expr.manager), self.manager_ptr),
             "grafted BoolExpr must share the builder's BDD manager"
@@ -148,6 +173,11 @@ impl BoolExpr {
     /// threads, so intermediate steps need not be globally consistent — only the returned root. If the
     /// closure **panics**, the lock poisons and the panic propagates, which is correct: a panic
     /// mid-build may have left the manager's tables inconsistent.
+    ///
+    /// **Precondition:** inside the closure, obtain handles **only** from the [`BddBuilder`]. Calling any
+    /// [`BoolExpr`] constructor, operator, or [`BoolExpr::parse`] from within the closure re-acquires the
+    /// same (non-reentrant) write lock and will **deadlock** — build or [`parse`](BoolExpr::parse) such
+    /// sub-expressions *before* `build` and splice them in with [`graft`](BddBuilder::graft).
     ///
     /// # Examples
     ///

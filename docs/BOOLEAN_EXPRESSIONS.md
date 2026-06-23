@@ -108,8 +108,8 @@ let and_expr = expr!("a" * "b");
 let or_expr = expr!("a" + "b");
 let not_expr = expr!(!"a");
 
-// XOR - no variable declarations!
-let xor = expr!("a" * !"b" + !"a" * "b");
+// XOR - no variable declarations! (`^` is a built-in operator)
+let xor = expr!("a" ^ "b");
 
 // Complex nested
 let complex = expr!(("a" + "b") * ("c" + "d"));
@@ -134,7 +134,7 @@ fn main() -> std::io::Result<()> {
     let func_b = BoolExpr::parse("input3 + input4")?;
     
     // Combine them all with expr! - clean and readable
-    let xor = expr!(a * !b + !a * b);
+    let xor = expr!(a ^ b);
     let combined = expr!(func_a + func_b);
     
     // Mix created and parsed expressions
@@ -204,7 +204,8 @@ Use `BoolExpr::parse()` to parse expressions from strings at runtime. The parser
 | `( )` | Parentheses | Highest (0) | `(a + b)` |
 | `~` or `!` | NOT | High (1) | `~a`, `!b` |
 | `*` or `&` | AND | Medium (2) | `a * b`, `a & b` |
-| `+` or `\|` | OR | Lowest (3) | `a + b`, `a \| b` |
+| `^` | XOR | Low (3) | `a ^ b` |
+| `+` or `\|` | OR | Lowest (4) | `a + b`, `a \| b` |
 
 **Note (v3.1+):** The parser now accepts both mathematical notation (`*`, `+`) and logical notation (`&`, `|`) for AND and OR operations. 
 You can even mix notations within the same expression (e.g., `a * b | c`).
@@ -215,8 +216,12 @@ Operators follow standard boolean algebra precedence:
 
 1. **Parentheses** (highest) - force evaluation order
 2. **NOT** - evaluated first (after parentheses)
-3. **AND** - evaluated second
-4. **OR** (lowest) - evaluated last
+3. **AND** - evaluated next
+4. **XOR** - evaluated after AND, before OR
+5. **OR** (lowest) - evaluated last
+
+XOR (`^`) sits between AND and OR (mirroring Rust's `| < ^ < &`) and is left-associative, so
+`a + b ^ c` parses as `a + (b ^ c)` and `a ^ b * c` as `a ^ (b * c)`.
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -308,17 +313,18 @@ let b = BoolExpr::variable("b");
 
 let and_expr = &a * &b;        // AND
 let or_expr = &a + &b;         // OR
+let xor_expr = &a ^ &b;        // XOR
 let not_expr = !&a;            // NOT
 
-// Complex: XNOR
-let xnor = &a * &b + &(!&a) * &(!&b);
+// Complex: XNOR is the negation of XOR
+let xnor = !&(&a ^ &b);
 ```
 
 **Note:** Requires `&` references due to Rust's ownership rules. The `expr!` macro is preferred as it avoids this requirement.
 
 ### Monadic Interface
 
-The monadic interface provides explicit method calls for building expressions. The `expr!` macro expands to this interface:
+The monadic interface provides explicit method calls for building expressions:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -333,6 +339,9 @@ let and_expr = a.and(&b);
 // OR
 let or_expr = a.or(&b);
 
+// XOR
+let xor_expr = a.xor(&b);
+
 // NOT
 let not_expr = a.not();
 
@@ -340,38 +349,22 @@ let not_expr = a.not();
 let complex = a.and(&b).or(&a.not().and(&c));
 ```
 
-**Actual macro expansions** (verified with `cargo expand`):
+**Macro lowering:** `expr!` does *not* chain these monadic methods. It lowers onto the `BoolExpr::build` closure builder — emitting a single `BoolExpr::build(|b| …)` that composes `Bdd` handles, so the whole expression is constructed under one manager lock and is canonical. In-scope `BoolExpr` identifiers are spliced in with `graft`; string literals become variables via `var`. Conceptually:
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::BoolExpr;
 
 let a = BoolExpr::variable("a");
 let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
 
-// let _expr1 = expr!(a * b);
-// Expands to:
-let _expr1 = (&(a)).and(&(b));
+// expr!(a * b)  lowers to (the builder param `bld` shown for clarity; the real binding is hygienic):
+let _expr1 = BoolExpr::build(|bld| bld.and(bld.graft(&a), bld.graft(&b)));
 
-// let _expr2 = expr!(a + b);
-// Expands to:
-let _expr2 = (&(a)).or(&(b));
-
-// let _expr3 = expr!(!a);
-// Expands to:
-let _expr3 = (&(a)).not();
-
-// let _expr4 = expr!(a * b + !c);
-// Expands to:
-let _expr4 = (&((&(a)).and(&(b)))).or(&((&(c)).not()));
-
-// let _expr5 = expr!("x" * "y" + !"z");
-// Expands to:
-let _expr5 = (&((&(BoolExpr::variable("x"))).and(&(BoolExpr::variable("y")))))
-    .or(&((&(BoolExpr::variable("z"))).not()));
+// expr!("x" * "y" + !"z")  lowers to:
+let _expr2 = BoolExpr::build(|bld| {
+    bld.or(bld.and(bld.var("x"), bld.var("y")), bld.not(bld.var("z")))
+});
 ```
-
-The macro generates clean calls to the monadic interface, using references for all arguments. The monadic methods (`.and()`, `.or()`, `.not()`) all take `&self` and handle any necessary cloning internally - the macro itself does not clone. String literals are automatically converted to `BoolExpr::variable()` calls.
 
 **When to use:**
 - Building expressions in loops or conditional logic
@@ -394,11 +387,66 @@ for var_name in ["b", "c", "d"] {
 println!("{}", expr);
 ```
 
+### Low-level builder: `BoolExpr::build`
+
+For programmatic construction — folding over a slice, structure that depends on runtime values —
+`BoolExpr::build` hands a builder to a closure and takes the manager lock **once** for the whole
+expression, composing cheap `Bdd` handles with no intermediate `BoolExpr` allocations. The result is
+canonical, identical to the operator API.
+
+```rust
+use espresso_logic::BoolExpr;
+
+// AND-reduce a runtime list of variable names under a single lock.
+let names = ["a", "b", "c", "d"];
+let conjunction = BoolExpr::build(|b| {
+    let mut acc = b.constant(true);
+    for name in names {
+        acc = b.and(acc, b.var(name));
+    }
+    acc
+});
+
+let manual = BoolExpr::variable("a")
+    .and(&BoolExpr::variable("b"))
+    .and(&BoolExpr::variable("c"))
+    .and(&BoolExpr::variable("d"));
+assert_eq!(conjunction, manual);
+```
+
+Inside the closure, obtain handles **only** from the builder. Do not call any `BoolExpr` constructor,
+operator, or `BoolExpr::parse` there — each re-takes the manager lock and would deadlock. To fold in an
+existing or freshly-parsed expression, build it *before* `build` and splice it with `graft`:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let sub = BoolExpr::parse("a * b").unwrap(); // parse outside the closure
+let _expr = BoolExpr::build(|b| b.or(b.graft(&sub), b.var("c")));
+```
+
+### If-then-else: `BoolExpr::ite`
+
+`BoolExpr::ite` is a convenience over `build` for the ternary `if self then g else h`
+(equivalently `self*g + !self*h`), built directly from the BDD primitive:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let s = BoolExpr::variable("s");
+let a = BoolExpr::variable("a");
+let b = BoolExpr::variable("b");
+
+let mux = s.ite(&a, &b); // s ? a : b
+let manual = s.and(&a).or(&s.not().and(&b));
+assert_eq!(mux, manual);
+```
+
 ## Minimisation
 
 ### Direct Minimisation (Heuristic)
 
-The simplest way to minimize an expression using the fast heuristic algorithm:
+The simplest way to minimise an expression using the fast heuristic algorithm:
 
 ```rust
 use espresso_logic::{BoolExpr, Minimizable};
@@ -435,7 +483,7 @@ fn main() -> std::io::Result<()> {
     // Redundant expression
     let expr = a.and(&b).or(&a.and(&b).and(&c));
 
-    // Exact minimization - guaranteed minimal result
+    // Exact minimisation - guaranteed minimal result
     let minimized = expr.minimize_exact()?;
 
     println!("{}", minimized);  // Guaranteed to be minimal: (a * b)
@@ -468,7 +516,7 @@ fn main() -> std::io::Result<()> {
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&expr, "output")?;
     
-    // Inspect before minimization
+    // Inspect before minimisation
     println!("Input variables: {:?}", cover.input_labels());
     println!("Inputs: {}", cover.num_inputs());
     println!("Outputs: {}", cover.num_outputs());
@@ -491,42 +539,52 @@ fn main() -> std::io::Result<()> {
 
 ### XOR (Exclusive OR)
 
+XOR is a first-class operator — the `.xor()` method, the `^` operator, the parser, and the `expr!` macro
+all build it directly (no need to spell out `a*!b + !a*b`):
+
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::{BoolExpr, expr};
 
 fn main() -> std::io::Result<()> {
-    // Method API
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
-    let xor1 = a.and(&b.not()).or(&a.not().and(&b));
 
-    // expr! macro (using strings - cleanest)
-    let xor2 = expr!("a" * !"b" + !"a" * "b");
+    let xor_method = a.xor(&b);              // method
+    let xor_op     = &a ^ &b;                // `^` operator
+    let xor_parse  = BoolExpr::parse("a ^ b")?; // parser
+    let xor_macro  = expr!(a ^ b);           // macro
 
-    // Parser
-    let xor3 = BoolExpr::parse("a * ~b + ~a * b")?;
-    
+    // All four agree with the hand-written sum-of-products a*!b + !a*b:
+    let xor_sop = a.and(&b.not()).or(&a.not().and(&b));
+    assert!(xor_method.equivalent_to(&xor_sop));
+    assert!(xor_op.equivalent_to(&xor_sop));
+    assert!(xor_parse.equivalent_to(&xor_sop));
+    assert!(xor_macro.equivalent_to(&xor_sop));
+
     Ok(())
 }
 ```
 
 ### XNOR (Equivalence)
 
+XNOR is the negation of XOR:
+
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::{BoolExpr, expr};
 
 fn main() -> std::io::Result<()> {
-    // Method API
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
-    let xnor1 = a.and(&b).or(&a.not().and(&b.not()));
 
-    // expr! macro (using strings - cleanest)
-    let xnor2 = expr!("a" * "b" + !"a" * !"b");
+    let xnor_op    = !&(&a ^ &b);            // negation of `^`
+    let xnor_macro = expr!(!(a ^ b));
+    let xnor_parse = BoolExpr::parse("~(a ^ b)")?;
 
-    // Parser
-    let xnor3 = BoolExpr::parse("a * b + ~a * ~b")?;
-    
+    let xnor_sop = a.and(&b).or(&a.not().and(&b.not()));
+    assert!(xnor_op.equivalent_to(&xnor_sop));
+    assert!(xnor_macro.equivalent_to(&xnor_sop));
+    assert!(xnor_parse.equivalent_to(&xnor_sop));
+
     Ok(())
 }
 ```
@@ -758,7 +816,7 @@ match BoolExpr::parse("a * * b") {
 
 Common parse errors:
 - Syntax errors: `"a * * b"`, `"a +"`, `"(a * b"`
-- Invalid tokens: `"a ^ b"` (XOR is not supported; `&`/`|` are accepted as AND/OR)
+- Invalid tokens: `"a @ b"` (`@` is not an operator; `^` is XOR, `&`/`|` are accepted as AND/OR)
 - Empty input: `""`
 
 ### Minimisation Errors
@@ -1339,7 +1397,7 @@ let b2 = BoolExpr::variable("b");
 let xor3 = a2.clone() * b2.clone() + !a2 * !b2;
 ```
 
-### Expression doesn't minimize as expected
+### Expression doesn't minimise as expected
 
 ```rust
 use espresso_logic::*;

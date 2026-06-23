@@ -17,7 +17,7 @@ Espresso takes Boolean functions and produces minimal or near-minimal equivalent
 
 ## Features
 
-- **Boolean Expressions** - Parse and compose expressions with the `expr!` macro, supporting both mathematical (`*`, `+`) and logical (`&`, `|`) notation
+- **Boolean Expressions** - Parse and compose expressions with the `expr!` macro — AND/OR/XOR/NOT in mathematical (`*`, `+`, `^`, `~`) or logical (`&`, `|`) notation — plus a low-level `BoolExpr::build` closure builder and a `BoolExpr::ite` if-then-else
 - **Cover API** - Direct truth table manipulation with automatic dimension management for precise control
 - **Multi-Output Functions** - Minimise multiple outputs simultaneously in a single cover
 - **Advanced Minimisation** - Both heuristic (fast, ~99% optimal) and exact (guaranteed minimal) algorithms
@@ -31,7 +31,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "4.0"
+espresso-logic = "4.1"
 ```
 
 ### Boolean Expression Minimisation

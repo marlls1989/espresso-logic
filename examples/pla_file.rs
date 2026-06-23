@@ -1,6 +1,6 @@
-//! Example: Reading and minimizing a PLA file
+//! Example: Reading and minimising a PLA file
 //!
-//! This example demonstrates how to read a PLA file, minimize it,
+//! This example demonstrates how to read a PLA file, minimise it,
 //! and write the result back to a file.
 
 use espresso_logic::{CoverType, Minimizable, PLAWriter, PlaCover, Symbol};
