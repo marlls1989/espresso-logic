@@ -257,14 +257,6 @@ impl BoolExpr {
         }
     }
 
-    /// Apply a BDD operation to this expression's root under one write lock, returning the result as a
-    /// fresh `BoolExpr` sharing the same manager. Shared by `and`/`or`/`not`.
-    fn op(&self, f: impl FnOnce(&mut BddManager, NodeId) -> NodeId) -> BoolExpr {
-        let manager = Arc::clone(&self.manager);
-        let root = f(&mut manager.write().unwrap(), self.root);
-        BoolExpr::from_root(manager, root)
-    }
-
     /// Create a variable expression with the given name
     #[must_use]
     pub fn variable(name: &str) -> Self {

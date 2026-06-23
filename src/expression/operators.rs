@@ -1,6 +1,5 @@
 //! Operator overloading and boolean operations for boolean expressions
 
-use super::manager::{FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use std::ops::{Add, BitXor, Mul, Not};
 
@@ -198,15 +197,13 @@ impl BoolExpr {
     /// `and(f, g) = ite(f, g, false)`
     #[must_use]
     pub fn and(&self, other: &BoolExpr) -> BoolExpr {
-        // `other.root` is a NodeId valid in `other.manager`; feeding it into `self.manager` is sound
-        // only because every live BoolExpr shares the one global manager (its `Weak` can't have
-        // expired while `other` is alive). Guard that load-bearing invariant.
-        debug_assert!(
-            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
-            "BoolExpr operands must share the same BDD manager"
-        );
-        // and(f, g) = ite(f, g, false)
-        self.op(|mgr, root| mgr.ite(root, other.root, FALSE_NODE))
+        // and(f, g) = ite(f, g, false). A thin shim over `build`, the single manager-acquisition point;
+        // `graft` debug-asserts both operands belong to that (global) manager.
+        BoolExpr::build(|b| {
+            let f = b.graft(self);
+            let g = b.graft(other);
+            b.and(f, g)
+        })
     }
 
     /// Logical OR: create a new expression that is the disjunction of this and another
@@ -215,13 +212,12 @@ impl BoolExpr {
     /// `or(f, g) = ite(f, true, g)`
     #[must_use]
     pub fn or(&self, other: &BoolExpr) -> BoolExpr {
-        // See `and`: operands must share the one global BDD manager for `other.root` to be valid here.
-        debug_assert!(
-            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
-            "BoolExpr operands must share the same BDD manager"
-        );
-        // or(f, g) = ite(f, true, g)
-        self.op(|mgr, root| mgr.ite(root, TRUE_NODE, other.root))
+        // or(f, g) = ite(f, true, g). Thin shim over `build` (see `and`).
+        BoolExpr::build(|b| {
+            let f = b.graft(self);
+            let g = b.graft(other);
+            b.or(f, g)
+        })
     }
 
     /// Logical NOT: create a new expression that is the negation of this one
@@ -230,8 +226,11 @@ impl BoolExpr {
     /// `not(f) = ite(f, false, true)`
     #[must_use]
     pub fn not(&self) -> BoolExpr {
-        // not(f) = ite(f, false, true)
-        self.op(|mgr, root| mgr.ite(root, FALSE_NODE, TRUE_NODE))
+        // not(f) = ite(f, false, true). Thin shim over `build` (see `and`).
+        BoolExpr::build(|b| {
+            let f = b.graft(self);
+            b.not(f)
+        })
     }
 
     /// Logical XOR: create a new expression that is the exclusive-or of this and another
@@ -240,12 +239,11 @@ impl BoolExpr {
     /// `xor(f, g) = ite(f, ¬g, g)` — equivalently `f*¬g + ¬f*g`.
     #[must_use]
     pub fn xor(&self, other: &BoolExpr) -> BoolExpr {
-        // See `and`: operands must share the one global BDD manager for `other.root` to be valid here.
-        debug_assert!(
-            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
-            "BoolExpr operands must share the same BDD manager"
-        );
-        // xor(f, g) = ite(f, !g, g)
-        self.op(|mgr, root| mgr.xor(root, other.root))
+        // xor(f, g) = ite(f, !g, g). Thin shim over `build` (see `and`).
+        BoolExpr::build(|b| {
+            let f = b.graft(self);
+            let g = b.graft(other);
+            b.xor(f, g)
+        })
     }
 }

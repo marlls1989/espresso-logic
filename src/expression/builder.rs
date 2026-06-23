@@ -175,6 +175,8 @@ impl BoolExpr {
     where
         F: for<'b> FnOnce(&BddBuilder<'b>) -> Bdd<'b>,
     {
+        // The single place a BDD manager is acquired: every constructor and operator funnels through
+        // here, so manager acquisition / lock policy lives in exactly one spot.
         let manager = BddManager::get_or_create();
         let manager_ptr = Arc::as_ptr(&manager);
         let root = {
@@ -207,10 +209,6 @@ impl BoolExpr {
     /// ```
     #[must_use]
     pub fn ite(&self, g: &BoolExpr, h: &BoolExpr) -> BoolExpr {
-        debug_assert!(
-            Arc::ptr_eq(&self.manager, &g.manager) && Arc::ptr_eq(&self.manager, &h.manager),
-            "BoolExpr operands must share the same BDD manager"
-        );
         BoolExpr::build(|b| {
             let f = b.graft(self);
             let g = b.graft(g);
@@ -218,4 +216,60 @@ impl BoolExpr {
             b.ite(f, g, h)
         })
     }
+}
+
+/// One step of a postfix (reverse-Polish) expression program. The lalrpop string grammar emits a
+/// `Vec<Op>` bottom-up, which [`build_postfix`] realises through a single [`BoolExpr::build`].
+pub(crate) enum Op {
+    /// Push a variable by name.
+    Var(String),
+    /// Push a constant.
+    Const(bool),
+    /// Pop one operand, push its negation.
+    Not,
+    /// Pop two operands, push their conjunction.
+    And,
+    /// Pop two operands, push their disjunction.
+    Or,
+    /// Pop two operands, push their exclusive-or.
+    Xor,
+}
+
+/// Realise a postfix [`Op`] program as a [`BoolExpr`] under a single manager lock.
+///
+/// Evaluated **iteratively** with an explicit value stack (no recursion), so an arbitrarily deep parse
+/// — a long operator chain or deep nesting — cannot overflow the call stack, matching the no-recursion
+/// discipline used elsewhere for deep expression trees. The program is well-formed by construction (the
+/// grammar only ever emits balanced postfix), so the stack neither underflows nor ends non-singleton.
+pub(crate) fn build_postfix(program: Vec<Op>) -> BoolExpr {
+    BoolExpr::build(|b| {
+        let mut stack: Vec<Bdd<'_>> = Vec::with_capacity(program.len());
+        for op in program {
+            let node = match op {
+                Op::Var(name) => b.var(&name),
+                Op::Const(value) => b.constant(value),
+                Op::Not => {
+                    let a = stack.pop().expect("postfix underflow on NOT");
+                    b.not(a)
+                }
+                Op::And => {
+                    let r = stack.pop().expect("postfix underflow on AND");
+                    let l = stack.pop().expect("postfix underflow on AND");
+                    b.and(l, r)
+                }
+                Op::Or => {
+                    let r = stack.pop().expect("postfix underflow on OR");
+                    let l = stack.pop().expect("postfix underflow on OR");
+                    b.or(l, r)
+                }
+                Op::Xor => {
+                    let r = stack.pop().expect("postfix underflow on XOR");
+                    let l = stack.pop().expect("postfix underflow on XOR");
+                    b.xor(l, r)
+                }
+            };
+            stack.push(node);
+        }
+        stack.pop().expect("postfix program produced no result")
+    })
 }

@@ -1191,6 +1191,45 @@ fn deep_chain_does_not_overflow() {
         .expect("deep-chain traversals must not overflow the stack");
 }
 
+/// `BoolExpr::parse` realises its result through `build_postfix`, which evaluates the grammar's postfix
+/// program on an explicit value stack rather than recursively. A deeply *right-nested* parenthesised
+/// expression makes that value stack `N` deep, so a recursive realise would overflow at a small thread
+/// stack; the iterative one must not. (The LR parser itself is already heap-stacked.)
+#[test]
+fn deep_parse_does_not_overflow() {
+    const N: usize = 2000;
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            // v0000 + (v0001 + (v0002 + ( ... vN-1 ))) — postfix pushes all N vars before collapsing,
+            // so the realise value stack reaches depth N.
+            let mut src = String::from("v0000");
+            for i in 1..N {
+                src.push_str(&format!(" + (v{i:04}"));
+            }
+            for _ in 1..N {
+                src.push(')');
+            }
+
+            let expr = BoolExpr::parse(&src).expect("parse deep nested expression");
+            assert_eq!(expr.var_count(), N);
+            // Equivalent to a flat OR of the same variables.
+            let flat = BoolExpr::build(|b| {
+                let mut acc = b.var("v0000");
+                for i in 1..N {
+                    let v = b.var(&format!("v{i:04}"));
+                    acc = b.or(acc, v);
+                }
+                acc
+            });
+            assert!(expr.equivalent_to(&flat));
+        })
+        .expect("spawn deep-parse thread");
+    handle
+        .join()
+        .expect("parse + build_postfix must not overflow the stack");
+}
+
 #[test]
 fn from_str_and_hash() {
     use std::collections::hash_map::RandomState;

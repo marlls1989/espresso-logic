@@ -1,62 +1,66 @@
 // Boolean expression grammar for lalrpop
 // Supports standard boolean operators with proper precedence:
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
+//
+// Each rule builds a postfix (reverse-Polish) `Vec<Op>` bottom-up; the top-level `Expr` realises it as a
+// BoolExpr through a single `BoolExpr::build` (one manager lock, iterative — see `build_postfix`).
 
+use crate::expression::builder::{build_postfix, Op};
 use crate::expression::BoolExpr;
 
 grammar;
 
-// Main entry point
+// Main entry point: realise the postfix program into a BoolExpr under one lock.
 pub Expr: BoolExpr = {
-    OrExpr,
+    <ops:OrExpr> => build_postfix(ops),
 };
 
 // OR has lowest precedence (supports both + and |)
-OrExpr: BoolExpr = {
-    <l:OrExpr> "+" <r:XorExpr> => l.or(&r),
-    <l:OrExpr> "|" <r:XorExpr> => l.or(&r),
+OrExpr: Vec<Op> = {
+    <mut l:OrExpr> "+" <r:XorExpr> => { l.extend(r); l.push(Op::Or); l },
+    <mut l:OrExpr> "|" <r:XorExpr> => { l.extend(r); l.push(Op::Or); l },
     XorExpr,
 };
 
 // XOR sits between OR and AND
-XorExpr: BoolExpr = {
-    <l:XorExpr> "^" <r:AndExpr> => l.xor(&r),
+XorExpr: Vec<Op> = {
+    <mut l:XorExpr> "^" <r:AndExpr> => { l.extend(r); l.push(Op::Xor); l },
     AndExpr,
 };
 
 // AND has higher precedence (supports both * and &)
-AndExpr: BoolExpr = {
-    <l:AndExpr> "*" <r:NotExpr> => l.and(&r),
-    <l:AndExpr> "&" <r:NotExpr> => l.and(&r),
+AndExpr: Vec<Op> = {
+    <mut l:AndExpr> "*" <r:NotExpr> => { l.extend(r); l.push(Op::And); l },
+    <mut l:AndExpr> "&" <r:NotExpr> => { l.extend(r); l.push(Op::And); l },
     NotExpr,
 };
 
 // NOT has highest precedence
-NotExpr: BoolExpr = {
-    "~" <e:NotExpr> => e.not(),
-    "!" <e:NotExpr> => e.not(),
+NotExpr: Vec<Op> = {
+    "~" <mut e:NotExpr> => { e.push(Op::Not); e },
+    "!" <mut e:NotExpr> => { e.push(Op::Not); e },
     Term,
 };
 
 // Base terms
-Term: BoolExpr = {
+Term: Vec<Op> = {
     // Variables (identifiers)
-    <v:Ident> => BoolExpr::variable(v),
-    
+    <v:Ident> => vec![Op::Var(v.to_string())],
+
     // Constants
-    "0" => BoolExpr::constant(false),
-    "1" => BoolExpr::constant(true),
-    "true" => BoolExpr::constant(true),
-    "false" => BoolExpr::constant(false),
-    
-    // Parenthesized expressions
-    "(" <e:Expr> ")" => e,
+    "0" => vec![Op::Const(false)],
+    "1" => vec![Op::Const(true)],
+    "true" => vec![Op::Const(true)],
+    "false" => vec![Op::Const(false)],
+
+    // Parenthesized expressions (still a postfix program — only the top-level `Expr` realises one)
+    "(" <e:OrExpr> ")" => e,
 };
 
 // Lexer rules
 
 // Match identifiers (variable names)
-// Standard Rust identifier: starts with letter or underscore, 
+// Standard Rust identifier: starts with letter or underscore,
 // followed by letters, digits, or underscores
 // Note: Operators must be listed explicitly before identifiers to avoid
 // being treated as special regex characters
@@ -71,17 +75,16 @@ match {
     "!",
     "(",
     ")",
-    
+
     // Keywords/constants
     "true",
     "false",
     "0",
     "1",
-    
+
     // Identifiers (matches variable names)
     r"[a-zA-Z_][a-zA-Z0-9_]*" => Ident,
-    
+
     // Skip whitespace
     r"\s+" => { },
 }
-
