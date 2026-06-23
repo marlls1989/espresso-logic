@@ -135,11 +135,16 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// # Construction Methods
 ///
-/// Three ways to build expressions:
+/// Several ways to build expressions, all producing the same canonical BDD:
 ///
 /// 1. **`expr!` macro** (recommended) - Clean syntax without explicit references
-/// 2. **Method API** - Explicit `.and()`, `.or()`, `.not()` calls
-/// 3. **Operator overloading** - Requires `&` references
+/// 2. **Method API** - Explicit `.and()`, `.or()`, `.not()`, `.xor()`, `.ite()` calls
+/// 3. **Operator overloading** - `*`/`&` (AND), `+`/`|` (OR), `^` (XOR), `!`/`~` (NOT); requires `&`
+///    references on the owned forms
+/// 4. **String parsing** - [`BoolExpr::parse`] (and `str::parse`) for the same operators in text form
+/// 5. **Low-level builder** - [`BoolExpr::build`] composes a whole expression under a single manager
+///    lock from cheap node handles; see [Implementation Details](#implementation-details) and the
+///    [builder example](#low-level-builder)
 ///
 /// # Minimisation
 ///
@@ -161,6 +166,20 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// The BDD manager is a global singleton (protected by `RwLock`) shared by all
 /// expressions, providing structural sharing and canonical representation.
+///
+/// **Canonical form.** Because every operation hash-conses through the shared manager, two expressions
+/// that denote the same Boolean function have the *same* BDD root. Equality, equivalence, and hashing are
+/// therefore O(1) on the root, and structurally different but logically equal inputs (e.g. `a*b` built
+/// three different ways, or `a+b` versus `b+a`) compare equal.
+///
+/// **One construction primitive.** Every constructor and operator funnels through [`BoolExpr::build`],
+/// the single place a manager lock is acquired. The macro lowers to a `build` closure; the string parser
+/// realises its parse through `build`; and `.and()`/`.or()`/`.not()`/`.xor()`/`.ite()` are thin shims
+/// that graft their operands into a `build` closure. `build` takes the manager write lock **once** for
+/// the whole closure (not once per operation) and exposes a [`BddBuilder`] whose `Copy` [`Bdd`] handles
+/// are bare node ids — so building a large expression costs one lock and no throw-away intermediate
+/// `BoolExpr`s. If a `build` closure panics, the lock poisons and the panic propagates, since a
+/// half-finished build may have left the manager's tables inconsistent.
 ///
 /// # Cloning
 ///
@@ -214,6 +233,51 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// // No & references needed!
 /// let expr = expr!(a * b + !a * !b);
 /// println!("{}", expr);
+/// ```
+///
+/// ## Low-level builder
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// // Build (a ^ b) | (b & c) under a single manager lock, composing cheap node handles.
+/// let expr = BoolExpr::build(|f| {
+///     let a = f.var("a");
+///     let b = f.var("b");
+///     let c = f.var("c");
+///     f.or(f.xor(a, b), f.and(b, c))
+/// });
+///
+/// // Identical to the equivalent operator/method expression (canonical BDD).
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let c = BoolExpr::variable("c");
+/// assert_eq!(expr, a.xor(&b).or(&b.and(&c)));
+/// ```
+///
+/// The builder shines when the shape is dynamic — e.g. folding a slice of variables — since the whole
+/// result is built with one lock and no intermediate `BoolExpr` allocations:
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// // OR of a runtime-sized set of variables.
+/// let names = ["x0", "x1", "x2", "x3"];
+/// let any = BoolExpr::build(|f| {
+///     names
+///         .iter()
+///         .map(|n| f.var(n))
+///         .reduce(|acc, v| f.or(acc, v))
+///         .unwrap_or_else(|| f.constant(false))
+/// });
+/// assert_eq!(any.var_count(), 4);
+///
+/// // Existing expressions can be grafted in with `graft`.
+/// let sub = BoolExpr::parse("a * b").unwrap();
+/// let guarded = BoolExpr::build(|f| {
+///     let sub = f.graft(&sub);
+///     let c = f.var("c");
+///     f.and(sub, c)
+/// });
+/// assert_eq!(guarded, BoolExpr::parse("a * b * c").unwrap());
 /// ```
 ///
 /// ## BDD Operations

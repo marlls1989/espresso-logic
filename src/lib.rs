@@ -22,7 +22,8 @@
 //!
 //! The high-level API provides easy-to-use abstractions with automatic resource management:
 //!
-//! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, and the `expr!` macro
+//! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, the `expr!` macro, and a low-level
+//!   [`BoolExpr::build`] closure builder
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
 //! - **[`Cube`]** / **[`Minterm`]** - A `Cover`'s product terms: a [`Cube`] pairs two
 //!   [`Minterm`]s (a [`Minterm`] is a label-carrying row of tri-state values, `1`/`0`/`-`).
@@ -97,7 +98,7 @@
 //! use espresso_logic::{BoolExpr, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Parse using standard operators: +, *, ~, ! (or & and |)
+//! // Parse using standard operators: +, ^, *, ~, ! (or & and |)
 //! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
 //!
 //! // Minimise using Espresso algorithm
@@ -105,6 +106,24 @@
 //! println!("Minimised: {}", minimised);
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! Build dynamically with the low-level closure builder ([`BoolExpr::build`]) — one BDD manager lock for
+//! the whole expression, no intermediate allocations, and a natural fit for runtime-shaped construction:
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! // AND-reduce a runtime slice of variables.
+//! let names = ["a", "b", "c"];
+//! let all = BoolExpr::build(|f| {
+//!     names
+//!         .iter()
+//!         .map(|n| f.var(n))
+//!         .reduce(|acc, v| f.and(acc, v))
+//!         .unwrap_or_else(|| f.constant(true))
+//! });
+//! assert_eq!(all, BoolExpr::parse("a * b * c").unwrap());
 //! ```
 //!
 //! #### Using Cover with Expressions

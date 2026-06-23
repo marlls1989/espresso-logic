@@ -20,12 +20,16 @@ mod parser_impl {
 impl BoolExpr {
     /// Parse a boolean expression from a string
     ///
-    /// Supports standard boolean operators:
+    /// Supports standard boolean operators, in precedence order (lowest to highest):
     /// - `+` or `|` for OR
-    /// - `*` or `&` for AND  
+    /// - `^` for XOR
+    /// - `*` or `&` for AND
     /// - `~` or `!` for NOT
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
+    ///
+    /// All binary operators are left-associative. The result is realised through [`BoolExpr::build`],
+    /// so the whole expression is constructed under a single BDD manager lock.
     pub fn parse(input: &str) -> Result<Self, ParseBoolExprError> {
         parser_impl::ExprParser::new().parse(input).map_err(|e| {
             let message = e.to_string();
