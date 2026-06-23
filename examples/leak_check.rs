@@ -32,5 +32,25 @@ fn main() {
         }
     }
 
+    // macOS attach-mode leak harness: park as a live process so it can be scanned with
+    // `leaks <pid>`, then exit cleanly when released. (No-op without the env var, so a direct run or
+    // Linux/valgrind still runs straight through.)
+    park_for_leak_scan();
+
     println!("Done. Check for leaks.");
+}
+
+/// When `ESPRESSO_LEAK_PARK` is set, print a `READY <pid>` marker and block on stdin so the macOS
+/// `scripts/check_leaks_macos.sh` harness can scan this *live* process (`leaks <pid>`) and then
+/// release it. macOS 26's `leaks --atExit` cannot resume a restricted process after its exit-time
+/// SIGSTOP, leaving it orphaned and wedging the run — attaching to a live process avoids that.
+fn park_for_leak_scan() {
+    use std::io::Write;
+    if std::env::var_os("ESPRESSO_LEAK_PARK").is_none() {
+        return;
+    }
+    println!("READY {}", std::process::id());
+    let _ = std::io::stdout().flush();
+    let mut buf = String::new();
+    let _ = std::io::stdin().read_line(&mut buf);
 }

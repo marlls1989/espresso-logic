@@ -191,8 +191,37 @@ leaks <PID>
 **Using the script:**
 
 ```bash
-./scripts/check_memory_leaks.sh
+./scripts/check_leaks_macos.sh            # run the leak_check example under `leaks`
+./scripts/check_leaks_macos.sh --validate # prove detection works (intentional_leak must be caught)
 ```
+
+**How the script works on macOS 26 (and why):**
+
+The script does **not** use `leaks --atExit`. That mode injects `libLeaksAtExit.dylib`, which
+interposes `exit()` and makes the target `SIGSTOP` itself so the parent `leaks` can scan it at exit.
+On macOS 26 the cargo-built binary is "not debuggable" (restricted), so `leaks` scans it but **cannot
+resume the stopped process**; it exits and leaves the target orphaned in a stopped state, still
+holding the report pipe's write end. The `leaks ... | tee` then never sees EOF and the whole run hangs
+**after** printing "0 leaks" (observed wedged for days).
+
+Instead the script attaches to a **live** process, which suspends and *resumes* the target via task
+ports and never orphans it:
+
+1. **Build the example unoptimised** (`cargo build --example …`, debug). Release optimisation elides
+   allocations whose result never escapes — which deletes the intentional leaks (so `leaks` reports
+   none) and could mask a real one.
+2. **Ad-hoc code-sign with `get-task-allow`** (`codesign -s - -f --entitlements … `). Without this
+   entitlement macOS 26 refuses the task port and `leaks` can only read read-only memory, so it cannot
+   see the heap and reports zero leaks.
+3. **Run with `MallocStackLogging=1`** so `leaks` enumerates every allocation and reports allocation
+   stacks.
+4. The example runs its workload, prints `READY <pid>`, then **parks on stdin** (gated by the
+   `ESPRESSO_LEAK_PARK` env var, so a direct run or Linux/valgrind is unaffected). The script runs
+   `leaks <pid>` against the live process, then writes to the example's stdin to release it for a
+   clean exit.
+
+The script terminates on its own (no kill needed), and `--validate` correctly reports the planted
+leaks.
 
 ### Method 5: Heaptrack (Linux)
 
