@@ -507,7 +507,7 @@ fn bench_api_overhead(c: &mut Criterion) {
                 continue;
             }
             let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
-            let membership: Vec<bool> = cube.outputs().iter().map(|v| v == Some(true)).collect();
+            let membership: Vec<bool> = cube.outputs().iter().collect();
             let low_in: Vec<u8> = inputs
                 .iter()
                 .map(|v| match v {

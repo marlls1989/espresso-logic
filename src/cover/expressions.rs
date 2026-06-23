@@ -7,6 +7,7 @@ use super::cubes::{Cube, CubeType};
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
 use super::minterm::Minterm;
+use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use super::Cover;
 use crate::expression::BoolExpr;
@@ -91,9 +92,9 @@ impl Cover<Symbol, Symbol> {
             .collect();
         let out_syms = Symbols::new(out_header);
         for cube in &mut self.cubes {
-            cube.outputs = Minterm::from_symbols(
+            cube.outputs = OutputSet::from_symbols(
                 Arc::clone(&out_syms),
-                cube.outputs.iter().chain(std::iter::once(Some(false))),
+                cube.outputs.iter().chain(std::iter::once(false)),
             );
         }
         self.output_symbols = out_syms;
@@ -111,9 +112,9 @@ impl Cover<Symbol, Symbol> {
                     .iter()
                     .map(|name| product_term.value_of(name)),
             );
-            let om = Minterm::from_symbols(
+            let om = OutputSet::from_symbols(
                 Arc::clone(&output_symbols),
-                (0..no).map(|i| Some(i == output_index)),
+                (0..no).map(|i| i == output_index),
             );
             Cube::new(im, om, CubeType::F)
         }));

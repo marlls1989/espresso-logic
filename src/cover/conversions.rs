@@ -6,6 +6,7 @@
 use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
 use super::minterm::{InputField, Minterm};
+use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
@@ -34,8 +35,7 @@ pub(crate) fn anonymous_cover_from_raw(
         .map(|(mut inputs, mask, set)| {
             inputs.resize(num_inputs, InputField::DontCare);
             let im = Minterm::from_symbols_input_fields(Arc::clone(&input_symbols), inputs);
-            let om =
-                Minterm::from_symbols(Arc::clone(&output_symbols), mask.iter().map(|&b| Some(b)));
+            let om = OutputSet::from_symbols(Arc::clone(&output_symbols), mask.iter().copied());
             Cube::new(im, om, set)
         })
         .collect();
@@ -61,7 +61,7 @@ fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymou
         .map(|m| Arc::clone(m.symbols()))
         .unwrap_or_else(Symbols::empty);
     let output_symbols = Symbols::<Anonymous>::anonymous(1);
-    let asserted = Minterm::from_symbols(Arc::clone(&output_symbols), [Some(true)]);
+    let asserted = OutputSet::from_symbols(Arc::clone(&output_symbols), [true]);
     let cubes = minterms
         .iter()
         .map(|m| Cube::new(m.clone(), asserted.clone(), CubeType::F))

@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nMinimized cubes:");
     for (i, cube) in cover.cubes().enumerate() {
         let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
-        let outputs: Vec<Option<bool>> = cube.outputs().iter().collect();
+        let outputs: Vec<bool> = cube.outputs().iter().collect();
         print!("  Cube {}: ", i + 1);
         for input in inputs {
             match input {
@@ -60,14 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         print!(" -> ");
         for output in outputs {
-            print!(
-                "{}",
-                match output {
-                    Some(true) => "1",
-                    Some(false) => "0",
-                    None => "-",
-                }
-            );
+            print!("{}", if output { "1" } else { "0" });
         }
         println!();
     }

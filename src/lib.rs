@@ -347,8 +347,8 @@ pub mod sys;
 // Re-export high-level public API
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
-    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, ReconcilableLabel,
-    StringLabel, Symbols,
+    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
+    ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
 pub use expression::{BoolExpr, ExprNode};

@@ -175,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, cube) in cover.cubes().enumerate() {
         let inputs: Vec<Option<bool>> = cube.inputs().iter().collect();
-        let outputs: Vec<Option<bool>> = cube.outputs().iter().collect();
+        let outputs: Vec<bool> = cube.outputs().iter().collect();
         print!("      Cube {}: inputs=[", i + 1);
         for input in &inputs {
             match input {
@@ -186,11 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         print!("] outputs=[");
         for output in &outputs {
-            match output {
-                Some(true) => print!("1"),
-                Some(false) => print!("0"),
-                None => print!("-"),
-            }
+            print!("{}", if *output { "1" } else { "0" });
         }
         println!("]");
     }

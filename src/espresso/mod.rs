@@ -376,7 +376,7 @@
 
 pub mod error;
 
-use crate::cover::{Anonymous, Minterm, Symbols};
+use crate::cover::{Anonymous, Minterm, OutputSet, Symbols};
 pub use crate::cover::{Cube, CubeType};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
@@ -874,11 +874,10 @@ impl EspressoCover {
                     }
                     let im = Minterm::from_packed_words(Arc::clone(&input_syms), iwords.into());
 
-                    // Decode outputs (multi-valued variable - 1 bit per value); the membership encoding
-                    // differs from the C cube's single bit, so this side is built per output.
-                    let outputs =
-                        (0..num_outputs).map(|out| Some(bit_at(cube_ptr, output_start + out)));
-                    let om = Minterm::from_symbols(Arc::clone(&output_syms), outputs);
+                    // Decode the output membership — one C bit per output, the same 1-bit-per-output
+                    // packing as `OutputSet`, so read each bit directly into the bitmap.
+                    let outputs = (0..num_outputs).map(|out| bit_at(cube_ptr, output_start + out));
+                    let om = OutputSet::from_symbols(Arc::clone(&output_syms), outputs);
 
                     Cube::new(im, om, cube_type)
                 })
@@ -2328,7 +2327,7 @@ mod tests {
         );
         assert_eq!(
             cube.outputs().iter().collect::<Vec<_>>(),
-            [Some(true)],
+            [true],
             "Output should be [1]"
         );
 
@@ -2492,7 +2491,7 @@ mod tests {
             cube.inputs().iter().collect::<Vec<_>>(),
             [Some(false), Some(true), Some(true)]
         );
-        assert_eq!(cube.outputs().iter().collect::<Vec<_>>(), [Some(true)]);
+        assert_eq!(cube.outputs().iter().collect::<Vec<_>>(), [true]);
     }
 
     #[test]

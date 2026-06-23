@@ -7,6 +7,7 @@
 use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
 use super::minterm::Minterm;
+use super::output_set::OutputSet;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::expression::BoolExpr;
@@ -342,7 +343,7 @@ where
             Arc::clone(&input_symbols),
             Arc::clone(cube.inputs().packed()),
         );
-        let om = Minterm::from_packed_words(
+        let om = OutputSet::from_packed_bits(
             Arc::clone(&output_symbols),
             Arc::clone(cube.outputs().packed()),
         );

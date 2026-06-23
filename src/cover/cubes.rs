@@ -1,11 +1,11 @@
-//! The [`Cube`] product term: input pattern + output-membership, both [`Minterm`]s.
+//! The [`Cube`] product term: a tri-state input [`Minterm`] + a binary output [`OutputSet`].
 //!
 //! A cube is one product term of a cover. It belongs to exactly one of the cover's three sets
 //! (ON/`F`, don't-care/`D`, OFF/`R`) — recorded by its [`CubeType`] — and stores:
 //!
 //! - `inputs`: the input pattern minterm (`Some(true)`/`Some(false)`/`None` per input variable);
-//! - `outputs`: a membership minterm where `Some(true)` means "this output is asserted by this
-//!   cube (in its set)" and `Some(false)` means "not asserted".
+//! - `outputs`: a binary membership bitmap ([`OutputSet`]) — one bit per output: set means "this cube
+//!   asserts the output (in its set)", clear means "not asserted".
 //!
 //! Keeping the per-cube [`CubeType`] (rather than merging all three into one tri-state output) is
 //! what makes the representation **lossless**: the PLA `~` ("not asserted") state stays distinct
@@ -14,6 +14,7 @@
 
 use super::label::{Anonymous, Label};
 use super::minterm::Minterm;
+use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use std::fmt;
 
@@ -36,12 +37,12 @@ pub enum CubeType {
 #[derive(Clone)]
 pub struct Cube<I, O> {
     pub(crate) inputs: Minterm<I>,
-    /// Membership mask: `Some(true)` where this cube asserts the output, `Some(false)` otherwise.
-    pub(crate) outputs: Minterm<O>,
+    /// Output-membership bitmap: bit set where this cube asserts the output (in its set).
+    pub(crate) outputs: OutputSet<O>,
     pub(crate) set: CubeType,
 }
 
-impl<I: Label + fmt::Debug, O: Label + fmt::Debug> fmt::Debug for Cube<I, O> {
+impl<I: Label + fmt::Debug, O> fmt::Debug for Cube<I, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Cube")
             .field("inputs", &self.inputs)
@@ -51,9 +52,10 @@ impl<I: Label + fmt::Debug, O: Label + fmt::Debug> fmt::Debug for Cube<I, O> {
     }
 }
 
-/// Renders the cube as a PLA-style row — `<inputs> <outputs>` (each a bare `1`/`0`/`-` string from
-/// [`Minterm`]'s `Display`) — annotating the set tag for don't-care/off-set cubes (`F` is the default
-/// and left unmarked). Needs no bound on the label types.
+/// Renders the cube as a PLA-style row — `<inputs> <outputs>` (the inputs a bare `1`/`0`/`-` string
+/// from [`Minterm`]'s `Display`, the outputs a bare `1`/`0` string from [`OutputSet`]'s) — annotating
+/// the set tag for don't-care/off-set cubes (`F` is the default and left unmarked). Needs no bound on
+/// the label types.
 impl<I, O> fmt::Display for Cube<I, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.inputs, self.outputs)?;
@@ -65,20 +67,20 @@ impl<I, O> fmt::Display for Cube<I, O> {
     }
 }
 
-/// Two cubes are equal when they belong to the same set and their input and output patterns are
-/// equal. The pattern comparison is [`Minterm`]'s identity-based equality, so cubes align by variable
-/// name (ignoring header order) and treat absent variables as don't-cares.
-impl<I: Label, O: Label> PartialEq for Cube<I, O> {
+/// Two cubes are equal when they belong to the same set, their input patterns are equal, and their
+/// output bitmaps are equal. Inputs compare by [`Minterm`]'s identity-based equality (aligning by
+/// variable name, absent variables as don't-cares); outputs compare positionally by [`OutputSet`].
+impl<I: Label, O> PartialEq for Cube<I, O> {
     fn eq(&self, other: &Self) -> bool {
         self.set == other.set && self.inputs == other.inputs && self.outputs == other.outputs
     }
 }
 
-impl<I: Label, O: Label> Eq for Cube<I, O> {}
+impl<I: Label, O> Eq for Cube<I, O> {}
 
-/// Hashes the same fields the [`PartialEq`] impl compares (set tag + both pattern minterms), keeping
-/// the `Hash`/`Eq` contract so a `Cube` can key a `HashMap`/`HashSet`.
-impl<I: Label, O: Label> std::hash::Hash for Cube<I, O> {
+/// Hashes the same fields the [`PartialEq`] impl compares (set tag + input minterm + output bitmap),
+/// keeping the `Hash`/`Eq` contract so a `Cube` can key a `HashMap`/`HashSet`.
+impl<I: Label, O> std::hash::Hash for Cube<I, O> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.set.hash(state);
         self.inputs.hash(state);
@@ -87,8 +89,8 @@ impl<I: Label, O: Label> std::hash::Hash for Cube<I, O> {
 }
 
 impl<I, O> Cube<I, O> {
-    /// Build a cube from its input pattern, output-membership mask, and set tag.
-    pub(crate) fn new(inputs: Minterm<I>, outputs: Minterm<O>, set: CubeType) -> Self {
+    /// Build a cube from its input pattern, output-membership bitmap, and set tag.
+    pub(crate) fn new(inputs: Minterm<I>, outputs: OutputSet<O>, set: CubeType) -> Self {
         Cube {
             inputs,
             outputs,
@@ -102,14 +104,14 @@ impl<I, O> Cube<I, O> {
         &self.inputs
     }
 
-    /// The output-membership mask of this cube (`Some(true)` where the output is asserted).
+    /// The output-membership bitmap of this cube (a set bit where the output is asserted).
     ///
-    /// This is a per-cube, per-set membership mask, **not** a merged tri-state output: `Some(true)`
-    /// means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))" and
-    /// `Some(false)` means "it does not". For an FR/FDR cover, a given input pattern can therefore
-    /// appear in more than one cube (e.g. an F cube and an R cube), each with its own mask.
+    /// This is a per-cube, per-set membership bitmap, **not** a merged tri-state output: an asserted
+    /// bit means "this cube asserts the output in its own set ([`cube_type`](Self::cube_type))". For an
+    /// FR/FDR cover, a given input pattern can therefore appear in more than one cube (e.g. an F cube
+    /// and an R cube), each with its own bitmap.
     #[must_use]
-    pub fn outputs(&self) -> &Minterm<O> {
+    pub fn outputs(&self) -> &OutputSet<O> {
         &self.outputs
     }
 
@@ -121,7 +123,7 @@ impl<I, O> Cube<I, O> {
 
     /// Whether output `i` is asserted by this cube.
     pub(crate) fn asserts(&self, i: usize) -> bool {
-        self.outputs.value_at(i) == Some(true)
+        self.outputs.value_at(i)
     }
 }
 
@@ -155,10 +157,7 @@ impl Cube<Anonymous, Anonymous> {
             Symbols::<Anonymous>::anonymous(inputs.len()),
             inputs.iter().copied(),
         );
-        let om = Minterm::from_symbols(
-            Symbols::<Anonymous>::anonymous(membership.len()),
-            membership.iter().map(|&b| Some(b)),
-        );
+        let om = OutputSet::anonymous(membership);
         Cube::new(im, om, set)
     }
 }

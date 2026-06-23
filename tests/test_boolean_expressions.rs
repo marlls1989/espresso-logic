@@ -208,7 +208,7 @@ fn test_cube_iteration() {
         cube.inputs().iter().collect::<Vec<_>>(),
         vec![Some(true), Some(true)]
     );
-    assert_eq!(cube.outputs().iter().collect::<Vec<_>>(), vec![Some(true)]);
+    assert_eq!(cube.outputs().iter().collect::<Vec<_>>(), vec![true]);
 }
 
 #[test]

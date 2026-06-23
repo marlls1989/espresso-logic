@@ -223,12 +223,12 @@ impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
 
             write!(writer, " ")?;
 
-            // Encode outputs. `cube.outputs` is a membership mask: Some(true) = asserted.
+            // Encode outputs. `cube.outputs` is a membership bitmap: a set bit = asserted.
             match pla_type {
                 CoverType::F => {
                     // F-type: '1' for asserted, '0' otherwise
-                    for out in cube.outputs.iter() {
-                        write!(writer, "{}", if out == Some(true) { '1' } else { '0' })?;
+                    for asserted in cube.outputs.iter() {
+                        write!(writer, "{}", if asserted { '1' } else { '0' })?;
                     }
                 }
                 CoverType::FD | CoverType::FDR | CoverType::FR => {
@@ -239,8 +239,8 @@ impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
                         CubeType::R => '0', // OFF
                     };
 
-                    for out in cube.outputs.iter() {
-                        write!(writer, "{}", if out == Some(true) { set_char } else { '~' })?;
+                    for asserted in cube.outputs.iter() {
+                        write!(writer, "{}", if asserted { set_char } else { '~' })?;
                     }
                 }
             }

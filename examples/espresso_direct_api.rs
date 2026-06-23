@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         print!(" -> ");
         for output in cube.outputs().iter() {
-            print!("{}", if output == Some(true) { "1" } else { "0" });
+            print!("{}", if output { "1" } else { "0" });
         }
         println!();
     }

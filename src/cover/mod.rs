@@ -110,6 +110,7 @@ mod iterators;
 mod label;
 mod minimisation;
 mod minterm;
+mod output_set;
 pub mod pla;
 mod symbols;
 
@@ -120,6 +121,7 @@ pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
 pub use minterm::{Minterm, MintermIter};
+pub use output_set::OutputSet;
 pub use symbols::Symbols;
 
 use std::collections::HashMap;
@@ -427,7 +429,7 @@ impl<I, O> Cover<I, O> {
             .map(|cube| {
                 Cube::new(
                     Minterm::from_symbols(Arc::clone(&input_symbols), cube.inputs.iter()),
-                    Minterm::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
+                    OutputSet::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
                     cube.cube_type(),
                 )
             })
@@ -495,7 +497,7 @@ impl<I, O> Cover<I, O> {
             .map(|cube| {
                 Cube::new(
                     cube.inputs,
-                    Minterm::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
+                    OutputSet::from_symbols(Arc::clone(&output_symbols), cube.outputs.iter()),
                     cube.set,
                 )
             })
@@ -732,15 +734,9 @@ impl Cover<Anonymous, Anonymous> {
             let new_syms = Symbols::<Anonymous>::anonymous(min_outputs);
             for cube in &mut self.cubes {
                 let old = cube.outputs.num_vars();
-                cube.outputs = Minterm::from_symbols(
+                cube.outputs = OutputSet::from_symbols(
                     Arc::clone(&new_syms),
-                    (0..min_outputs).map(|i| {
-                        if i < old {
-                            cube.outputs.value_at(i)
-                        } else {
-                            Some(false)
-                        }
-                    }),
+                    (0..min_outputs).map(|i| i < old && cube.outputs.value_at(i)),
                 );
             }
             self.output_symbols = new_syms;
@@ -770,14 +766,14 @@ fn assert_mask<I, O, M>(
     new_no: usize,
     old_count: usize,
     map: impl Fn(usize) -> usize,
-) -> Minterm<M> {
+) -> OutputSet<M> {
     let mut mask = vec![false; new_no];
     for old in 0..old_count {
         if cube.asserts(old) {
             mask[map(old)] = true;
         }
     }
-    Minterm::from_symbols(Arc::clone(new_output), mask.into_iter().map(Some))
+    OutputSet::from_symbols(Arc::clone(new_output), mask)
 }
 
 /// Union two headers by variable identity: `a`'s labels, then each of `b`'s labels whose identity is

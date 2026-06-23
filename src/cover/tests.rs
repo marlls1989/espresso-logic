@@ -59,7 +59,7 @@ fn test_from_cubes_matches_push() {
 }
 
 /// One cube's `(inputs, output-membership)` values.
-type CubeRow = (Vec<Option<bool>>, Vec<Option<bool>>);
+type CubeRow = (Vec<Option<bool>>, Vec<bool>);
 
 /// `(inputs, outputs)` rows of every cube, in order.
 fn io_rows<I, O>(c: &Cover<I, O>) -> Vec<CubeRow> {
@@ -1512,7 +1512,7 @@ fn cover_is_send_sync() {
 // ===== extend / merge =====
 
 /// Membership rows (`Some(true)`=asserted) of every cube, in order.
-fn output_rows<I, O>(c: &Cover<I, O>) -> Vec<Vec<Option<bool>>> {
+fn output_rows<I, O>(c: &Cover<I, O>) -> Vec<Vec<bool>> {
     c.cubes()
         .map(|cube| cube.outputs().iter().collect())
         .collect()
@@ -1542,10 +1542,7 @@ fn extend_appends_anonymous_outputs() {
     assert_eq!(a.num_outputs(), 2); // appended: 1 + 1
     assert_eq!(a.num_cubes(), 2);
     // a's cube asserts output 0 only; b's cube asserts output 1 only.
-    assert_eq!(
-        output_rows(&a),
-        vec![vec![Some(true), Some(false)], vec![Some(false), Some(true)],]
-    );
+    assert_eq!(output_rows(&a), vec![vec![true, false], vec![false, true]]);
 }
 
 #[test]
@@ -1572,7 +1569,7 @@ fn merge_overlays_anonymous_outputs_by_position() {
     assert_eq!(a.num_outputs(), 1); // overlaid: max(1, 1)
     assert_eq!(a.num_cubes(), 2);
     // Both cubes assert the same (position-0) output.
-    assert_eq!(output_rows(&a), vec![vec![Some(true)], vec![Some(true)]]);
+    assert_eq!(output_rows(&a), vec![vec![true], vec![true]]);
 }
 
 #[test]
@@ -1674,7 +1671,7 @@ fn merge_overlays_colliding_named_outputs() {
     assert_eq!(a.num_outputs(), 1); // single overlaid column
     assert_eq!(a.output_labels()[0].as_ref(), "f");
     // Both source cubes now assert the one shared output.
-    assert!(output_rows(&a).iter().all(|row| row == &vec![Some(true)]));
+    assert!(output_rows(&a).iter().all(|row| row == &vec![true]));
 }
 
 // ===== BoolExpr -> Cover<Symbol, Anonymous> and per-side relabel =====
