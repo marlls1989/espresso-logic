@@ -1314,6 +1314,17 @@ fn pla_input_field_chars_match_c() {
         to_pla(".i 2\n.o 1\n10 1\n.e\n"),
         "an empty (?) cube must be dropped, leaving just the real cube"
     );
+
+    // Read-then-write (no minimisation) echoes the empty literal `?` faithfully, like C's `print_cube`
+    // (`"?01-"[field]`). The `Option<bool>` view would fold `00`→`-`; the writer reads the raw fields.
+    let roundtrip = PlaCover::<Symbol>::from_pla_string(".i 4\n.o 1\n?01- 1\n.e\n")
+        .expect("parses")
+        .to_pla_string(CoverType::F)
+        .expect("serialise");
+    assert!(
+        roundtrip.contains("?01- 1"),
+        "empty literal `?` must survive a read-then-write round-trip, got:\n{roundtrip}"
+    );
 }
 
 #[test]
@@ -1355,6 +1366,19 @@ fn try_new_rejects_oversized_dimensions() {
             MinimizationError::Instance(InstanceError::DimensionTooLarge { .. })
         ),
         "expected DimensionTooLarge, got {err:?}"
+    );
+
+    // Pathological pair: each dimension is within `c_int::MAX` on its own, but the C core's
+    // `cube.size = 2*num_inputs + num_outputs` accumulation would overflow `c_int` and wrap negative.
+    // The guard's checked arithmetic must still reject it rather than letting `cube_setup` abort.
+    let big = (i32::MAX as usize) - 1;
+    let err = Espresso::try_new(big, big, None).expect_err("overflowing cube.size must error");
+    assert!(
+        matches!(
+            err,
+            MinimizationError::Instance(InstanceError::DimensionTooLarge { .. })
+        ),
+        "expected DimensionTooLarge for the overflowing pair, got {err:?}"
     );
 }
 

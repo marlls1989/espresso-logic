@@ -206,15 +206,17 @@ impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
 
         // Write filtered cubes
         for cube in filtered_cubes {
-            // Write inputs
-            for inp in cube.inputs.iter() {
+            // Write inputs from the raw fields so the empty literal `?` round-trips (the `Option<bool>`
+            // view would fold it to `-`). Matches C's `print_cube` map `"?01-"[field]`.
+            for field in cube.inputs.input_fields() {
                 write!(
                     writer,
                     "{}",
-                    match inp {
-                        Some(false) => '0',
-                        Some(true) => '1',
-                        None => '-',
+                    match field {
+                        InputField::Zero => '0',
+                        InputField::One => '1',
+                        InputField::DontCare => '-',
+                        InputField::Empty => '?',
                     }
                 )?;
             }

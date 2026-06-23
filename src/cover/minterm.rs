@@ -73,6 +73,17 @@ fn encode_field(field: InputField) -> u8 {
 }
 
 #[inline]
+fn decode_field(field: u8) -> InputField {
+    match field {
+        FIELD_FALSE => InputField::Zero,
+        FIELD_TRUE => InputField::One,
+        FIELD_DC => InputField::DontCare,
+        // The only remaining 2-bit value is `00`, the empty literal.
+        _ => InputField::Empty,
+    }
+}
+
+#[inline]
 fn words_for(num_vars: usize) -> usize {
     num_vars.div_ceil(VARS_PER_WORD)
 }
@@ -248,6 +259,13 @@ impl<L> Minterm<L> {
             }
         }
         false
+    }
+
+    /// Iterate the raw input fields in index order, preserving the empty literal (`00`) that the
+    /// public `Option<bool>` view folds to `None`. Crate-internal; used by the PLA writer so a `?`
+    /// read into a cube is echoed back faithfully (matching C's `print_cube`).
+    pub(crate) fn input_fields(&self) -> impl Iterator<Item = InputField> + '_ {
+        (0..self.num_vars()).map(|i| decode_field(field_at(&self.values, i)))
     }
 
     /// The shared symbol table this minterm is defined over.

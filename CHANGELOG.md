@@ -34,7 +34,8 @@ and serialise byte-identically to 4.0.0.
   lines, and `.i`/`.o` are required up front (cube dimensions are never inferred from the data).
 - The PLA reader's *input field* now matches C exactly: `0 1 2 - ?` are accepted (`?` being the empty
   literal), and `~`/`x`/`X` are rejected. A `?` makes a cube cover no minterm, so such a cube is
-  dropped during minimisation, leaving the function unchanged.
+  dropped during minimisation, leaving the function unchanged; on a read-then-write (without
+  minimising), the writer echoes `?` faithfully, matching C's `print_cube`.
 - The PLA writer now groups cubes ON → DC → OFF (matching C's `fprint_pla`) for *any* cover, not just
   already-minimised ones — a directly-built or read-then-written multi-set cover no longer diverges.
 - Minimisation now **validates** a cover before handing it to the C core, so two inputs that previously

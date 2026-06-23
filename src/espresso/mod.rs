@@ -1241,11 +1241,23 @@ impl Espresso {
         num_outputs: usize,
         config: Option<&EspressoConfig>,
     ) -> Result<Self, MinimizationError> {
-        // The C cube setup casts the dimensions to `c_int` (and uses `num_inputs + 1`); an out-of-range
-        // value would wrap negative and abort the process inside `cube_setup`. Reject it up front so the
-        // safe API returns an error instead of taking down the process.
-        let max_dim = (c_int::MAX as usize) - 1;
-        if num_inputs > max_dim || num_outputs > max_dim {
+        // `cube_setup` casts the dimensions to signed `c_int`, allocates `num_inputs + 1` variables,
+        // and accumulates `cube.size = 2*num_inputs + num_outputs` (cubestr.c) — every one of these as
+        // `c_int`. Any of them overflowing would wrap negative and abort the process inside
+        // `cube_setup`. Reject up front (with checked arithmetic, so a pair that is individually in
+        // range but whose `2*num_inputs + num_outputs` sum overflows is still caught) so the safe API
+        // returns an error instead of taking down the process.
+        let max_dim = c_int::MAX as usize;
+        let fits = num_inputs <= max_dim
+            && num_outputs <= max_dim
+            && num_inputs
+                .checked_add(1)
+                .is_some_and(|num_vars| num_vars <= max_dim)
+            && num_inputs
+                .checked_mul(2)
+                .and_then(|n| n.checked_add(num_outputs))
+                .is_some_and(|cube_size| cube_size <= max_dim);
+        if !fits {
             return Err(MinimizationError::Instance(
                 InstanceError::DimensionTooLarge {
                     requested: (num_inputs, num_outputs),
