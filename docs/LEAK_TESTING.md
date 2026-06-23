@@ -104,11 +104,11 @@ RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --test test_memory_safety
 - This catches leaks in `sf_new()`, `sf_save()`, `complement()`, etc.
 
 **What ASan detects:**
-- ✅ Memory leaks (unreachable allocations)
-- ✅ Use-after-free
-- ✅ Double-free
-- ✅ Buffer overflows
-- ✅ Stack use-after-return
+- Memory leaks (unreachable allocations)
+- Use-after-free
+- Double-free
+- Buffer overflows
+- Stack use-after-return
 
 **Example output on leak:**
 ```
@@ -147,10 +147,10 @@ valgrind \
 ```
 
 **What Valgrind detects:**
-- ✅ Memory leaks (definitely lost, possibly lost, still reachable)
-- ✅ Invalid reads/writes
-- ✅ Use of uninitialised values
-- ✅ Double-free
+- Memory leaks (definitely lost, possibly lost, still reachable)
+- Invalid reads/writes
+- Use of uninitialised values
+- Double-free
 
 **Example output on success:**
 ```

@@ -8,7 +8,7 @@ The boolean expression API provides a high-level, intuitive interface for workin
 
 - **Build expressions programmatically** using a fluent monadic interface
 - **Parse expressions from strings** using standard boolean notation
-- **Use operator overloading** with `*`, `+`, and `!`
+- **Use operator overloading** with `*`, `+`, `^`, and `!`
 - **Use the `expr!` macro** for clean, readable syntax
 - **Compose expressions** - elegantly combine parsed or existing expressions
 - **Minimize directly** with `.minimize()` method
@@ -94,7 +94,7 @@ fn main() -> std::io::Result<()> {
 
 ### `expr!` Macro (Recommended)
 
-The `expr!` macro is a procedural macro that provides the cleanest syntax. At compile time, the macro expands to use the monadic interface (`.and()`, `.or()`, `.not()` methods), so there is zero runtime overhead.
+The `expr!` macro is a procedural macro. At compile time it lowers onto the `BoolExpr::build` closure builder (composing `Bdd` handles directly, with no intermediate `BoolExpr` allocations), so there is zero runtime overhead. See **Macro lowering** under the Monadic Interface section below.
 
 #### Using String Literals
 
@@ -349,7 +349,7 @@ let not_expr = a.not();
 let complex = a.and(&b).or(&a.not().and(&c));
 ```
 
-**Macro lowering:** `expr!` does *not* chain these monadic methods. It lowers onto the `BoolExpr::build` closure builder — emitting a single `BoolExpr::build(|b| …)` that composes `Bdd` handles, so the whole expression is constructed under one manager lock and is canonical. In-scope `BoolExpr` identifiers are spliced in with `graft`; string literals become variables via `var`. Conceptually:
+**Macro lowering:** `expr!` does *not* chain these monadic methods. It lowers onto the `BoolExpr::build` closure builder — emitting a single `BoolExpr::build(|b| …)` that composes `Bdd` handles, and the result is canonical. In-scope `BoolExpr` identifiers are spliced in with `graft`; string literals become variables via `var`. Conceptually:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -390,14 +390,14 @@ println!("{}", expr);
 ### Low-level builder: `BoolExpr::build`
 
 For programmatic construction — folding over a slice, structure that depends on runtime values —
-`BoolExpr::build` hands a builder to a closure and takes the manager lock **once** for the whole
-expression, composing cheap `Bdd` handles with no intermediate `BoolExpr` allocations. The result is
-canonical, identical to the operator API.
+`BoolExpr::build` hands a builder to a closure and returns the `BoolExpr` for the handle the closure
+returns. The builder's methods build `Bdd` node handles in the manager. The result is canonical, identical
+to the operator API.
 
 ```rust
 use espresso_logic::BoolExpr;
 
-// AND-reduce a runtime list of variable names under a single lock.
+// AND-reduce a runtime list of variable names.
 let names = ["a", "b", "c", "d"];
 let conjunction = BoolExpr::build(|b| {
     let mut acc = b.constant(true);
@@ -414,14 +414,12 @@ let manual = BoolExpr::variable("a")
 assert_eq!(conjunction, manual);
 ```
 
-Inside the closure, obtain handles **only** from the builder. Do not call any `BoolExpr` constructor,
-operator, or `BoolExpr::parse` there — each re-takes the manager lock and would deadlock. To fold in an
-existing or freshly-parsed expression, build it *before* `build` and splice it with `graft`:
+`graft` folds an existing `BoolExpr` into the build as a handle:
 
 ```rust
 use espresso_logic::BoolExpr;
 
-let sub = BoolExpr::parse("a * b").unwrap(); // parse outside the closure
+let sub = BoolExpr::parse("a * b").unwrap();
 let _expr = BoolExpr::build(|b| b.or(b.graft(&sub), b.var("c")));
 ```
 

@@ -3,14 +3,14 @@
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 //
 // Each rule builds a postfix (reverse-Polish) `Vec<Op>` bottom-up; the top-level `Expr` realises it as a
-// BoolExpr through a single `BoolExpr::build` (one manager lock, iterative — see `build_postfix`).
+// BoolExpr through a single `BoolExpr::build` (iterative, per-op manager locking — see `build_postfix`).
 
 use crate::expression::builder::{build_postfix, Op};
 use crate::expression::BoolExpr;
 
 grammar;
 
-// Main entry point: realise the postfix program into a BoolExpr under one lock.
+// Main entry point: realise the postfix program into a BoolExpr.
 pub Expr: BoolExpr = {
     <ops:OrExpr> => build_postfix(ops),
 };

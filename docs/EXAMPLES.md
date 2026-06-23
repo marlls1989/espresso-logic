@@ -144,6 +144,9 @@ fn main() -> std::io::Result<()> {
     // NOT: ! operator
     let not = !&a;
 
+    // XOR: ^ operator
+    let xor = &a ^ &b;
+
     // Complex expressions
     let complex = (&a * &b) + ((!&a) * c);
 

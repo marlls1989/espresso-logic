@@ -27,8 +27,8 @@
 //! | *empty*       | no       | no       | `00`        |
 //!
 //! The packing is private; the public API is expressed in `Option<bool>`. The encoding matches the
-//! C library's cube layout, which makes set operations cheap (word-wise bit ops) and the Espresso
-//! boundary close to a bit-repack.
+//! C library's cube layout, so set operations reduce to word-wise bit ops and the Espresso
+//! boundary is close to a bit-repack.
 
 use super::label::{Anonymous, Label};
 use super::symbols::Symbols;

@@ -76,7 +76,7 @@ fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymou
 
 /// Convert a `BoolExpr` into a single-output [`Cover<Symbol, Anonymous>`](Cover) (anonymous output).
 ///
-/// Uses the BDD representation for efficient product-term extraction.
+/// Extracts product terms from the BDD representation.
 ///
 /// # Examples
 ///

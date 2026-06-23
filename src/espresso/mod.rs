@@ -225,7 +225,7 @@
 //!
 //! ## Internal Implementation
 //!
-//! This module uses a sophisticated singleton pattern with reference counting to manage
+//! This module uses a singleton pattern with reference counting to manage
 //! the thread-local Espresso state safely:
 //!
 //! 1. **Thread-Local Singleton**: A `thread_local!` static holds a `Weak<InnerEspresso>`
@@ -269,7 +269,7 @@
 //!
 //! ## Basic Usage (Recommended)
 //!
-//! Simply work with `EspressoCover` - the Espresso instance is managed automatically:
+//! Work with `EspressoCover` - the Espresso instance is managed automatically:
 //!
 //! ```
 //! use espresso_logic::espresso::EspressoCover;

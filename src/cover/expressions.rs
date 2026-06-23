@@ -1,7 +1,7 @@
 //! Expression integration for Cover
 //!
 //! This module provides methods for converting between covers and boolean expressions,
-//! allowing seamless integration with the expression API.
+//! allowing integration with the expression API.
 
 use super::cubes::{Cube, CubeType};
 use super::error::{AddExprError, CoverError, ToExprError};

@@ -238,7 +238,7 @@ impl CoverType {
 /// `Cover` is `Send` and `Sync`, allowing it to be freely moved between and shared across threads.
 /// Unlike the low-level API, `Cover` doesn't hold a thread-local Espresso instance - it only
 /// creates one temporarily when `.minimize()` is called, then releases it immediately after.
-/// This makes `Cover` ideal for concurrent applications.
+/// This makes `Cover` suitable for concurrent applications.
 ///
 /// # Examples
 ///

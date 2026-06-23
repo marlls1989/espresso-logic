@@ -6,7 +6,7 @@ use std::ops::{Add, BitXor, Mul, Not};
 /// Logical AND operator for references: `&a * &b`
 ///
 /// Implements the `*` operator for boolean expressions using references.
-/// This is the most efficient form as it avoids unnecessary cloning.
+/// This form avoids cloning the operands.
 ///
 /// # Examples
 ///
@@ -53,7 +53,7 @@ impl Mul for BoolExpr {
 /// Logical OR operator for references: `&a + &b`
 ///
 /// Implements the `+` operator for boolean expressions using references.
-/// This is the most efficient form as it avoids unnecessary cloning.
+/// This form avoids cloning the operands.
 ///
 /// # Examples
 ///
@@ -99,7 +99,7 @@ impl Add for BoolExpr {
 /// Logical XOR operator for references: `&a ^ &b`
 ///
 /// Implements the `^` operator for boolean expressions using references.
-/// This is the most efficient form as it avoids unnecessary cloning.
+/// This form avoids cloning the operands.
 ///
 /// # Examples
 ///
@@ -146,7 +146,7 @@ impl BitXor for BoolExpr {
 /// Logical NOT operator for references: `!&a`
 ///
 /// Implements the `!` operator for boolean expressions using references.
-/// This is the most efficient form as it avoids unnecessary cloning.
+/// This form avoids cloning the operands.
 ///
 /// # Examples
 ///

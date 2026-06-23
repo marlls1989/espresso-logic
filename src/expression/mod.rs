@@ -7,7 +7,7 @@
 //! # Main Types
 //!
 //! - [`BoolExpr`] - A boolean expression supporting three construction methods:
-//!   1. **`expr!` macro**: `expr!(a * b + c)` - Recommended!
+//!   1. **`expr!` macro**: `expr!(a * b + c)` - Recommended
 //!   2. Method API: `a.and(&b).or(&c)`
 //!   3. Operator overloading: `&a * &b + &c`
 //!   
@@ -30,12 +30,12 @@
 //!
 //! ## Using the `expr!` Macro (Recommended)
 //!
-//! The `expr!` macro provides the cleanest syntax with three usage styles:
+//! The `expr!` macro provides a concise syntax with three usage styles:
 //!
 //! ```
 //! use espresso_logic::{BoolExpr, expr};
 //!
-//! // Style 1: String literals (most concise - no variable declarations!)
+//! // Style 1: String literals (most concise - no variable declarations)
 //! let xor = expr!("a" * !"b" + !"a" * "b");
 //! println!("{}", xor);  // Output: a * ~b + ~a * b
 //!
@@ -95,7 +95,7 @@
 //! # }
 //! ```
 //!
-//! # 📚 Comprehensive Guide
+//! # Comprehensive Guide
 //!
 //! For a complete guide to the Boolean expression API including detailed examples,
 //! composition patterns, BDD architecture, performance considerations, and best practices,
@@ -142,9 +142,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// 3. **Operator overloading** - `*`/`&` (AND), `+`/`|` (OR), `^` (XOR), `!`/`~` (NOT); requires `&`
 ///    references on the owned forms
 /// 4. **String parsing** - [`BoolExpr::parse`] (and `str::parse`) for the same operators in text form
-/// 5. **Low-level builder** - [`BoolExpr::build`] composes a whole expression under a single manager
-///    lock from cheap node handles; see [Implementation Details](#implementation-details) and the
-///    [builder example](#low-level-builder)
+/// 5. **Low-level builder** - [`BoolExpr::build`] composes a whole expression from node handles; see
+///    [Implementation Details](#implementation-details) and the [builder example](#low-level-builder)
 ///
 /// # Minimisation
 ///
@@ -154,9 +153,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// # Implementation Details
 ///
-/// **Internal representation:** Uses Binary Decision Diagrams (BDDs) for efficient
-/// operations and canonical form. This is an implementation detail that makes the
-/// high-level API practical for complex expressions.
+/// **Internal representation:** Uses Binary Decision Diagrams (BDDs) for canonical form.
 ///
 /// Each `BoolExpr` contains:
 /// - **Node ID** - Reference to BDD structure in global manager
@@ -172,18 +169,14 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// therefore O(1) on the root, and structurally different but logically equal inputs (e.g. `a*b` built
 /// three different ways, or `a+b` versus `b+a`) compare equal.
 ///
-/// **One construction primitive.** Every constructor and operator funnels through [`BoolExpr::build`],
-/// the single place a manager lock is acquired. The macro lowers to a `build` closure; the string parser
-/// realises its parse through `build`; and `.and()`/`.or()`/`.not()`/`.xor()`/`.ite()` are thin shims
-/// that graft their operands into a `build` closure. `build` takes the manager write lock **once** for
-/// the whole closure (not once per operation) and exposes a [`BddBuilder`] whose `Copy` [`Bdd`] handles
-/// are bare node ids — so building a large expression costs one lock and no throw-away intermediate
-/// `BoolExpr`s. If a `build` closure panics, the lock poisons and the panic propagates, since a
-/// half-finished build may have left the manager's tables inconsistent.
+/// **One construction primitive.** Every constructor and operator funnels through [`BoolExpr::build`].
+/// The macro lowers to a `build` closure; the string parser realises its parse through `build`; and
+/// `.and()`/`.or()`/`.not()`/`.xor()`/`.ite()` graft their operands into a `build` closure. `build`
+/// exposes a [`BddBuilder`] whose methods build [`Bdd`] node handles in the manager.
 ///
 /// # Cloning
 ///
-/// Cloning is very cheap - copies Arc references and node ID. `OnceLock::clone()` copies
+/// Cloning copies Arc references and the node ID. `OnceLock::clone()` copies
 /// the cached content (Arc pointers), so clones share the actual cached data. The BDD
 /// structure itself is shared via the global manager.
 ///
@@ -239,7 +232,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// ```
 /// use espresso_logic::BoolExpr;
 ///
-/// // Build (a ^ b) | (b & c) under a single manager lock, composing cheap node handles.
+/// // Build (a ^ b) | (b & c) by composing node handles.
 /// let expr = BoolExpr::build(|f| {
 ///     let a = f.var("a");
 ///     let b = f.var("b");
@@ -290,7 +283,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// println!("BDD nodes: {}", expr.node_count());
 /// println!("Variables: {}", expr.var_count());
 ///
-/// // All operations are efficient BDD operations
+/// // All operations are BDD operations
 /// let vars = expr.collect_variables();
 /// println!("Variables: {:?}", vars);
 /// ```
@@ -345,7 +338,7 @@ impl BoolExpr {
     pub(crate) fn get_or_create_cubes(&self) -> Arc<[crate::cover::Minterm<crate::Symbol>]> {
         // Check local cache
         if let Some(cubes) = self.cube_cache.get() {
-            return Arc::clone(cubes); // Cheap Arc clone
+            return Arc::clone(cubes);
         }
 
         // Not cached - extract from BDD
@@ -414,7 +407,7 @@ impl BoolExpr {
 /// Collect a minterm's fixed literals as a `name -> polarity` map (don't-cares omitted).
 ///
 /// This is the scratch format consumed by the algebraic factoriser; don't-care variables
-/// (`None`) are simply absent from the map.
+/// (`None`) are absent from the map.
 pub(crate) fn minterm_literals(
     cube: &crate::cover::Minterm<crate::Symbol>,
 ) -> std::collections::BTreeMap<Symbol, bool> {

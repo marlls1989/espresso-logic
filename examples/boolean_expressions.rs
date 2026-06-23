@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let b = BoolExpr::variable("b");
     let _c = BoolExpr::variable("c");
 
-    // XOR function: a*~b + ~a*b - clean syntax!
+    // XOR function: a*~b + ~a*b
     let xor = expr!(a * !b + !a * b);
     println!("   XOR = a*~b + ~a*b");
     println!("   Variables: {:?}", xor.collect_variables());

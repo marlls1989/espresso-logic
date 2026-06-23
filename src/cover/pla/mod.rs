@@ -42,8 +42,8 @@
 //!
 //! # PLA Format Specification
 //!
-//! For complete details on the PLA file format including directives, encoding rules,
-//! and examples, see the comprehensive guide below:
+//! For details on the PLA file format including directives, encoding rules,
+//! and examples, see the guide below:
 #![doc = include_str!("../../../docs/PLA_FORMAT.md")]
 
 pub mod error;
@@ -124,8 +124,8 @@ pub trait PLAWriter {
 
     /// Write this cover to a PLA file
     ///
-    /// This method delegates to `write_pla` for efficient file writing without
-    /// building the entire string in memory first.
+    /// This method delegates to `write_pla`, which writes without building the
+    /// entire string in memory first.
     fn to_pla_file<P: AsRef<Path>>(
         &self,
         path: P,

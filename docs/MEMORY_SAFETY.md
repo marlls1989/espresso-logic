@@ -179,12 +179,12 @@ This is safe because:
 
 ## Conclusion
 
-The memory management is **correct** with proper safeguards:
-- ✅ All C allocations are freed
-- ✅ No double-frees
-- ✅ No use-after-free
-- ✅ Thread-safe via thread-local storage
-- ✅ Proper lifetime management via Rc
+The memory management is correct, with these safeguards:
+- All C allocations are freed
+- No double-frees
+- No use-after-free
+- Thread-safe via thread-local storage
+- Lifetime management via Rc
 
 The key insight is that `into_raw()` transfers Rust ownership to C, and returned C pointers are re-wrapped in Rust ownership for proper cleanup.
 

@@ -83,7 +83,7 @@ use std::sync::Arc;
 ///   [`DimensionTooLarge`](crate::espresso::InstanceError::DimensionTooLarge) — a dimension too large
 ///   for the C core's 32-bit cube indices.
 ///
-/// A cube with an *empty* input field (the PLA `?` literal) covers no minterm, so it is simply dropped.
+/// A cube with an *empty* input field (the PLA `?` literal) covers no minterm, so it is dropped.
 ///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover

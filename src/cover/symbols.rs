@@ -1,7 +1,7 @@
 //! Shared symbol table backing a cover's variable labels.
 //!
 //! A [`Symbols`] table describes a dense index range (`0..arity`) of variables, storing **one label
-//! of type `L` per position** — there is no separate "anonymous" shape. A positional cover simply
+//! of type `L` per position** — there is no separate "anonymous" shape. A positional cover
 //! uses the zero-sized [`Anonymous`] label (`Symbols<Anonymous>` holds `[Anonymous; arity]`, which
 //! costs nothing); a named cover uses a real label type such as `Symbol`. The difference is carried
 //! by the type, via [`Label::NAMED`], not by a runtime variant — so partial labelling is

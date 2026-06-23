@@ -1,26 +1,13 @@
 //! Low-level BDD construction: the [`BoolExpr::build`] closure builder.
 //!
-//! [`BoolExpr::and`](BoolExpr::and)/[`or`](BoolExpr::or)/… each allocate a fresh intermediate
-//! [`BoolExpr`] per operation — an `Arc` clone, a manager handle, and a heap node — and re-resolve the
-//! global manager every time. Building a large expression that way churns *N* throw-away `BoolExpr`s.
-//!
-//! [`BoolExpr::build`] instead hands a [`BddBuilder`] to a closure and lets you compose cheap `Copy`
-//! [`Bdd`] handles (bare node ids): no intermediate `BoolExpr` allocations, and the manager is resolved
-//! once for the whole build. Each node-creating step locks the manager itself, read-mostly — a lookup
-//! that hits an existing canonical node needs only a shared read lock, and the write lock is taken only
-//! to append a genuinely new node — exactly like the operator API, so the lock cost is the same while
-//! the per-step `BoolExpr`/`Arc` overhead is gone. Every operation flows through the manager's
-//! hash-consing (`make_node`/`ite`), so the result is canonical, identical to what the monadic API
-//! would produce.
-//!
-//! Because no lock is held across the closure, you may freely call other [`BoolExpr`] operations —
-//! including [`BoolExpr::parse`] — from inside it; [`graft`](BddBuilder::graft) then splices the result
-//! in as a handle without allocating.
+//! [`BoolExpr::build`] calls a closure with a [`BddBuilder`] and returns the [`BoolExpr`] for the handle
+//! the closure returns. The builder's methods build [`Bdd`] node handles in the global manager.
+//! [`graft`](BddBuilder::graft) turns an existing [`BoolExpr`] into a handle.
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! // (a ^ b) & !c, composed from cheap node handles.
+//! // (a ^ b) & !c, composed from node handles.
 //! let expr = BoolExpr::build(|b| {
 //!     let a = b.var("a");
 //!     let bb = b.var("b");
@@ -36,16 +23,13 @@
 //!
 //! # Splicing in existing expressions
 //!
-//! [`graft`](BddBuilder::graft) lifts an existing [`BoolExpr`] into the build as a handle (its root
-//! node), with no allocation. The expression can be built beforehand or produced inside the closure —
-//! either is fine, since `build` holds no lock across your code:
+//! [`graft`](BddBuilder::graft) lifts an existing [`BoolExpr`] into the build as a handle (its root node):
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
 //! let sub = BoolExpr::parse("a * b").unwrap();
 //! let expr = BoolExpr::build(|b| {
-//!     // `parse` here works too — nothing is locked across the closure.
 //!     let other = BoolExpr::parse("c + d").unwrap();
 //!     b.or(b.graft(&sub), b.graft(&other))
 //! });
@@ -55,9 +39,9 @@
 //! # Handles cannot escape their builder
 //!
 //! A [`Bdd`] handle is branded with the builder's invariant lifetime, so it cannot be stored outside the
-//! closure or smuggled between two `build` calls — misuse is a compile error, not a runtime panic. (The
-//! brand guards *cross-builder* handle hygiene; it is not what ties a [`graft`](BddBuilder::graft)ed
-//! expression to the manager — that rests on the single global manager, see `graft`.)
+//! closure or smuggled between two `build` calls — misuse is a compile error. (The brand guards
+//! *cross-builder* handle hygiene; a [`graft`](BddBuilder::graft)ed expression is tied to the manager by
+//! the single global manager, see `graft`.)
 //!
 //! ```compile_fail
 //! use espresso_logic::BoolExpr;
@@ -77,7 +61,7 @@ use std::sync::{Arc, RwLock};
 
 /// A handle to a node being built inside a [`BoolExpr::build`] closure.
 ///
-/// Cheap to `Copy` (it is just a node id). The `'b` lifetime is an **invariant brand** tying the handle
+/// `Copy` (it is a node id). The `'b` lifetime is an **invariant brand** tying the handle
 /// to one [`BddBuilder`] activation, so the borrow checker rejects any attempt to move a handle out of
 /// its closure or use it with a different builder. Handles are opaque: combine them only through the
 /// [`BddBuilder`] methods.
@@ -88,14 +72,11 @@ pub struct Bdd<'b> {
     _brand: PhantomData<fn(&'b ()) -> &'b ()>,
 }
 
-/// The builder handed to a [`BoolExpr::build`] closure: the node-construction operations of the BDD
-/// manager, composing cheap [`Bdd`] node handles.
+/// The builder handed to a [`BoolExpr::build`] closure: the BDD manager's node-construction operations.
 ///
-/// Methods take `&self`, so handles can be nested freely in one expression —
-/// `b.and(b.var("a"), b.not(b.var("b")))`. Each node-creating method locks the manager itself,
-/// read-mostly (a shared read lock for lookups, the write lock only to append a new node), and releases
-/// it immediately; no lock is held across the closure or between calls. Every method goes through the
-/// same hash-consing as the [`BoolExpr`] operators, so each handle is already a canonical node.
+/// Methods take `&self`, so handles nest in one expression — `b.and(b.var("a"), b.not(b.var("b")))`. Each
+/// method hash-conses through the manager — a read lock for the lookup, the write lock to append a new
+/// node — and returns a canonical [`Bdd`] handle.
 pub struct BddBuilder<'b> {
     manager: Arc<RwLock<BddManager>>,
     /// Identity of the manager, used only to debug-assert that a [`graft`](Self::graft)ed expression
@@ -180,21 +161,10 @@ impl<'b> BddBuilder<'b> {
 }
 
 impl BoolExpr {
-    /// Build an expression by composing [`Bdd`] handles, avoiding the per-operation [`BoolExpr`] overhead.
+    /// Build an expression by composing [`Bdd`] handles inside a closure.
     ///
     /// The closure receives a [`BddBuilder`] and returns the handle for the root of the expression.
-    /// Intermediate handles are bare `Copy` node ids — no throw-away [`BoolExpr`] allocations and no
-    /// per-step `Arc`/manager churn. Each node-creating step locks the manager itself, read-mostly (a
-    /// shared read lock for lookups, the write lock only to append a new node), the same lock cost as the
-    /// operator API, so the result is canonical, identical to building the same expression with the
-    /// [`and`](BoolExpr::and)/[`or`](BoolExpr::or)/… operators.
-    ///
-    /// No lock is held across the closure, so the closure may call any other [`BoolExpr`] operation —
-    /// constructors, operators, [`BoolExpr::parse`] — and splice the result in with
-    /// [`graft`](BddBuilder::graft). A panic in the closure body propagates but leaves the manager
-    /// consistent and unpoisoned (each step already released its lock); a panic *during* an append still
-    /// poisons that step's brief write lock and propagates, which is correct — the tables may be
-    /// half-updated.
+    /// [`graft`](BddBuilder::graft) splices an existing [`BoolExpr`] into the build as a handle.
     ///
     /// # Examples
     ///
@@ -222,8 +192,8 @@ impl BoolExpr {
     where
         F: for<'b> FnOnce(&BddBuilder<'b>) -> Bdd<'b>,
     {
-        // Resolve the singleton manager once for the whole build; the builder holds a cheap `Arc` clone
-        // and takes the write lock per node-creating step (never across the closure).
+        // Resolve the singleton manager once for the whole build; the builder holds an `Arc` clone and
+        // takes the write lock per node-creating step.
         let manager = BddManager::get_or_create();
         let manager_ptr = Arc::as_ptr(&manager);
         let root = {
@@ -282,7 +252,7 @@ pub(crate) enum Op {
     Xor,
 }
 
-/// Realise a postfix [`Op`] program as a [`BoolExpr`] under a single manager lock.
+/// Realise a postfix [`Op`] program as a [`BoolExpr`], locking the manager per node-creating step.
 ///
 /// Evaluated **iteratively** with an explicit value stack (no recursion), so an arbitrarily deep parse
 /// — a long operator chain or deep nesting — cannot overflow the call stack, matching the no-recursion

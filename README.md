@@ -7,12 +7,12 @@ Rust bindings to the Espresso heuristic logic minimiser from UC Berkeley, with a
 
 ## Overview
 
-Espresso takes Boolean functions and produces minimal or near-minimal equivalent representations. This Rust crate provides safe, thread-safe bindings with modern features:
+Espresso takes Boolean functions and produces minimal or near-minimal equivalent representations. This Rust crate provides safe, thread-safe bindings with:
 
 - **High-Level API** - Boolean expressions and truth tables (covers) with automatic dimension tracking
 - **Automatic Minimisation** - Heuristic and exact algorithms
 - **Multi-Output Support** - Minimise multiple outputs simultaneously
-- **Thread-Safe** - Safe concurrent execution
+- **Thread-Safe** - Concurrent execution
 - **Flexible Input** - Parse expressions, build truth tables, or load PLA files
 
 ## Features
@@ -40,7 +40,7 @@ espresso-logic = "4.1"
 use espresso_logic::{expr, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build expression with redundant terms
+    // Build an expression with redundant terms
     let redundant = expr!("a" * "b" + "a" * "b" * "c");
     println!("Original: {}", redundant);
     

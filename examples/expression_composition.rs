@@ -13,7 +13,7 @@ fn main() -> std::io::Result<()> {
     println!("User function 3: {}", user_func3);
     println!();
 
-    // Compose them using expr! macro - clean and readable
+    // Compose them using expr! macro
     let combined = expr!(user_func1 * user_func2 + !user_func3);
     println!("Combined: {}", combined);
     println!();

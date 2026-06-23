@@ -3,12 +3,15 @@
 //! A cube belongs to exactly one of a cover's sets (ON/`F`, don't-care/`D`, OFF/`R`); its *outputs*
 //! record, per output column, whether the cube asserts that output **in its set**. That is inherently
 //! two-state (asserted / not) and positional, so — unlike the tri-state input [`Minterm`](super::Minterm)
-//! — it needs only **one bit per output**, packed 64 to a `u64` word. This is exactly the C cube's
-//! output-region encoding, which lets the Espresso boundary copy the words verbatim.
+//! — it needs only **one bit per output**, packed 64 to a `u64` word. This is the Rust-side
+//! representation; at the Espresso boundary outputs are decoded and encoded one bit at a time (the C cube
+//! packs 32 bits to a word at a non-word-aligned offset, so its layout does not match these `u64` words).
+//! Whole words are copied verbatim only when re-homing one `OutputSet` onto another `Symbols<O>` of equal
+//! arity.
 //!
 //! Output **labels** are still meaningful (named `.ob` outputs, relabelling), so `OutputSet` keeps a
 //! shared [`Symbols<O>`] handle — the same one the cover holds. The bit packing itself is independent of
-//! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is a cheap `Arc` clone.
+//! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is an `Arc` clone.
 
 use super::label::Anonymous;
 use super::symbols::Symbols;
@@ -116,8 +119,9 @@ impl<O> OutputSet<O> {
         self.symbols.labels()
     }
 
-    /// The packed bit words, for cheap re-home onto another [`Symbols`] table of the same arity (the
-    /// packing is independent of the label type). Same layout the Espresso output region uses.
+    /// The packed bit words, for re-homing onto another [`Symbols`] table of the same arity (the packing
+    /// is independent of the label type). This is the Rust-side `u64` packing, not the C cube's output
+    /// layout, which is packed and unpacked one bit at a time at the Espresso boundary.
     pub(crate) fn packed(&self) -> &Arc<[u64]> {
         &self.bits
     }

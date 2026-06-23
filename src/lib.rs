@@ -31,10 +31,10 @@
 //!   [`Cube::outputs`] returns `&OutputSet`.
 //!
 //! **Benefits:**
-//! - ✅ Automatic memory management
-//! - ✅ No manual dimension tracking
-//! - ✅ Thread-safe by design
-//! - ✅ Clean, idiomatic Rust API
+//! - Automatic memory management
+//! - No manual dimension tracking
+//! - Thread-safe by design
+//! - Idiomatic Rust API
 //!
 //! ### Low-Level API (Advanced)
 //!
@@ -57,8 +57,8 @@
 //!
 //! **Important constraints:**
 //! - ⚠️ **All covers on a thread must use the same dimensions** until dropped
-//! - ⚠️ Requires manual dimension management
-//! - ⚠️ More complex error handling
+//! - Requires manual dimension management
+//! - More complex error handling
 //!
 //! See the [`espresso`] module documentation for detailed usage and safety guidelines.
 //!
@@ -66,15 +66,15 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! The `expr!` macro provides three convenient styles:
+//! The `expr!` macro provides three styles:
 //!
 //! ```
 //! use espresso_logic::{BoolExpr, expr, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! // Style 1: String literals (most concise - no declarations!)
+//! // Style 1: String literals (most concise - no declarations)
 //! let xor = expr!("a" * !"b" + !"a" * "b");
-//! println!("{}", xor);  // Output: a * ~b + ~a * b (minimal parentheses!)
+//! println!("{}", xor);  // Output: a * ~b + ~a * b (minimal parentheses)
 //!
 //! // Style 2: Existing BoolExpr variables
 //! let a = BoolExpr::variable("a");
@@ -148,12 +148,12 @@
 //! println!("Input variables: {:?}", cover.input_labels());
 //! println!("Number of cubes: {}", cover.num_cubes());
 //!
-//! // Minimize the cover
+//! // Minimise the cover
 //! cover = cover.minimize()?;
 //!
 //! // Convert back to expression
 //! let minimized = cover.to_expr("output")?;
-//! println!("Minimized: {}", minimized);
+//! println!("Minimised: {}", minimized);
 //! # Ok(())
 //! # }
 //! ```
@@ -173,10 +173,10 @@
 //! cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
 //! cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));  // 10 -> 1
 //!
-//! // Minimize (returns new instance)
+//! // Minimise (returns new instance)
 //! cover = cover.minimize()?;
 //!
-//! // Iterate over minimized cubes
+//! // Iterate over minimised cubes
 //! for cube in cover.cubes() {
 //!     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
 //! }
@@ -200,7 +200,7 @@
 //! // Read from a PLA file into a `PlaCover` (the variant reflects which label sections were present)
 //! let mut cover = PlaCover::<Symbol>::from_pla_file(input_path)?;
 //!
-//! // Minimize
+//! // Minimise
 //! cover = cover.minimize()?;
 //!
 //! # let output_file = tempfile::NamedTempFile::new()?;
@@ -225,7 +225,7 @@
 //! The library supports different cover types for representing Boolean functions:
 //!
 //! - **F Type** - ON-set only (specifies where output is 1)
-//! - **FD Type** - ON-set + Don't-cares (most flexible)
+//! - **FD Type** - ON-set + Don't-cares
 //! - **FR Type** - ON-set + OFF-set (specifies both 1s and 0s)
 //! - **FDR Type** - ON-set + Don't-cares + OFF-set (complete specification)
 //!
@@ -306,7 +306,7 @@
 //! ];
 //! let cover = EspressoCover::from_cubes(&cubes, 2, 1)?;
 //!
-//! // Minimize and get all three covers (F, D, R)
+//! // Minimise and get all three covers (F, D, R)
 //! let (f_result, d_result, r_result) = cover.minimize(None, None);
 //!
 //! println!("ON-set: {} cubes", f_result.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).len());
@@ -341,7 +341,7 @@
 //!
 //! See the [`espresso`] module documentation for detailed safety guidelines and usage patterns.
 //!
-//! # 📚 Comprehensive Guides
+//! # Comprehensive Guides
 //!
 //! See the [`doc`] module for embedded guides:
 //!
@@ -380,7 +380,7 @@ pub use espresso_logic_macros::expr;
 /// Comprehensive documentation guides
 ///
 /// This module contains embedded guides from the `docs/` directory,
-/// making all comprehensive documentation available on docs.rs.
+/// making the documentation available on docs.rs.
 ///
 /// # Available Guides
 ///

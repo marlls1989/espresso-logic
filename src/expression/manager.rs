@@ -4,7 +4,7 @@
 //! The BDD manager maintains:
 //! - Global singleton manager with thread-local storage
 //! - Hash consing for canonical node representation
-//! - Operation caching for efficient boolean operations
+//! - Operation caching for boolean operations
 //! - Variable ordering (first-seen / insertion order)
 
 use crate::Symbol;
@@ -30,7 +30,7 @@ pub(super) const TRUE_NODE: NodeId = 1;
 ///
 /// The weak reference enables:
 /// - Better cache hit rates when BDDs are actively in use (shared across all BDDs)
-/// - More efficient memory usage (shared node table)
+/// - Lower memory usage (shared node table)
 /// - Hash consing works globally (same expressions = same nodes everywhere)
 /// - Automatic cleanup when no BDDs are in use
 pub(super) static GLOBAL_BDD_MANAGER: Mutex<Weak<RwLock<BddManager>>> = Mutex::new(Weak::new());

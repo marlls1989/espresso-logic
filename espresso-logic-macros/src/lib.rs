@@ -16,13 +16,11 @@ enum Expr {
 }
 
 impl Expr {
-    /// Emit the body of a `BoolExpr::build` closure: builder method calls that compose `Bdd` handles,
-    /// rather than chained monadic `BoolExpr` operations.
+    /// Emit the body of a `BoolExpr::build` closure: builder method calls that compose `Bdd` handles.
     ///
     /// `builder` is the closure's (hygienic) parameter ident. Variable identifiers in scope are grafted
-    /// in as existing `BoolExpr`s; string literals become fresh variables; the whole expression is built
-    /// under the single lock `build` holds. Methods take `&self`, so nested calls in one expression are
-    /// fine.
+    /// in as existing `BoolExpr`s; string literals become fresh variables. Methods take `&self`, so nested
+    /// calls in one expression are fine.
     fn to_bdd_tokens(&self, builder: &Ident) -> proc_macro2::TokenStream {
         match self {
             Expr::Variable(ident) => {

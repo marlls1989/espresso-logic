@@ -1,6 +1,6 @@
 # Thread-Local Global Variables Implementation
 
-> **✅ CURRENT IMPLEMENTATION** (since version 2.6.2)  
+> **Current implementation** (since version 2.6.2).
 > This is the active implementation used by the library.
 
 ## Overview
@@ -11,7 +11,7 @@ This implementation is used directly by the library since version 2.6.2 for all 
 
 ## Implementation Status
 
-### ✅ Completed and In Production
+### Completed and in production
 
 1. **All global variables converted to thread-local** (C code)
    - Primary globals in `globals.c` (21 scalar variables + 3 arrays + 2 structs)
@@ -22,36 +22,36 @@ This implementation is used directly by the library since version 2.6.2 for all 
 2. **C11 compiler support enabled** in `build.rs`
    - Added `-std=c11` flag to ensure `_Thread_local` support
 
-3. **Accessor functions created** (key solution!)
+3. **Accessor functions created**
    - Created `thread_local_accessors.c/h` with functions like `get_cube()`, `set_debug()`, etc.
    - Solves bindgen's limitation with `_Thread_local` variables
    - Each function returns a pointer to the thread-local variable for the current thread
    - Rust FFI uses these functions instead of accessing globals directly
 
-4. **Comprehensive test suite created and passing**
+4. **Test suite created and passing**
    - Multi-threaded tests in `src/espresso/mod.rs`
    - Tests cover: concurrent access, state isolation, config isolation, stress testing, rapid creation/destruction, long-running threads, memory cleanup, different problem sizes
-   - **All tests pass successfully**
+   - All tests pass
 
 5. **Rust FFI layer updated**
    - `src/espresso/mod.rs` uses accessor functions: `(*sys::get_cube()).size` instead of `sys::cube.size`
    - All configuration set via `sys::set_*()` functions
    - Proper thread-safe access to thread-local variables
 
-### ✅ Resolved Issues
+### Resolved issues
 
-1. **Bindgen limitation** - **SOLVED with accessor functions**
+1. **Bindgen limitation** — solved with accessor functions
    - Bindgen cannot handle `extern _Thread_local` declarations properly
    - **Solution**: C accessor functions that bindgen can properly bind
    - Functions return pointers to thread-local storage for the current thread
    - Clean separation: C manages thread-local storage, Rust calls accessor functions
 
-2. **Thread-local variable access** - **SOLVED**
+2. **Thread-local variable access** — solved
    - Initial tests segfaulted when trying to access thread-local globals directly
    - Accessor functions provide the correct indirection
    - Each thread gets its own independent copy of all global state
 
-### ✅ Production Status (as of 2.6.2)
+### Production status (as of 2.6.2)
 
 1. **Process isolation removed**:
    - Library now uses direct C calls with thread-local storage
@@ -233,7 +233,7 @@ Each thread calling `get_cube()` gets a pointer to its own independent `cube` st
 
 ## Test Results
 
-✅ **The full suite passes**, covering thread-local multi-threaded tests in
+The full suite passes, covering thread-local multi-threaded tests in
 `src/espresso/mod.rs` alongside library unit tests, boolean expression tests,
 cover builder tests, integration tests, safe API tests, doctests, and boolean
 expression integration tests. (The historical per-category counts that once
@@ -247,7 +247,7 @@ the current totals.)
 
 ## Completed Phases
 
-1. **Memory leak testing**: ✅ Completed - No leaks detected
-2. **Remove process isolation**: ✅ Completed in version 2.6.2
-3. **Performance benchmarking**: ✅ Confirmed ~10-20ms improvement per operation
+1. **Memory leak testing**: completed — no leaks detected
+2. **Remove process isolation**: completed in version 2.6.2
+3. **Performance benchmarking**: confirmed ~10-20ms improvement per operation
 
