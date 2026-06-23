@@ -103,8 +103,29 @@ impl BddManager {
         }
     }
 
-    /// Get or create a variable ID for a variable name
-    pub(super) fn get_or_create_var(&mut self, name: &str) -> VarId {
+    /// Get or create the variable id for `name`, managing the manager's lock itself.
+    ///
+    /// Read-mostly: an already-known variable resolves under a shared read lock (concurrent lookups run
+    /// in parallel); only a genuinely new variable escalates to the write lock to append it.
+    pub(super) fn make_var(lock: &RwLock<Self>, name: &str) -> VarId {
+        {
+            let manager = lock.read().unwrap();
+            if let Some(id) = manager.var_id(name) {
+                return id;
+            }
+        }
+        // Re-check under the write lock: another thread may have appended `name` meanwhile.
+        lock.write().unwrap().get_or_create_var(name)
+    }
+
+    /// Read-only lookup of an existing variable id — the shared-lock fast path of
+    /// [`make_var`](Self::make_var).
+    fn var_id(&self, name: &str) -> Option<VarId> {
+        self.var_to_id.get(&Symbol::from(name)).copied()
+    }
+
+    /// Append `name` as a new variable (or return its id if already present). Caller holds the write lock.
+    fn get_or_create_var(&mut self, name: &str) -> VarId {
         let key: Symbol = Symbol::from(name);
         if let Some(&id) = self.var_to_id.get(&key) {
             id
@@ -121,18 +142,40 @@ impl BddManager {
         self.id_to_var.get(id)
     }
 
-    /// Get or create a decision node (with hash consing)
+    /// Get or create a canonical decision node, managing the manager's lock itself.
+    ///
+    /// Read-mostly hash-consing: the reduction rule needs no lock, an already-interned node resolves
+    /// under a shared read lock (concurrent lookups run in parallel), and only a brand-new node
+    /// escalates to the write lock. NodeIds are stable, so the id returned from the read path stays
+    /// valid after the lock is released.
+    pub(super) fn make_node(lock: &RwLock<Self>, var: VarId, low: NodeId, high: NodeId) -> NodeId {
+        // Reduction rule (no lock): a redundant test collapses to its child.
+        if low == high {
+            return low;
+        }
+        let key = (var, low, high);
+        // Shared-lock fast path: an existing canonical node needs no write lock.
+        {
+            let manager = lock.read().unwrap();
+            if let Some(&existing) = manager.unique_table.get(&key) {
+                return existing;
+            }
+        }
+        // Append path: re-check under the write lock (another thread may have interned it), then insert.
+        lock.write().unwrap().insert_node(var, low, high)
+    }
+
+    /// Intern a decision node, re-checking the unique table. Caller holds the write lock.
     ///
     /// # Invariant
-    /// This method only creates Decision nodes, never Terminal nodes.
-    /// Terminal nodes are always at positions 0 and 1.
-    pub(super) fn make_node(&mut self, var: VarId, low: NodeId, high: NodeId) -> NodeId {
+    /// Only creates Decision nodes, never Terminal nodes (terminals are fixed at positions 0 and 1).
+    fn insert_node(&mut self, var: VarId, low: NodeId, high: NodeId) -> NodeId {
         // Reduction rule: if low == high, return that node (redundant test elimination)
         if low == high {
             return low;
         }
 
-        // Check unique table
+        // Authoritative unique-table check (the read-path check above is only advisory)
         let key = (var, low, high);
         if let Some(&existing) = self.unique_table.get(&key) {
             return existing;
@@ -150,17 +193,26 @@ impl BddManager {
         self.nodes.get(id)
     }
 
-    /// If-Then-Else operation (Shannon expansion)
+    /// If-Then-Else (`if f then g else h`), managing the manager's lock itself.
     ///
-    /// Computes: if f then g else h
-    /// This is the fundamental BDD operation from which all others are derived.
+    /// The fundamental BDD operation all others derive from. Read-mostly: a **single read lock is held
+    /// across the whole traversal**, shared by every read step — cache/terminal lookups
+    /// ([`ite_resolved`](Self::ite_resolved)), Shannon expansion ([`ite_expand`](Self::ite_expand)),
+    /// reading back child results, and the final result read. It is dropped *only* to **commit** a
+    /// resolved triple (the lone write), then re-acquired: read-then-write on the same lock would
+    /// deadlock, so the read lock is released for exactly the duration of that write. Each commit interns
+    /// the result node and records its cache entry as one atomic transaction (never released with a node
+    /// created but its result uncached). So re-deriving an existing expression resolves under one read
+    /// lock with no writes at all (parallel across threads), and even a fresh computation takes the write
+    /// lock only momentarily, once per committed triple.
     ///
-    /// Evaluated **iteratively** with an explicit work-stack rather than recursion, so a tall BDD
-    /// (deep variable ordering) can't overflow the call stack. Memoisation is preserved exactly:
-    /// every sub-triple is resolved through [`ite_resolved`](Self::ite_resolved) (terminal cases +
-    /// `ite_cache`), so shared sub-problems collapse to cache hits just as in the recursive form —
-    /// the walk stays linear in the number of distinct reachable triples, not exponential.
-    pub(super) fn ite(&mut self, f: NodeId, g: NodeId, h: NodeId) -> NodeId {
+    /// Evaluated **iteratively** with an explicit work-stack rather than recursion, so a tall BDD (deep
+    /// variable ordering) can't overflow the call stack. Memoisation is preserved exactly: every
+    /// sub-triple is resolved through `ite_resolved` (terminal cases + `ite_cache`), so shared
+    /// sub-problems collapse to cache hits, keeping the walk linear in the number of distinct reachable
+    /// triples, not exponential. NodeIds are stable, so an id read under one lock stays valid for use
+    /// after that lock is released.
+    pub(super) fn ite(lock: &RwLock<Self>, f: NodeId, g: NodeId, h: NodeId) -> NodeId {
         /// One unit of work. `Solve` resolves a triple (expanding it if needed); `Combine` runs
         /// after a triple's two children are resolved and builds the result node for it.
         enum Work {
@@ -174,16 +226,22 @@ impl BddManager {
         }
 
         let mut stack = vec![Work::Solve(f, g, h)];
+        // One read lock held across the whole traversal — every read step (Solve's resolve/expand,
+        // Combine's cache/child reads, and the final result read) shares it. It is dropped *only* when a
+        // Combine must commit (a write), then re-acquired: read-then-write on the same `RwLock` would
+        // deadlock, so the read lock is released for exactly the duration of the write and no longer.
+        let mut guard = lock.read().unwrap();
         while let Some(work) = stack.pop() {
             match work {
                 Work::Solve(f, g, h) => {
-                    // Terminal case or already-memoised: nothing to do, result is fetchable later.
-                    if self.ite_resolved(f, g, h).is_some() {
+                    // Bail if the triple is already resolved (terminal or memoised), otherwise
+                    // Shannon-expand around the topmost variable — both under the held read lock.
+                    if guard.ite_resolved(f, g, h).is_some() {
                         continue;
                     }
-                    // Shannon expansion: schedule both cofactor triples, then a Combine that runs
-                    // once they're resolved. Pushed Combine-first so it pops last (LIFO).
-                    let (top_var, low, high) = self.ite_expand(f, g, h);
+                    let (top_var, low, high) = guard.ite_expand(f, g, h);
+                    // Schedule both cofactor triples and a Combine that runs once they're resolved
+                    // (Combine pushed first → pops last, LIFO).
                     stack.push(Work::Combine {
                         triple: (f, g, h),
                         top_var,
@@ -199,37 +257,51 @@ impl BddManager {
                     low,
                     high,
                 } => {
-                    // A diamond in the DAG can schedule the same Combine twice; the first one
-                    // caches the result, so later ones are no-ops.
-                    if self.ite_cache.contains_key(&triple) {
+                    // A diamond can schedule the same Combine twice; the first caches the result, so skip
+                    // if it is already there (keep holding the read lock). Otherwise both children are
+                    // resolved by now — read their ids under the held read lock.
+                    if guard.ite_cache.contains_key(&triple) {
                         continue;
                     }
-                    // Both children are guaranteed resolved by the time this runs.
-                    let low_id = self
+                    let low_id = guard
                         .ite_resolved(low.0, low.1, low.2)
                         .expect("ITE low child unresolved at combine time - BDD scheduling bug");
-                    let high_id = self
+                    let high_id = guard
                         .ite_resolved(high.0, high.1, high.2)
                         .expect("ITE high child unresolved at combine time - BDD scheduling bug");
-                    let result = self.make_node(top_var, low_id, high_id);
-                    self.ite_cache.insert(triple, result);
+                    // Committing this triple is an append (to `ite_cache`, and possibly `nodes`) — the
+                    // only thing that forces dropping the read lock. Drop it, then under the write lock
+                    // intern the node and record its cache entry as one transaction (never released with
+                    // a node created but its result uncached), re-checking in case another thread
+                    // committed it meanwhile. Then re-acquire the read lock and carry on.
+                    drop(guard);
+                    {
+                        let mut manager = lock.write().unwrap();
+                        if !manager.ite_cache.contains_key(&triple) {
+                            let result = manager.insert_node(top_var, low_id, high_id);
+                            manager.ite_cache.insert(triple, result);
+                        }
+                    }
+                    guard = lock.read().unwrap();
                 }
             }
         }
 
-        self.ite_resolved(f, g, h).expect(
+        // The read lock is still held here, so the final result read needs no new acquisition.
+        guard.ite_resolved(f, g, h).expect(
             "top-level ITE triple unresolved after iterative evaluation - BDD scheduling bug",
         )
     }
 
-    /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`.
+    /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`, managing the manager's lock itself.
     ///
     /// Built from [`ite`](Self::ite) (so it inherits the same hash-consing and memoisation and stays
     /// canonical): `¬g = ite(g, FALSE, TRUE)`, then select `¬g` when `f` is true and `g` when `f` is
-    /// false. Shared by [`BoolExpr::xor`](crate::BoolExpr::xor) and the public BDD builder.
-    pub(super) fn xor(&mut self, f: NodeId, g: NodeId) -> NodeId {
-        let not_g = self.ite(g, FALSE_NODE, TRUE_NODE);
-        self.ite(f, not_g, g)
+    /// false. Each sub-`ite` does its own read-mostly locking. Shared by
+    /// [`BoolExpr::xor`](crate::BoolExpr::xor) and the public BDD builder.
+    pub(super) fn xor(lock: &RwLock<Self>, f: NodeId, g: NodeId) -> NodeId {
+        let not_g = Self::ite(lock, g, FALSE_NODE, TRUE_NODE);
+        Self::ite(lock, f, not_g, g)
     }
 
     /// Resolve an ITE triple **without** Shannon expansion.

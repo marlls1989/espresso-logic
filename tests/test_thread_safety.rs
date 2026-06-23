@@ -269,3 +269,62 @@ fn concurrent_symbol_covers() {
         handle.join().expect("Thread panicked");
     }
 }
+
+/// Many threads build the **same** overlapping expressions against the shared global BDD manager,
+/// hammering the read-mostly double-checked locking (concurrent node interning) and the ITE
+/// cache-commit transaction. Canonicity must hold under contention: identical expressions reduce to one
+/// shared root, so every thread's results must equal the reference, with no deadlock, panic, or
+/// duplicate nodes (a duplicated node would give a different root and fail the equality check).
+#[test]
+fn concurrent_shared_manager_building_stays_canonical() {
+    use espresso_logic::BoolExpr;
+
+    // A suite of varied shapes over shared variable names, exercising var/and/or/not/xor/ite, the
+    // `build` closure, and the parser — all against the one global manager.
+    fn build_suite() -> Vec<BoolExpr> {
+        let a = BoolExpr::variable("share_a");
+        let b = BoolExpr::variable("share_b");
+        let c = BoolExpr::variable("share_c");
+        vec![
+            &(&a ^ &b) ^ &c,                         // XOR chain
+            a.and(&b).or(&b.and(&c)).or(&a.and(&c)), // majority
+            BoolExpr::parse("share_a * share_b + ~share_c").unwrap(),
+            BoolExpr::build(|bld| {
+                let x = bld.var("share_a");
+                let y = bld.var("share_b");
+                let z = bld.var("share_c");
+                bld.or(bld.and(x, y), bld.not(z))
+            }),
+            a.ite(&b, &c),
+        ]
+    }
+
+    const THREADS: usize = 16;
+    const ITERS: usize = 200;
+
+    // Reference built on the main thread; keeps the manager generation alive for the whole test.
+    let reference = build_suite();
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            thread::spawn(|| {
+                // Re-build the suite many times under contention; return the last for cross-thread check.
+                let mut last = build_suite();
+                for _ in 1..ITERS {
+                    last = build_suite();
+                }
+                last
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        let suite = handle
+            .join()
+            .expect("builder thread must not panic or deadlock");
+        assert_eq!(
+            suite, reference,
+            "concurrent builds against the shared manager must yield identical canonical expressions"
+        );
+    }
+}

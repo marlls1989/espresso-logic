@@ -325,11 +325,8 @@ impl BoolExpr {
     #[must_use]
     pub fn variable(name: &str) -> Self {
         let manager = BddManager::get_or_create();
-        let node = {
-            let mut mgr = manager.write().unwrap();
-            let var_id = mgr.get_or_create_var(name);
-            mgr.make_node(var_id, FALSE_NODE, TRUE_NODE)
-        };
+        let var_id = BddManager::make_var(&manager, name);
+        let node = BddManager::make_node(&manager, var_id, FALSE_NODE, TRUE_NODE);
         BoolExpr::from_root(manager, node)
     }
 

@@ -310,6 +310,54 @@ fn test_build_ite_method() {
     assert_eq!(mux, a.and(&b).or(&a.not().and(&c)));
 }
 
+#[test]
+fn build_closure_may_nest_boolexpr_operations() {
+    use std::collections::HashMap;
+
+    // With per-op locking the manager lock is never held across the closure, so calling other BoolExpr
+    // operations *inside* it is fine. Under the old hold-the-lock-across-the-closure design every one of
+    // these calls re-acquired the held write lock and deadlocked; this test must complete, not hang.
+    let built = BoolExpr::build(|b| {
+        let parsed = BoolExpr::parse("a * b").unwrap(); // parse() inside the closure
+        let other = BoolExpr::variable("c").or(&BoolExpr::variable("d")); // operators inside the closure
+                                                                          // A read-locking query (evaluate) inside the closure must also not deadlock.
+        let pick = parsed.evaluate(&HashMap::from([("a", true), ("b", true)]));
+        let extra = if pick { b.var("e") } else { b.constant(false) };
+        b.or(b.or(b.graft(&parsed), b.graft(&other)), extra)
+    });
+
+    // pick is true, so this is a*b + (c + d) + e.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    let d = BoolExpr::variable("d");
+    let e = BoolExpr::variable("e");
+    assert_eq!(built, a.and(&b).or(&c.or(&d)).or(&e));
+}
+
+#[test]
+fn build_closure_panic_propagates_without_poisoning_the_manager() {
+    // The manager lock is taken only per node-op and released, never held across the closure, so a panic
+    // in the closure body propagates out of `build` but leaves the manager consistent and usable — it
+    // does not poison the global lock (each make_node/ite already completed). Poison-and-propagate still
+    // applies to a panic *while* a node op holds the lock, but a user-code panic between ops does not.
+    let panicked = std::panic::catch_unwind(|| {
+        BoolExpr::build(|b| {
+            let _ = b.var("panics");
+            panic!("boom inside build");
+        })
+    });
+    assert!(panicked.is_err(), "the panic must propagate out of build");
+
+    // The manager is not poisoned: subsequent operations still work.
+    let after =
+        std::panic::catch_unwind(|| BoolExpr::variable("after").and(&BoolExpr::variable("panics")));
+    assert!(
+        after.is_ok(),
+        "a closure-body panic must not poison the manager; later ops keep working"
+    );
+}
+
 // ========== XOR Tests ==========
 
 #[test]
