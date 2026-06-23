@@ -1,7 +1,8 @@
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::quote;
-use syn::{parse_macro_input, Ident, Token};
 use syn::parse::{Parse, ParseStream, Result};
+use syn::{parse_macro_input, Ident, Token};
 
 /// AST for boolean expressions
 enum Expr {
@@ -15,57 +16,56 @@ enum Expr {
 }
 
 impl Expr {
-    /// Generate code for this expression using references (no cloning in the macro)
-    /// 
-    /// The macro generates references and lets the monadic interface methods
-    /// (and, or, not) handle any necessary cloning internally. This follows
-    /// good Rust design - the macro doesn't assume ownership semantics.
-    fn to_tokens(&self) -> proc_macro2::TokenStream {
+    /// Emit the body of a `BoolExpr::build` closure: builder method calls that compose `Bdd` handles,
+    /// rather than chained monadic `BoolExpr` operations.
+    ///
+    /// `builder` is the closure's (hygienic) parameter ident. Variable identifiers in scope are grafted
+    /// in as existing `BoolExpr`s; string literals become fresh variables; the whole expression is built
+    /// under the single lock `build` holds. Methods take `&self`, so nested calls in one expression are
+    /// fine.
+    fn to_bdd_tokens(&self, builder: &Ident) -> proc_macro2::TokenStream {
         match self {
             Expr::Variable(ident) => {
-                // Just use the variable by reference
-                // The monadic methods already take &self and clone internally
+                // An in-scope BoolExpr (or &BoolExpr — deref coercion handles the extra reference).
                 quote! {
-                    #ident
+                    #builder.graft(&(#ident))
                 }
             }
             Expr::StringLiteral(lit) => {
-                // Create a variable from the string literal
                 quote! {
-                    BoolExpr::variable(#lit)
+                    #builder.var(#lit)
                 }
             }
             Expr::Constant(value) => {
-                // Create a constant from the boolean value
                 quote! {
-                    BoolExpr::constant(#value)
+                    #builder.constant(#value)
                 }
             }
             Expr::Not(inner) => {
-                let inner_tokens = inner.to_tokens();
+                let inner_tokens = inner.to_bdd_tokens(builder);
                 quote! {
-                    (&(#inner_tokens)).not()
+                    #builder.not(#inner_tokens)
                 }
             }
             Expr::And(left, right) => {
-                let left_tokens = left.to_tokens();
-                let right_tokens = right.to_tokens();
+                let left_tokens = left.to_bdd_tokens(builder);
+                let right_tokens = right.to_bdd_tokens(builder);
                 quote! {
-                    (&(#left_tokens)).and(&(#right_tokens))
+                    #builder.and(#left_tokens, #right_tokens)
                 }
             }
             Expr::Xor(left, right) => {
-                let left_tokens = left.to_tokens();
-                let right_tokens = right.to_tokens();
+                let left_tokens = left.to_bdd_tokens(builder);
+                let right_tokens = right.to_bdd_tokens(builder);
                 quote! {
-                    (&(#left_tokens)).xor(&(#right_tokens))
+                    #builder.xor(#left_tokens, #right_tokens)
                 }
             }
             Expr::Or(left, right) => {
-                let left_tokens = left.to_tokens();
-                let right_tokens = right.to_tokens();
+                let left_tokens = left.to_bdd_tokens(builder);
+                let right_tokens = right.to_bdd_tokens(builder);
                 quote! {
-                    (&(#left_tokens)).or(&(#right_tokens))
+                    #builder.or(#left_tokens, #right_tokens)
                 }
             }
         }
@@ -163,7 +163,7 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
             1 => Ok(Expr::Constant(true)),
             _ => Err(syn::Error::new(
                 lit.span(),
-                "only 0 and 1 are supported as boolean constants"
+                "only 0 and 1 are supported as boolean constants",
             )),
         }
     } else {
@@ -236,6 +236,12 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let parser = parse_macro_input!(input as BoolExprParser);
-    let tokens = parser.expr.to_tokens();
+    // `mixed_site` hygiene: the builder binding is invisible to (and cannot capture) user identifiers,
+    // so an expression like `expr!(b)` where the user has a variable `b` is unaffected.
+    let builder = Ident::new("__expr_builder", Span::mixed_site());
+    let body = parser.expr.to_bdd_tokens(&builder);
+    let tokens = quote! {
+        BoolExpr::build(|#builder| #body)
+    };
     TokenStream::from(tokens)
 }

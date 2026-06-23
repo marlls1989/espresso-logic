@@ -401,6 +401,18 @@ fn test_expr_macro_xor() {
 // ========== Procedural Macro Tests (expr!) ==========
 
 #[test]
+#[allow(non_snake_case)]
+fn test_expr_macro_hygiene_builder_ident() {
+    // The macro lowers to `BoolExpr::build(|__expr_builder| ...)`. A user variable that happens to
+    // share that name must NOT be shadowed by the closure parameter — `mixed_site` hygiene keeps the
+    // two distinct, so this both compiles (the operand is a BoolExpr, not the builder) and grafts the
+    // user's expression.
+    let __expr_builder = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
+    let built = expr!(__expr_builder);
+    assert_eq!(built, __expr_builder);
+}
+
+#[test]
 fn test_expr_macro_basic_operators() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
