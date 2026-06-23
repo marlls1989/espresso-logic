@@ -70,6 +70,19 @@ use std::sync::Arc;
 /// [`try_minimize_exact_with_config`](Self::try_minimize_exact_with_config); the remaining methods
 /// have defaults.
 ///
+/// # Validation
+///
+/// A cover is validated before it is handed to the C core, so two inputs that would otherwise make
+/// the C library abort the whole process (`exit(1)`) instead surface as a recoverable
+/// [`MinimizationError`] from the `try_*` methods:
+/// - [`NonOrthogonal`](MinimizationError::NonOrthogonal) — an `FR`/`FDR` cover whose ON-set and
+///   OFF-set overlap (some minterm is asserted as both 1 and 0 for the same output).
+/// - [`Instance`](MinimizationError::Instance) wrapping
+///   [`DimensionTooLarge`](crate::espresso::InstanceError::DimensionTooLarge) — a dimension too large
+///   for the C core's 32-bit cube indices.
+///
+/// A cube with an *empty* input field (the PLA `?` literal) covers no minterm, so it is simply dropped.
+///
 /// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
 ///
@@ -246,80 +259,76 @@ where
 {
     use crate::espresso::EspressoCover;
 
-    // Split cubes into F, D, R sets based on cube type
-    let mut f_cubes = Vec::new();
-    let mut d_cubes = Vec::new();
-    let mut r_cubes = Vec::new();
+    let no = cover.num_outputs();
+    let ni = cover.num_inputs();
 
+    // Pre-minimisation normalise + partition: split cubes into F, D, R sets, dropping any cube with an
+    // empty (`00`) input field. An empty field means the cube covers no minterm, so removing it leaves
+    // the function unchanged — and keeps the vacuous cube away from Espresso's `expand`, which
+    // mishandles it (it is the very thing C's own verification flags).
+    let mut f_cubes: Vec<&Cube<I, O>> = Vec::new();
+    let mut d_cubes: Vec<&Cube<I, O>> = Vec::new();
+    let mut r_cubes: Vec<&Cube<I, O>> = Vec::new();
     for cube in cover.cubes.iter() {
-        let input_vec: Vec<u8> = cube
-            .inputs()
-            .iter()
-            .map(|opt| match opt {
-                Some(false) => 0,
-                Some(true) => 1,
-                None => 2,
-            })
-            .collect();
-
-        // Output mask: 1 where this cube asserts the output, 0 otherwise.
-        let output_vec: Vec<u8> = (0..cover.num_outputs())
-            .map(|i| if cube.asserts(i) { 1 } else { 0 })
-            .collect();
-
-        // Send to appropriate set based on the cube's set.
+        if cube.inputs().has_empty_field() {
+            continue;
+        }
         match cube.cube_type() {
-            CubeType::F => f_cubes.push((input_vec, output_vec)),
-            CubeType::D => d_cubes.push((input_vec, output_vec)),
-            CubeType::R => r_cubes.push((input_vec, output_vec)),
+            CubeType::F => f_cubes.push(cube),
+            CubeType::D => d_cubes.push(cube),
+            CubeType::R => r_cubes.push(cube),
+        }
+    }
+
+    // Sanity check: the ON-set and OFF-set must be orthogonal. If a minterm is asserted as both 1 and
+    // 0 for the same output, the cover is contradictory and the C core's `expand` would `exit(1)` the
+    // whole process; reject it as a recoverable error instead.
+    if !f_cubes.is_empty() && !r_cubes.is_empty() {
+        for fc in &f_cubes {
+            for rc in &r_cubes {
+                if !fc.inputs().is_disjoint_same_header(rc.inputs()) {
+                    if let Some(output) = (0..no).find(|&o| fc.asserts(o) && rc.asserts(o)) {
+                        return Err(MinimizationError::NonOrthogonal { output });
+                    }
+                }
+            }
         }
     }
 
     // `esp` (the thread's Espresso instance) is supplied by the caller. Direct C calls below are
-    // thread-safe via thread-local storage.
-
-    // Build covers from cube data - convert Vec to slices
-    let f_cubes_refs: Vec<(&[u8], &[u8])> = f_cubes
-        .iter()
-        .map(|(i, o)| (i.as_slice(), o.as_slice()))
-        .collect();
-    let f_cover =
-        EspressoCover::from_cubes(&f_cubes_refs, cover.num_inputs(), cover.num_outputs())?;
-
-    let d_cover = if !d_cubes.is_empty() {
-        let d_cubes_refs: Vec<(&[u8], &[u8])> = d_cubes
+    // thread-safe via thread-local storage. Marshal each set by copying the cubes' packed input words
+    // straight into the C cube (same 2-bit encoding) plus a per-output assertion bit.
+    let to_cover = |cubes: &[&Cube<I, O>]| -> Result<EspressoCover, MinimizationError> {
+        let data: Vec<(&[u64], Vec<bool>)> = cubes
             .iter()
-            .map(|(i, o)| (i.as_slice(), o.as_slice()))
+            .map(|c| {
+                (
+                    c.inputs().raw_words(),
+                    (0..no).map(|i| c.asserts(i)).collect(),
+                )
+            })
             .collect();
-        Some(EspressoCover::from_cubes(
-            &d_cubes_refs,
-            cover.num_inputs(),
-            cover.num_outputs(),
-        )?)
-    } else {
-        None
+        let refs: Vec<(&[u64], &[bool])> = data.iter().map(|(w, o)| (*w, o.as_slice())).collect();
+        EspressoCover::from_packed_cubes(&refs, ni, no)
     };
-    let r_cover = if !r_cubes.is_empty() {
-        let r_cubes_refs: Vec<(&[u8], &[u8])> = r_cubes
-            .iter()
-            .map(|(i, o)| (i.as_slice(), o.as_slice()))
-            .collect();
-        Some(EspressoCover::from_cubes(
-            &r_cubes_refs,
-            cover.num_inputs(),
-            cover.num_outputs(),
-        )?)
-    } else {
+
+    let f_cover = to_cover(&f_cubes)?;
+    let d_cover = if d_cubes.is_empty() {
         None
+    } else {
+        Some(to_cover(&d_cubes)?)
+    };
+    let r_cover = if r_cubes.is_empty() {
+        None
+    } else {
+        Some(to_cover(&r_cubes)?)
     };
 
     // Call the provided minimize function (heuristic or exact)
     let (f_result, d_result, r_result) =
         minimize_fn(esp, &f_cover, d_cover.as_ref(), r_cover.as_ref());
 
-    // Extract minimised cubes back onto the cover's shared symbol tables.
-    let ni = cover.num_inputs();
-    let no = cover.num_outputs();
+    // Extract minimised cubes back onto the cover's shared symbol tables (`ni`/`no` from above).
     let input_symbols = Arc::clone(cover.input_symbols());
     let output_symbols = Arc::clone(cover.output_symbols());
     // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`); re-point each onto the

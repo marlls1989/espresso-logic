@@ -47,6 +47,10 @@ espresso --do exact input.pla
 espresso input.pla --out-file output.pla
 ```
 
+> **Note:** the minimised PLA is written to **stdout** (or `--out-file`), while `-s`/`--summary`,
+> `-t`/`--trace`, `--debug` and `--verbose` diagnostics go to **stderr** — so they never pollute a
+> redirected `> output.pla`.
+
 If building locally, use `./target/release/espresso` after running `cargo build --release --features cli`.
 
 ## Command Line Options

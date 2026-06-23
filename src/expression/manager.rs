@@ -5,7 +5,7 @@
 //! - Global singleton manager with thread-local storage
 //! - Hash consing for canonical node representation
 //! - Operation caching for efficient boolean operations
-//! - Variable ordering (alphabetical)
+//! - Variable ordering (first-seen / insertion order)
 
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};

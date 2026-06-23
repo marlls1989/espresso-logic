@@ -63,7 +63,7 @@
 //! # }
 //! ```
 //!
-//! **❌ UNSAFE - Different dimensions without dropping:**
+//! **❌ ERROR - Different dimensions without dropping:**
 //! ```rust
 //! use espresso_logic::espresso::EspressoCover;
 //!
@@ -378,10 +378,22 @@ pub use crate::cover::{Cube, CubeType};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
 use std::marker::PhantomData;
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_uint};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
+
+/// Bits per Espresso cube word, mirroring `BPI` in `espresso.h` (the vendored C is built with the
+/// default `BPI == 32`). The cube bit-layout is fixed at this width *independent of*
+/// `sizeof(unsigned int)`: a variable bit `b` lives in cube word `(b >> LOGBPI) + 1` (word 0 is the
+/// set header) at bit `b & (BPI - 1)`, exactly as the C `WHICH_WORD`/`WHICH_BIT` macros define. Words
+/// are stored as `c_uint` (`unsigned int`), which the C — and therefore this crate — assumes holds at
+/// least `BPI` bits.
+const BPI: usize = 32;
+/// `log2(BPI)` — `espresso.h`'s `LOGBPI`, used for the word index `b >> LOGBPI`.
+const LOGBPI: usize = 5;
+/// Mask of the low `BPI` bits, applied when narrowing a packed word to one cube word.
+const BPI_MASK: u64 = (1u64 << BPI) - 1;
 
 // Re-export for convenience when using the espresso module directly
 
@@ -609,11 +621,10 @@ impl EspressoCover {
                 let cf = *(*sys::get_cube()).temp.add(0);
                 sys::set_clear(cf, cube_size as c_int);
 
-                // Set the bit at `bit_pos` in the cube word vector. The cube bit-layout convention
-                // (word `(bit_pos >> 5) + 1`, bit `bit_pos & 31`) lives here, mirroring the read-side
-                // `bit_at` in `to_cubes`.
+                // Set the bit at `bit_pos` via the C WHICH_WORD/WHICH_BIT layout (word
+                // `(bit_pos >> LOGBPI) + 1`, bit `bit_pos & (BPI - 1)`); mirrors `bit_at` in `to_cubes`.
                 let set_bit = |bit_pos: usize| {
-                    *cf.add((bit_pos >> 5) + 1) |= 1 << (bit_pos & 31);
+                    *cf.add((bit_pos >> LOGBPI) + 1) |= (1 as c_uint) << (bit_pos & (BPI - 1));
                 };
 
                 // Set input values. Each binary variable occupies two bits at `var * 2` (value 0) and
@@ -642,6 +653,83 @@ impl EspressoCover {
                 for (i, &val) in outputs.iter().enumerate() {
                     if val == 1 {
                         set_bit(output_first + i);
+                    }
+                }
+
+                cover.ptr = sys::sf_addset(cover.ptr, cf);
+            }
+        }
+
+        Ok(cover)
+    }
+
+    /// Build a cover by copying each cube's **packed input words** straight into the C cube, rather
+    /// than re-coding every variable through `0/1/2` bytes as [`from_cubes`](Self::from_cubes) does.
+    ///
+    /// A [`Minterm`](crate::Minterm)'s input packing uses the *same* 2-bit-per-variable encoding as an
+    /// Espresso cube (value 0 = even bit, value 1 = odd bit, don't-care = both, empty = neither), so a
+    /// `Minterm` `u64` word `k` maps onto Espresso's `u32` cube words `2k+1` / `2k+2` (the `+1` skips
+    /// Espresso's reserved header word). Each cube is `(input_words, output_assertions)`:
+    /// `input_words` is the input minterm's [`raw_words`](crate::Minterm::raw_words) (length
+    /// `ceil(num_inputs / 32)`), `output_assertions[i]` is whether output `i` is asserted. Empty (`?`,
+    /// `00`) input fields are copied verbatim, so they reach C as the empty literal with no recoding.
+    ///
+    /// Crate-internal: used by the high-level cover minimisation path. The public `from_cubes` stays.
+    pub(crate) fn from_packed_cubes(
+        cubes: &[(&[u64], &[bool])],
+        num_inputs: usize,
+        num_outputs: usize,
+    ) -> Result<Self, MinimizationError> {
+        let espresso = Espresso::try_new(num_inputs, num_outputs, None)?;
+        let cube_size = unsafe { (*sys::get_cube()).size as usize };
+
+        let ptr = unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) };
+        let mut cover = EspressoCover {
+            ptr,
+            _espresso: espresso.inner,
+        };
+
+        // Number of cube words the input region (bits `0..2*num_inputs`) spans; copying is bounded by
+        // this so we never run past the cube or clobber the word the input region may share with the
+        // start of the output region.
+        let input_cube_words = (2 * num_inputs).div_ceil(BPI);
+        // Each input minterm packs 32 variables (2 bits each) per `u64` word.
+        const VARS_PER_U64: usize = 32;
+        let expected_u64_words = num_inputs.div_ceil(VARS_PER_U64);
+        // A `u64` holds 64 bits, i.e. `64 / BPI` cube words.
+        let cube_words_per_u64 = 64 / BPI;
+
+        for &(input_words, outputs) in cubes {
+            if input_words.len() != expected_u64_words || outputs.len() != num_outputs {
+                return Err(MinimizationError::Cube(CubeError::DimensionMismatch {
+                    expected_inputs: num_inputs,
+                    actual_inputs: input_words.len().saturating_mul(VARS_PER_U64),
+                    expected_outputs: num_outputs,
+                    actual_outputs: outputs.len(),
+                }));
+            }
+            unsafe {
+                let cf = *(*sys::get_cube()).temp.add(0);
+                sys::set_clear(cf, cube_size as c_int);
+
+                // Copy the input region one cube word at a time — the minterm uses the same 2-bit
+                // encoding as a C cube, so no recoding. Each `u64` is sliced into `cube_words_per_u64`
+                // BPI-wide chunks; masking to BPI bits keeps it correct even if `c_uint` is wider than
+                // BPI. `set_clear` zeroed the cube, so `|=` is a copy that leaves the (possibly shared)
+                // boundary word's output bits untouched — they are set below.
+                for w in 0..input_cube_words {
+                    let mword = input_words[w / cube_words_per_u64];
+                    let chunk = ((mword >> ((w % cube_words_per_u64) * BPI)) & BPI_MASK) as c_uint;
+                    *cf.add(w + 1) |= chunk;
+                }
+
+                // Set one bit per asserted output at `output_first + i` (the C WHICH_WORD/WHICH_BIT).
+                let output_var = (*sys::get_cube()).num_vars - 1;
+                let output_first = *(*sys::get_cube()).first_part.add(output_var as usize) as usize;
+                for (i, &asserted) in outputs.iter().enumerate() {
+                    if asserted {
+                        let bit_pos = output_first + i;
+                        *cf.add((bit_pos >> LOGBPI) + 1) |= (1 as c_uint) << (bit_pos & (BPI - 1));
                     }
                 }
 
@@ -742,10 +830,11 @@ impl EspressoCover {
             let data = (*self.ptr).data;
             let output_start = num_inputs * 2;
 
-            // Read a single bit from a cube's word array (out-of-range words read as 0).
-            let bit_at = |cube_ptr: *const u32, bit: usize| -> bool {
-                let word = (bit >> 5) + 1;
-                word < wsize && (*cube_ptr.add(word) & (1 << (bit & 31))) != 0
+            // Read a single bit from a cube's word array (out-of-range words read as 0), via the C
+            // WHICH_WORD/WHICH_BIT layout. Words are `c_uint`, matching Espresso's `unsigned int*`.
+            let bit_at = |cube_ptr: *const c_uint, bit: usize| -> bool {
+                let word = (bit >> LOGBPI) + 1;
+                word < wsize && (*cube_ptr.add(word) & ((1 as c_uint) << (bit & (BPI - 1)))) != 0
             };
 
             (0..count)
@@ -782,7 +871,7 @@ impl EspressoCover {
     ///
     /// # Arguments
     ///
-    /// * `d` - Optional don't-care set. If `None`, computed as complement of F ∪ R
+    /// * `d` - Optional don't-care set. If `None`, an empty don't-care set is used
     /// * `r` - Optional OFF-set. If `None`, computed as complement of F ∪ D
     ///
     /// # Returns
@@ -832,6 +921,7 @@ impl EspressoCover {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn minimize(
         self,
         d: Option<EspressoCover>,
@@ -851,7 +941,7 @@ impl EspressoCover {
     ///
     /// # Arguments
     ///
-    /// * `d` - Optional don't-care set. If `None`, computed as complement of F ∪ R
+    /// * `d` - Optional don't-care set. If `None`, an empty don't-care set is used
     /// * `r` - Optional OFF-set. If `None`, computed as complement of F ∪ D
     ///
     /// # Returns
@@ -879,6 +969,7 @@ impl EspressoCover {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn minimize_exact(
         self,
         d: Option<EspressoCover>,
@@ -1150,6 +1241,19 @@ impl Espresso {
         num_outputs: usize,
         config: Option<&EspressoConfig>,
     ) -> Result<Self, MinimizationError> {
+        // The C cube setup casts the dimensions to `c_int` (and uses `num_inputs + 1`); an out-of-range
+        // value would wrap negative and abort the process inside `cube_setup`. Reject it up front so the
+        // safe API returns an error instead of taking down the process.
+        let max_dim = (c_int::MAX as usize) - 1;
+        if num_inputs > max_dim || num_outputs > max_dim {
+            return Err(MinimizationError::Instance(
+                InstanceError::DimensionTooLarge {
+                    requested: (num_inputs, num_outputs),
+                    max: max_dim,
+                },
+            ));
+        }
+
         // Check if an instance already exists
         let inner = ESPRESSO_INSTANCE.with(|instance| {
             if let Some(existing) = instance.borrow().upgrade() {
@@ -1304,7 +1408,7 @@ impl Espresso {
     ///
     /// * `f` - **ON-set cover**: Specifies where the function output is 1 (required)
     /// * `d` - **Don't-care set**: Positions where output can be either 0 or 1 (optional).
-    ///   If `None`, computed as the complement of F ∪ R
+    ///   If `None`, an empty don't-care set is used
     /// * `r` - **OFF-set cover**: Specifies where the function output is 0 (optional).
     ///   If `None`, computed as the complement of F ∪ D
     ///
@@ -1340,8 +1444,8 @@ impl Espresso {
     /// # Algorithm Notes
     ///
     /// Espresso is a **heuristic algorithm** - it produces near-optimal results quickly but
-    /// does not guarantee absolute minimality. For exact minimisation (slower), use the
-    /// `exact` configuration option.
+    /// does not guarantee absolute minimality. For exact minimisation (slower), use
+    /// [`minimize_exact`](Self::minimize_exact).
     ///
     /// The algorithm quality depends on the configuration:
     /// - `single_expand = false` (default): Better quality, slower
@@ -1393,6 +1497,7 @@ impl Espresso {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn minimize(
         &self,
         f: &EspressoCover,
@@ -1416,7 +1521,7 @@ impl Espresso {
     ///
     /// * `f` - **ON-set cover**: Specifies where the function output is 1 (required)
     /// * `d` - **Don't-care set**: Positions where output can be either 0 or 1 (optional).
-    ///   If `None`, computed as the complement of F ∪ R
+    ///   If `None`, an empty don't-care set is used
     /// * `r` - **OFF-set cover**: Specifies where the function output is 0 (optional).
     ///   If `None`, computed as the complement of F ∪ D
     ///
@@ -1454,6 +1559,7 @@ impl Espresso {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn minimize_exact(
         &self,
         f: &EspressoCover,

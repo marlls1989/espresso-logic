@@ -5,7 +5,7 @@
 
 use super::cubes::{Cube, CubeType};
 use super::label::Anonymous;
-use super::minterm::Minterm;
+use super::minterm::{InputField, Minterm};
 use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
@@ -13,8 +13,9 @@ use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
 
-/// Raw parsed cube data from the PLA reader: `(input pattern, output-membership mask, set)`.
-pub(crate) type RawCube = (Vec<Option<bool>>, Vec<bool>, CubeType);
+/// Raw parsed cube data from the PLA reader: `(input fields, output-membership mask, set)`. The input
+/// side uses [`InputField`] (not `Option<bool>`) so the empty literal (`?`) survives into the minterm.
+pub(crate) type RawCube = (Vec<InputField>, Vec<bool>, CubeType);
 
 /// Build a positional [`Cover<Anonymous, Anonymous>`](Cover) from raw parsed PLA cubes. The PLA reader
 /// then relabels the present sides (`.ilb`/`.ob`) to select a [`PlaCover`](super::pla::PlaCover) variant
@@ -31,8 +32,8 @@ pub(crate) fn anonymous_cover_from_raw(
     let cubes = cubes
         .into_iter()
         .map(|(mut inputs, mask, set)| {
-            inputs.resize(num_inputs, None);
-            let im = Minterm::from_symbols(Arc::clone(&input_symbols), inputs);
+            inputs.resize(num_inputs, InputField::DontCare);
+            let im = Minterm::from_symbols_input_fields(Arc::clone(&input_symbols), inputs);
             let om =
                 Minterm::from_symbols(Arc::clone(&output_symbols), mask.iter().map(|&b| Some(b)));
             Cube::new(im, om, set)

@@ -25,6 +25,15 @@ pub enum InstanceError {
         /// The existing instance's dimensions (num_inputs, num_outputs)
         existing: (usize, usize),
     },
+    /// A requested dimension is too large to represent. The C cube setup casts the counts to a 32-bit
+    /// signed `c_int`; an out-of-range value would wrap negative and abort the process inside C, so it
+    /// is rejected up front instead.
+    DimensionTooLarge {
+        /// The requested dimensions (num_inputs, num_outputs)
+        requested: (usize, usize),
+        /// The maximum value supported for a single dimension
+        max: usize,
+    },
 }
 
 impl fmt::Display for InstanceError {
@@ -49,6 +58,12 @@ impl fmt::Display for InstanceError {
                  thread-local instance with dimensions {:?} already exists (requested {:?}). \
                  Drop all existing covers and handles first.",
                 existing, requested
+            ),
+            InstanceError::DimensionTooLarge { requested, max } => write!(
+                f,
+                "Espresso dimensions {:?} are too large; each must be at most {} (the C core uses \
+                 32-bit signed cube indices).",
+                requested, max
             ),
         }
     }
@@ -137,6 +152,13 @@ pub enum MinimizationError {
     Cover(CoverError),
     /// IO error during minimisation
     Io(io::Error),
+    /// The cover's ON-set and OFF-set overlap: some minterm is asserted as both 1 and 0 for the same
+    /// output. Such a cover is contradictory; the C core's `expand` aborts the process on it, so the
+    /// pre-minimisation check rejects it with this error instead.
+    NonOrthogonal {
+        /// An output index at which the ON-set and OFF-set overlap.
+        output: usize,
+    },
 }
 
 impl From<CoverError> for MinimizationError {
@@ -152,6 +174,11 @@ impl fmt::Display for MinimizationError {
             MinimizationError::Cube(e) => write!(f, "Cube error: {}", e),
             MinimizationError::Cover(e) => write!(f, "Cover error: {}", e),
             MinimizationError::Io(e) => write!(f, "IO error: {}", e),
+            MinimizationError::NonOrthogonal { output } => write!(
+                f,
+                "ON-set and OFF-set are not orthogonal (they overlap at output {})",
+                output
+            ),
         }
     }
 }
@@ -163,6 +190,7 @@ impl std::error::Error for MinimizationError {
             MinimizationError::Cube(e) => Some(e),
             MinimizationError::Cover(e) => Some(e),
             MinimizationError::Io(e) => Some(e),
+            MinimizationError::NonOrthogonal { .. } => None,
         }
     }
 }
@@ -194,6 +222,9 @@ impl From<MinimizationError> for io::Error {
             MinimizationError::Instance(e) => io::Error::other(e),
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
             MinimizationError::Cover(e) => io::Error::new(io::ErrorKind::InvalidData, e),
+            e @ MinimizationError::NonOrthogonal { .. } => {
+                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+            }
         }
     }
 }

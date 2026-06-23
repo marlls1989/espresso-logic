@@ -604,6 +604,16 @@ fn test_fdr_type_cover() {
 
     // For FDR type, num_cubes() counts all cubes
     assert_eq!(cover.num_cubes(), 3);
+
+    // The writer must group cubes F -> D -> R (matching C's fprint_pla), regardless of the push
+    // order above (F, R, D). Output char per set: F='1', D='2', R='0'.
+    let pla = cover.to_pla_string(CoverType::FDR).unwrap();
+    let body: Vec<&str> = pla.lines().filter(|l| !l.starts_with('.')).collect();
+    assert_eq!(
+        body,
+        vec!["10 1", "11 2", "01 0"],
+        "cubes must be emitted grouped F->D->R:\n{pla}"
+    );
 }
 
 // ===== Mixed Operations Tests =====
@@ -1271,6 +1281,81 @@ fn minimise_empty_cover_is_ok_with_no_cubes() {
     assert_eq!(minimised.num_cubes(), 0);
     assert_eq!(minimised.num_inputs(), 1);
     assert_eq!(minimised.num_outputs(), 1);
+}
+
+#[test]
+fn pla_input_field_chars_match_c() {
+    use super::pla::{PLAError, PLAReadError};
+
+    // `~`, `x`, `X` are rejected in the input field (C rejects them there — only `0 1 2 - ?` are valid).
+    for bad in ["~0 1", "x0 1", "X0 1"] {
+        let src = format!(".i 2\n.o 1\n{bad}\n.e\n");
+        assert!(
+            matches!(
+                PlaCover::<Symbol>::from_pla_string(&src),
+                Err(PLAReadError::PLA(PLAError::InvalidInputCharacter { .. }))
+            ),
+            "input {bad:?} should be rejected"
+        );
+    }
+
+    // `?` is the empty literal: it parses (no error), but the cube covers no minterm, so it is dropped
+    // at minimisation — leaving the function defined only by the real cubes.
+    let to_pla = |s: &str| {
+        PlaCover::<Symbol>::from_pla_string(s)
+            .expect("parses")
+            .minimize()
+            .expect("minimises")
+            .to_pla_string(CoverType::F)
+            .expect("serialise")
+    };
+    assert_eq!(
+        to_pla(".i 2\n.o 1\n?1 1\n10 1\n.e\n"),
+        to_pla(".i 2\n.o 1\n10 1\n.e\n"),
+        "an empty (?) cube must be dropped, leaving just the real cube"
+    );
+}
+
+#[test]
+fn minimise_rejects_non_orthogonal_on_off_sets() {
+    use crate::espresso::MinimizationError;
+
+    // An FR cover where the same minterm `10` is asserted in BOTH the ON-set (F) and OFF-set (R) for
+    // output 0 is contradictory. C's `expand` would `exit(1)` the process; we reject it with an error.
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::FR);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::R,
+    ));
+    let err = cover
+        .minimize()
+        .expect_err("overlapping ON/OFF sets must be rejected");
+    assert!(
+        matches!(err, MinimizationError::NonOrthogonal { output: 0 }),
+        "expected NonOrthogonal at output 0, got {err:?}"
+    );
+}
+
+#[test]
+fn try_new_rejects_oversized_dimensions() {
+    use crate::espresso::{Espresso, InstanceError, MinimizationError};
+
+    // A dimension beyond what the C core's `c_int` cube indices can represent must be a recoverable
+    // error, not a process `exit(1)`.
+    let err = Espresso::try_new(usize::MAX, 1, None).expect_err("oversized dimension must error");
+    assert!(
+        matches!(
+            err,
+            MinimizationError::Instance(InstanceError::DimensionTooLarge { .. })
+        ),
+        "expected DimensionTooLarge, got {err:?}"
+    );
 }
 
 #[test]

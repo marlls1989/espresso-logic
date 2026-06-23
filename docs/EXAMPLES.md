@@ -418,7 +418,8 @@ fn main() {
 
     // Evaluate
     let result = expr.evaluate(&assignment);
-    println!("Result: {}", result);  // true
+    // a*b + !a  with a=true, b=false  =  (true AND false) OR (NOT true)  =  false
+    println!("Result: {}", result);  // false
 }
 ```
 
@@ -545,11 +546,11 @@ fn main() {
     println!("Node count: {}", expr.node_count());
     println!("Variable count: {}", expr.var_count());
     
-    // Extract cubes (paths to TRUE) as minterms
-    let cubes = expr.to_cubes();
-    println!("Number of cubes: {}", cubes.len());
-    for cube in cubes.iter() {
-        println!("  Cube: {:?}", cube);
+    // Extract the product terms (paths to TRUE) as minterms
+    let minterms = expr.to_cubes();
+    println!("Number of minterms: {}", minterms.len());
+    for minterm in minterms.iter() {
+        println!("  Minterm: {:?}", minterm);
     }
 }
 ```

@@ -184,35 +184,20 @@ fn main() {
 
     let bindings = builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        // Whitelist the functions and types we want to expose
+        // Allowlist only the FFI surface the wrapper actually calls (PLA I/O is pure Rust, so the
+        // `read_pla`/`*_PLA`/`fprint_pla` family and the standalone `simplify`/`expand`/`irredundant`/
+        // `reduce`/`verify` passes are not exposed).
         .allowlist_function("espresso")
-        .allowlist_function("read_pla")
-        .allowlist_function("new_PLA")
-        .allowlist_function("free_PLA")
-        .allowlist_function("fprint_pla")
-        .allowlist_function("PLA_summary")
         .allowlist_function("cube_setup")
         .allowlist_function("setdown_cube")
         .allowlist_function("sf_new")
         .allowlist_function("sf_free")
         .allowlist_function("sf_save")
-        .allowlist_function("set_new")
-        .allowlist_function("set_free")
         .allowlist_function("complement")
-        .allowlist_function("simplify")
-        .allowlist_function("expand")
-        .allowlist_function("irredundant")
-        .allowlist_function("reduce")
         .allowlist_function("minimize_exact")
-        .allowlist_function("verify")
         .allowlist_function("sf_addset")
-        .allowlist_function("sf_active")
-        .allowlist_function("complement")
-        .allowlist_function("cube1list")
         .allowlist_function("cube2list")
         .allowlist_function("set_clear")
-        .allowlist_type("PLA_t")
-        .allowlist_type("pPLA")
         .allowlist_type("set_family_t")
         .allowlist_type("pset_family")
         .allowlist_type("pset")

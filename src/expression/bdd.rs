@@ -11,10 +11,10 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 impl BoolExpr {
-    /// Collect all variables used in this expression in alphabetical order
+    /// Collect all variables used in this expression, sorted alphabetically by name.
     ///
-    /// Returns a `BTreeSet` which maintains variables in sorted order.
-    /// This ordering is used when converting to covers for minimisation.
+    /// Returned as a `BTreeSet`, so iteration yields the variables in a stable, canonical order.
+    #[must_use]
     pub fn collect_variables(&self) -> BTreeSet<Symbol> {
         let mut var_ids = std::collections::HashSet::new();
         self.collect_var_ids(self.root, &mut var_ids);
@@ -64,6 +64,7 @@ impl BoolExpr {
     ///
     /// The result is `Arc<[Minterm<Symbol>]>`: extracted minterms are cached, so this is a cheap
     /// reference-count clone of the shared cache rather than a fresh allocation per call.
+    #[must_use]
     pub fn to_cubes(&self) -> Arc<[Minterm<Symbol>]> {
         self.get_or_create_cubes()
     }

@@ -16,7 +16,8 @@ pub enum ExpressionParseError {
         message: Arc<str>,
         /// The original input string that failed to parse
         input: Arc<str>,
-        /// Optional position in the input where the error occurred
+        /// Best-effort, approximate offset into the input where the error occurred (its exact base —
+        /// byte offset vs. line-relative column — depends on which parser branch reported the error)
         position: Option<usize>,
     },
 }

@@ -59,6 +59,7 @@ use std::sync::Arc;
 use super::conversions::{anonymous_cover_from_raw, RawCube};
 use super::label::{Anonymous, Label, StringLabel};
 use super::minimisation::Minimizable;
+use super::minterm::InputField;
 use super::symbols::Symbols;
 use super::{Cover, CoverType, CubeType};
 use crate::espresso::error::MinimizationError;
@@ -179,7 +180,7 @@ impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
         }
 
         // Filter cubes based on output type using the cube's set tag
-        let filtered_cubes: Vec<_> = self
+        let mut filtered_cubes: Vec<_> = self
             .cubes
             .iter()
             .filter(|cube| match pla_type {
@@ -189,6 +190,16 @@ impl<I: PlaLabel, O: PlaLabel> PLAWriter for Cover<I, O> {
                 CoverType::FDR => true, // All cubes
             })
             .collect();
+
+        // Regroup F -> D -> R to match C's `fprint_pla` (cvrout.c), which emits each set-family in a
+        // separate pass. `sort_by_key` is stable, so cube order within each set is preserved. After
+        // `minimize` the cubes already arrive grouped, but a directly-built or read-then-written
+        // unminimised cover can interleave sets — this keeps the output byte-identical to C regardless.
+        filtered_cubes.sort_by_key(|cube| match cube.set {
+            CubeType::F => 0u8,
+            CubeType::D => 1,
+            CubeType::R => 2,
+        });
 
         // Add .p directive with filtered cube count
         writeln!(writer, ".p {}", filtered_cubes.len())?;
@@ -526,13 +537,16 @@ fn push_cube(
     cover_type: CoverType,
     cubes: &mut Vec<RawCube>,
 ) -> Result<(), PLAError> {
-    // Parse the input field.
+    // Parse the input field, matching C's `read_cube` (cvrin.c:62-72): `0`/`1` are the two values,
+    // `-` and `2` are don't-care, `?` is the empty literal (the cube covers no minterm). Anything else
+    // — including `~`/`x`/`X`, which C rejects in the input field — is an error.
     let mut inputs = Vec::with_capacity(input_chars.len());
     for (pos, &ch) in input_chars.iter().enumerate() {
         inputs.push(match ch {
-            '0' => Some(false),
-            '1' => Some(true),
-            '-' | '~' | 'x' | 'X' => None,
+            '0' => InputField::Zero,
+            '1' => InputField::One,
+            '-' | '2' => InputField::DontCare,
+            '?' => InputField::Empty,
             _ => {
                 return Err(PLAError::InvalidInputCharacter {
                     character: ch,

@@ -47,6 +47,30 @@ const VARS_PER_WORD: usize = 32;
 const FIELD_FALSE: u8 = 0b01;
 const FIELD_TRUE: u8 = 0b10;
 const FIELD_DC: u8 = 0b11;
+/// The *empty* literal (Espresso's `?`): the variable matches neither value, so the cube covers no
+/// minterm. `Option<bool>` cannot express it; the public value API folds it back to `None`.
+const FIELD_EMPTY: u8 = 0b00;
+
+/// A parsed input-field value. Carries the three logical states *plus* Espresso's empty literal, which
+/// `Option<bool>` cannot represent — used only on the PLA read path so a `?` survives into the
+/// minterm's packed bits (and on to the C backend) verbatim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InputField {
+    Zero,
+    One,
+    DontCare,
+    Empty,
+}
+
+#[inline]
+fn encode_field(field: InputField) -> u8 {
+    match field {
+        InputField::Zero => FIELD_FALSE,
+        InputField::One => FIELD_TRUE,
+        InputField::DontCare => FIELD_DC,
+        InputField::Empty => FIELD_EMPTY,
+    }
+}
 
 #[inline]
 fn words_for(num_vars: usize) -> usize {
@@ -86,6 +110,18 @@ where
     let mut words = vec![0u64; words_for(num_vars)];
     for (i, value) in values.into_iter().enumerate() {
         words[i / VARS_PER_WORD] |= (encode(value) as u64) << ((i % VARS_PER_WORD) * 2);
+    }
+    words.into()
+}
+
+/// Like [`pack`], but from raw [`InputField`]s so the empty literal (`00`) can be stored.
+fn pack_fields<I>(fields: I, num_vars: usize) -> Arc<[u64]>
+where
+    I: IntoIterator<Item = InputField>,
+{
+    let mut words = vec![0u64; words_for(num_vars)];
+    for (i, field) in fields.into_iter().enumerate() {
+        words[i / VARS_PER_WORD] |= (encode_field(field) as u64) << ((i % VARS_PER_WORD) * 2);
     }
     words.into()
 }
@@ -164,6 +200,54 @@ impl<L> Minterm<L> {
             values: pack(values, num_vars),
             symbols,
         }
+    }
+
+    /// Build a minterm from raw [`InputField`]s, preserving the empty literal (`?`/`00`) that
+    /// `Option<bool>` cannot express. Crate-internal; used by the PLA reader.
+    pub(crate) fn from_symbols_input_fields<I>(symbols: Arc<Symbols<L>>, fields: I) -> Self
+    where
+        I: IntoIterator<Item = InputField>,
+    {
+        let num_vars = symbols.arity();
+        Minterm {
+            values: pack_fields(fields, num_vars),
+            symbols,
+        }
+    }
+
+    /// The packed 2-bit value-set words (32 variables per `u64`), in the same per-variable encoding as
+    /// an Espresso input cube. Crate-internal; used to copy a cover to the C backend without re-coding.
+    #[must_use]
+    pub(crate) fn raw_words(&self) -> &[u64] {
+        &self.values
+    }
+
+    /// Whether any variable holds the empty literal (`00`) — i.e. the cube covers no minterm. Such a
+    /// cube is vacuous and is dropped before minimisation (see the cover minimisation pipeline).
+    #[must_use]
+    pub(crate) fn has_empty_field(&self) -> bool {
+        (0..self.num_vars()).any(|i| field_at(&self.values, i) == FIELD_EMPTY)
+    }
+
+    /// Disjointness of two cubes defined over the **same header** (shared [`Symbols`]), computed purely
+    /// on the packed words so it needs no [`Label`] bound. Two cubes are disjoint when some variable's
+    /// fields don't intersect (the intersection is the empty field `00`). Used by the orthogonality
+    /// check in the cover minimisation pipeline, where every cube shares the cover's header.
+    #[must_use]
+    pub(crate) fn is_disjoint_same_header(&self, other: &Self) -> bool {
+        debug_assert!(
+            Arc::ptr_eq(&self.symbols, &other.symbols),
+            "is_disjoint_same_header requires a shared header"
+        );
+        for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
+            let inter = x & y;
+            let nonempty = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
+            let valid = valid_even_mask(k, self.num_vars());
+            if nonempty & valid != valid {
+                return true;
+            }
+        }
+        false
     }
 
     /// The shared symbol table this minterm is defined over.
