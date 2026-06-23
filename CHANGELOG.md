@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+This is an intentionally **API-breaking minor release** (low 4.0 adoption does not justify a major bump).
+
+### Added
+
+- Exclusive-or for boolean expressions: the `BoolExpr::xor` method and the `^` operator (for both
+  `BoolExpr` and `&BoolExpr`), computed canonically as `ite(f, ¬g, g)`.
+- `^` is now accepted by the string parser (`BoolExpr::parse`) and the `expr!` macro, with precedence
+  **between** OR and AND (`a + b ^ c` parses as `a + (b ^ c)`; `a ^ b * c` as `a ^ (b * c)`),
+  left-associative.
+
 ## [4.0.1] - 2026-06-23
 
 A polish and hardening release following a full code review: additive API conveniences, the PLA reader

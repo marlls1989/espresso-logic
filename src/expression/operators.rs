@@ -2,7 +2,7 @@
 
 use super::manager::{FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
-use std::ops::{Add, Mul, Not};
+use std::ops::{Add, BitXor, Mul, Not};
 
 /// Logical AND operator for references: `&a * &b`
 ///
@@ -97,6 +97,53 @@ impl Add for BoolExpr {
     }
 }
 
+/// Logical XOR operator for references: `&a ^ &b`
+///
+/// Implements the `^` operator for boolean expressions using references.
+/// This is the most efficient form as it avoids unnecessary cloning.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// let result = &a ^ &b;  // Equivalent to a.xor(&b)
+/// assert!(result.equivalent_to(&a.xor(&b)));
+/// ```
+impl BitXor for &BoolExpr {
+    type Output = BoolExpr;
+
+    fn bitxor(self, rhs: &BoolExpr) -> BoolExpr {
+        self.xor(rhs)
+    }
+}
+
+/// Logical XOR operator: `a ^ b` (delegates to reference version)
+///
+/// Implements the `^` operator for owned boolean expressions.
+/// Note: Using references (`&a ^ &b`) is preferred for efficiency.
+///
+/// # Examples
+///
+/// ```
+/// use espresso_logic::BoolExpr;
+///
+/// let a = BoolExpr::variable("a");
+/// let b = BoolExpr::variable("b");
+/// // Both work, but references are preferred
+/// let result1 = a.clone() ^ b.clone();
+/// let result2 = &a ^ &b;
+/// ```
+impl BitXor for BoolExpr {
+    type Output = BoolExpr;
+
+    fn bitxor(self, rhs: BoolExpr) -> BoolExpr {
+        self.xor(&rhs)
+    }
+}
+
 /// Logical NOT operator for references: `!&a`
 ///
 /// Implements the `!` operator for boolean expressions using references.
@@ -185,5 +232,20 @@ impl BoolExpr {
     pub fn not(&self) -> BoolExpr {
         // not(f) = ite(f, false, true)
         self.op(|mgr, root| mgr.ite(root, FALSE_NODE, TRUE_NODE))
+    }
+
+    /// Logical XOR: create a new expression that is the exclusive-or of this and another
+    ///
+    /// Computes the exclusive-or using the BDD ITE operation:
+    /// `xor(f, g) = ite(f, ¬g, g)` — equivalently `f*¬g + ¬f*g`.
+    #[must_use]
+    pub fn xor(&self, other: &BoolExpr) -> BoolExpr {
+        // See `and`: operands must share the one global BDD manager for `other.root` to be valid here.
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.manager, &other.manager),
+            "BoolExpr operands must share the same BDD manager"
+        );
+        // xor(f, g) = ite(f, !g, g)
+        self.op(|mgr, root| mgr.xor(root, other.root))
     }
 }

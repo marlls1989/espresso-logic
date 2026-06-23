@@ -10,6 +10,7 @@ enum Expr {
     Constant(bool),
     Not(Box<Expr>),
     And(Box<Expr>, Box<Expr>),
+    Xor(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
 }
 
@@ -53,6 +54,13 @@ impl Expr {
                     (&(#left_tokens)).and(&(#right_tokens))
                 }
             }
+            Expr::Xor(left, right) => {
+                let left_tokens = left.to_tokens();
+                let right_tokens = right.to_tokens();
+                quote! {
+                    (&(#left_tokens)).xor(&(#right_tokens))
+                }
+            }
             Expr::Or(left, right) => {
                 let left_tokens = left.to_tokens();
                 let right_tokens = right.to_tokens();
@@ -78,7 +86,7 @@ impl Parse for BoolExprParser {
 
 /// Parse OR expressions (lowest precedence)
 fn parse_or(input: ParseStream) -> Result<Expr> {
-    let mut left = parse_and(input)?;
+    let mut left = parse_xor(input)?;
 
     while input.peek(Token![+]) || input.peek(Token![|]) {
         if input.peek(Token![+]) {
@@ -86,8 +94,21 @@ fn parse_or(input: ParseStream) -> Result<Expr> {
         } else {
             input.parse::<Token![|]>()?;
         }
-        let right = parse_and(input)?;
+        let right = parse_xor(input)?;
         left = Expr::Or(Box::new(left), Box::new(right));
+    }
+
+    Ok(left)
+}
+
+/// Parse XOR expressions (between OR and AND)
+fn parse_xor(input: ParseStream) -> Result<Expr> {
+    let mut left = parse_and(input)?;
+
+    while input.peek(Token![^]) {
+        input.parse::<Token![^]>()?;
+        let right = parse_and(input)?;
+        left = Expr::Xor(Box::new(left), Box::new(right));
     }
 
     Ok(left)
@@ -164,6 +185,7 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 /// - `1` - True constant (creates `BoolExpr::constant(true)`)
 /// - `!a` or `~a` - NOT operation (both syntaxes supported, like the parser)
 /// - `a * b` or `a & b` - AND operation (both `*` and `&` supported)
+/// - `a ^ b` - XOR operation
 /// - `a + b` or `a | b` - OR operation (both `+` and `|` supported)
 /// - `(a + b) * c` - Parentheses for grouping
 ///
@@ -173,7 +195,8 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 /// 1. `( )` (Parentheses - force evaluation order)
 /// 2. `!` / `~` (NOT)
 /// 3. `*` / `&` (AND)
-/// 4. `+` / `|` (OR)
+/// 4. `^` (XOR)
+/// 5. `+` / `|` (OR)
 ///
 /// # Examples
 ///

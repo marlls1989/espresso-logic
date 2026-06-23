@@ -250,6 +250,94 @@ fn test_operator_overloading_xor_pattern() {
     assert_eq!(manual, with_ops);
 }
 
+// ========== XOR Tests ==========
+
+#[test]
+fn test_xor_truth_table() {
+    use std::collections::HashMap;
+
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let xor = a.xor(&b);
+
+    for (av, bv) in [(false, false), (false, true), (true, false), (true, true)] {
+        let assignment: HashMap<&str, bool> = HashMap::from([("a", av), ("b", bv)]);
+        assert_eq!(xor.evaluate(&assignment), av ^ bv, "a={av} b={bv}");
+    }
+}
+
+#[test]
+fn test_xor_equals_sop_form() {
+    // a ^ b is exactly a*!b + !a*b.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    let xor = a.xor(&b);
+    let sop = a.and(&b.not()).or(&a.not().and(&b));
+    assert_eq!(xor, sop);
+    assert!(xor.equivalent_to(&sop));
+}
+
+#[test]
+fn test_xor_operator() {
+    // The `^` operator (reference and owned forms) matches the `xor` method.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+
+    assert_eq!(&a ^ &b, a.xor(&b));
+    assert_eq!(a.clone() ^ b.clone(), a.xor(&b));
+}
+
+#[test]
+fn test_xor_is_associative() {
+    // XOR is associative, so the canonical BDDs coincide regardless of grouping.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    assert_eq!(a.xor(&b).xor(&c), a.xor(&b.xor(&c)));
+}
+
+#[test]
+fn test_xor_parser_precedence_below_or() {
+    // `^` binds tighter than `+`, so `a + b ^ c` parses as `a + (b ^ c)`.
+    let bound = BoolExpr::parse("a + b ^ c").unwrap();
+    let grouped = BoolExpr::parse("a + (b ^ c)").unwrap();
+    assert_eq!(bound, grouped);
+
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    assert_eq!(bound, a.or(&b.xor(&c)));
+}
+
+#[test]
+fn test_xor_parser_precedence_above_and() {
+    // `*` binds tighter than `^`, so `a ^ b * c` parses as `a ^ (b * c)`.
+    let bound = BoolExpr::parse("a ^ b * c").unwrap();
+    let grouped = BoolExpr::parse("a ^ (b * c)").unwrap();
+    assert_eq!(bound, grouped);
+
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+    assert_eq!(bound, a.xor(&b.and(&c)));
+}
+
+#[test]
+fn test_expr_macro_xor() {
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    // `^` in the macro lowers to `xor`, left-associative.
+    assert_eq!(expr!(a ^ b), a.xor(&b));
+    assert_eq!(expr!(a ^ b ^ c), a.xor(&b).xor(&c));
+    // Macro precedence matches the parser: `^` between `+` and `*`.
+    assert_eq!(expr!(a + b ^ c), a.or(&b.xor(&c)));
+    assert_eq!(expr!(a ^ b * c), a.xor(&b.and(&c)));
+}
+
 // ========== Procedural Macro Tests (expr!) ==========
 
 #[test]

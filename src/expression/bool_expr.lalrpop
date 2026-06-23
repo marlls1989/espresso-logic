@@ -1,6 +1,6 @@
 // Boolean expression grammar for lalrpop
 // Supports standard boolean operators with proper precedence:
-// Parentheses () > NOT (~, !) > AND (*, &) > OR (+, |)
+// Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 
 use crate::expression::BoolExpr;
 
@@ -13,12 +13,18 @@ pub Expr: BoolExpr = {
 
 // OR has lowest precedence (supports both + and |)
 OrExpr: BoolExpr = {
-    <l:OrExpr> "+" <r:AndExpr> => l.or(&r),
-    <l:OrExpr> "|" <r:AndExpr> => l.or(&r),
+    <l:OrExpr> "+" <r:XorExpr> => l.or(&r),
+    <l:OrExpr> "|" <r:XorExpr> => l.or(&r),
+    XorExpr,
+};
+
+// XOR sits between OR and AND
+XorExpr: BoolExpr = {
+    <l:XorExpr> "^" <r:AndExpr> => l.xor(&r),
     AndExpr,
 };
 
-// AND has middle precedence (supports both * and &)
+// AND has higher precedence (supports both * and &)
 AndExpr: BoolExpr = {
     <l:AndExpr> "*" <r:NotExpr> => l.and(&r),
     <l:AndExpr> "&" <r:NotExpr> => l.and(&r),
@@ -60,6 +66,7 @@ match {
     "|",
     "*",
     "+",
+    "^",
     "~",
     "!",
     "(",

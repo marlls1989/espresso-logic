@@ -222,6 +222,16 @@ impl BddManager {
         )
     }
 
+    /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`.
+    ///
+    /// Built from [`ite`](Self::ite) (so it inherits the same hash-consing and memoisation and stays
+    /// canonical): `¬g = ite(g, FALSE, TRUE)`, then select `¬g` when `f` is true and `g` when `f` is
+    /// false. Shared by [`BoolExpr::xor`](crate::BoolExpr::xor) and the public BDD builder.
+    pub(super) fn xor(&mut self, f: NodeId, g: NodeId) -> NodeId {
+        let not_g = self.ite(g, FALSE_NODE, TRUE_NODE);
+        self.ite(f, not_g, g)
+    }
+
     /// Resolve an ITE triple **without** Shannon expansion.
     ///
     /// Returns `Some(node)` when `(f, g, h)` is a terminal case or already lives in `ite_cache`,
