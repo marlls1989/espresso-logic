@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "4.0.1"
+version = "4.1.0"
 edition = "2021"
 rust-version = "1.82"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
@@ -34,7 +34,7 @@ libc = "0.2"
 weak-table = "0.3"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 clap = { version = "4.4", features = ["derive"], optional = true }
-espresso-logic-macros = { version = "4.0.1", path = "./espresso-logic-macros" }
+espresso-logic-macros = { version = "4.1.0", path = "./espresso-logic-macros" }
 
 [features]
 cli = ["dep:clap"]
