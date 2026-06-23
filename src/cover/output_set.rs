@@ -189,3 +189,63 @@ impl OutputSet<Anonymous> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+
+    fn hash_of(o: &OutputSet<Anonymous>) -> u64 {
+        let mut h = DefaultHasher::new();
+        o.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn eq_and_hash_ignore_construction_path_and_padding() {
+        // 65 outputs, only output 64 asserted — the single set bit lives in the *second* word, so this
+        // exercises both the multi-word packing and the zero-padding of the unused high bits.
+        let mut membership = vec![false; 65];
+        membership[64] = true;
+        let from_iter = OutputSet::<Anonymous>::anonymous(&membership);
+
+        // Rebuild from the packed words through the other constructor: must compare and hash equal.
+        let symbols = Symbols::<Anonymous>::anonymous(membership.len());
+        let from_packed = OutputSet::from_packed_bits(symbols, Arc::clone(from_iter.packed()));
+        assert_eq!(from_iter, from_packed);
+        assert_eq!(hash_of(&from_iter), hash_of(&from_packed));
+
+        // Padding above the arity must be zero, so the second word holds exactly bit 0 (output 64).
+        assert_eq!(from_iter.packed().len(), 2);
+        assert_eq!(from_iter.packed()[1], 1u64);
+    }
+
+    #[test]
+    fn value_at_and_iter_track_multi_word_packing() {
+        let mut membership = vec![false; 70];
+        for &i in &[0usize, 64, 69] {
+            membership[i] = true;
+        }
+        let o = OutputSet::<Anonymous>::anonymous(&membership);
+
+        assert_eq!(o.num_vars(), 70);
+        assert!(o.value_at(0) && o.value_at(64) && o.value_at(69));
+        assert!(!o.value_at(1) && !o.value_at(63) && !o.value_at(65));
+        assert!(!o.value_at(70), "an index at the arity reads false");
+        assert!(!o.value_at(1000), "a far out-of-range index reads false");
+        assert_eq!(o.iter().collect::<Vec<bool>>(), membership);
+    }
+
+    #[test]
+    fn ord_breaks_ties_by_arity_then_bits() {
+        let one = OutputSet::<Anonymous>::anonymous(&[true]);
+        let two = OutputSet::<Anonymous>::anonymous(&[false, false]);
+        assert!(one < two, "fewer outputs orders first, regardless of bits");
+
+        // Same arity: ordered by the packed words. Bit 1 set (word value 2) > bit 0 set (value 1).
+        let bit0 = OutputSet::<Anonymous>::anonymous(&[true, false]);
+        let bit1 = OutputSet::<Anonymous>::anonymous(&[false, true]);
+        assert!(bit0 < bit1);
+        assert_ne!(bit0, bit1);
+    }
+}

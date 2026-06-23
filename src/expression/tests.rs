@@ -398,6 +398,51 @@ fn test_expr_macro_xor() {
     assert_eq!(expr!(a ^ b * c), a.xor(&b.and(&c)));
 }
 
+#[test]
+fn test_xor_algebraic_edges() {
+    // These pin the XOR construction `ite(f, !g, g)` against a swapped/misbuilt node: each holds only
+    // for the correct XOR (e.g. a swap to `ite(f, g, !g)` would compute XNOR and break all four).
+    let a = BoolExpr::variable("a");
+
+    assert_eq!(a.xor(&a), BoolExpr::constant(false)); // a ^ a == 0
+    assert_eq!(a.xor(&BoolExpr::constant(false)), a, "a ^ 0 == a");
+    assert_eq!(a.xor(&BoolExpr::constant(true)), a.not(), "a ^ 1 == !a");
+    assert_eq!(a.xor(&a.not()), BoolExpr::constant(true), "a ^ !a == 1");
+}
+
+#[test]
+fn test_xor_chain_parity_agrees_across_surfaces() {
+    use std::collections::HashMap;
+
+    // `a ^ b ^ c` is odd parity. Check the full 3-input truth table for the operator, the parser, and
+    // the macro — a single semantic check that all three build the same (correct) 3-way XOR, beyond the
+    // grouping that XOR's associativity makes unobservable.
+    let a = BoolExpr::variable("a");
+    let b = BoolExpr::variable("b");
+    let c = BoolExpr::variable("c");
+
+    let via_ops = &(&a ^ &b) ^ &c;
+    let via_parse = BoolExpr::parse("a ^ b ^ c").unwrap();
+    let via_macro = expr!(a ^ b ^ c);
+
+    for bits in 0u8..8 {
+        let (av, bv, cv) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0);
+        let assignment: HashMap<&str, bool> = HashMap::from([("a", av), ("b", bv), ("c", cv)]);
+        let parity = av ^ bv ^ cv;
+        assert_eq!(via_ops.evaluate(&assignment), parity, "ops, bits={bits}");
+        assert_eq!(
+            via_parse.evaluate(&assignment),
+            parity,
+            "parse, bits={bits}"
+        );
+        assert_eq!(
+            via_macro.evaluate(&assignment),
+            parity,
+            "macro, bits={bits}"
+        );
+    }
+}
+
 // ========== Procedural Macro Tests (expr!) ==========
 
 #[test]
@@ -1228,6 +1273,32 @@ fn deep_parse_does_not_overflow() {
     handle
         .join()
         .expect("parse + build_postfix must not overflow the stack");
+}
+
+/// `BoolExpr::ite` is built from the manager's `ite`, which resolves its operands on an explicit work
+/// stack rather than recursively. Nesting `ite` `N` deep produces a BDD whose operand chain is `N` long,
+/// so a recursive `ite` regression would overflow at a small thread stack; the iterative one must not.
+#[test]
+fn deep_ite_does_not_overflow() {
+    const N: usize = 2000;
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            // f_i = v_i ? f_{i-1} : false  ==  v_i & f_{i-1}; starting from `true` this is the AND of all
+            // N variables, but built entirely through `ite` so the ite path (not `and`) is exercised.
+            let f_false = BoolExpr::constant(false);
+            let mut acc = BoolExpr::constant(true);
+            for i in 0..N {
+                let v = BoolExpr::variable(&format!("v{i:04}"));
+                acc = v.ite(&acc, &f_false);
+            }
+            assert_eq!(acc.var_count(), N);
+            assert_eq!(acc.to_cubes().len(), 1); // AND of all vars => one all-true cube
+        })
+        .expect("spawn deep-ite thread");
+    handle
+        .join()
+        .expect("nested BoolExpr::ite must not overflow the stack");
 }
 
 #[test]

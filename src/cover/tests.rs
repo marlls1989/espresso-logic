@@ -1009,6 +1009,73 @@ fn wide_minimise_crosses_word_boundary() {
 }
 
 #[test]
+fn multi_output_minimise_round_trips_across_word_boundary() {
+    // 70 outputs, so output bit `i` straddles both the C 32-bit and the OutputSet 64-bit word boundary.
+    // Two cubes assert the *same* 70-bit output pattern (with bits on both sides of 64) and differ in
+    // one input, so they merge to a single cube that must carry that exact pattern back from C. This is
+    // the path that would silently corrupt outputs if the output-region bit-blit shifted by the wrong
+    // amount — and the only `cargo test` (no C oracle) that exercises a multi-word output round-trip.
+    const NO: usize = 70;
+    let asserted = [0usize, 1, 63, 64, 65, 69]; // span the 64-bit boundary
+    let mut membership = vec![false; NO];
+    for &i in &asserted {
+        membership[i] = true;
+    }
+
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    let a = [Some(true), Some(true), Some(true), Some(true)];
+    let mut b = a;
+    b[0] = Some(false);
+    cover.push(Cube::anonymous(&a, &membership, CubeType::F));
+    cover.push(Cube::anonymous(&b, &membership, CubeType::F));
+
+    let min = cover.minimize().unwrap();
+    assert!(min.num_cubes() >= 1);
+    // Whether or not the two cubes merged, every returned cube must carry the exact output pattern —
+    // bit-for-bit, including the outputs past index 64.
+    for cube in min.cubes() {
+        assert_eq!(
+            cube.outputs().iter().collect::<Vec<bool>>(),
+            membership,
+            "output membership must round-trip across the u64 word boundary"
+        );
+        assert!(cube.outputs().value_at(64) && cube.outputs().value_at(69));
+        assert!(!cube.outputs().value_at(62) && !cube.outputs().value_at(66));
+    }
+}
+
+#[test]
+fn multi_output_minimise_keeps_each_output_independent() {
+    // Three outputs, each asserted by a distinct fully-specified input minterm. Distinct inputs with
+    // distinct outputs cannot merge or expand under F-type minimisation, so each (input, output) pair
+    // must survive verbatim — catching any per-output `(0..no)` indexing slip without a C oracle.
+    let expected: [([Option<bool>; 2], [bool; 3]); 3] = [
+        ([Some(true), Some(false)], [true, false, false]), // output 0 only
+        ([Some(false), Some(true)], [false, true, false]), // output 1 only
+        ([Some(true), Some(true)], [false, false, true]),  // output 2 only
+    ];
+
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    for (ins, outs) in &expected {
+        cover.push(Cube::anonymous(ins, outs, CubeType::F));
+    }
+
+    let min = cover.minimize().unwrap();
+    let got: std::collections::HashSet<(Vec<Option<bool>>, Vec<bool>)> = min
+        .cubes()
+        .map(|c| (c.inputs().iter().collect(), c.outputs().iter().collect()))
+        .collect();
+    let want: std::collections::HashSet<(Vec<Option<bool>>, Vec<bool>)> = expected
+        .iter()
+        .map(|(i, o)| (i.to_vec(), o.to_vec()))
+        .collect();
+    assert_eq!(
+        got, want,
+        "each output's minterm must round-trip independently"
+    );
+}
+
+#[test]
 fn write_pla_surfaces_io_error() {
     use super::pla::PLAWriteError;
     use std::io::{self, Write};

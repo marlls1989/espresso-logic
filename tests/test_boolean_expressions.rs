@@ -39,10 +39,12 @@ fn test_cover_trait_basics() {
 fn test_xor_expression() {
     use std::collections::HashMap;
 
-    // XOR: a*~b + ~a*b
+    // Exercise the built-in `^` end-to-end: the operator, the parser, and the macro must agree.
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
-    let xor = expr!(a * !b + !a * b);
+    let xor = &a ^ &b;
+    assert_eq!(xor, BoolExpr::parse("a ^ b").unwrap());
+    assert_eq!(xor, expr!(a ^ b));
 
     // Verify XOR truth table
     let mut assignment = HashMap::new();
