@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - 2026-06-23
+
+A polish and hardening release following a full code review: additive API conveniences, the PLA reader
+and writer brought fully in line with the reference C implementation, two process-aborting C paths
+turned into recoverable errors, and a slimmer published package. Well-formed PLA files parse, minimise,
+and serialise byte-identically to 4.0.0.
+
+### Added
+
+- `Cover::with_labels` now takes independent type parameters for the input and output label slices, so
+  the two may differ in concrete type (e.g. `&[String]` inputs with `&[&str]` outputs). Existing
+  same-type calls still infer unchanged.
+- `Symbol` now compares directly against `str` and `&str` in both directions (`PartialEq` and
+  `PartialOrd`), mirroring how the standard library's `String` compares against string slices.
+- `MintermIter` implements `ExactSizeIterator` (its remaining length is known in O(1)).
+- `ExprNode` now derives `Hash`.
+- `MinimizationError::NonOrthogonal` and `InstanceError::DimensionTooLarge` — the safe minimisation API
+  now validates a cover and returns these instead of letting the C core abort the process (see below).
+- `#[must_use]` on the remaining pure getters/constructors and on the low-level
+  `EspressoCover`/`Espresso` `minimize`/`minimize_exact` methods.
+
+### Changed
+
+- The PLA reader now matches the reference C implementation (`cvrin.c`) when reading cube data: space,
+  tab, `|` and newlines are all insignificant separators, and each cube is exactly `.i + .o`
+  significant characters. In practice several cubes may now share a line, a single cube may span
+  lines, and `.i`/`.o` are required up front (cube dimensions are never inferred from the data).
+- The PLA reader's *input field* now matches C exactly: `0 1 2 - ?` are accepted (`?` being the empty
+  literal), and `~`/`x`/`X` are rejected. A `?` makes a cube cover no minterm, so such a cube is
+  dropped during minimisation, leaving the function unchanged.
+- The PLA writer now groups cubes ON → DC → OFF (matching C's `fprint_pla`) for *any* cover, not just
+  already-minimised ones — a directly-built or read-then-written multi-set cover no longer diverges.
+- Minimisation now **validates** a cover before handing it to the C core, so two inputs that previously
+  aborted the whole process (`exit(1)`) now return a recoverable error: a contradictory `FR`/`FDR`
+  cover whose ON-set and OFF-set overlap (`NonOrthogonal`), and a dimension too large for the C core's
+  32-bit cube indices (`DimensionTooLarge`).
+- The published package now excludes development- and verification-only material (regression and
+  benchmark data, dev scripts, hard test cases, CI configuration), making the download substantially
+  smaller.
+
+### Fixed
+
+- Corrected stale or wrong rustdoc: the `PLAWriter` trait no longer references a nonexistent
+  `PLASerialisable` trait and the `PLAReadError`/`PLAWriteError` docs point at the current
+  `PlaCover::from_pla_*` / `PLAWriter` APIs; a worked `evaluate` example that printed the wrong result;
+  a reference to a nonexistent `exact` configuration option (it is `minimize_exact`); the documented
+  default don't-care set (an empty set, not the complement of F ∪ R); and the BDD variable ordering
+  note (first-seen, not alphabetical).
+
 ## [4.0.0] - 2026-06-19
 
 A breaking release with two themes: unifying the crate's four parallel product-term representations

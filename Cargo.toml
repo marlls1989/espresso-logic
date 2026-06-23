@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2021"
 rust-version = "1.82"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
@@ -10,12 +10,31 @@ repository = "https://github.com/marlls1989/espresso-logic"
 keywords = ["logic", "minimization", "boolean", "pla", "espresso"]
 categories = ["algorithms", "science"]
 
+# Development- and verification-only material: regression/test data, dev scripts, hard test cases, the
+# benchmark, and CI config. None of it is needed to build or use the crate, so keep it out of the
+# published package. The regression shell scripts and the benchmark are excluded because they rely on
+# the excluded data dirs (`pla/`, `tlex/`, `hard_examples/`); cargo just drops the now-sourceless
+# `[[bench]]` target with a harmless warning. The Rust integration tests (tests/*.rs) are kept. Paths
+# are anchored with a leading `/` so nested directories such as `src/cover/pla` are unaffected.
+exclude = [
+    "/pla",
+    "/tlex",
+    "/hard_examples",
+    "/scripts",
+    "/benches",
+    "/tests/regression_test.sh",
+    "/tests/quick_regression.sh",
+    "/benchmark_results.log",
+    "/.travis.yml",
+    "/TESTING.md",
+]
+
 [dependencies]
 libc = "0.2"
 weak-table = "0.3"
 lalrpop-util = { version = "0.20", features = ["lexer"] }
 clap = { version = "4.4", features = ["derive"], optional = true }
-espresso-logic-macros = { version = "4.0.0", path = "./espresso-logic-macros" }
+espresso-logic-macros = { version = "4.0.1", path = "./espresso-logic-macros" }
 
 [features]
 cli = ["dep:clap"]
