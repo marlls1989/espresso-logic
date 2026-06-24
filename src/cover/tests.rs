@@ -74,6 +74,120 @@ fn io_rows<I, O>(c: &Cover<I, O>) -> Vec<CubeRow> {
 }
 
 #[test]
+fn cube_labeled_builds_expected_and_matches_with_labels() {
+    let cube = Cube::<Symbol, Symbol>::labeled(
+        &[(Symbol::new("a"), Some(true)), (Symbol::new("b"), None)],
+        &[(Symbol::new("f"), true)],
+        CubeType::F,
+    );
+    assert_eq!(cube.inputs().num_vars(), 2);
+    assert_eq!(cube.outputs().num_vars(), 1);
+    assert_eq!(cube.inputs().value_of("a"), Some(true));
+    assert_eq!(cube.inputs().value_of("b"), None);
+    assert_eq!(cube.cube_type(), CubeType::F);
+
+    // The `&str` convenience builds an identical cube.
+    let via_str = Cube::<Symbol, Symbol>::with_labels(
+        &[("a", Some(true)), ("b", None)],
+        &[("f", true)],
+        CubeType::F,
+    );
+    assert_eq!(cube, via_str);
+}
+
+#[test]
+fn cube_labeled_accepts_non_string_labels() {
+    // Any `Label` works, not only strings — here `u32` column ids.
+    let cube = Cube::<u32, u32>::labeled(
+        &[(10, Some(true)), (20, Some(false))],
+        &[(0, true)],
+        CubeType::F,
+    );
+    assert_eq!(cube.inputs().value_of(&10u32), Some(true));
+    assert_eq!(cube.inputs().value_of(&20u32), Some(false));
+    assert_eq!(cube.outputs().num_vars(), 1);
+}
+
+#[test]
+fn push_aligns_labeled_cubes_by_name() {
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.push(Cube::with_labels(
+        &[("a", Some(true)), ("b", Some(false))],
+        &[("f", true)],
+        CubeType::F,
+    ));
+    // Same assignment, labels listed in the OPPOSITE order: must align by name, not position.
+    cover.push(Cube::with_labels(
+        &[("b", Some(false)), ("a", Some(true))],
+        &[("f", true)],
+        CubeType::F,
+    ));
+
+    assert_eq!(cover.num_inputs(), 2); // aligned by name, not duplicated into 4 columns
+    assert_eq!(cover.num_cubes(), 2);
+    let f = cover
+        .output_labels()
+        .iter()
+        .position(|l| l.as_ref() == "f")
+        .unwrap();
+    for cube in cover.cubes() {
+        assert_eq!(cube.inputs().value_of("a"), Some(true));
+        assert_eq!(cube.inputs().value_of("b"), Some(false));
+        assert!(cube.outputs().value_at(f));
+    }
+}
+
+#[test]
+fn push_widens_labeled_cover_by_new_name() {
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F));
+    assert_eq!(cover.num_inputs(), 1);
+
+    // A second cube introduces `b`: the cover widens by name, and the first cube gets `b` = don't-care.
+    cover.push(Cube::with_labels(
+        &[("a", Some(false)), ("b", Some(true))],
+        &[("f", true)],
+        CubeType::F,
+    ));
+    assert_eq!(cover.num_inputs(), 2);
+
+    let rows: Vec<_> = cover.cubes().collect();
+    assert_eq!(rows[0].inputs().value_of("a"), Some(true));
+    assert_eq!(rows[0].inputs().value_of("b"), None); // widened → don't-care
+    assert_eq!(rows[1].inputs().value_of("a"), Some(false));
+    assert_eq!(rows[1].inputs().value_of("b"), Some(true));
+}
+
+#[test]
+fn from_cubes_labeled_unions_headers_by_name() {
+    let cover: Cover<Symbol, Symbol> = Cover::from_cubes(
+        CoverType::F,
+        [
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(false))],
+                &[("f", true)],
+                CubeType::F,
+            ),
+            Cube::with_labels(
+                &[("b", Some(true)), ("c", Some(true))],
+                &[("g", true)],
+                CubeType::F,
+            ),
+        ],
+    );
+    assert_eq!(cover.num_inputs(), 3); // a, b, c unioned by name
+    assert_eq!(cover.num_outputs(), 2); // f, g
+    let labels: Vec<&str> = cover.input_labels().iter().map(|l| l.as_ref()).collect();
+    assert_eq!(labels, ["a", "b", "c"]);
+    // Cube 0 lacks `c`, cube 1 lacks `a` → each don't-care where absent.
+    let rows: Vec<_> = cover.cubes().collect();
+    assert_eq!(rows[0].inputs().value_of("a"), Some(true));
+    assert_eq!(rows[0].inputs().value_of("c"), None);
+    assert_eq!(rows[1].inputs().value_of("a"), None);
+    assert_eq!(rows[1].inputs().value_of("c"), Some(true));
+}
+
+#[test]
 fn test_minimize() {
     let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
@@ -375,6 +489,26 @@ fn test_to_expr_basic() {
     assert_eq!(vars.len(), 2);
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
+}
+
+#[test]
+fn to_expr_and_from_pla_string_accept_owned_string() {
+    // `Cover::to_expr` and `PlaCover::from_pla_string` take any `AsRef<str>`, not only `&str` — an
+    // owned `String` behaves identically to the `&str` form (no string type is privileged).
+    let mut cover = Cover::new(CoverType::F);
+    let a = crate::BoolExpr::variable("a");
+    let b = crate::BoolExpr::variable("b");
+    cover.add_expr(&a.and(&b), "result").unwrap();
+    let from_string = cover.to_expr(String::from("result")).unwrap();
+    let from_str = cover.to_expr("result").unwrap();
+    assert!(from_string.equivalent_to(&from_str));
+
+    let pla = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
+    let from_string = PlaCover::<Symbol>::from_pla_string(String::from(pla)).unwrap();
+    let from_str = PlaCover::<Symbol>::from_pla_string(pla).unwrap();
+    assert_eq!(from_string.num_inputs(), from_str.num_inputs());
+    assert_eq!(from_string.num_outputs(), from_str.num_outputs());
+    assert_eq!(from_string.num_cubes(), from_str.num_cubes());
 }
 
 #[test]

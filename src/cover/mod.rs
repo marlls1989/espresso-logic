@@ -621,34 +621,16 @@ impl<I: Clone, O> Cover<I, O> {
     }
 }
 
-/// Re-point an anonymous cube positionally onto target symbol tables of any label type: input values
-/// are read by position (positions beyond the cube's own arity become don't-care), output membership is
-/// read by position (positions beyond it become unasserted, `Some(false)`). The target tables supply
-/// the labels; the cube only supplies values, so this works for both anonymous (`I = O = Anonymous`)
-/// and named targets — Espresso hands back anonymous positional cubes that get re-homed this way.
-pub(super) fn repoint<I, O>(
-    cube: &Cube<Anonymous, Anonymous>,
-    input_symbols: &Arc<Symbols<I>>,
-    output_symbols: &Arc<Symbols<O>>,
-) -> Cube<I, O> {
-    let ni = input_symbols.arity();
-    let no = output_symbols.arity();
-    let im = Minterm::from_symbols(
-        Arc::clone(input_symbols),
-        (0..ni).map(|i| cube.inputs().value_at(i)),
-    );
-    // Outputs re-home positionally: new position i asserts iff the cube asserts position i.
-    let om = assert_mask(cube, output_symbols, no, no, |i| i);
-    Cube::new(im, om, cube.cube_type())
-}
-
-impl Cover<Anonymous, Anonymous> {
-    /// Build an **anonymous** cover from a collection of typed [`Cube<Anonymous, Anonymous>`](Cube)s.
+impl<I: Label, O: Label> Cover<I, O> {
+    /// Build a cover from a collection of typed [`Cube`]s, aligning them by variable
+    /// [identity](Label) — by name for labelled cubes, by position for anonymous ones.
     ///
-    /// The cover's dimensions are the widest input/output arity seen across `cubes`; each cube is
-    /// re-pointed positionally onto the shared anonymous tables (shorter inputs padded with
-    /// don't-cares, shorter membership masks padded unasserted). Each cube keeps its own
-    /// [`CubeType`] (F/D/R); build them with [`Cube::anonymous`].
+    /// The cover's headers are the identity **union** of the cubes' headers: a variable carried by some
+    /// cubes but not others becomes a don't-care (inputs) / unasserted (outputs) in the cubes that lack
+    /// it. For anonymous cubes identity is position, so this is the widest input/output arity with
+    /// shorter cubes padded — the original positional behaviour. Each cube keeps its own [`CubeType`]
+    /// (F/D/R); build anonymous cubes with [`Cube::anonymous`], labelled ones with
+    /// [`Cube::labeled`]/[`Cube::with_labels`].
     ///
     /// # Examples
     ///
@@ -666,24 +648,31 @@ impl Cover<Anonymous, Anonymous> {
     #[must_use]
     pub fn from_cubes(
         cover_type: CoverType,
-        cubes: impl IntoIterator<Item = Cube<Anonymous, Anonymous>>,
-    ) -> Cover<Anonymous, Anonymous> {
-        let cubes: Vec<Cube<Anonymous, Anonymous>> = cubes.into_iter().collect();
-        let ni = cubes
-            .iter()
-            .map(|c| c.inputs().num_vars())
-            .max()
-            .unwrap_or(0);
-        let no = cubes
-            .iter()
-            .map(|c| c.outputs().num_vars())
-            .max()
-            .unwrap_or(0);
-        let input_symbols = Symbols::<Anonymous>::anonymous(ni);
-        let output_symbols = Symbols::<Anonymous>::anonymous(no);
+        cubes: impl IntoIterator<Item = Cube<I, O>>,
+    ) -> Cover<I, O> {
+        let cubes: Vec<Cube<I, O>> = cubes.into_iter().collect();
+        // Headers are the identity union of every cube's headers (position union for anonymous).
+        let mut input_symbols: Arc<Symbols<I>> = Symbols::empty();
+        let mut output_symbols: Arc<Symbols<O>> = Symbols::empty();
+        for c in &cubes {
+            input_symbols = union_inputs(&input_symbols, c.inputs().symbols());
+            output_symbols = overlay_outputs(&output_symbols, c.outputs().symbols()).0;
+        }
+        let new_no = output_symbols.arity();
         let cubes = cubes
             .iter()
-            .map(|cube| repoint(cube, &input_symbols, &output_symbols))
+            .map(|c| {
+                // `output_symbols` already holds every identity of `c`, so the overlay's `b`-map
+                // re-homes `c`'s outputs onto it; inputs project by identity.
+                let (_, _, out_map) = overlay_outputs(&output_symbols, c.outputs().symbols());
+                Cube::new(
+                    c.inputs().project_onto(&input_symbols),
+                    assert_mask(c, &output_symbols, new_no, c.outputs().num_vars(), |old| {
+                        out_map[old]
+                    }),
+                    c.set,
+                )
+            })
             .collect();
         Cover {
             input_symbols,
@@ -693,8 +682,13 @@ impl Cover<Anonymous, Anonymous> {
         }
     }
 
-    /// Append a single typed [`Cube<Anonymous, Anonymous>`](Cube) to this anonymous cover, growing its dimensions
-    /// to fit (shorter inputs become don't-care, new output columns unasserted).
+    /// Append a single typed [`Cube`] to this cover, aligning it by variable [identity](Label).
+    ///
+    /// The cube's variables line up with the cover's existing columns by identity — by name for
+    /// labelled covers, by position for anonymous ones. A variable the cube carries but the cover lacks
+    /// **widens the cover by that identity**: every existing cube gains a don't-care (inputs) /
+    /// unasserted (outputs) column, exactly as [`merge`](Self::merge) does. For an anonymous cover that
+    /// means a wider cube extends the dimensions position-wise (the original behaviour).
     ///
     /// # Examples
     ///
@@ -709,38 +703,35 @@ impl Cover<Anonymous, Anonymous> {
     /// cover.push(Cube::anonymous(&[Some(true), Some(false), Some(true)], &[true], CubeType::F));
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
-    pub fn push(&mut self, cube: Cube<Anonymous, Anonymous>) {
-        self.grow_to_fit(cube.inputs().num_vars(), cube.outputs().num_vars());
-        let repointed = repoint(&cube, &self.input_symbols, &self.output_symbols);
-        self.cubes.push(repointed);
-    }
+    pub fn push(&mut self, cube: Cube<I, O>) {
+        let new_input = union_inputs(&self.input_symbols, cube.inputs().symbols());
+        let (new_output, self_out_map, cube_out_map) =
+            overlay_outputs(&self.output_symbols, cube.outputs().symbols());
 
-    /// Positionally widen this anonymous cover to at least the given dimensions (new input positions
-    /// are don't-care, new output positions unasserted). No labels are synthesised.
-    fn grow_to_fit(&mut self, min_inputs: usize, min_outputs: usize) {
-        if min_inputs > self.num_inputs() {
-            // A `Cover<Anonymous, Anonymous>` is always anonymous, so widening is just a wider anonymous table.
-            let new_syms = Symbols::<Anonymous>::anonymous(min_inputs);
-            for cube in &mut self.cubes {
-                cube.inputs = Minterm::from_symbols(
-                    Arc::clone(&new_syms),
-                    (0..min_inputs).map(|i| cube.inputs.value_at(i)),
-                );
+        // Only when the cube introduces a new variable identity do the existing cubes need re-homing
+        // onto wider headers; otherwise this is an O(1) append.
+        if new_input.arity() != self.num_inputs() || new_output.arity() != self.num_outputs() {
+            let new_no = new_output.arity();
+            let old_no = self.num_outputs();
+            for c in &mut self.cubes {
+                let inputs = c.inputs().project_onto(&new_input);
+                let outputs = assert_mask(c, &new_output, new_no, old_no, |old| self_out_map[old]);
+                c.inputs = inputs;
+                c.outputs = outputs;
             }
-            self.input_symbols = new_syms;
+            self.input_symbols = new_input;
+            self.output_symbols = new_output;
         }
 
-        if min_outputs > self.num_outputs() {
-            let new_syms = Symbols::<Anonymous>::anonymous(min_outputs);
-            for cube in &mut self.cubes {
-                let old = cube.outputs.num_vars();
-                cube.outputs = OutputSet::from_symbols(
-                    Arc::clone(&new_syms),
-                    (0..min_outputs).map(|i| i < old && cube.outputs.value_at(i)),
-                );
-            }
-            self.output_symbols = new_syms;
-        }
+        let inputs = cube.inputs().project_onto(&self.input_symbols);
+        let outputs = assert_mask(
+            &cube,
+            &self.output_symbols,
+            self.num_outputs(),
+            cube.outputs().num_vars(),
+            |old| cube_out_map[old],
+        );
+        self.cubes.push(Cube::new(inputs, outputs, cube.set));
     }
 }
 
@@ -758,8 +749,8 @@ impl Cover<Anonymous, Anonymous> {
 
 /// Build a cube's output-membership minterm over `new_output` (width `new_no`): for each old output
 /// position `0..old_count` the cube asserts, set the new position `map(old)`; everything else is
-/// unasserted (`Some(false)`). Shared by [`repoint`] (positional re-home, identity map) and the
-/// `merge`/`extend` rebuild (remapped via the per-side output map).
+/// unasserted (`Some(false)`). Shared by the per-cube re-home in `push`/`from_cubes` and the
+/// `merge`/`extend` rebuild, each supplying its own per-output `map`.
 fn assert_mask<I, O, M>(
     cube: &Cube<I, O>,
     new_output: &Arc<Symbols<M>>,

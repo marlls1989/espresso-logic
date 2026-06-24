@@ -96,8 +96,8 @@ impl<'b> BddBuilder<'b> {
     }
 
     /// A variable by name (creating it in the manager's ordering on first use).
-    pub fn var(&self, name: &str) -> Bdd<'b> {
-        let var_id = BddManager::make_var(&self.manager, name);
+    pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<'b> {
+        let var_id = BddManager::make_var(&self.manager, name.as_ref());
         Self::wrap(BddManager::make_node(
             &self.manager,
             var_id,

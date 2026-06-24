@@ -12,7 +12,7 @@
 //! from the `-` (don't-care) state, so multi-output FD/FDR covers round-trip and minimise
 //! byte-identically to the C library.
 
-use super::label::{Anonymous, Label};
+use super::label::{Anonymous, Label, StringLabel};
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::symbols::Symbols;
@@ -159,5 +159,91 @@ impl Cube<Anonymous, Anonymous> {
         );
         let om = OutputSet::anonymous(membership);
         Cube::new(im, om, set)
+    }
+}
+
+impl<I: Label, O: Label> Cube<I, O> {
+    /// Build a **labelled** cube from `(label, value)` pairs.
+    ///
+    /// - Each input pair is `(label, value)` where `value` is `Some(true)`/`Some(false)`, or `None`
+    ///   for a don't-care.
+    /// - Each output pair is `(label, asserted)` where `asserted` says whether this cube asserts that
+    ///   output **in its own set** (`set`): an `F` cube asserts the ON-set outputs, a `D` cube the
+    ///   don't-care outputs, an `R` cube the OFF-set outputs.
+    ///
+    /// Pairing each label with its value makes a label/value length mismatch unrepresentable. The cube
+    /// carries its own symbol tables; [`Cover::push`](crate::Cover::push) /
+    /// [`Cover::from_cubes`](crate::Cover::from_cubes) align it onto the cover by variable
+    /// [identity](crate::Label), so the labels need no particular order — but they should be distinct.
+    ///
+    /// Works for any label type — [`Symbol`](crate::Symbol), `String`, `u32`, … For `&str` names,
+    /// [`with_labels`](Self::with_labels) avoids naming the label type at each pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType, Symbol};
+    ///
+    /// // a·b in the ON-set, asserting output `f`.
+    /// let cube = Cube::<Symbol, Symbol>::labeled(
+    ///     &[(Symbol::new("a"), Some(true)), (Symbol::new("b"), Some(true))],
+    ///     &[(Symbol::new("f"), true)],
+    ///     CubeType::F,
+    /// );
+    /// assert_eq!(cube.inputs().num_vars(), 2);
+    /// assert_eq!(cube.outputs().num_vars(), 1);
+    /// ```
+    #[must_use]
+    pub fn labeled(
+        inputs: &[(I, Option<bool>)],
+        outputs: &[(O, bool)],
+        set: CubeType,
+    ) -> Cube<I, O> {
+        let im = Minterm::from_symbols(
+            Symbols::new(inputs.iter().map(|(l, _)| l.clone()).collect()),
+            inputs.iter().map(|(_, v)| *v),
+        );
+        let om = OutputSet::from_symbols(
+            Symbols::new(outputs.iter().map(|(l, _)| l.clone()).collect()),
+            outputs.iter().map(|(_, a)| *a),
+        );
+        Cube::new(im, om, set)
+    }
+}
+
+impl<I: StringLabel, O: StringLabel> Cube<I, O> {
+    /// Build a labelled cube from `(name, value)` pairs, naming variables with any `&str`-like type.
+    ///
+    /// A string-name convenience over [`labeled`](Self::labeled): each label is built via `From<&str>`,
+    /// so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work). The label type is
+    /// inferred from context (e.g. `Cube::<Symbol, Symbol>::with_labels`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType, Symbol};
+    ///
+    /// let cube = Cube::<Symbol, Symbol>::with_labels(
+    ///     &[("a", Some(true)), ("b", Some(true))],
+    ///     &[("f", true)],
+    ///     CubeType::F,
+    /// );
+    /// assert_eq!(cube.inputs().num_vars(), 2);
+    /// ```
+    #[must_use]
+    pub fn with_labels<SI: AsRef<str>, SO: AsRef<str>>(
+        inputs: &[(SI, Option<bool>)],
+        outputs: &[(SO, bool)],
+        set: CubeType,
+    ) -> Cube<I, O> {
+        let in_pairs: Vec<(I, Option<bool>)> = inputs
+            .iter()
+            .map(|(s, v)| (I::from(s.as_ref()), *v))
+            .collect();
+        let out_pairs: Vec<(O, bool)> = outputs
+            .iter()
+            .map(|(s, a)| (O::from(s.as_ref()), *a))
+            .collect();
+        Cube::labeled(&in_pairs, &out_pairs, set)
     }
 }

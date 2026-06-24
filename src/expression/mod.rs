@@ -316,9 +316,9 @@ impl BoolExpr {
 
     /// Create a variable expression with the given name
     #[must_use]
-    pub fn variable(name: &str) -> Self {
+    pub fn variable<S: AsRef<str>>(name: S) -> Self {
         let manager = BddManager::get_or_create();
-        let var_id = BddManager::make_var(&manager, name);
+        let var_id = BddManager::make_var(&manager, name.as_ref());
         let node = BddManager::make_node(&manager, var_id, FALSE_NODE, TRUE_NODE);
         BoolExpr::from_root(manager, node)
     }

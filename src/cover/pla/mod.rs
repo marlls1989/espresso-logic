@@ -685,8 +685,8 @@ impl<S: StringLabel> PlaCover<S> {
     /// assert_eq!(cover.num_inputs(), 2);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
-    pub fn from_pla_string(s: &str) -> Result<Self, PLAReadError> {
-        Self::from_pla_reader(Cursor::new(s.as_bytes()))
+    pub fn from_pla_string<T: AsRef<str>>(s: T) -> Result<Self, PLAReadError> {
+        Self::from_pla_reader(Cursor::new(s.as_ref().as_bytes()))
     }
 
     /// Load a `PlaCover` from a PLA-format file.

@@ -247,12 +247,12 @@ fn concurrent_symbol_covers() {
     let handles: Vec<_> = (0..8)
         .map(|t| {
             thread::spawn(move || {
-                let a = BoolExpr::variable(&format!("t{t}_a"));
-                let b = BoolExpr::variable(&format!("t{t}_b"));
+                let a = BoolExpr::variable(format!("t{t}_a"));
+                let b = BoolExpr::variable(format!("t{t}_b"));
                 let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
                 // a*b + a*~b  ==  a  (so b drops out under minimisation)
                 cover
-                    .add_expr(&a.and(&b).or(&a.and(&b.not())), &format!("out{t}"))
+                    .add_expr(&a.and(&b).or(&a.and(&b.not())), format!("out{t}"))
                     .unwrap();
                 let min = cover.minimize().unwrap();
                 assert!(min.num_cubes() >= 1);

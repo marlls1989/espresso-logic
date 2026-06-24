@@ -30,7 +30,8 @@ impl BoolExpr {
     ///
     /// All binary operators are left-associative. The result is realised through [`BoolExpr::build`],
     /// so the whole expression is constructed under a single BDD manager lock.
-    pub fn parse(input: &str) -> Result<Self, ParseBoolExprError> {
+    pub fn parse<S: AsRef<str>>(input: S) -> Result<Self, ParseBoolExprError> {
+        let input = input.as_ref();
         parser_impl::ExprParser::new().parse(input).map_err(|e| {
             let message = e.to_string();
             // Try to extract position from lalrpop error message

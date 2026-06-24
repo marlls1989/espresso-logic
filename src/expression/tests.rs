@@ -43,6 +43,19 @@ fn test_precedence_and_over_or() {
 }
 
 #[test]
+fn parse_and_var_accept_owned_string() {
+    // `BoolExpr::parse` and `BddBuilder::var` take any `AsRef<str>`, not only `&str` — passing an
+    // owned `String` yields the same expression as the `&str` form (no string type is privileged).
+    let from_string = BoolExpr::parse(String::from("a * b + c")).unwrap();
+    let from_str = BoolExpr::parse("a * b + c").unwrap();
+    assert!(from_string.equivalent_to(&from_str));
+
+    let var_string = BoolExpr::build(|b| b.var(String::from("x")));
+    let var_str = BoolExpr::build(|b| b.var("x"));
+    assert!(var_string.equivalent_to(&var_str));
+}
+
+#[test]
 fn test_precedence_or_in_and_needs_parens() {
     // OR has lower precedence, needs parentheses when inside AND
     let a = BoolExpr::variable("a");
@@ -1232,7 +1245,7 @@ fn deep_chain_does_not_overflow() {
             // factorised AST is N deep — both would blow a recursive traversal at this stack size.
             let mut expr = BoolExpr::variable("v0000");
             for i in 1..N {
-                expr = expr.and(&BoolExpr::variable(&format!("v{i:04}")));
+                expr = expr.and(&BoolExpr::variable(format!("v{i:04}")));
             }
 
             // BDD-side iterative consumers.
@@ -1303,7 +1316,7 @@ fn deep_parse_does_not_overflow() {
             let flat = BoolExpr::build(|b| {
                 let mut acc = b.var("v0000");
                 for i in 1..N {
-                    let v = b.var(&format!("v{i:04}"));
+                    let v = b.var(format!("v{i:04}"));
                     acc = b.or(acc, v);
                 }
                 acc
@@ -1330,7 +1343,7 @@ fn deep_ite_does_not_overflow() {
             let f_false = BoolExpr::constant(false);
             let mut acc = BoolExpr::constant(true);
             for i in 0..N {
-                let v = BoolExpr::variable(&format!("v{i:04}"));
+                let v = BoolExpr::variable(format!("v{i:04}"));
                 acc = v.ite(&acc, &f_false);
             }
             assert_eq!(acc.var_count(), N);

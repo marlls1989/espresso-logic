@@ -46,7 +46,12 @@ impl Cover<Symbol, Symbol> {
     /// let expr2 = b.or(&a);
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
-    pub fn add_expr(&mut self, expr: &BoolExpr, output_name: &str) -> Result<(), AddExprError> {
+    pub fn add_expr<S: AsRef<str>>(
+        &mut self,
+        expr: &BoolExpr,
+        output_name: S,
+    ) -> Result<(), AddExprError> {
+        let output_name = output_name.as_ref();
         // `add_expr` is a *labelled* operation, intended for empty or fully-labelled covers. Build
         // positional covers as `Cover<Anonymous, Anonymous>` and convert explicitly (`relabel`) rather than naming
         // anonymous positions here.
@@ -209,7 +214,8 @@ impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
     /// let expr = cover.to_expr("result").unwrap();
     /// println!("result: {}", expr);
     /// ```
-    pub fn to_expr(&self, output_name: &str) -> Result<BoolExpr, ToExprError> {
+    pub fn to_expr<S: AsRef<str>>(&self, output_name: S) -> Result<BoolExpr, ToExprError> {
+        let output_name = output_name.as_ref();
         let output_idx = self
             .output_symbols()
             .labels()

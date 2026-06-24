@@ -15,7 +15,7 @@
 //! `Symbol`'s `Ord`, `Eq` and `Hash` all act on the string **content** and agree with `str`'s, so a
 //! `BTreeMap<Symbol, _>` / `HashMap<Symbol, _>` can be looked up with a `&str` key (via [`Borrow`]).
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
@@ -44,8 +44,13 @@ enum Repr {
 
 impl Symbol {
     /// Intern a string as a `Symbol` (inline if short, pooled otherwise).
+    ///
+    /// Accepts any `&str`-like type with no privilege — `&str`, `String`, `Arc<str>`, `Box<str>`,
+    /// `Cow<str>`, another `Symbol`, … all work through the single [`AsRef<str>`] bound, the same way
+    /// [`Path::new`](std::path::Path::new) accepts any `AsRef<OsStr>`.
     #[must_use]
-    pub fn new(s: &str) -> Symbol {
+    pub fn new<S: AsRef<str>>(s: S) -> Symbol {
+        let s = s.as_ref();
         let bytes = s.as_bytes();
         if bytes.len() <= INLINE_CAP {
             let mut buf = [0u8; INLINE_CAP];
@@ -93,6 +98,17 @@ fn intern(s: &str) -> Arc<str> {
     arc
 }
 
+/// Like [`intern`], but reuses the caller's existing `Arc<str>` on a pool miss instead of allocating a
+/// fresh copy. Lets `From<Arc<str>>` move a long name's allocation straight into the heap repr.
+fn intern_arc(arc: Arc<str>) -> Arc<str> {
+    let mut pool = POOL.lock().unwrap();
+    if let Some(existing) = pool.get(&*arc) {
+        return existing;
+    }
+    pool.insert(Arc::clone(&arc));
+    arc
+}
+
 // ===== Trait surface — all content-based and `str`-consistent =====
 
 impl Deref for Symbol {
@@ -132,6 +148,40 @@ impl From<String> for Symbol {
 impl From<&String> for Symbol {
     fn from(s: &String) -> Symbol {
         Symbol::new(s)
+    }
+}
+
+impl From<&mut str> for Symbol {
+    fn from(s: &mut str) -> Symbol {
+        Symbol::new(s)
+    }
+}
+
+impl From<Box<str>> for Symbol {
+    fn from(s: Box<str>) -> Symbol {
+        Symbol::new(s)
+    }
+}
+
+impl From<Cow<'_, str>> for Symbol {
+    fn from(s: Cow<'_, str>) -> Symbol {
+        Symbol::new(s)
+    }
+}
+
+/// Consumes the `Arc<str>`, reusing its allocation for a heap-stored (long) name rather than copying —
+/// `Symbol`'s heap representation *is* an `Arc<str>`, so a long name interns by moving the incoming
+/// allocation into the pool. Short names still go inline (the `Arc` is dropped).
+impl From<Arc<str>> for Symbol {
+    fn from(s: Arc<str>) -> Symbol {
+        // `str::len()` is the UTF-8 **byte** length (not chars), which is what `INLINE_CAP`'s byte
+        // capacity (`buf: [u8; INLINE_CAP]`) wants — so multibyte names split inline/heap by bytes,
+        // exactly as in `Symbol::new`.
+        if s.len() <= INLINE_CAP {
+            Symbol::new(&*s)
+        } else {
+            Symbol(Repr::Heap(intern_arc(s)))
+        }
     }
 }
 
@@ -262,6 +312,59 @@ mod tests {
         for s in ["", "a", "x0", "carry_in", LONG] {
             assert_eq!(Symbol::new(s).as_str(), s);
         }
+    }
+
+    #[test]
+    fn new_accepts_any_str_type_without_privilege() {
+        use std::borrow::Cow;
+        // Every `&str`-like type constructs a `Symbol` directly — no `String` detour, no privilege.
+        assert_eq!(Symbol::new("a"), Symbol::new(String::from("a")));
+        assert_eq!(Symbol::new("a"), Symbol::new(Arc::<str>::from("a")));
+        assert_eq!(Symbol::new("a"), Symbol::new(Box::<str>::from("a")));
+        assert_eq!(Symbol::new("a"), Symbol::new(Cow::Borrowed("a")));
+        assert_eq!(Symbol::new("a"), Symbol::new(Symbol::new("a")));
+        // Long (heap-interned) names too.
+        assert_eq!(Symbol::new(LONG), Symbol::new(Arc::<str>::from(LONG)));
+    }
+
+    #[test]
+    fn from_accepts_common_string_types() {
+        // Every common owned/shared/borrowed string type converts via `From`/`.into()` with no privilege.
+        let mut owned = String::from("a");
+        assert_eq!(Symbol::from("a"), Symbol::from(String::from("a")));
+        assert_eq!(Symbol::from("a"), Symbol::from(&String::from("a")));
+        assert_eq!(Symbol::from("a"), Symbol::from(owned.as_mut_str()));
+        assert_eq!(Symbol::from("a"), Symbol::from(Box::<str>::from("a")));
+        assert_eq!(Symbol::from("a"), Symbol::from(Arc::<str>::from("a")));
+        assert_eq!(Symbol::from("a"), Symbol::from(Cow::Borrowed("a")));
+        assert_eq!(Symbol::from("a"), Symbol::from(Cow::<str>::Owned("a".into())));
+    }
+
+    #[test]
+    fn from_arc_preserves_interning() {
+        // A long name built from an `Arc<str>` shares one interned allocation with the same name built
+        // any other way — `From<Arc<str>>` must go through the pool, not stash a private allocation.
+        let from_arc = Symbol::from(Arc::<str>::from(LONG));
+        let from_str = Symbol::new(LONG);
+        match (&from_arc.0, &from_str.0) {
+            (Repr::Heap(a), Repr::Heap(b)) => assert!(Arc::ptr_eq(a, b), "must share one interned Arc"),
+            _ => panic!("long names must be heap-interned"),
+        }
+        // A short name from an `Arc<str>` goes inline (the Arc is dropped), like any short name.
+        assert!(matches!(Symbol::from(Arc::<str>::from("a")).0, Repr::Inline { .. }));
+    }
+
+    #[test]
+    fn from_arc_splits_inline_heap_by_bytes_not_chars() {
+        // 'é' is 2 bytes. 11 of them == 22 bytes (== INLINE_CAP) → inline; 12 == 24 bytes → heap. A
+        // char-count split would wrongly inline the 12-char (24-byte) name and overflow the buffer.
+        let fits = "é".repeat(11);
+        let over = "é".repeat(12);
+        assert_eq!(fits.len(), INLINE_CAP); // str::len() is bytes
+        assert!(matches!(Symbol::from(Arc::<str>::from(fits.as_str())).0, Repr::Inline { .. }));
+        assert!(matches!(Symbol::from(Arc::<str>::from(over.as_str())).0, Repr::Heap(_)));
+        // Content is preserved across the split either way.
+        assert_eq!(Symbol::from(Arc::<str>::from(over.as_str())).as_str(), over);
     }
 
     #[test]

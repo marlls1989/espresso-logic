@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] - 2026-06-24
+
+Ergonomic, fully backward-compatible patch: string-accepting APIs no longer privilege one string type,
+and `Symbol` converts from every common string type. Existing `&str` call sites are unaffected.
+
+### Added
+
+- `Symbol` converts from every common string type via `From`/`.into()`: `&mut str`, `Box<str>`,
+  `Arc<str>`, and `Cow<str>` join the existing `&str`/`String`/`&String` impls. `From<Arc<str>>` reuses
+  the incoming allocation for a long (heap-interned) name rather than copying it.
+- Labelled `Cube` constructors: `Cube::labeled` (from `(label, value)` pairs, any label type) and
+  `Cube::with_labels` (the same with `&str` names). Pairing each label with its value makes a
+  label/value length mismatch unrepresentable.
+- `Cover::push` and `Cover::from_cubes` now work for **any** label type, not just anonymous covers.
+  A cube aligns onto the cover by variable identity — by name for labelled covers, by position for
+  anonymous ones — and a cube carrying a new variable widens the cover by that identity (as `merge`
+  does). Anonymous behaviour is unchanged (identity is position).
+
+### Changed
+
+- String-accepting entry points now take any `impl AsRef<str>` instead of `&str`, so no string type is
+  privileged: `Symbol::new`, `BoolExpr::variable`, `BoolExpr::parse`, `BddBuilder::var`,
+  `Cover::add_expr`, `Cover::to_expr`, and `PlaCover::from_pla_string`. Existing `&str` call sites are
+  unaffected.
+
 ## [4.1.0] - 2026-06-24
 
 This is an intentionally **API-breaking minor release** (low 4.0 adoption does not justify a major bump).

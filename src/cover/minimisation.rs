@@ -336,8 +336,8 @@ where
     // Espresso returns anonymous positional cubes (`Cube<Anonymous, Anonymous>`) at exactly the cover's
     // arity, in the same packed layout. Re-home each onto the cover's real `Symbols<L>` tables by
     // cloning the packed-word `Arc`s (the packing is independent of the label type, and variable order
-    // is preserved across the boundary) — no per-variable re-packing. Unlike `repoint`, this needs no
-    // padding/projection because the arities already match.
+    // is preserved across the boundary) — no per-variable re-packing. Unlike the identity-union
+    // re-home in `push`/`from_cubes`, this needs no padding/projection because the arities already match.
     let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
         let im = Minterm::from_packed_words(
             Arc::clone(&input_symbols),
