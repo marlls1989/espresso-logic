@@ -337,7 +337,10 @@ mod tests {
         assert_eq!(Symbol::from("a"), Symbol::from(Box::<str>::from("a")));
         assert_eq!(Symbol::from("a"), Symbol::from(Arc::<str>::from("a")));
         assert_eq!(Symbol::from("a"), Symbol::from(Cow::Borrowed("a")));
-        assert_eq!(Symbol::from("a"), Symbol::from(Cow::<str>::Owned("a".into())));
+        assert_eq!(
+            Symbol::from("a"),
+            Symbol::from(Cow::<str>::Owned("a".into()))
+        );
     }
 
     #[test]
@@ -347,11 +350,16 @@ mod tests {
         let from_arc = Symbol::from(Arc::<str>::from(LONG));
         let from_str = Symbol::new(LONG);
         match (&from_arc.0, &from_str.0) {
-            (Repr::Heap(a), Repr::Heap(b)) => assert!(Arc::ptr_eq(a, b), "must share one interned Arc"),
+            (Repr::Heap(a), Repr::Heap(b)) => {
+                assert!(Arc::ptr_eq(a, b), "must share one interned Arc")
+            }
             _ => panic!("long names must be heap-interned"),
         }
         // A short name from an `Arc<str>` goes inline (the Arc is dropped), like any short name.
-        assert!(matches!(Symbol::from(Arc::<str>::from("a")).0, Repr::Inline { .. }));
+        assert!(matches!(
+            Symbol::from(Arc::<str>::from("a")).0,
+            Repr::Inline { .. }
+        ));
     }
 
     #[test]
@@ -361,8 +369,14 @@ mod tests {
         let fits = "é".repeat(11);
         let over = "é".repeat(12);
         assert_eq!(fits.len(), INLINE_CAP); // str::len() is bytes
-        assert!(matches!(Symbol::from(Arc::<str>::from(fits.as_str())).0, Repr::Inline { .. }));
-        assert!(matches!(Symbol::from(Arc::<str>::from(over.as_str())).0, Repr::Heap(_)));
+        assert!(matches!(
+            Symbol::from(Arc::<str>::from(fits.as_str())).0,
+            Repr::Inline { .. }
+        ));
+        assert!(matches!(
+            Symbol::from(Arc::<str>::from(over.as_str())).0,
+            Repr::Heap(_)
+        ));
         // Content is preserved across the split either way.
         assert_eq!(Symbol::from(Arc::<str>::from(over.as_str())).as_str(), over);
     }

@@ -234,12 +234,20 @@ fn push_rehomes_non_f_cube_through_widening() {
     let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::FDR);
     cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap());
     cover.push(
-        Cube::with_labels(&[("a", Some(false)), ("b", Some(true))], &[("f", true)], CubeType::D)
-            .unwrap(),
+        Cube::with_labels(
+            &[("a", Some(false)), ("b", Some(true))],
+            &[("f", true)],
+            CubeType::D,
+        )
+        .unwrap(),
     );
     cover.push(
-        Cube::with_labels(&[("a", Some(true)), ("b", Some(false))], &[("f", true)], CubeType::R)
-            .unwrap(),
+        Cube::with_labels(
+            &[("a", Some(true)), ("b", Some(false))],
+            &[("f", true)],
+            CubeType::R,
+        )
+        .unwrap(),
     );
 
     assert_eq!(cover.num_inputs(), 2);
@@ -306,10 +314,24 @@ fn merge_same_headers_appends_without_widening() {
     // `other`'s identities are all present in `self` → merge's no-widening fast path: `self` keeps its
     // headers/cubes and `other`'s cube is appended, aligned by name.
     let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    a.push(Cube::with_labels(&[("x", Some(true)), ("y", None)], &[("o", true)], CubeType::F).unwrap());
+    a.push(
+        Cube::with_labels(
+            &[("x", Some(true)), ("y", None)],
+            &[("o", true)],
+            CubeType::F,
+        )
+        .unwrap(),
+    );
     let mut b: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     // Labels in the opposite order, same header set.
-    b.push(Cube::with_labels(&[("y", Some(false)), ("x", None)], &[("o", true)], CubeType::F).unwrap());
+    b.push(
+        Cube::with_labels(
+            &[("y", Some(false)), ("x", None)],
+            &[("o", true)],
+            CubeType::F,
+        )
+        .unwrap(),
+    );
 
     a.merge(&b);
     assert_eq!(a.num_inputs(), 2);

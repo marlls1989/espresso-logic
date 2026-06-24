@@ -471,7 +471,6 @@ impl<B: Brand> BoolExpr<B> {
     }
 }
 
-
 /// Collect a minterm's fixed literals as a `name -> polarity` map (don't-cares omitted).
 ///
 /// This is the scratch format consumed by the algebraic factoriser; don't-care variables

@@ -706,16 +706,28 @@ impl<I: Label, O: Label> Cover<I, O> {
         // Probe (no allocation) whether the cube carries an identity the cover lacks. Only then must the
         // existing cubes be re-homed onto wider headers; the common append allocates no `Symbols` and
         // touches just the new cube.
-        let grows_inputs = cube.inputs().symbols().labels().iter().enumerate().any(|(i, l)| {
-            self.input_symbols
-                .position_of_identity(&l.identity(i))
-                .is_none()
-        });
-        let grows_outputs = cube.outputs().symbols().labels().iter().enumerate().any(|(j, l)| {
-            self.output_symbols
-                .position_of_identity(&l.identity(j))
-                .is_none()
-        });
+        let grows_inputs = cube
+            .inputs()
+            .symbols()
+            .labels()
+            .iter()
+            .enumerate()
+            .any(|(i, l)| {
+                self.input_symbols
+                    .position_of_identity(&l.identity(i))
+                    .is_none()
+            });
+        let grows_outputs = cube
+            .outputs()
+            .symbols()
+            .labels()
+            .iter()
+            .enumerate()
+            .any(|(j, l)| {
+                self.output_symbols
+                    .position_of_identity(&l.identity(j))
+                    .is_none()
+            });
 
         if grows_inputs || grows_outputs {
             let new_input = union_inputs(&self.input_symbols, cube.inputs().symbols());
@@ -898,16 +910,26 @@ impl<I: Label, O: Label> Cover<I, O> {
         // Probe (no allocation) whether `other` carries an identity `self` lacks. Only then must `self`'s
         // cubes be re-homed onto wider headers; otherwise `self` keeps its headers and cubes, and
         // `other`'s cubes are appended in place — no union `Symbols`, no rebuild of `self`.
-        let grows_inputs = other.input_symbols.labels().iter().enumerate().any(|(i, l)| {
-            self.input_symbols
-                .position_of_identity(&l.identity(i))
-                .is_none()
-        });
-        let grows_outputs = other.output_symbols.labels().iter().enumerate().any(|(j, l)| {
-            self.output_symbols
-                .position_of_identity(&l.identity(j))
-                .is_none()
-        });
+        let grows_inputs = other
+            .input_symbols
+            .labels()
+            .iter()
+            .enumerate()
+            .any(|(i, l)| {
+                self.input_symbols
+                    .position_of_identity(&l.identity(i))
+                    .is_none()
+            });
+        let grows_outputs = other
+            .output_symbols
+            .labels()
+            .iter()
+            .enumerate()
+            .any(|(j, l)| {
+                self.output_symbols
+                    .position_of_identity(&l.identity(j))
+                    .is_none()
+            });
 
         if grows_inputs || grows_outputs {
             let (new_output, a_map, b_map) =
