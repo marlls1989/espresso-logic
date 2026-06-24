@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # bindgen needs libclang to generate the FFI bindings against the vendored C.
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Build CLI
+        run: cargo build --features cli
+
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Builds the reference C binary (espresso-src/Makefile) and the Rust CLI, then asserts the Rust
+      # CLI's PLA output is byte-identical to C across every -o {f,fd,fr,fdr} variant.
+      - name: Regression (Rust CLI vs C reference)
+        run: ./tests/regression_test.sh
