@@ -190,6 +190,46 @@ impl From<ArityMismatch> for io::Error {
     }
 }
 
+/// Returned by [`Cube::labeled`](crate::Cube::labeled) / [`Cube::with_labels`](crate::Cube::with_labels)
+/// when a side carries the same label twice. Variables are aligned by label identity, so a cube's input
+/// (or output) labels must be distinct — otherwise the duplicate columns would collapse onto one and
+/// silently drop a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DuplicateLabel {
+    /// Two input variables share a label; `index` is the position of the second occurrence.
+    Input {
+        /// The position of the duplicate input label.
+        index: usize,
+    },
+    /// Two output variables share a label; `index` is the position of the second occurrence.
+    Output {
+        /// The position of the duplicate output label.
+        index: usize,
+    },
+}
+
+impl fmt::Display for DuplicateLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DuplicateLabel::Input { index } => {
+                write!(f, "duplicate input label at position {}", index)
+            }
+            DuplicateLabel::Output { index } => {
+                write!(f, "duplicate output label at position {}", index)
+            }
+        }
+    }
+}
+
+impl std::error::Error for DuplicateLabel {}
+
+impl From<DuplicateLabel> for io::Error {
+    fn from(err: DuplicateLabel) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

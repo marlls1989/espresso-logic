@@ -79,7 +79,8 @@ fn cube_labeled_builds_expected_and_matches_with_labels() {
         &[(Symbol::new("a"), Some(true)), (Symbol::new("b"), None)],
         &[(Symbol::new("f"), true)],
         CubeType::F,
-    );
+    )
+    .unwrap();
     assert_eq!(cube.inputs().num_vars(), 2);
     assert_eq!(cube.outputs().num_vars(), 1);
     assert_eq!(cube.inputs().value_of("a"), Some(true));
@@ -91,7 +92,8 @@ fn cube_labeled_builds_expected_and_matches_with_labels() {
         &[("a", Some(true)), ("b", None)],
         &[("f", true)],
         CubeType::F,
-    );
+    )
+    .unwrap();
     assert_eq!(cube, via_str);
 }
 
@@ -102,26 +104,63 @@ fn cube_labeled_accepts_non_string_labels() {
         &[(10, Some(true)), (20, Some(false))],
         &[(0, true)],
         CubeType::F,
-    );
+    )
+    .unwrap();
     assert_eq!(cube.inputs().value_of(&10u32), Some(true));
     assert_eq!(cube.inputs().value_of(&20u32), Some(false));
     assert_eq!(cube.outputs().num_vars(), 1);
 }
 
 #[test]
-fn push_aligns_labeled_cubes_by_name() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    cover.push(Cube::with_labels(
+fn cube_rejects_duplicate_labels() {
+    use super::DuplicateLabel;
+    // Duplicate input name → Err(Input).
+    assert_eq!(
+        Cube::<Symbol, Symbol>::with_labels(
+            &[("a", Some(true)), ("a", Some(false))],
+            &[("f", true)],
+            CubeType::F,
+        ),
+        Err(DuplicateLabel::Input { index: 1 })
+    );
+    // Duplicate output name → Err(Output).
+    assert_eq!(
+        Cube::<Symbol, Symbol>::with_labels(
+            &[("a", Some(true))],
+            &[("f", true), ("f", false)],
+            CubeType::F,
+        ),
+        Err(DuplicateLabel::Output { index: 1 })
+    );
+    // Distinct labels are fine.
+    assert!(Cube::<Symbol, Symbol>::with_labels(
         &[("a", Some(true)), ("b", Some(false))],
         &[("f", true)],
         CubeType::F,
-    ));
+    )
+    .is_ok());
+}
+
+#[test]
+fn push_aligns_labeled_cubes_by_name() {
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.push(
+        Cube::with_labels(
+            &[("a", Some(true)), ("b", Some(false))],
+            &[("f", true)],
+            CubeType::F,
+        )
+        .unwrap(),
+    );
     // Same assignment, labels listed in the OPPOSITE order: must align by name, not position.
-    cover.push(Cube::with_labels(
-        &[("b", Some(false)), ("a", Some(true))],
-        &[("f", true)],
-        CubeType::F,
-    ));
+    cover.push(
+        Cube::with_labels(
+            &[("b", Some(false)), ("a", Some(true))],
+            &[("f", true)],
+            CubeType::F,
+        )
+        .unwrap(),
+    );
 
     assert_eq!(cover.num_inputs(), 2); // aligned by name, not duplicated into 4 columns
     assert_eq!(cover.num_cubes(), 2);
@@ -140,15 +179,18 @@ fn push_aligns_labeled_cubes_by_name() {
 #[test]
 fn push_widens_labeled_cover_by_new_name() {
     let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F));
+    cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap());
     assert_eq!(cover.num_inputs(), 1);
 
     // A second cube introduces `b`: the cover widens by name, and the first cube gets `b` = don't-care.
-    cover.push(Cube::with_labels(
-        &[("a", Some(false)), ("b", Some(true))],
-        &[("f", true)],
-        CubeType::F,
-    ));
+    cover.push(
+        Cube::with_labels(
+            &[("a", Some(false)), ("b", Some(true))],
+            &[("f", true)],
+            CubeType::F,
+        )
+        .unwrap(),
+    );
     assert_eq!(cover.num_inputs(), 2);
 
     let rows: Vec<_> = cover.cubes().collect();
@@ -156,6 +198,65 @@ fn push_widens_labeled_cover_by_new_name() {
     assert_eq!(rows[0].inputs().value_of("b"), None); // widened → don't-care
     assert_eq!(rows[1].inputs().value_of("a"), Some(false));
     assert_eq!(rows[1].inputs().value_of("b"), Some(true));
+}
+
+#[test]
+fn push_widens_outputs_and_remaps_by_name() {
+    // Exercises the OUTPUT widening path: the second cube introduces a new output identity while the
+    // cover already holds a cube, so the existing cube is re-homed (self_out_map) and the new cube's
+    // output lands on the fresh column (the on-demand identity_position map).
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap());
+    cover.push(Cube::with_labels(&[("a", Some(false))], &[("g", true)], CubeType::F).unwrap());
+
+    assert_eq!(cover.num_outputs(), 2);
+    let col = |name: &str| {
+        cover
+            .output_labels()
+            .iter()
+            .position(|l| l.as_ref() == name)
+            .unwrap()
+    };
+    let (f, g) = (col("f"), col("g"));
+    let rows: Vec<_> = cover.cubes().collect();
+    // Cube 0 asserts only f (g was added as an unasserted column for it).
+    assert!(rows[0].outputs().value_at(f));
+    assert!(!rows[0].outputs().value_at(g));
+    // Cube 1 asserts only g.
+    assert!(!rows[1].outputs().value_at(f));
+    assert!(rows[1].outputs().value_at(g));
+}
+
+#[test]
+fn push_rehomes_non_f_cube_through_widening() {
+    // A D and an R cube re-homed through input widening: cube_type is preserved and the earlier cube
+    // gains a don't-care in the new input column.
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::FDR);
+    cover.push(Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap());
+    cover.push(
+        Cube::with_labels(&[("a", Some(false)), ("b", Some(true))], &[("f", true)], CubeType::D)
+            .unwrap(),
+    );
+    cover.push(
+        Cube::with_labels(&[("a", Some(true)), ("b", Some(false))], &[("f", true)], CubeType::R)
+            .unwrap(),
+    );
+
+    assert_eq!(cover.num_inputs(), 2);
+    let rows: Vec<_> = cover.cubes().collect();
+    assert_eq!(rows[0].cube_type(), CubeType::F);
+    assert_eq!(rows[1].cube_type(), CubeType::D);
+    assert_eq!(rows[2].cube_type(), CubeType::R);
+    // The first (F) cube was re-homed: a=Some(true), b=don't-care.
+    assert_eq!(rows[0].inputs().value_of("a"), Some(true));
+    assert_eq!(rows[0].inputs().value_of("b"), None);
+    // All three share the single output column f.
+    let f = cover
+        .output_labels()
+        .iter()
+        .position(|l| l.as_ref() == "f")
+        .unwrap();
+    assert!(rows.iter().all(|c| c.outputs().value_at(f)));
 }
 
 #[test]
@@ -167,24 +268,92 @@ fn from_cubes_labeled_unions_headers_by_name() {
                 &[("a", Some(true)), ("b", Some(false))],
                 &[("f", true)],
                 CubeType::F,
-            ),
+            )
+            .unwrap(),
             Cube::with_labels(
                 &[("b", Some(true)), ("c", Some(true))],
                 &[("g", true)],
                 CubeType::F,
-            ),
+            )
+            .unwrap(),
         ],
     );
     assert_eq!(cover.num_inputs(), 3); // a, b, c unioned by name
     assert_eq!(cover.num_outputs(), 2); // f, g
     let labels: Vec<&str> = cover.input_labels().iter().map(|l| l.as_ref()).collect();
     assert_eq!(labels, ["a", "b", "c"]);
-    // Cube 0 lacks `c`, cube 1 lacks `a` → each don't-care where absent.
     let rows: Vec<_> = cover.cubes().collect();
+    // Cube 0 lacks `c`, cube 1 lacks `a` → each don't-care where absent.
     assert_eq!(rows[0].inputs().value_of("a"), Some(true));
     assert_eq!(rows[0].inputs().value_of("c"), None);
     assert_eq!(rows[1].inputs().value_of("a"), None);
     assert_eq!(rows[1].inputs().value_of("c"), Some(true));
+    // Output columns are remapped by name: cube 0 ⇒ f only, cube 1 ⇒ g only.
+    let col = |name: &str| {
+        cover
+            .output_labels()
+            .iter()
+            .position(|l| l.as_ref() == name)
+            .unwrap()
+    };
+    let (f, g) = (col("f"), col("g"));
+    assert!(rows[0].outputs().value_at(f) && !rows[0].outputs().value_at(g));
+    assert!(!rows[1].outputs().value_at(f) && rows[1].outputs().value_at(g));
+}
+
+#[test]
+fn merge_same_headers_appends_without_widening() {
+    // `other`'s identities are all present in `self` → merge's no-widening fast path: `self` keeps its
+    // headers/cubes and `other`'s cube is appended, aligned by name.
+    let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    a.push(Cube::with_labels(&[("x", Some(true)), ("y", None)], &[("o", true)], CubeType::F).unwrap());
+    let mut b: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    // Labels in the opposite order, same header set.
+    b.push(Cube::with_labels(&[("y", Some(false)), ("x", None)], &[("o", true)], CubeType::F).unwrap());
+
+    a.merge(&b);
+    assert_eq!(a.num_inputs(), 2);
+    assert_eq!(a.num_outputs(), 1);
+    assert_eq!(a.num_cubes(), 2);
+    let rows: Vec<_> = a.cubes().collect();
+    assert_eq!(rows[0].inputs().value_of("x"), Some(true));
+    assert_eq!(rows[0].inputs().value_of("y"), None);
+    assert_eq!(rows[1].inputs().value_of("x"), None);
+    assert_eq!(rows[1].inputs().value_of("y"), Some(false));
+    let o = a
+        .output_labels()
+        .iter()
+        .position(|l| l.as_ref() == "o")
+        .unwrap();
+    assert!(rows.iter().all(|c| c.outputs().value_at(o)));
+}
+
+#[test]
+fn merge_widening_rebuilds_by_identity() {
+    // `other` introduces a new input (`z`) and output (`p`) → merge's widening path: `self`'s cube is
+    // re-homed (new columns don't-care/unasserted) and `other`'s cube lands on the new columns.
+    let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    a.push(Cube::with_labels(&[("x", Some(true))], &[("o", true)], CubeType::F).unwrap());
+    let mut b: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    b.push(Cube::with_labels(&[("z", Some(false))], &[("p", true)], CubeType::F).unwrap());
+
+    a.merge(&b);
+    assert_eq!(a.num_inputs(), 2); // x, z
+    assert_eq!(a.num_outputs(), 2); // o, p
+    let rows: Vec<_> = a.cubes().collect();
+    assert_eq!(rows[0].inputs().value_of("x"), Some(true));
+    assert_eq!(rows[0].inputs().value_of("z"), None); // re-homed: new input don't-care
+    assert_eq!(rows[1].inputs().value_of("z"), Some(false));
+    assert_eq!(rows[1].inputs().value_of("x"), None);
+    let col = |name: &str| {
+        a.output_labels()
+            .iter()
+            .position(|l| l.as_ref() == name)
+            .unwrap()
+    };
+    let (o, p) = (col("o"), col("p"));
+    assert!(rows[0].outputs().value_at(o) && !rows[0].outputs().value_at(p));
+    assert!(!rows[1].outputs().value_at(o) && rows[1].outputs().value_at(p));
 }
 
 #[test]

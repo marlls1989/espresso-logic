@@ -17,7 +17,8 @@ and `Symbol` converts from every common string type. Existing `&str` call sites 
   the incoming allocation for a long (heap-interned) name rather than copying it.
 - Labelled `Cube` constructors: `Cube::labeled` (from `(label, value)` pairs, any label type) and
   `Cube::with_labels` (the same with `&str` names). Pairing each label with its value makes a
-  label/value length mismatch unrepresentable.
+  label/value length mismatch unrepresentable; both return `Result`, rejecting a side's duplicate
+  labels with `DuplicateLabel` (duplicates would otherwise collapse to one column and drop a value).
 - `Cover::push` and `Cover::from_cubes` now work for **any** label type, not just anonymous covers.
   A cube aligns onto the cover by variable identity — by name for labelled covers, by position for
   anonymous ones — and a cube carrying a new variable widens the cover by that identity (as `merge`

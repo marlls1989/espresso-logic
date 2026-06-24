@@ -12,11 +12,14 @@
 //! from the `-` (don't-care) state, so multi-output FD/FDR covers round-trip and minimise
 //! byte-identically to the C library.
 
+use super::error::DuplicateLabel;
 use super::label::{Anonymous, Label, StringLabel};
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::symbols::Symbols;
+use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 
 /// Which of a cover's three sets a cube belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -162,6 +165,17 @@ impl Cube<Anonymous, Anonymous> {
     }
 }
 
+/// The position of the first label whose identity repeats an earlier one, or `None` if all distinct.
+/// `Anonymous`'s identity is its position, so an anonymous header never reports a duplicate.
+fn first_duplicate<L: Label>(labels: &[L]) -> Option<usize> {
+    let mut seen = HashSet::new();
+    labels
+        .iter()
+        .enumerate()
+        .find(|&(i, l)| !seen.insert(l.identity(i)))
+        .map(|(i, _)| i)
+}
+
 impl<I: Label, O: Label> Cube<I, O> {
     /// Build a **labelled** cube from `(label, value)` pairs.
     ///
@@ -174,10 +188,15 @@ impl<I: Label, O: Label> Cube<I, O> {
     /// Pairing each label with its value makes a label/value length mismatch unrepresentable. The cube
     /// carries its own symbol tables; [`Cover::push`](crate::Cover::push) /
     /// [`Cover::from_cubes`](crate::Cover::from_cubes) align it onto the cover by variable
-    /// [identity](crate::Label), so the labels need no particular order — but they should be distinct.
+    /// [identity](crate::Label), so the labels need no particular order.
     ///
     /// Works for any label type — [`Symbol`](crate::Symbol), `String`, `u32`, … For `&str` names,
     /// [`with_labels`](Self::with_labels) avoids naming the label type at each pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if either side repeats a label. Variables align by identity, so a
+    /// side's labels must be distinct — duplicates would collapse onto one column and drop a value.
     ///
     /// # Examples
     ///
@@ -189,25 +208,46 @@ impl<I: Label, O: Label> Cube<I, O> {
     ///     &[(Symbol::new("a"), Some(true)), (Symbol::new("b"), Some(true))],
     ///     &[(Symbol::new("f"), true)],
     ///     CubeType::F,
-    /// );
+    /// )
+    /// .unwrap();
     /// assert_eq!(cube.inputs().num_vars(), 2);
     /// assert_eq!(cube.outputs().num_vars(), 1);
     /// ```
-    #[must_use]
     pub fn labeled(
         inputs: &[(I, Option<bool>)],
         outputs: &[(O, bool)],
         set: CubeType,
-    ) -> Cube<I, O> {
-        let im = Minterm::from_symbols(
-            Symbols::new(inputs.iter().map(|(l, _)| l.clone()).collect()),
+    ) -> Result<Cube<I, O>, DuplicateLabel> {
+        Self::from_label_arcs(
+            inputs.iter().map(|(l, _)| l.clone()).collect(),
             inputs.iter().map(|(_, v)| *v),
-        );
-        let om = OutputSet::from_symbols(
-            Symbols::new(outputs.iter().map(|(l, _)| l.clone()).collect()),
+            outputs.iter().map(|(l, _)| l.clone()).collect(),
             outputs.iter().map(|(_, a)| *a),
-        );
-        Cube::new(im, om, set)
+            set,
+        )
+    }
+
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): validate
+    /// distinctness, then build the cube directly from the label `Arc`s and value iterators (no
+    /// intermediate pair `Vec`).
+    fn from_label_arcs(
+        in_labels: Arc<[I]>,
+        in_values: impl IntoIterator<Item = Option<bool>>,
+        out_labels: Arc<[O]>,
+        out_values: impl IntoIterator<Item = bool>,
+        set: CubeType,
+    ) -> Result<Cube<I, O>, DuplicateLabel> {
+        if let Some(index) = first_duplicate(&in_labels) {
+            return Err(DuplicateLabel::Input { index });
+        }
+        if let Some(index) = first_duplicate(&out_labels) {
+            return Err(DuplicateLabel::Output { index });
+        }
+        Ok(Cube::new(
+            Minterm::from_symbols(Symbols::new(in_labels), in_values),
+            OutputSet::from_symbols(Symbols::new(out_labels), out_values),
+            set,
+        ))
     }
 }
 
@@ -218,6 +258,10 @@ impl<I: StringLabel, O: StringLabel> Cube<I, O> {
     /// so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work). The label type is
     /// inferred from context (e.g. `Cube::<Symbol, Symbol>::with_labels`).
     ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if either side repeats a name (see [`labeled`](Self::labeled)).
+    ///
     /// # Examples
     ///
     /// ```
@@ -227,23 +271,21 @@ impl<I: StringLabel, O: StringLabel> Cube<I, O> {
     ///     &[("a", Some(true)), ("b", Some(true))],
     ///     &[("f", true)],
     ///     CubeType::F,
-    /// );
+    /// )
+    /// .unwrap();
     /// assert_eq!(cube.inputs().num_vars(), 2);
     /// ```
-    #[must_use]
     pub fn with_labels<SI: AsRef<str>, SO: AsRef<str>>(
         inputs: &[(SI, Option<bool>)],
         outputs: &[(SO, bool)],
         set: CubeType,
-    ) -> Cube<I, O> {
-        let in_pairs: Vec<(I, Option<bool>)> = inputs
-            .iter()
-            .map(|(s, v)| (I::from(s.as_ref()), *v))
-            .collect();
-        let out_pairs: Vec<(O, bool)> = outputs
-            .iter()
-            .map(|(s, a)| (O::from(s.as_ref()), *a))
-            .collect();
-        Cube::labeled(&in_pairs, &out_pairs, set)
+    ) -> Result<Cube<I, O>, DuplicateLabel> {
+        Self::from_label_arcs(
+            inputs.iter().map(|(s, _)| I::from(s.as_ref())).collect(),
+            inputs.iter().map(|(_, v)| *v),
+            outputs.iter().map(|(s, _)| O::from(s.as_ref())).collect(),
+            outputs.iter().map(|(_, a)| *a),
+            set,
+        )
     }
 }

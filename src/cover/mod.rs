@@ -116,7 +116,7 @@ mod symbols;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
-pub use error::{AddExprError, ArityMismatch, CoverError, ToExprError};
+pub use error::{AddExprError, ArityMismatch, CoverError, DuplicateLabel, ToExprError};
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
@@ -662,13 +662,12 @@ impl<I: Label, O: Label> Cover<I, O> {
         let cubes = cubes
             .iter()
             .map(|c| {
-                // `output_symbols` already holds every identity of `c`, so the overlay's `b`-map
-                // re-homes `c`'s outputs onto it; inputs project by identity.
-                let (_, _, out_map) = overlay_outputs(&output_symbols, c.outputs().symbols());
+                // `output_symbols` already holds every identity of `c` (built in the fold above), so
+                // each output column is found directly by identity — no per-cube union rebuild.
                 Cube::new(
                     c.inputs().project_onto(&input_symbols),
                     assert_mask(c, &output_symbols, new_no, c.outputs().num_vars(), |old| {
-                        out_map[old]
+                        identity_position(&output_symbols, c.outputs().symbols(), old)
                     }),
                     c.set,
                 )
@@ -704,13 +703,24 @@ impl<I: Label, O: Label> Cover<I, O> {
     /// assert_eq!(cover.num_inputs(), 3);
     /// ```
     pub fn push(&mut self, cube: Cube<I, O>) {
-        let new_input = union_inputs(&self.input_symbols, cube.inputs().symbols());
-        let (new_output, self_out_map, cube_out_map) =
-            overlay_outputs(&self.output_symbols, cube.outputs().symbols());
+        // Probe (no allocation) whether the cube carries an identity the cover lacks. Only then must the
+        // existing cubes be re-homed onto wider headers; the common append allocates no `Symbols` and
+        // touches just the new cube.
+        let grows_inputs = cube.inputs().symbols().labels().iter().enumerate().any(|(i, l)| {
+            self.input_symbols
+                .position_of_identity(&l.identity(i))
+                .is_none()
+        });
+        let grows_outputs = cube.outputs().symbols().labels().iter().enumerate().any(|(j, l)| {
+            self.output_symbols
+                .position_of_identity(&l.identity(j))
+                .is_none()
+        });
 
-        // Only when the cube introduces a new variable identity do the existing cubes need re-homing
-        // onto wider headers; otherwise this is an O(1) append.
-        if new_input.arity() != self.num_inputs() || new_output.arity() != self.num_outputs() {
+        if grows_inputs || grows_outputs {
+            let new_input = union_inputs(&self.input_symbols, cube.inputs().symbols());
+            let (new_output, self_out_map, _) =
+                overlay_outputs(&self.output_symbols, cube.outputs().symbols());
             let new_no = new_output.arity();
             let old_no = self.num_outputs();
             for c in &mut self.cubes {
@@ -723,13 +733,14 @@ impl<I: Label, O: Label> Cover<I, O> {
             self.output_symbols = new_output;
         }
 
+        // Re-home the new cube onto the cover's current headers (now a superset of its identities).
         let inputs = cube.inputs().project_onto(&self.input_symbols);
         let outputs = assert_mask(
             &cube,
             &self.output_symbols,
             self.num_outputs(),
             cube.outputs().num_vars(),
-            |old| cube_out_map[old],
+            |old| identity_position(&self.output_symbols, cube.outputs().symbols(), old),
         );
         self.cubes.push(Cube::new(inputs, outputs, cube.set));
     }
@@ -765,6 +776,15 @@ fn assert_mask<I, O, M>(
         }
     }
     OutputSet::from_symbols(Arc::clone(new_output), mask)
+}
+
+/// Position in `target` of the variable that `source`'s column `pos` carries, found by identity.
+/// `target` must contain that identity (it is always a superset by construction at the call sites).
+fn identity_position<L: Label>(target: &Symbols<L>, source: &Symbols<L>, pos: usize) -> usize {
+    let id = source.labels()[pos].identity(pos);
+    target
+        .position_of_identity(&id)
+        .expect("target header contains the source column's identity") as usize
 }
 
 /// Union two headers by variable identity: `a`'s labels, then each of `b`'s labels whose identity is
@@ -875,9 +895,36 @@ impl<I: Label, O: Label> Cover<I, O> {
     /// means output `i` of `other` overlays output `i` of `self`; the result has
     /// `max(self.num_outputs(), other.num_outputs())` outputs. Consistent across every label type.
     pub fn merge(&mut self, other: &Cover<I, O>) {
-        let (new_output, a_map, b_map) =
-            overlay_outputs(&self.output_symbols, &other.output_symbols);
-        *self = assemble(self, other, new_output, a_map, b_map);
+        // Probe (no allocation) whether `other` carries an identity `self` lacks. Only then must `self`'s
+        // cubes be re-homed onto wider headers; otherwise `self` keeps its headers and cubes, and
+        // `other`'s cubes are appended in place — no union `Symbols`, no rebuild of `self`.
+        let grows_inputs = other.input_symbols.labels().iter().enumerate().any(|(i, l)| {
+            self.input_symbols
+                .position_of_identity(&l.identity(i))
+                .is_none()
+        });
+        let grows_outputs = other.output_symbols.labels().iter().enumerate().any(|(j, l)| {
+            self.output_symbols
+                .position_of_identity(&l.identity(j))
+                .is_none()
+        });
+
+        if grows_inputs || grows_outputs {
+            let (new_output, a_map, b_map) =
+                overlay_outputs(&self.output_symbols, &other.output_symbols);
+            *self = assemble(self, other, new_output, a_map, b_map);
+            return;
+        }
+
+        let no = self.num_outputs();
+        self.cubes.reserve(other.cubes.len());
+        for c in &other.cubes {
+            let inputs = c.inputs().project_onto(&self.input_symbols);
+            let outputs = assert_mask(c, &self.output_symbols, no, c.outputs().num_vars(), |old| {
+                identity_position(&self.output_symbols, c.outputs().symbols(), old)
+            });
+            self.cubes.push(Cube::new(inputs, outputs, c.set));
+        }
     }
 }
 
