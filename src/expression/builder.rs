@@ -1,8 +1,10 @@
 //! Low-level BDD construction: the [`BoolExpr::build`] closure builder.
 //!
 //! [`BoolExpr::build`] calls a closure with a [`BddBuilder`] and returns the [`BoolExpr`] for the handle
-//! the closure returns. The builder's methods build [`Bdd`] node handles in the global manager.
-//! [`graft`](BddBuilder::graft) turns an existing [`BoolExpr`] into a handle.
+//! the closure returns. The builder's methods build [`Bdd`] node handles in the manager.
+//! [`graft`](BddBuilder::graft) turns an existing [`BoolExpr`] into a handle. A scoped
+//! [`BddContext`](crate::BddContext) offers the same surface via
+//! [`BddContext::build`](crate::BddContext::build).
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
@@ -39,9 +41,7 @@
 //! # Handles cannot escape their builder
 //!
 //! A [`Bdd`] handle is branded with the builder's invariant lifetime, so it cannot be stored outside the
-//! closure or smuggled between two `build` calls — misuse is a compile error. (The brand guards
-//! *cross-builder* handle hygiene; a [`graft`](BddBuilder::graft)ed expression is tied to the manager by
-//! the single global manager, see `graft`.)
+//! closure or smuggled between two `build` calls — misuse is a compile error.
 //!
 //! ```compile_fail
 //! use espresso_logic::BoolExpr;
@@ -54,52 +54,68 @@
 //! });
 //! ```
 
-use super::manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
+use super::context::{Brand, Global};
+use super::manager::{BddManager, NodeId, Store, FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use std::marker::PhantomData;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-/// A handle to a node being built inside a [`BoolExpr::build`] closure.
+/// Marker that is **invariant** in both the builder lifetime `'b` and the brand `B`, so neither can be
+/// widened or narrowed. Carried by [`Bdd`] and [`BddBuilder`] to brand handles to one builder activation
+/// and one BDD namespace.
+type BuilderBrand<'b, B> = PhantomData<(fn(&'b ()) -> &'b (), fn() -> B)>;
+
+/// A handle to a node being built inside a [`BoolExpr::build`] / [`BddContext::build`] closure.
 ///
-/// `Copy` (it is a node id). The `'b` lifetime is an **invariant brand** tying the handle
-/// to one [`BddBuilder`] activation, so the borrow checker rejects any attempt to move a handle out of
-/// its closure or use it with a different builder. Handles are opaque: combine them only through the
-/// [`BddBuilder`] methods.
-#[derive(Clone, Copy)]
-pub struct Bdd<'b> {
+/// `Copy` (it is a node id). The `'b` lifetime is an **invariant brand** tying the handle to one
+/// builder activation, so the borrow checker rejects any attempt to move a handle out of its closure
+/// or use it with a different builder; the `B` type parameter additionally brands it to its BDD
+/// namespace. Handles are opaque: combine them only through the [`BddBuilder`] methods.
+///
+/// [`BddContext::build`]: crate::BddContext::build
+pub struct Bdd<'b, B: Brand = Global> {
     node: NodeId,
-    // Invariant in 'b (neither co- nor contravariant), so the brand cannot be widened or narrowed.
-    _brand: PhantomData<fn(&'b ()) -> &'b ()>,
+    // Invariant in 'b (neither co- nor contravariant) and in B, so neither brand can be widened.
+    _marker: BuilderBrand<'b, B>,
 }
 
-/// The builder handed to a [`BoolExpr::build`] closure: the BDD manager's node-construction operations.
+impl<B: Brand> Clone for Bdd<'_, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<B: Brand> Copy for Bdd<'_, B> {}
+
+/// The builder handed to a [`BoolExpr::build`] / [`BddContext::build`] closure: the BDD manager's
+/// node-construction operations.
 ///
-/// Methods take `&self`, so handles nest in one expression — `b.and(b.var("a"), b.not(b.var("b")))`. Each
-/// method hash-conses through the manager — a read lock for the lookup, the write lock to append a new
-/// node — and returns a canonical [`Bdd`] handle.
-pub struct BddBuilder<'b> {
-    manager: Arc<RwLock<BddManager>>,
-    /// Identity of the manager, used only to debug-assert that a [`graft`](Self::graft)ed expression
-    /// belongs to it (it always does — there is one global manager). Equal to `Arc::as_ptr(&manager)`.
-    manager_ptr: *const RwLock<BddManager>,
-    /// Invariant brand (see [`Bdd`]); the builder owns the `Arc`, so `'b` is carried only as a marker.
-    _brand: PhantomData<fn(&'b ()) -> &'b ()>,
+/// Methods take `&self`, so handles nest in one expression — `b.and(b.var("a"), b.not(b.var("b")))`.
+/// Each method hash-conses through the manager and returns a canonical [`Bdd`] handle.
+///
+/// [`BddContext::build`]: crate::BddContext::build
+pub struct BddBuilder<'b, B: Brand = Global> {
+    store: Store,
+    /// Identity of the store, used only to debug-assert that a [`graft`](Self::graft)ed expression
+    /// belongs to it. Equal to `self.store.ident()`.
+    ident: *const (),
+    /// Invariant brand (see [`Bdd`]); the builder owns the store, so `'b` is carried only as a marker.
+    _marker: BuilderBrand<'b, B>,
 }
 
-impl<'b> BddBuilder<'b> {
+impl<'b, B: Brand> BddBuilder<'b, B> {
     #[inline]
-    fn wrap(node: NodeId) -> Bdd<'b> {
+    fn wrap(node: NodeId) -> Bdd<'b, B> {
         Bdd {
             node,
-            _brand: PhantomData,
+            _marker: PhantomData,
         }
     }
 
     /// A variable by name (creating it in the manager's ordering on first use).
-    pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<'b> {
-        let var_id = BddManager::make_var(&self.manager, name.as_ref());
+    pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<'b, B> {
+        let var_id = BddManager::make_var(&self.store, name.as_ref());
         Self::wrap(BddManager::make_node(
-            &self.manager,
+            &self.store,
             var_id,
             FALSE_NODE,
             TRUE_NODE,
@@ -108,63 +124,78 @@ impl<'b> BddBuilder<'b> {
 
     /// A constant `true`/`false`.
     #[must_use]
-    pub fn constant(&self, value: bool) -> Bdd<'b> {
+    pub fn constant(&self, value: bool) -> Bdd<'b, B> {
         Self::wrap(if value { TRUE_NODE } else { FALSE_NODE })
     }
 
     /// Splice an existing [`BoolExpr`] into the build as a handle (its root node).
     ///
     /// This is how an in-scope `BoolExpr` is grafted into a larger expression — the lowering target of
-    /// the `expr!` macro's variable operands. The expression must belong to the same (global) manager;
-    /// checked with a `debug_assert!`, as it always holds while the operand is alive.
-    pub fn graft(&self, expr: &BoolExpr) -> Bdd<'b> {
-        // Soundness rests on the *operand's* `Arc<RwLock<BddManager>>`, not on the assert below: while any
-        // `BoolExpr` is alive the global manager cannot be freed/replaced, so `expr.root` indexes the same
-        // node table the builder writes. The `debug_assert!` is a debug-only sanity check (compiled out in
-        // release). This is why `graft` takes `&BoolExpr` (which owns that `Arc`) and never a bare node id.
+    /// the `expr!` macro's variable operands. The expression must belong to the same manager as the
+    /// builder. For the [`Global`] brand and for any single scoped context this always holds, so it is
+    /// a `debug_assert!`; the brand type parameter already rules out splicing across two *distinct*
+    /// (anonymous) contexts at compile time. The only way to trip the assert is to reuse a *named*
+    /// brand across two separate contexts — an opt-in hazard.
+    pub fn graft(&self, expr: &BoolExpr<B>) -> Bdd<'b, B> {
         debug_assert!(
-            std::ptr::eq(Arc::as_ptr(&expr.manager), self.manager_ptr),
-            "grafted BoolExpr must share the builder's BDD manager"
+            expr.store_ident() == self.ident,
+            "grafted BoolExpr must share the builder's BDD manager (named brand reused across contexts?)"
         );
-        Self::wrap(expr.root)
+        Self::wrap(expr.root_node())
     }
 
     /// Logical NOT: `ite(a, false, true)`.
-    pub fn not(&self, a: Bdd<'b>) -> Bdd<'b> {
-        Self::wrap(BddManager::ite(
-            &self.manager,
-            a.node,
-            FALSE_NODE,
-            TRUE_NODE,
-        ))
+    pub fn not(&self, a: Bdd<'b, B>) -> Bdd<'b, B> {
+        Self::wrap(BddManager::ite(&self.store, a.node, FALSE_NODE, TRUE_NODE))
     }
 
     /// Logical AND: `ite(a, b, false)`.
-    pub fn and(&self, a: Bdd<'b>, b: Bdd<'b>) -> Bdd<'b> {
-        Self::wrap(BddManager::ite(&self.manager, a.node, b.node, FALSE_NODE))
+    pub fn and(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
+        Self::wrap(BddManager::ite(&self.store, a.node, b.node, FALSE_NODE))
     }
 
     /// Logical OR: `ite(a, true, b)`.
-    pub fn or(&self, a: Bdd<'b>, b: Bdd<'b>) -> Bdd<'b> {
-        Self::wrap(BddManager::ite(&self.manager, a.node, TRUE_NODE, b.node))
+    pub fn or(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
+        Self::wrap(BddManager::ite(&self.store, a.node, TRUE_NODE, b.node))
     }
 
     /// Logical XOR: `ite(a, ¬b, b)`.
-    pub fn xor(&self, a: Bdd<'b>, b: Bdd<'b>) -> Bdd<'b> {
-        Self::wrap(BddManager::xor(&self.manager, a.node, b.node))
+    pub fn xor(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
+        Self::wrap(BddManager::xor(&self.store, a.node, b.node))
     }
 
     /// If-then-else: `ite(f, g, h)` — the primitive all the others are built from.
-    pub fn ite(&self, f: Bdd<'b>, g: Bdd<'b>, h: Bdd<'b>) -> Bdd<'b> {
-        Self::wrap(BddManager::ite(&self.manager, f.node, g.node, h.node))
+    pub fn ite(&self, f: Bdd<'b, B>, g: Bdd<'b, B>, h: Bdd<'b, B>) -> Bdd<'b, B> {
+        Self::wrap(BddManager::ite(&self.store, f.node, g.node, h.node))
     }
 }
 
-impl BoolExpr {
+/// Realise a `build` closure against an explicit `store`, the single construction primitive shared by
+/// [`BoolExpr::build`], [`BddContext::build`](crate::BddContext::build), the operators, and the parser.
+pub(crate) fn build_in<B, F>(store: Store, f: F) -> BoolExpr<B>
+where
+    B: Brand,
+    F: for<'b> FnOnce(&BddBuilder<'b, B>) -> Bdd<'b, B>,
+{
+    let ident = Arc::as_ptr(&store).cast::<()>();
+    let root = {
+        let builder = BddBuilder {
+            store: store.clone(),
+            ident,
+            _marker: PhantomData,
+        };
+        f(&builder).node
+    };
+    BoolExpr::from_store(store, root)
+}
+
+impl BoolExpr<Global> {
     /// Build an expression by composing [`Bdd`] handles inside a closure.
     ///
     /// The closure receives a [`BddBuilder`] and returns the handle for the root of the expression.
-    /// [`graft`](BddBuilder::graft) splices an existing [`BoolExpr`] into the build as a handle.
+    /// [`graft`](BddBuilder::graft) splices an existing [`BoolExpr`] into the build as a handle. This is
+    /// the [`Global`]-brand entry point; a scoped [`BddContext`](crate::BddContext) offers the same via
+    /// [`BddContext::build`](crate::BddContext::build).
     ///
     /// # Examples
     ///
@@ -188,28 +219,18 @@ impl BoolExpr {
     /// assert_eq!(majority, manual);
     /// ```
     #[must_use]
-    pub fn build<F>(f: F) -> BoolExpr
+    pub fn build<F>(f: F) -> BoolExpr<Global>
     where
-        F: for<'b> FnOnce(&BddBuilder<'b>) -> Bdd<'b>,
+        F: for<'b> FnOnce(&BddBuilder<'b, Global>) -> Bdd<'b, Global>,
     {
-        // Resolve the singleton manager once for the whole build; the builder holds an `Arc` clone and
-        // takes the write lock per node-creating step.
-        let manager = BddManager::get_or_create();
-        let manager_ptr = Arc::as_ptr(&manager);
-        let root = {
-            let builder = BddBuilder {
-                manager: Arc::clone(&manager),
-                manager_ptr,
-                _brand: PhantomData,
-            };
-            f(&builder).node
-        };
-        BoolExpr::from_root(manager, root)
+        build_in(BddManager::get_or_create(), f)
     }
+}
 
+impl<B: Brand> BoolExpr<B> {
     /// If-then-else: `if self then g else h`.
     ///
-    /// A convenience wrapper over [`build`](Self::build) for the common ternary shape, equivalent to
+    /// A convenience wrapper over the builder for the common ternary shape, equivalent to
     /// `self*g + ¬self*h` but built directly from the BDD primitive.
     ///
     /// ```
@@ -225,8 +246,8 @@ impl BoolExpr {
     /// assert_eq!(mux, manual);
     /// ```
     #[must_use]
-    pub fn ite(&self, g: &BoolExpr, h: &BoolExpr) -> BoolExpr {
-        BoolExpr::build(|b| {
+    pub fn ite(&self, g: &BoolExpr<B>, h: &BoolExpr<B>) -> BoolExpr<B> {
+        build_in(self.store_cloned(), |b| {
             let f = b.graft(self);
             let g = b.graft(g);
             let h = b.graft(h);
@@ -236,7 +257,7 @@ impl BoolExpr {
 }
 
 /// One step of a postfix (reverse-Polish) expression program. The lalrpop string grammar emits a
-/// `Vec<Op>` bottom-up, which [`build_postfix`] realises through a single [`BoolExpr::build`].
+/// `Vec<Op>` bottom-up, which [`build_postfix`] realises through a single builder activation.
 pub(crate) enum Op {
     /// Push a variable by name.
     Var(String),
@@ -252,15 +273,15 @@ pub(crate) enum Op {
     Xor,
 }
 
-/// Realise a postfix [`Op`] program as a [`BoolExpr`], locking the manager per node-creating step.
+/// Realise a postfix [`Op`] program as a [`BoolExpr`] against `store`.
 ///
 /// Evaluated **iteratively** with an explicit value stack (no recursion), so an arbitrarily deep parse
-/// — a long operator chain or deep nesting — cannot overflow the call stack, matching the no-recursion
-/// discipline used elsewhere for deep expression trees. The program is well-formed by construction (the
-/// grammar only ever emits balanced postfix), so the stack neither underflows nor ends non-singleton.
-pub(crate) fn build_postfix(program: Vec<Op>) -> BoolExpr {
-    BoolExpr::build(|b| {
-        let mut stack: Vec<Bdd<'_>> = Vec::with_capacity(program.len());
+/// — a long operator chain or deep nesting — cannot overflow the call stack. The program is well-formed
+/// by construction (the grammar only ever emits balanced postfix), so the stack neither underflows nor
+/// ends non-singleton.
+pub(crate) fn build_postfix<B: Brand>(store: Store, program: Vec<Op>) -> BoolExpr<B> {
+    build_in(store, |b| {
+        let mut stack: Vec<Bdd<'_, B>> = Vec::with_capacity(program.len());
         for op in program {
             let node = match op {
                 Op::Var(name) => b.var(&name),

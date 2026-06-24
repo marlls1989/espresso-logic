@@ -35,6 +35,12 @@ pub(super) const TRUE_NODE: NodeId = 1;
 /// - Automatic cleanup when no BDDs are in use
 pub(super) static GLOBAL_BDD_MANAGER: Mutex<Weak<RwLock<BddManager>>> = Mutex::new(Weak::new());
 
+/// The owned storage handle every [`BoolExpr`](crate::BoolExpr) and [`BddContext`](crate::BddContext)
+/// holds: an `Arc<RwLock<BddManager>>`. The [`Global`](crate::Global) brand shares one process-global
+/// instance; each scoped context owns a fresh, independent one. Either way `Arc<RwLock<…>>` keeps
+/// expressions `Send`/`Sync` and the manager alive while any expression references it.
+pub(crate) type Store = Arc<RwLock<BddManager>>;
+
 /// Binary decision diagram node
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum BddNode {
@@ -62,7 +68,7 @@ pub(super) enum BddNode {
 /// - Multiple threads can safely traverse using NodeIds after releasing read locks
 /// - Recursive traversal can release locks between calls without invalidating NodeIds
 #[derive(Debug)]
-pub(super) struct BddManager {
+pub(crate) struct BddManager {
     /// All nodes in the BDD (terminals at indices 0 and 1)
     /// INVARIANT: Nodes are never removed or reordered - only appended
     pub(super) nodes: Vec<BddNode>,
@@ -87,20 +93,32 @@ impl BddManager {
         if let Some(manager) = guard.upgrade() {
             manager
         } else {
-            // Initialise manager inline with terminal nodes
-            let manager = Arc::new(RwLock::new(BddManager {
-                nodes: vec![
-                    BddNode::Terminal(false), // FALSE_NODE = 0
-                    BddNode::Terminal(true),  // TRUE_NODE = 1
-                ],
-                unique_table: HashMap::new(),
-                var_to_id: BTreeMap::new(),
-                id_to_var: Vec::new(),
-                ite_cache: HashMap::new(),
-            }));
+            let manager = Arc::new(RwLock::new(BddManager::new_empty()));
             *guard = Arc::downgrade(&manager);
             manager
         }
+    }
+
+    /// A fresh, empty manager seeded with the two terminal nodes (`FALSE_NODE = 0`, `TRUE_NODE = 1`).
+    ///
+    /// Used both for the global singleton and for every scoped context's store (via
+    /// [`ManagerStore::new_shared`]).
+    pub(super) fn new_empty() -> Self {
+        BddManager {
+            nodes: vec![
+                BddNode::Terminal(false), // FALSE_NODE = 0
+                BddNode::Terminal(true),  // TRUE_NODE = 1
+            ],
+            unique_table: HashMap::new(),
+            var_to_id: BTreeMap::new(),
+            id_to_var: Vec::new(),
+            ite_cache: HashMap::new(),
+        }
+    }
+
+    /// A fresh, independent [`Store`] backing a single scoped [`BddContext`](crate::BddContext).
+    pub(super) fn new_store() -> Store {
+        Arc::new(RwLock::new(BddManager::new_empty()))
     }
 
     /// Get or create the variable id for `name`, managing the manager's lock itself.

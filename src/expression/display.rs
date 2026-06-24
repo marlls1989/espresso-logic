@@ -1,5 +1,6 @@
 //! Display and Debug formatting for boolean expressions
 
+use super::context::Brand;
 use super::{BoolExpr, ExprNode};
 use std::fmt;
 
@@ -13,7 +14,7 @@ enum OpContext {
     Not,  // Inside a NOT operation
 }
 
-impl BoolExpr {
+impl<B: Brand> BoolExpr<B> {
     /// Format with operator-precedence context to minimise parentheses.
     ///
     /// Renders via [`fold_with_context`](BoolExpr::fold_with_context) — an iterative walk — so a deeply
@@ -75,7 +76,7 @@ impl BoolExpr {
 ///
 /// println!("{:?}", expr);  // Outputs: a * b + c (no unnecessary parentheses)
 /// ```
-impl fmt::Debug for BoolExpr {
+impl<B: Brand> fmt::Debug for BoolExpr<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_with_context(f, OpContext::None)
     }
@@ -96,7 +97,7 @@ impl fmt::Debug for BoolExpr {
 ///
 /// println!("{}", expr);  // Same as println!("{:?}", expr)
 /// ```
-impl fmt::Display for BoolExpr {
+impl<B: Brand> fmt::Display for BoolExpr<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }

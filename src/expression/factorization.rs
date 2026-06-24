@@ -333,7 +333,7 @@ pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Symbol, bool>, bool)>) -> Boo
 /// overflow the call stack: each node's matching `BoolExpr` operation runs bottom-up as the fold
 /// combines children's results.
 fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
-    BoolExpr::fold_ast(ast, &|node: ExprNode<BoolExpr>| match node {
+    BoolExpr::<super::context::Global>::fold_ast(ast, &|node: ExprNode<BoolExpr>| match node {
         ExprNode::Constant(val) => BoolExpr::constant(val),
         ExprNode::Variable(name) => BoolExpr::variable(name),
         ExprNode::And(left, right) => left.and(&right),

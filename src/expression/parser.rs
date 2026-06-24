@@ -1,6 +1,9 @@
 //! Parsing support for boolean expressions
 
+use super::builder::{build_postfix, Op};
+use super::context::{Brand, Global};
 use super::error::{ExpressionParseError, ParseBoolExprError};
+use super::manager::{BddManager, Store};
 use super::BoolExpr;
 use std::sync::Arc;
 
@@ -17,7 +20,31 @@ mod parser_impl {
     include!(concat!(env!("OUT_DIR"), "/expression/bool_expr.rs"));
 }
 
-impl BoolExpr {
+/// Parse a string into a postfix [`Op`] program (the brand-independent half of parsing).
+fn parse_program(input: &str) -> Result<Vec<Op>, ParseBoolExprError> {
+    parser_impl::ExprParser::new().parse(input).map_err(|e| {
+        let message = e.to_string();
+        // Try to extract position from lalrpop error message
+        let position = extract_position_from_error(&message);
+        ExpressionParseError::InvalidSyntax {
+            message: Arc::from(message.as_str()),
+            input: Arc::from(input),
+            position,
+        }
+        .into()
+    })
+}
+
+/// Parse a boolean expression and realise it against `store` (the shared backend of
+/// [`BoolExpr::parse`] and [`BddContext::parse`](crate::BddContext::parse)).
+pub(super) fn parse_in<B: Brand>(
+    store: Store,
+    input: &str,
+) -> Result<BoolExpr<B>, ParseBoolExprError> {
+    Ok(build_postfix(store, parse_program(input)?))
+}
+
+impl BoolExpr<Global> {
     /// Parse a boolean expression from a string
     ///
     /// Supports standard boolean operators, in precedence order (lowest to highest):
@@ -28,27 +55,17 @@ impl BoolExpr {
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
     ///
-    /// All binary operators are left-associative. The result is realised through [`BoolExpr::build`],
-    /// so the whole expression is constructed under a single BDD manager lock.
+    /// All binary operators are left-associative. The whole expression is constructed under a single
+    /// BDD manager acquisition. For a scoped context, use
+    /// [`BddContext::parse`](crate::BddContext::parse).
     pub fn parse<S: AsRef<str>>(input: S) -> Result<Self, ParseBoolExprError> {
-        let input = input.as_ref();
-        parser_impl::ExprParser::new().parse(input).map_err(|e| {
-            let message = e.to_string();
-            // Try to extract position from lalrpop error message
-            let position = extract_position_from_error(&message);
-            ExpressionParseError::InvalidSyntax {
-                message: Arc::from(message.as_str()),
-                input: Arc::from(input),
-                position,
-            }
-            .into()
-        })
+        parse_in(BddManager::get_or_create(), input.as_ref())
     }
 }
 
 /// Parse a boolean expression from a string, so `"a + b".parse::<BoolExpr>()` and generic `FromStr`
 /// bounds work. Delegates to the inherent [`BoolExpr::parse`].
-impl std::str::FromStr for BoolExpr {
+impl std::str::FromStr for BoolExpr<Global> {
     type Err = ParseBoolExprError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

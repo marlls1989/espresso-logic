@@ -1027,12 +1027,60 @@ fn test_global_manager_sharing() {
     let a2 = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
 
-    // All BoolExprs should share the same manager (Arc pointer equality)
-    assert!(Arc::ptr_eq(&a1.manager, &a2.manager));
-    assert!(Arc::ptr_eq(&a1.manager, &b.manager));
+    // All BoolExprs should share the same manager (store identity equality)
+    assert_eq!(a1.store_ident(), a2.store_ident());
+    assert_eq!(a1.store_ident(), b.store_ident());
 
     // Same expressions should produce identical representations (hash consing works globally)
     assert_eq!(a1, a2);
+}
+
+#[test]
+fn test_scoped_context_basic_and_independent_manager() {
+    use crate::bdd_context;
+
+    let ctx = bdd_context!();
+    let a = ctx.var("a");
+    let b = ctx.var("b");
+
+    // Operators, methods, parse, and the `expr!` context form all agree within the context.
+    let via_ops = &a * &b + !&a * !&b;
+    assert_eq!(via_ops, ctx.parse("a * b + ~a * ~b").unwrap());
+    assert_eq!(via_ops, expr!(ctx, a * b + !a * !b));
+
+    // A scoped expression shares its context's manager, which is NOT the global one.
+    assert_eq!(a.store_ident(), b.store_ident());
+    assert_ne!(a.store_ident(), BoolExpr::variable("a").store_ident());
+
+    // Canonical equality still holds within the context.
+    assert_eq!(ctx.var("a"), ctx.var("a"));
+}
+
+#[test]
+fn test_two_anonymous_contexts_have_distinct_managers() {
+    use crate::bdd_context;
+
+    let c1 = bdd_context!();
+    let c2 = bdd_context!();
+    // Distinct contexts → distinct managers. (Combining their expressions is a compile error, exercised
+    // by the `compile_fail` doctest on `bdd_context!`.)
+    assert_ne!(c1.var("a").store_ident(), c2.var("a").store_ident());
+}
+
+#[test]
+fn test_scoped_minimize_matches_global() {
+    use crate::bdd_context;
+    use crate::Minimizable;
+
+    let ctx = bdd_context!();
+    let redundant = expr!(ctx, "a" * "b" + "a" * "b" * "c");
+    let scoped_min = redundant.minimize().unwrap();
+
+    let global_redundant = expr!("a" * "b" + "a" * "b" * "c");
+    let global_min = global_redundant.minimize().unwrap();
+
+    // Same minimised function, rendered identically, regardless of which manager produced it.
+    assert_eq!(scoped_min.to_string(), global_min.to_string());
 }
 
 #[test]

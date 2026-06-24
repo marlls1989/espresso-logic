@@ -1,12 +1,13 @@
 //! Evaluation and equivalence checking for boolean expressions
 
+use super::context::Brand;
 use super::manager::{BddNode, NodeId};
 use super::BoolExpr;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-impl BoolExpr {
+impl<B: Brand> BoolExpr<B> {
     /// Check whether two boolean expressions are logically equivalent.
     ///
     /// Every `BoolExpr` is a root into one shared, **canonical** reduced-ordered BDD (all
@@ -27,7 +28,7 @@ impl BoolExpr {
     /// assert!(a.and(&b).equivalent_to(&b.and(&a)));
     /// ```
     #[must_use]
-    pub fn equivalent_to(&self, other: &BoolExpr) -> bool {
+    pub fn equivalent_to(&self, other: &BoolExpr<B>) -> bool {
         self == other
     }
 
@@ -80,7 +81,7 @@ impl BoolExpr {
     where
         K: Borrow<str> + Eq + Hash,
     {
-        let mgr = self.manager.read().unwrap();
+        let mgr = self.store.read().unwrap();
         let mut node_id = node_id;
         loop {
             match mgr.get_node(node_id) {

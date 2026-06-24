@@ -27,6 +27,9 @@ fn main() {
     let is_emscripten = target == "wasm32-unknown-emscripten";
 
     println!("cargo:rerun-if-changed=espresso-src");
+    // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
+    // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
+    println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
 
     // Get all C source files except main.c (we'll use this as a library)
     let c_files = vec![
