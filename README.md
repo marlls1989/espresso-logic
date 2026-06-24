@@ -122,6 +122,33 @@ let xor = expr!("a" * !"b" + !"a" * "b");
 let minimised = xor.minimize()?;
 ```
 
+Expressions built this way share a process-global BDD manager (so independently built expressions
+compare canonically, and `BoolExpr` is `Send`/`Sync`).
+
+### BddContext - Scoped, branded expressions
+
+When you want a private BDD namespace — isolated from the global manager, with its own node table and
+no contention from unrelated expressions — create a context with `bdd_context!()`. Each context owns an
+independent manager, and its expressions are *branded* to it, so mixing expressions from two different
+contexts is a compile error rather than a silent bug. (Like the global API, a context is
+`Arc<RwLock<…>>`-backed, so its expressions remain `Send`/`Sync`.)
+
+```rust
+use espresso_logic::{bdd_context, expr, Minimizable};
+
+let ctx = bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+let f = &a * &b + !&a * !&b;                  // operators, like the global API
+assert_eq!(f, ctx.parse("a * b + ~a * ~b")?); // or parse / `expr!(ctx, ...)`
+let minimised = f.minimize()?;                // minimises within the same context
+
+// let other = bdd_context!();
+// let _ = &a * &other.var("c");              // compile error: brands cannot mix
+```
+
+The global `BoolExpr` API above and `BddContext` coexist; `Global` is simply the default brand.
+
 ### Cover - For Truth Tables and Multi-Output Functions
 
 Use when you need to:

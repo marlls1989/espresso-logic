@@ -106,6 +106,7 @@
 mod ast;
 mod bdd;
 mod builder;
+mod context;
 mod display;
 pub mod error;
 mod eval;
@@ -120,12 +121,13 @@ pub use error::{ExpressionParseError, ParseBoolExprError};
 pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
 pub use builder::{Bdd, BddBuilder};
+pub use context::{BddContext, Brand, Global};
 
 // Re-export manager types for internal use
 use crate::Symbol;
-use manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
+use manager::{BddManager, NodeId, Store, FALSE_NODE, TRUE_NODE};
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 /// A boolean expression for logic minimisation
 ///
@@ -151,18 +153,29 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// - `.minimize()` - Fast heuristic algorithm (~99% optimal)
 /// - `.minimize_exact()` - Slower but guaranteed minimal result
 ///
+/// # Brands
+///
+/// `BoolExpr<B = Global>` is parameterised by a **brand** that selects which BDD manager backs it.
+/// The default, `Global`, is the process-global manager that all the free constructors
+/// ([`variable`](Self::variable), [`parse`](Self::parse), [`build`](Self::build), the `expr!` macro)
+/// use — bare `BoolExpr` means `BoolExpr<Global>`. A scoped [`BddContext`](crate::BddContext) (created
+/// with [`bdd_context!`](crate::bdd_context)) mints its own brand and a private, independent manager;
+/// expressions of two distinct brands cannot be combined (a compile error). Both storage models are
+/// `Arc<RwLock<…>>`, so `BoolExpr` is `Send`/`Sync` for every brand.
+///
 /// # Implementation Details
 ///
 /// **Internal representation:** Uses Binary Decision Diagrams (BDDs) for canonical form.
 ///
 /// Each `BoolExpr` contains:
-/// - **Node ID** - Reference to BDD structure in global manager
-/// - **Manager Reference** - Shared access to global singleton BDD manager
+/// - **Node ID** - Index into its manager's BDD node table
+/// - **Storage handle** - Owned `Arc<RwLock<BddManager>>` (`Global` shares one process-global manager;
+///   each scoped context has its own)
 /// - **Cube Cache** - Lazily cached cubes for Espresso minimisation
 /// - **AST Cache** - Lazily cached syntax tree for display
 ///
-/// The BDD manager is a global singleton (protected by `RwLock`) shared by all
-/// expressions, providing structural sharing and canonical representation.
+/// Within one brand, the manager provides structural sharing and canonical representation: every
+/// operation hash-conses through it.
 ///
 /// **Canonical form.** Because every operation hash-conses through the shared manager, two expressions
 /// that denote the same Boolean function have the *same* BDD root. Equality, equivalence, and hashing are
@@ -176,14 +189,17 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// # Cloning
 ///
-/// Cloning copies Arc references and the node ID. `OnceLock::clone()` copies
-/// the cached content (Arc pointers), so clones share the actual cached data. The BDD
-/// structure itself is shared via the global manager.
+/// Cloning bumps the storage handle's refcount and copies the node ID. `OnceLock::clone()` copies
+/// the cached content (Arc pointers), so clones share the actual cached data. The BDD structure
+/// itself is shared via the manager.
 ///
 /// # Thread Safety
 ///
-/// Thread-safe via global BDD manager with `RwLock` protection. Multiple threads
-/// can safely create and manipulate expressions concurrently.
+/// `BoolExpr` is `Send`/`Sync` for every brand: each manager is `Arc<RwLock<…>>`-backed, so multiple
+/// threads can safely create and manipulate expressions concurrently. A scoped
+/// [`BddContext`](crate::BddContext) gives **isolation and locality** — its own node table, with no
+/// lock contention or cache pollution from unrelated global expressions — not a different
+/// concurrency model.
 ///
 /// # Memory
 ///
@@ -287,10 +303,11 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// let vars = expr.collect_variables();
 /// println!("Variables: {:?}", vars);
 /// ```
-#[derive(Clone)]
-pub struct BoolExpr {
-    /// BDD manager (shared across all BoolExprs)
-    manager: Arc<RwLock<BddManager>>,
+pub struct BoolExpr<B: Brand = Global> {
+    /// Owned `Arc<RwLock<BddManager>>` handle to this expression's BDD manager. The [`Global`] brand
+    /// shares one process-global manager; each scoped [`BddContext`](crate::BddContext) brand has its
+    /// own. The brand `B` only distinguishes namespaces — it does not change the storage.
+    store: Store,
     /// Root node ID in the BDD
     root: NodeId,
     /// Cached product-term cubes (input minterms) for this BDD.
@@ -300,37 +317,82 @@ pub struct BoolExpr {
     /// Cached AST representation (reconstructed lazily when needed for display/fold)
     /// OnceLock's Clone copies the content, so clones share cached data via Arc
     pub(crate) ast_cache: OnceLock<Arc<BoolExprAst>>,
+    /// Invariant brand marker (the storage carries the actual handle).
+    _brand: std::marker::PhantomData<fn() -> B>,
 }
 
-impl BoolExpr {
-    /// Build a `BoolExpr` from a manager and root node, with fresh (empty) caches. The single place the
-    /// struct is constructed, so the cache fields are initialised in exactly one spot.
-    fn from_root(manager: Arc<RwLock<BddManager>>, root: NodeId) -> Self {
+/// Cloning copies the storage handle (a refcount bump) and the node ID; `OnceLock::clone` copies the
+/// cached content (Arc pointers), so clones share the cached data. Hand-written so it does not require
+/// `B: Clone` (a brand is a zero-sized marker that need not implement `Clone`).
+impl<B: Brand> Clone for BoolExpr<B> {
+    fn clone(&self) -> Self {
         BoolExpr {
-            manager,
+            store: self.store.clone(),
+            root: self.root,
+            cube_cache: self.cube_cache.clone(),
+            ast_cache: self.ast_cache.clone(),
+            _brand: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<B: Brand> BoolExpr<B> {
+    /// Build a `BoolExpr` from a storage handle and root node, with fresh (empty) caches. The single
+    /// place the struct is constructed, so the cache fields are initialised in exactly one spot.
+    pub(crate) fn from_store(store: Store, root: NodeId) -> Self {
+        BoolExpr {
+            store,
             root,
             cube_cache: OnceLock::new(),
             ast_cache: OnceLock::new(),
+            _brand: std::marker::PhantomData,
         }
     }
 
+    /// Create a variable expression in the given store (creating the variable on first use).
+    pub(crate) fn var_in(store: Store, name: &str) -> Self {
+        let var_id = BddManager::make_var(&store, name);
+        let node = BddManager::make_node(&store, var_id, FALSE_NODE, TRUE_NODE);
+        BoolExpr::from_store(store, node)
+    }
+
+    /// Create a constant expression in the given store.
+    pub(crate) fn constant_in(store: Store, value: bool) -> Self {
+        let root = if value { TRUE_NODE } else { FALSE_NODE };
+        BoolExpr::from_store(store, root)
+    }
+
+    /// The BDD root node id (for sibling modules such as the builder's `graft`).
+    pub(crate) fn root_node(&self) -> NodeId {
+        self.root
+    }
+
+    /// A stable identity for this expression's manager (for `graft` checks and `Eq`/`Hash`).
+    pub(crate) fn store_ident(&self) -> *const () {
+        Arc::as_ptr(&self.store).cast::<()>()
+    }
+
+    /// Clone this expression's storage handle (for building derived expressions in the same manager).
+    pub(crate) fn store_cloned(&self) -> Store {
+        self.store.clone()
+    }
+}
+
+impl BoolExpr<Global> {
     /// Create a variable expression with the given name
     #[must_use]
     pub fn variable<S: AsRef<str>>(name: S) -> Self {
-        let manager = BddManager::get_or_create();
-        let var_id = BddManager::make_var(&manager, name.as_ref());
-        let node = BddManager::make_node(&manager, var_id, FALSE_NODE, TRUE_NODE);
-        BoolExpr::from_root(manager, node)
+        BoolExpr::var_in(BddManager::get_or_create(), name.as_ref())
     }
 
     /// Create a constant expression (true or false)
     #[must_use]
     pub fn constant(value: bool) -> Self {
-        let manager = BddManager::get_or_create();
-        let root = if value { TRUE_NODE } else { FALSE_NODE };
-        BoolExpr::from_root(manager, root)
+        BoolExpr::constant_in(BddManager::get_or_create(), value)
     }
+}
 
+impl<B: Brand> BoolExpr<B> {
     /// Get or create the cached product-term cubes with local caching.
     ///
     /// Extracts cubes (input [`Minterm`](crate::cover::Minterm)s) from the BDD on first
@@ -349,8 +411,10 @@ impl BoolExpr {
 
         cubes
     }
+}
 
-    /// Build a `BoolExpr` from a set of product-term cubes (sum of products).
+impl<B: Brand> BoolExpr<B> {
+    /// Build a `BoolExpr` in the given `store` from a set of product-term cubes (sum of products).
     ///
     /// Each [`Minterm`](crate::cover::Minterm) becomes an AND of its fixed literals; the
     /// expression is their OR. An empty cube is a tautology (`true`); an empty cube set is
@@ -358,12 +422,15 @@ impl BoolExpr {
     /// minimisation reporting reflects exactly these terms (e.g. an Espresso-minimised set).
     ///
     /// **Precondition:** the cubes must describe the same function as the built expression — i.e.
-    /// the cubes must fix every variable the function depends on. This holds for the only caller
+    /// the cubes must fix every variable the function depends on. This holds for the only callers
     /// (a single-output `Cover` derived from the same variable namespace); passing an unrelated cube
     /// set would desync [`to_cubes`](Self::to_cubes) from the BDD. Checked with a `debug_assert!`.
-    pub(crate) fn from_cubes(cubes: Arc<[crate::cover::Minterm<crate::Symbol>]>) -> BoolExpr {
+    pub(crate) fn from_cubes_in(
+        store: Store,
+        cubes: Arc<[crate::cover::Minterm<crate::Symbol>]>,
+    ) -> BoolExpr<B> {
         if cubes.is_empty() {
-            return BoolExpr::constant(false);
+            return BoolExpr::constant_in(store, false);
         }
 
         // OR the product terms, each an AND of its fixed literals (empty cube = tautology).
@@ -374,12 +441,12 @@ impl BoolExpr {
                     .iter()
                     .zip(cube.iter())
                     .filter_map(|(name, val)| match val {
-                        Some(true) => Some(BoolExpr::variable(name)),
-                        Some(false) => Some(BoolExpr::variable(name).not()),
+                        Some(true) => Some(BoolExpr::var_in(store.clone(), name.as_ref())),
+                        Some(false) => Some(BoolExpr::var_in(store.clone(), name.as_ref()).not()),
                         None => None,
                     })
                     .reduce(|acc, f| acc.and(&f))
-                    .unwrap_or_else(|| BoolExpr::constant(true))
+                    .unwrap_or_else(|| BoolExpr::constant_in(store.clone(), true))
             })
             .reduce(|acc, t| acc.or(&t))
             .unwrap();
@@ -422,21 +489,22 @@ pub(crate) fn minterm_literals(
 ///
 /// Since BDDs are canonical, two BoolExprs are equal if and only if
 /// they represent the same logical function.
-impl PartialEq for BoolExpr {
+impl<B: Brand> PartialEq for BoolExpr<B> {
     fn eq(&self, other: &Self) -> bool {
-        // BDDs are equal if they share the same manager and have the same root node
-        // The singleton manager ensures consistent representation across all BoolExprs
-        Arc::ptr_eq(&self.manager, &other.manager) && self.root == other.root
+        // BDDs are equal if they share the same manager and have the same root node. Within one brand
+        // (a single manager) this is exact canonical equality; the brand type parameter already keeps
+        // expressions of different (anonymous) contexts from being compared at all.
+        self.store_ident() == other.store_ident() && self.root == other.root
     }
 }
 
-impl Eq for BoolExpr {}
+impl<B: Brand> Eq for BoolExpr<B> {}
 
-/// Hashes the same identity the [`PartialEq`] impl compares — the shared manager's pointer and the BDD
-/// root node — so the `Hash`/`Eq` contract holds and a `BoolExpr` can be a `HashMap`/`HashSet` key.
-impl std::hash::Hash for BoolExpr {
+/// Hashes the same identity the [`PartialEq`] impl compares — the manager's pointer and the BDD root
+/// node — so the `Hash`/`Eq` contract holds and a `BoolExpr` can be a `HashMap`/`HashSet` key.
+impl<B: Brand> std::hash::Hash for BoolExpr<B> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.manager) as *const ()).hash(state);
+        self.store_ident().hash(state);
         self.root.hash(state);
     }
 }

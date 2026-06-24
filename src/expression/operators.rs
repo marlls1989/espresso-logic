@@ -1,5 +1,7 @@
 //! Operator overloading and boolean operations for boolean expressions
 
+use super::builder::build_in;
+use super::context::Brand;
 use super::BoolExpr;
 use std::ops::{Add, BitXor, Mul, Not};
 
@@ -18,10 +20,10 @@ use std::ops::{Add, BitXor, Mul, Not};
 /// let result = &a * &b;  // Equivalent to a.and(&b)
 /// assert!(result.equivalent_to(&a.and(&b)));
 /// ```
-impl Mul for &BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Mul for &BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn mul(self, rhs: &BoolExpr) -> BoolExpr {
+    fn mul(self, rhs: &BoolExpr<B>) -> BoolExpr<B> {
         self.and(rhs)
     }
 }
@@ -42,10 +44,10 @@ impl Mul for &BoolExpr {
 /// let result1 = a.clone() * b.clone();
 /// let result2 = &a * &b;
 /// ```
-impl Mul for BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Mul for BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn mul(self, rhs: BoolExpr) -> BoolExpr {
+    fn mul(self, rhs: BoolExpr<B>) -> BoolExpr<B> {
         self.and(&rhs)
     }
 }
@@ -64,10 +66,10 @@ impl Mul for BoolExpr {
 /// let b = BoolExpr::variable("b");
 /// let result = &a + &b;  // Equivalent to a.or(&b)
 /// ```
-impl Add for &BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Add for &BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn add(self, rhs: &BoolExpr) -> BoolExpr {
+    fn add(self, rhs: &BoolExpr<B>) -> BoolExpr<B> {
         self.or(rhs)
     }
 }
@@ -88,10 +90,10 @@ impl Add for &BoolExpr {
 /// let result1 = a.clone() + b.clone();
 /// let result2 = &a + &b;
 /// ```
-impl Add for BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Add for BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn add(self, rhs: BoolExpr) -> BoolExpr {
+    fn add(self, rhs: BoolExpr<B>) -> BoolExpr<B> {
         self.or(&rhs)
     }
 }
@@ -111,10 +113,10 @@ impl Add for BoolExpr {
 /// let result = &a ^ &b;  // Equivalent to a.xor(&b)
 /// assert!(result.equivalent_to(&a.xor(&b)));
 /// ```
-impl BitXor for &BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> BitXor for &BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn bitxor(self, rhs: &BoolExpr) -> BoolExpr {
+    fn bitxor(self, rhs: &BoolExpr<B>) -> BoolExpr<B> {
         self.xor(rhs)
     }
 }
@@ -135,10 +137,10 @@ impl BitXor for &BoolExpr {
 /// let result1 = a.clone() ^ b.clone();
 /// let result2 = &a ^ &b;
 /// ```
-impl BitXor for BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> BitXor for BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn bitxor(self, rhs: BoolExpr) -> BoolExpr {
+    fn bitxor(self, rhs: BoolExpr<B>) -> BoolExpr<B> {
         self.xor(&rhs)
     }
 }
@@ -157,10 +159,10 @@ impl BitXor for BoolExpr {
 /// let result = !&a;  // Equivalent to a.not()
 /// assert!(result.equivalent_to(&a.not()));
 /// ```
-impl Not for &BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Not for &BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn not(self) -> BoolExpr {
+    fn not(self) -> BoolExpr<B> {
         BoolExpr::not(self)
     }
 }
@@ -181,25 +183,25 @@ impl Not for &BoolExpr {
 /// let result1 = !a.clone();
 /// let result2 = !&a;
 /// ```
-impl Not for BoolExpr {
-    type Output = BoolExpr;
+impl<B: Brand> Not for BoolExpr<B> {
+    type Output = BoolExpr<B>;
 
-    fn not(self) -> BoolExpr {
+    fn not(self) -> BoolExpr<B> {
         BoolExpr::not(&self)
     }
 }
 
 // Boolean operation methods
-impl BoolExpr {
+impl<B: Brand> BoolExpr<B> {
     /// Logical AND: create a new expression that is the conjunction of this and another
     ///
     /// Computes the conjunction using the BDD ITE operation:
     /// `and(f, g) = ite(f, g, false)`
     #[must_use]
-    pub fn and(&self, other: &BoolExpr) -> BoolExpr {
-        // and(f, g) = ite(f, g, false). A thin shim over `build`, the single manager-acquisition point;
-        // `graft` debug-asserts both operands belong to that (global) manager.
-        BoolExpr::build(|b| {
+    pub fn and(&self, other: &BoolExpr<B>) -> BoolExpr<B> {
+        // and(f, g) = ite(f, g, false). A thin shim over the builder, the single manager-acquisition
+        // point; `graft` debug-asserts both operands belong to this expression's manager.
+        build_in(self.store_cloned(), |b| {
             let f = b.graft(self);
             let g = b.graft(other);
             b.and(f, g)
@@ -211,9 +213,9 @@ impl BoolExpr {
     /// Computes the disjunction using the BDD ITE operation:
     /// `or(f, g) = ite(f, true, g)`
     #[must_use]
-    pub fn or(&self, other: &BoolExpr) -> BoolExpr {
-        // or(f, g) = ite(f, true, g). Thin shim over `build` (see `and`).
-        BoolExpr::build(|b| {
+    pub fn or(&self, other: &BoolExpr<B>) -> BoolExpr<B> {
+        // or(f, g) = ite(f, true, g). Thin shim over the builder (see `and`).
+        build_in(self.store_cloned(), |b| {
             let f = b.graft(self);
             let g = b.graft(other);
             b.or(f, g)
@@ -225,9 +227,9 @@ impl BoolExpr {
     /// Computes the negation using the BDD ITE operation:
     /// `not(f) = ite(f, false, true)`
     #[must_use]
-    pub fn not(&self) -> BoolExpr {
-        // not(f) = ite(f, false, true). Thin shim over `build` (see `and`).
-        BoolExpr::build(|b| {
+    pub fn not(&self) -> BoolExpr<B> {
+        // not(f) = ite(f, false, true). Thin shim over the builder (see `and`).
+        build_in(self.store_cloned(), |b| {
             let f = b.graft(self);
             b.not(f)
         })
@@ -238,9 +240,9 @@ impl BoolExpr {
     /// Computes the exclusive-or using the BDD ITE operation:
     /// `xor(f, g) = ite(f, ¬g, g)` — equivalently `f*¬g + ¬f*g`.
     #[must_use]
-    pub fn xor(&self, other: &BoolExpr) -> BoolExpr {
-        // xor(f, g) = ite(f, !g, g). Thin shim over `build` (see `and`).
-        BoolExpr::build(|b| {
+    pub fn xor(&self, other: &BoolExpr<B>) -> BoolExpr<B> {
+        // xor(f, g) = ite(f, !g, g). Thin shim over the builder (see `and`).
+        build_in(self.store_cloned(), |b| {
             let f = b.graft(self);
             let g = b.graft(other);
             b.xor(f, g)

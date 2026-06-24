@@ -2,17 +2,17 @@
 // Supports standard boolean operators with proper precedence:
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 //
-// Each rule builds a postfix (reverse-Polish) `Vec<Op>` bottom-up; the top-level `Expr` realises it as a
-// BoolExpr through a single `BoolExpr::build` (iterative, per-op manager locking — see `build_postfix`).
+// Each rule builds a postfix (reverse-Polish) `Vec<Op>` bottom-up; the caller realises the top-level
+// program into a `BoolExpr` against a chosen store via `build_postfix` (so the global and scoped
+// parsers share this grammar).
 
-use crate::expression::builder::{build_postfix, Op};
-use crate::expression::BoolExpr;
+use crate::expression::builder::Op;
 
 grammar;
 
-// Main entry point: realise the postfix program into a BoolExpr.
-pub Expr: BoolExpr = {
-    <ops:OrExpr> => build_postfix(ops),
+// Main entry point: the postfix program.
+pub Expr: Vec<Op> = {
+    <ops:OrExpr> => ops,
 };
 
 // OR has lowest precedence (supports both + and |)

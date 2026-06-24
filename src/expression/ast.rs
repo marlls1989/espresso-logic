@@ -95,7 +95,7 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl BoolExpr {
+impl<B: super::context::Brand> BoolExpr<B> {
     /// Get or create the AST representation from the BDD
     ///
     /// This is called internally when AST is needed (for display, fold, etc.)

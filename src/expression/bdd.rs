@@ -3,6 +3,7 @@
 //! This module contains methods for traversing the BDD structure, extracting information,
 //! and querying properties of boolean expressions.
 
+use super::context::Brand;
 use super::manager::{BddNode, NodeId, VarId, FALSE_NODE, TRUE_NODE};
 use super::BoolExpr;
 use crate::cover::{Minterm, Symbols};
@@ -10,7 +11,7 @@ use crate::Symbol;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-impl BoolExpr {
+impl<B: Brand> BoolExpr<B> {
     /// Collect all variables used in this expression, sorted alphabetically by name.
     ///
     /// Returned as a `BTreeSet`, so iteration yields the variables in a stable, canonical order.
@@ -20,7 +21,7 @@ impl BoolExpr {
         self.collect_var_ids(self.root, &mut var_ids);
 
         // Convert var IDs to names
-        let mgr = self.manager.read().unwrap();
+        let mgr = self.store.read().unwrap();
         var_ids
             .into_iter()
             .filter_map(|id| mgr.var_name(id).cloned())
@@ -35,7 +36,7 @@ impl BoolExpr {
     /// linear in the BDD size. An explicit work-stack avoids unbounded recursion on large BDDs;
     /// one read guard is held for the whole walk (NodeIds are stable).
     fn collect_var_ids(&self, root: NodeId, vars: &mut std::collections::HashSet<VarId>) {
-        let mgr = self.manager.read().unwrap();
+        let mgr = self.store.read().unwrap();
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
@@ -101,7 +102,7 @@ impl BoolExpr {
         // Scratch path indexed by header position; `None` = variable not yet fixed (don't-care).
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
-        let mgr = self.manager.read().unwrap();
+        let mgr = self.store.read().unwrap();
         let mut stack = vec![Work::Node(self.root)];
         while let Some(work) = stack.pop() {
             match work {
@@ -155,7 +156,7 @@ impl BoolExpr {
     /// whole walk (NodeIds are stable).
     #[must_use]
     pub fn node_count(&self) -> usize {
-        let mgr = self.manager.read().unwrap();
+        let mgr = self.store.read().unwrap();
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![self.root];
         let mut count = 0;

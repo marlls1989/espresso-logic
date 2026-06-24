@@ -404,11 +404,11 @@ impl<I, O> Minimizable for Cover<I, O> {
 /// Workflow: `BoolExpr` → single-output `Cover` (product terms extracted from the internal
 /// BDD) → Espresso minimisation → rebuild a `BoolExpr` from the minimised product terms. The
 /// minimised cubes are cached on the result so subsequent cube extraction reflects them.
-fn minimize_expr_with<F>(
-    expr: &BoolExpr,
+fn minimize_expr_with<F, B: crate::Brand>(
+    expr: &BoolExpr<B>,
     config: &EspressoConfig,
     minimize_fn: F,
-) -> Result<BoolExpr, MinimizationError>
+) -> Result<BoolExpr<B>, MinimizationError>
 where
     F: FnOnce(
         &Cover<Symbol, Anonymous>,
@@ -421,16 +421,18 @@ where
     // Minimise it with the provided (heuristic or exact) algorithm.
     let minimized = minimize_fn(&cover, config)?;
 
-    // Rebuild a BoolExpr from the minimised product terms of the single output.
+    // Rebuild a BoolExpr from the minimised product terms of the single output, in the same manager
+    // as the input (so a scoped expression's minimised form stays branded to its context).
     let terms = minimized.output_product_terms(0);
-    Ok(BoolExpr::from_cubes(terms))
+    Ok(BoolExpr::from_cubes_in(expr.store_cloned(), terms))
 }
 
 /// Implement the public [`Minimizable`] trait for [`BoolExpr`].
 ///
 /// Boolean expressions minimise by extracting their product terms (from the internal BDD) into a
-/// single-output [`Cover`], running Espresso, and reconstructing an expression from the result.
-impl Minimizable for BoolExpr {
+/// single-output [`Cover`], running Espresso, and reconstructing an expression from the result. Works
+/// for any brand: a scoped expression minimises to an expression in the same context.
+impl<B: crate::Brand> Minimizable for BoolExpr<B> {
     fn try_minimize_with_config(
         &self,
         config: &crate::EspressoConfig,

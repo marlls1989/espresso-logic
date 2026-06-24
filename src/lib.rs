@@ -371,11 +371,55 @@ pub use cover::{
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-pub use expression::{Bdd, BddBuilder, BoolExpr, ExprNode};
+pub use expression::{Bdd, BddBuilder, BddContext, BoolExpr, Brand, ExprNode, Global};
 pub use symbol::Symbol;
 
 // Re-export procedural macro
 pub use espresso_logic_macros::expr;
+
+/// Create a fresh, branded [`BddContext`] with a private BDD manager.
+///
+/// Each call mints a unique brand so expressions from two different contexts cannot be combined — it
+/// is a compile error, not a runtime check. This is the scoped, isolated alternative to the
+/// [`Global`]-brand free constructors ([`BoolExpr::variable`] and friends), which share one
+/// process-global manager. A context gives a private node table (isolation and locality); like
+/// `Global`, it is `Arc<RwLock<…>>`-backed, so its expressions stay `Send`/`Sync`.
+///
+/// - `bdd_context!()` — an anonymous brand, unique to this call site/invocation.
+/// - `bdd_context!(Name)` — a named brand. Two contexts of the *same* name share a brand, so mixing
+///   their expressions type-checks; prefer the anonymous form unless you specifically need a named one.
+///
+/// ```
+/// use espresso_logic::bdd_context;
+///
+/// let ctx = bdd_context!();
+/// let a = ctx.var("a");
+/// let b = ctx.var("b");
+/// assert_eq!(&a * &b, ctx.parse("a * b").unwrap());
+/// ```
+///
+/// Expressions from two distinct contexts cannot be combined:
+///
+/// ```compile_fail
+/// use espresso_logic::bdd_context;
+///
+/// let c1 = bdd_context!();
+/// let c2 = bdd_context!();
+/// let _ = &c1.var("a") * &c2.var("b"); // error: distinct brands cannot mix
+/// ```
+#[macro_export]
+macro_rules! bdd_context {
+    () => {{
+        struct __EspressoBddBrand;
+        impl $crate::Brand for __EspressoBddBrand {}
+        $crate::BddContext::<__EspressoBddBrand>::new()
+    }};
+    ($name:ident) => {{
+        struct $name;
+        impl $crate::Brand for $name {}
+        $crate::BddContext::<$name>::new()
+    }};
+}
 
 /// Comprehensive documentation guides
 ///

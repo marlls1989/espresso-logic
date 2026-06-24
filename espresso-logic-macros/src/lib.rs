@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{parse_macro_input, Ident, Token};
+use syn::{Ident, Token};
 
 /// AST for boolean expressions
 enum Expr {
@@ -233,13 +233,62 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 /// ```
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
-    let parser = parse_macro_input!(input as BoolExprParser);
+    // An optional leading context operand selects the scoped form: `expr!(ctx, a * b)` builds in `ctx`,
+    // while `expr!(a * b)` builds in the global manager. The boolean grammar never contains a top-level
+    // comma, so the first one (if any) unambiguously separates the context expression from the body.
+    let (context, body_tokens) = split_leading_context(input.into());
+
+    let parser = match syn::parse2::<BoolExprParser>(body_tokens) {
+        Ok(parser) => parser,
+        Err(e) => return e.to_compile_error().into(),
+    };
     // `mixed_site` hygiene: the builder binding is invisible to (and cannot capture) user identifiers,
     // so an expression like `expr!(b)` where the user has a variable `b` is unaffected.
     let builder = Ident::new("__expr_builder", Span::mixed_site());
     let body = parser.expr.to_bdd_tokens(&builder);
-    let tokens = quote! {
-        BoolExpr::build(|#builder| #body)
+    let tokens = match context {
+        // Scoped: build inside the supplied context. `&(...)` so the context can be supplied by value
+        // or by reference; `BddContext::build` takes `&self`.
+        Some(ctx) => quote! {
+            (&(#ctx)).build(|#builder| #body)
+        },
+        // Global: the default brand's free builder.
+        None => quote! {
+            BoolExpr::build(|#builder| #body)
+        },
     };
     TokenStream::from(tokens)
+}
+
+/// Split a macro input on its first top-level (depth-0) comma into `(context, body)`.
+///
+/// Returns `(Some(context_tokens), body_tokens)` when a top-level comma is present (the scoped form),
+/// or `(None, all_tokens)` otherwise (the global form). Commas nested inside a group (e.g. a call's
+/// argument list) are not top-level and never split.
+fn split_leading_context(
+    input: proc_macro2::TokenStream,
+) -> (Option<proc_macro2::TokenStream>, proc_macro2::TokenStream) {
+    use proc_macro2::{TokenStream, TokenTree};
+
+    let mut context = TokenStream::new();
+    let mut iter = input.into_iter();
+    let mut found = false;
+    for tree in iter.by_ref() {
+        if let TokenTree::Punct(ref p) = tree {
+            if p.as_char() == ',' {
+                found = true;
+                break;
+            }
+        }
+        context.extend(std::iter::once(tree));
+    }
+
+    if found {
+        // Everything after the comma is the boolean-expression body.
+        let body: TokenStream = iter.collect();
+        (Some(context), body)
+    } else {
+        // No top-level comma: `context` accumulated the whole input as the body.
+        (None, context)
+    }
 }

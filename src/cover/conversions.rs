@@ -54,7 +54,9 @@ pub(crate) fn anonymous_cover_from_raw(
 /// yields the product terms as input minterms over one shared, canonical header. Each becomes an F cube
 /// asserting the cover's single output. The output is **anonymous** (`O = Anonymous`) — an expression has no
 /// output name; label it explicitly with [`relabel_outputs`](Cover::relabel_outputs) if needed.
-fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymous> {
+fn cover_from_expr<B: crate::Brand>(
+    expr: &crate::expression::BoolExpr<B>,
+) -> Cover<Symbol, Anonymous> {
     let minterms = expr.to_cubes();
     let input_symbols = minterms
         .first()
@@ -91,8 +93,8 @@ fn cover_from_expr(expr: &crate::expression::BoolExpr) -> Cover<Symbol, Anonymou
 /// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: crate::expression::BoolExpr) -> Self {
+impl<B: crate::Brand> From<crate::expression::BoolExpr<B>> for Cover<Symbol, Anonymous> {
+    fn from(expr: crate::expression::BoolExpr<B>) -> Self {
         cover_from_expr(&expr)
     }
 }
@@ -112,8 +114,8 @@ impl From<crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
 /// let cover = Cover::<Symbol, Anonymous>::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&crate::expression::BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: &crate::expression::BoolExpr) -> Self {
+impl<B: crate::Brand> From<&crate::expression::BoolExpr<B>> for Cover<Symbol, Anonymous> {
+    fn from(expr: &crate::expression::BoolExpr<B>) -> Self {
         cover_from_expr(expr)
     }
 }
