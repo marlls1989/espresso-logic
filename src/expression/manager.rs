@@ -10,7 +10,6 @@
 use super::manager_cell::ManagerCell;
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, RwLock, Weak};
 
 /// Node identifier in the BDD
 pub(crate) type NodeId = usize;
@@ -23,24 +22,6 @@ pub(crate) const FALSE_NODE: NodeId = 0;
 
 /// Terminal node for TRUE
 pub(crate) const TRUE_NODE: NodeId = 1;
-
-/// Global weak reference to BDD manager
-///
-/// Using a weak reference allows the manager to be dropped when no BDDs are using it,
-/// preventing memory leaks. A new manager will be created when needed.
-///
-/// The weak reference enables:
-/// - Better cache hit rates when BDDs are actively in use (shared across all BDDs)
-/// - Lower memory usage (shared node table)
-/// - Hash consing works globally (same expressions = same nodes everywhere)
-/// - Automatic cleanup when no BDDs are in use
-pub(super) static GLOBAL_BDD_MANAGER: Mutex<Weak<RwLock<BddManager>>> = Mutex::new(Weak::new());
-
-/// The owned storage handle every [`BoolExpr`](crate::BoolExpr) and [`BddContext`](crate::BddContext)
-/// holds: an `Arc<RwLock<BddManager>>`. The [`Global`](crate::Global) brand shares one process-global
-/// instance; each scoped context owns a fresh, independent one. Either way `Arc<RwLock<…>>` keeps
-/// expressions `Send`/`Sync` and the manager alive while any expression references it.
-pub(crate) type Store = Arc<RwLock<BddManager>>;
 
 /// Binary decision diagram node
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,8 +49,12 @@ pub(crate) enum BddNode {
 /// - A NodeId is valid for the lifetime of the manager
 /// - Multiple threads can safely traverse using NodeIds after releasing read locks
 /// - Recursive traversal can release locks between calls without invalidating NodeIds
+// Doc-hidden public so the cell types (which the `bdd_context!` / `sync_bdd_context!` macros name) can
+// expose it through the public `ManagerCell` interface. Its fields and constructors stay crate-private,
+// so it is opaque outside the crate.
+#[doc(hidden)]
 #[derive(Debug)]
-pub(crate) struct BddManager {
+pub struct BddManager {
     /// All nodes in the BDD (terminals at indices 0 and 1)
     /// INVARIANT: Nodes are never removed or reordered - only appended
     pub(super) nodes: Vec<BddNode>,
@@ -84,27 +69,12 @@ pub(crate) struct BddManager {
 }
 
 impl BddManager {
-    /// Get or create the singleton BDD manager
-    ///
-    /// All BDDs in the program share a single manager for maximum efficiency
-    /// through shared node tables and caches. The manager is automatically
-    /// cleaned up when no BDDs reference it anymore.
-    pub(super) fn get_or_create() -> Arc<RwLock<Self>> {
-        let mut guard = GLOBAL_BDD_MANAGER.lock().unwrap();
-        if let Some(manager) = guard.upgrade() {
-            manager
-        } else {
-            let manager = Arc::new(RwLock::new(BddManager::new_empty()));
-            *guard = Arc::downgrade(&manager);
-            manager
-        }
-    }
-
     /// A fresh, empty manager seeded with the two terminal nodes (`FALSE_NODE = 0`, `TRUE_NODE = 1`).
     ///
-    /// Used both for the global singleton and for every scoped context's store (via
-    /// [`new_store`](Self::new_store)).
-    pub(super) fn new_empty() -> Self {
+    /// Every [`BddContext`](crate::bdd::BddContext) / [`SyncBddContext`](crate::bdd::SyncBddContext)
+    /// owns one of these (minted through its cell's
+    /// [`new_empty`](super::manager_cell::ManagerCell::new_empty)).
+    pub(crate) fn new_empty() -> Self {
         BddManager {
             nodes: vec![
                 BddNode::Terminal(false), // FALSE_NODE = 0
@@ -115,11 +85,6 @@ impl BddManager {
             id_to_var: Vec::new(),
             ite_cache: HashMap::new(),
         }
-    }
-
-    /// A fresh, independent [`Store`] backing a single scoped [`BddContext`](crate::BddContext).
-    pub(super) fn new_store() -> Store {
-        Arc::new(RwLock::new(BddManager::new_empty()))
     }
 
     /// Get or create the variable id for `name`, managing the cell's borrow itself.

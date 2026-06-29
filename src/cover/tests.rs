@@ -677,7 +677,7 @@ fn test_to_expr_basic() {
     let retrieved = cover.to_expr("result").unwrap();
 
     // Should be able to collect variables
-    let vars = retrieved.collect_variables();
+    let vars = retrieved.variables();
     assert_eq!(vars.len(), 2);
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
@@ -693,7 +693,8 @@ fn to_expr_and_from_pla_string_accept_owned_string() {
     cover.add_expr(&a.and(&b), "result").unwrap();
     let from_string = cover.to_expr(String::from("result")).unwrap();
     let from_str = cover.to_expr("result").unwrap();
-    assert!(from_string.equivalent_to(&from_str));
+    // `to_expr` is deterministic, so the two forms produce structurally identical expressions.
+    assert_eq!(from_string, from_str);
 
     let pla = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
     let from_string = PlaCover::<Symbol>::from_pla_string(String::from(pla)).unwrap();
@@ -715,8 +716,8 @@ fn test_to_expr_by_index() {
     let expr0 = cover.to_expr_by_index(0).unwrap();
     let expr1 = cover.to_expr_by_index(1).unwrap();
 
-    assert_eq!(expr0.collect_variables().len(), 1);
-    assert_eq!(expr1.collect_variables().len(), 1);
+    assert_eq!(expr0.variables().len(), 1);
+    assert_eq!(expr1.variables().len(), 1);
 }
 
 #[test]
@@ -765,9 +766,9 @@ fn test_to_exprs_iterator() {
     assert_eq!(exprs[2].0.as_ref(), "out3");
 
     // Each expression should have one variable
-    assert_eq!(exprs[0].1.collect_variables().len(), 1);
-    assert_eq!(exprs[1].1.collect_variables().len(), 1);
-    assert_eq!(exprs[2].1.collect_variables().len(), 1);
+    assert_eq!(exprs[0].1.variables().len(), 1);
+    assert_eq!(exprs[1].1.variables().len(), 1);
+    assert_eq!(exprs[2].1.variables().len(), 1);
 }
 
 #[test]
@@ -796,7 +797,7 @@ fn to_exprs_works_for_any_string_input_label() {
         arc_cover
             .to_expr_by_index(0)
             .unwrap()
-            .collect_variables()
+            .variables()
             .len(),
         2
     );
@@ -804,7 +805,7 @@ fn to_exprs_works_for_any_string_input_label() {
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].0.as_ref(), "out"); // (&O, BoolExpr) — output label borrowed
     assert_eq!(
-        arc_cover.to_expr("out").unwrap().collect_variables().len(),
+        arc_cover.to_expr("out").unwrap().variables().len(),
         2
     );
 }
@@ -830,7 +831,7 @@ fn test_to_exprs_after_minimization() {
 
     // Should still be able to convert to expression
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.collect_variables();
+    let vars = minimized.variables();
     assert!(vars.len() >= 2); // At least a and b
 }
 
@@ -967,7 +968,7 @@ fn test_complex_expression_with_minimization() {
 
     // Should still be able to convert back
     let minimized = cover.to_expr("consensus").unwrap();
-    assert_eq!(minimized.collect_variables().len(), 3);
+    assert_eq!(minimized.variables().len(), 3);
 }
 
 #[test]
@@ -1819,8 +1820,8 @@ fn test_minimize_preserves_structure() {
     let expr1 = cover.to_expr("out1").unwrap();
     let expr2 = cover.to_expr("out2").unwrap();
 
-    assert!(expr1.collect_variables().len() <= 2);
-    assert!(expr2.collect_variables().len() <= 2);
+    assert!(expr1.variables().len() <= 2);
+    assert!(expr2.variables().len() <= 2);
 }
 
 // ===== Generic label type / anonymous covers (M3) =====
@@ -2067,22 +2068,32 @@ fn merge_overlays_colliding_named_outputs() {
     assert!(output_rows(&a).iter().all(|row| row == &vec![true]));
 }
 
-// ===== BoolExpr -> Cover<Symbol, Anonymous> and per-side relabel =====
+// ===== BoolExpr -> Bdd -> Cover<Symbol, Anonymous> and per-side relabel =====
 
 #[test]
-fn expr_into_anonymous_output_cover_roundtrips() {
+fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
+    use std::collections::HashMap;
+
     let a = crate::BoolExpr::variable("a");
     let b = crate::BoolExpr::variable("b");
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
 
-    // From<&BoolExpr> yields a labelled-input, anonymous-output cover (via the BDD).
-    let cover: Cover<Symbol, Anonymous> = (&expr).into();
+    // A free `BoolExpr` has no cubes; go through a BDD context to materialise the ON-set cover.
+    let ctx = crate::bdd_context!();
+    let cover: Cover<Symbol, Anonymous> = ctx.build(&expr).to_cubes();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
     // Reconstruction is index-addressed (no output name needed) and recovers the function.
     let back = cover.to_expr_by_index(0).unwrap();
-    assert!(back.equivalent_to(&expr));
+    // `to_expr` is factored/syntactic, so compare semantically over every assignment.
+    for mask in 0..4u32 {
+        let m: HashMap<Symbol, bool> = [("a", mask & 1 == 1), ("b", mask & 2 == 2)]
+            .into_iter()
+            .map(|(n, v)| (Symbol::from(n), v))
+            .collect();
+        assert_eq!(expr.evaluate(&m), back.evaluate(&m));
+    }
 }
 
 #[test]

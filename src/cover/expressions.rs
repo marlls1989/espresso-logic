@@ -15,46 +15,22 @@ use crate::Symbol;
 use std::sync::Arc;
 
 impl Cover<Symbol, Symbol> {
-    /// Add a boolean function to a named output.
+    /// Add a [`Bdd`](crate::bdd::Bdd)'s ON-set to a named output.
     ///
-    /// The expression's product terms (extracted from its internal BDD) become F cubes asserting
-    /// `output_name`. Input variables are matched by name with existing variables, and new variables
-    /// are appended.
-    ///
-    /// This is the bridge *from* the `Symbol`-based expression/BDD layer, so it produces the natural
-    /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
-    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`).
+    /// This is the primitive Boolean-function → cover bridge: the handle's product terms
+    /// ([`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes)) become F cubes asserting `output_name`. Input
+    /// variables are matched by name with existing variables, and new variables are appended.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType};
-    ///
-    /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
-    /// let expr = a.and(&b);
-    ///
-    /// // Add expression to cover
-    /// cover.add_expr(&expr, "output1").unwrap();
-    /// assert_eq!(cover.num_inputs(), 2);
-    /// assert_eq!(cover.num_outputs(), 1);
-    ///
-    /// // Add another expression as a second output
-    /// let expr2 = b.or(&a);
-    /// cover.add_expr(&expr2, "output2").unwrap();
-    /// ```
-    pub fn add_expr<S: AsRef<str>>(
+    pub fn add_bdd<S: AsRef<str>, B: crate::bdd::Brand>(
         &mut self,
-        expr: &BoolExpr,
+        bdd: &crate::bdd::Bdd<'_, B>,
         output_name: S,
     ) -> Result<(), AddExprError> {
         let output_name = output_name.as_ref();
-        // `add_expr` is a *labelled* operation, intended for empty or fully-labelled covers. Build
-        // positional covers as `Cover<Anonymous, Anonymous>` and convert explicitly (`relabel`) rather than naming
-        // anonymous positions here.
+        // `add_bdd` is a *labelled* operation, intended for empty or fully-labelled covers. Build
+        // positional covers as `Cover<Anonymous, Anonymous>` and convert explicitly (`relabel`) rather
+        // than naming anonymous positions here.
 
         // Check if output already exists (fail fast before doing any work).
         if self
@@ -69,9 +45,10 @@ impl Cover<Symbol, Symbol> {
             .into());
         }
 
-        // Extract the expression's product terms as input minterms (goes through the BDD for
-        // canonical form). Every minterm shares one header: the expression's variables, sorted.
-        let cubes = expr.to_cubes();
+        // Extract the function's product terms as input minterms (canonical ON-set from the BDD).
+        // Every minterm shares one header: the function's variables, sorted.
+        let on_set = bdd.to_cubes();
+        let cubes: Vec<Minterm<Symbol>> = on_set.cubes().map(|c| c.inputs().clone()).collect();
 
         // Union the cover's input header with the expression's variables, re-pointing existing cubes
         // onto the grown header (new inputs = don't-care). Reuse the shared identity-union helper
@@ -125,6 +102,51 @@ impl Cover<Symbol, Symbol> {
         }));
 
         Ok(())
+    }
+
+    /// Add a boolean function to a named output.
+    ///
+    /// A convenience wrapper over [`add_bdd`](Self::add_bdd): the owned, syntactic [`BoolExpr`] has no
+    /// cubes of its own, so it is first built into a [`Bdd`](crate::bdd::Bdd) in a private, temporary
+    /// single-threaded context (which canonicalises it), then its ON-set is added as a new output. The
+    /// temporary context lives only for this call; the handle is consumed before it returns.
+    ///
+    /// This is the bridge *from* the `Symbol`-based expression layer, so it produces the natural
+    /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
+    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`).
+    ///
+    /// Returns an error if the output name already exists (to prevent accidental overwrite).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
+    ///
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::variable("a");
+    /// let b = BoolExpr::variable("b");
+    /// let expr = a.and(&b);
+    ///
+    /// // Add expression to cover
+    /// cover.add_expr(&expr, "output1").unwrap();
+    /// assert_eq!(cover.num_inputs(), 2);
+    /// assert_eq!(cover.num_outputs(), 1);
+    ///
+    /// // Add another expression as a second output
+    /// let expr2 = b.or(&a);
+    /// cover.add_expr(&expr2, "output2").unwrap();
+    /// ```
+    pub fn add_expr<S: AsRef<str>>(
+        &mut self,
+        expr: &BoolExpr,
+        output_name: S,
+    ) -> Result<(), AddExprError> {
+        // Mediate the syntactic → cube transformation through a throwaway BDD context (canonicalises
+        // the expression). The context is local; the handle borrows it and is consumed by `add_bdd`
+        // before this function returns, so the lifetimes work out.
+        let ctx = crate::bdd_context!();
+        let bdd = ctx.build(expr);
+        self.add_bdd(&bdd, output_name)
     }
 }
 

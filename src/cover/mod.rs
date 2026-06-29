@@ -644,17 +644,6 @@ impl<'a, I, O> IntoIterator for &'a Cover<I, O> {
     }
 }
 
-impl<I: Clone, O> Cover<I, O> {
-    /// Input minterms of the F cubes that assert `output_idx` (the product terms of that output).
-    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm<I>]> {
-        self.cubes
-            .iter()
-            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
-            .map(|cube| cube.inputs().clone())
-            .collect()
-    }
-}
-
 impl<I: Label, O: Label> Cover<I, O> {
     /// Build a cover from a collection of typed [`Cube`]s, aligning them by variable
     /// [identity](Label) — by name for labelled cubes, by position for anonymous ones.

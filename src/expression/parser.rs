@@ -1,9 +1,10 @@
-//! Parsing support for boolean expressions
+//! Parsing support for boolean expressions.
+//!
+//! The lalrpop grammar (`bool_expr.lalrpop`) emits a reverse-Polish [`Token`] program directly, which
+//! [`BoolExpr::parse`] wraps into an owned [`BoolExpr`] — there is no BDD and no context involved.
 
-use super::builder::{build_postfix, Op};
-use super::context::{Brand, Global};
 use super::error::{ExpressionParseError, ParseBoolExprError};
-use super::manager::{BddManager, Store};
+use super::rpn::Token;
 use super::BoolExpr;
 use std::sync::Arc;
 
@@ -20,8 +21,8 @@ mod parser_impl {
     include!(concat!(env!("OUT_DIR"), "/expression/bool_expr.rs"));
 }
 
-/// Parse a string into a postfix [`Op`] program (the brand-independent half of parsing).
-fn parse_program(input: &str) -> Result<Vec<Op>, ParseBoolExprError> {
+/// Parse a string into a reverse-Polish [`Token`] program.
+fn parse_program(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
     parser_impl::ExprParser::new().parse(input).map_err(|e| {
         let message = e.to_string();
         // Try to extract position from lalrpop error message
@@ -35,17 +36,8 @@ fn parse_program(input: &str) -> Result<Vec<Op>, ParseBoolExprError> {
     })
 }
 
-/// Parse a boolean expression and realise it against `store` (the shared backend of
-/// [`BoolExpr::parse`] and [`BddContext::parse`](crate::BddContext::parse)).
-pub(super) fn parse_in<B: Brand>(
-    store: Store,
-    input: &str,
-) -> Result<BoolExpr<B>, ParseBoolExprError> {
-    Ok(build_postfix(store, parse_program(input)?))
-}
-
-impl BoolExpr<Global> {
-    /// Parse a boolean expression from a string
+impl BoolExpr {
+    /// Parse a boolean expression from a string.
     ///
     /// Supports standard boolean operators, in precedence order (lowest to highest):
     /// - `+` or `|` for OR
@@ -55,17 +47,18 @@ impl BoolExpr<Global> {
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
     ///
-    /// All binary operators are left-associative. The whole expression is constructed under a single
-    /// BDD manager acquisition. For a scoped context, use
-    /// [`BddContext::parse`](crate::BddContext::parse).
+    /// All binary operators are left-associative. The result is the owned, syntactic [`BoolExpr`] of
+    /// the parsed text (both the `*`/`+`/`~` and `&`/`|`/`!` spellings lower to the same canonical
+    /// operator set).
     pub fn parse<S: AsRef<str>>(input: S) -> Result<Self, ParseBoolExprError> {
-        parse_in(BddManager::get_or_create(), input.as_ref())
+        let program = parse_program(input.as_ref())?;
+        Ok(BoolExpr::from_tokens(Arc::from(program)))
     }
 }
 
 /// Parse a boolean expression from a string, so `"a + b".parse::<BoolExpr>()` and generic `FromStr`
 /// bounds work. Delegates to the inherent [`BoolExpr::parse`].
-impl std::str::FromStr for BoolExpr<Global> {
+impl std::str::FromStr for BoolExpr {
     type Err = ParseBoolExprError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

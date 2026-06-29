@@ -20,9 +20,13 @@ use std::marker::PhantomData;
 
 use super::brand::Brand;
 use super::handle::Bdd;
-use crate::cover::{Cover, StringLabel};
+use crate::cover::{Anonymous, Cover, StringLabel};
+use crate::error::MinimizationError;
 use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
+use crate::expression::rpn::Token;
+use crate::expression::{BoolExpr, ParseBoolExprError};
+use crate::Symbol;
 
 /// A single-threaded, owned BDD namespace.
 ///
@@ -127,6 +131,76 @@ macro_rules! context_impl {
                     acc = acc | term;
                 }
                 acc
+            }
+
+            /// Build a [`Bdd`] handle from an owned, syntactic [`BoolExpr`].
+            ///
+            /// Interprets the expression's reverse-Polish token stream into canonical BDD nodes through
+            /// this context's engine: a variable becomes [`var`](Self::var), a constant becomes
+            /// [`constant`](Self::constant), and the operators fold through the handle's `&`/`|`/`^`/`!`.
+            /// Evaluated iteratively with an explicit value stack (no recursion), so an arbitrarily deep
+            /// expression cannot overflow the call stack. The result is canonical, so two expressions
+            /// denoting the same function build to the *same* handle.
+            #[must_use]
+            pub fn build(&self, expr: &BoolExpr) -> Bdd<'_, B> {
+                let mut stack: Vec<Bdd<'_, B>> = Vec::with_capacity(expr.tokens().len());
+                for token in expr.tokens() {
+                    let node = match token {
+                        Token::Var(name) => self.var(name.as_str()),
+                        Token::Const(value) => self.constant(*value),
+                        Token::Not => {
+                            let a = stack.pop().expect("build: postfix underflow on NOT");
+                            a.complement()
+                        }
+                        Token::And => {
+                            let r = stack.pop().expect("build: postfix underflow on AND");
+                            let l = stack.pop().expect("build: postfix underflow on AND");
+                            l.and(r)
+                        }
+                        Token::Or => {
+                            let r = stack.pop().expect("build: postfix underflow on OR");
+                            let l = stack.pop().expect("build: postfix underflow on OR");
+                            l.or(r)
+                        }
+                        Token::Xor => {
+                            let r = stack.pop().expect("build: postfix underflow on XOR");
+                            let l = stack.pop().expect("build: postfix underflow on XOR");
+                            l.xor(r)
+                        }
+                    };
+                    stack.push(node);
+                }
+                stack.pop().expect("build: empty expression token stream")
+            }
+
+            /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this context.
+            ///
+            /// A convenience for `self.build(&BoolExpr::parse(input)?)`.
+            ///
+            /// # Errors
+            ///
+            /// Propagates a [`ParseBoolExprError`] if the text does not parse.
+            pub fn parse<S: AsRef<str>>(
+                &self,
+                input: S,
+            ) -> Result<Bdd<'_, B>, ParseBoolExprError> {
+                Ok(self.build(&BoolExpr::parse(input)?))
+            }
+
+            /// Minimise a [`BoolExpr`]'s ON-set with Espresso, returning the minimised single-output
+            /// [`Cover`].
+            ///
+            /// A convenience for `self.build(expr).minimize()`; the cover is the characteristic function
+            /// over the expression's support variables (see [`Bdd::to_cubes`]).
+            ///
+            /// # Errors
+            ///
+            /// Propagates any [`MinimizationError`] from the Espresso engine.
+            pub fn minimize(
+                &self,
+                expr: &BoolExpr,
+            ) -> Result<Cover<Symbol, Anonymous>, MinimizationError> {
+                self.build(expr).minimize()
             }
         }
 

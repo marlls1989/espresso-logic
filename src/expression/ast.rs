@@ -2,6 +2,7 @@
 //!
 //! This module contains the AST types and fold operations for boolean expressions.
 
+use super::rpn::Token;
 use super::BoolExpr;
 use crate::Symbol;
 use std::sync::Arc;
@@ -95,44 +96,48 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl<B: super::context::Brand> BoolExpr<B> {
-    /// Get or create the AST representation from the BDD
+impl BoolExpr {
+    /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
-    /// This is called internally when AST is needed (for display, fold, etc.)
-    ///
-    /// Uses factorisation-based reconstruction for beautiful, compact expressions.
-    pub(super) fn get_or_create_ast(&self) -> Arc<BoolExprAst> {
-        // The single place that reads and populates `ast_cache`.
-        if let Some(ast) = self.ast_cache.get() {
-            return Arc::clone(ast);
+    /// A plain postfix-to-tree fold over the tokens (iterative, an explicit `Arc<BoolExprAst>` stack,
+    /// so a deep expression can't overflow the call stack). [`BoolExprAst`] has no XOR node, so an
+    /// `^` token is expanded to its AND/OR/NOT definition `a ^ b = (a & !b) | (!a & b)` — this keeps
+    /// the fold/`ExprNode` surface (And/Or/Not/Variable/Constant) unchanged. The walk is **syntactic**:
+    /// it mirrors how the expression was built, not a canonical form.
+    fn to_ast(&self) -> Arc<BoolExprAst> {
+        let mut stack: Vec<Arc<BoolExprAst>> = Vec::with_capacity(self.tokens().len());
+        for token in self.tokens() {
+            let node = match token {
+                Token::Var(name) => Arc::new(BoolExprAst::Variable(name.clone())),
+                Token::Const(value) => Arc::new(BoolExprAst::Constant(*value)),
+                Token::Not => {
+                    let a = stack.pop().expect("postfix underflow on NOT");
+                    Arc::new(BoolExprAst::Not(a))
+                }
+                Token::And => {
+                    let r = stack.pop().expect("postfix underflow on AND");
+                    let l = stack.pop().expect("postfix underflow on AND");
+                    Arc::new(BoolExprAst::And(l, r))
+                }
+                Token::Or => {
+                    let r = stack.pop().expect("postfix underflow on OR");
+                    let l = stack.pop().expect("postfix underflow on OR");
+                    Arc::new(BoolExprAst::Or(l, r))
+                }
+                Token::Xor => {
+                    // a ^ b = (a & !b) | (!a & b)
+                    let r = stack.pop().expect("postfix underflow on XOR");
+                    let l = stack.pop().expect("postfix underflow on XOR");
+                    let not_l = Arc::new(BoolExprAst::Not(Arc::clone(&l)));
+                    let not_r = Arc::new(BoolExprAst::Not(Arc::clone(&r)));
+                    let left = Arc::new(BoolExprAst::And(l, not_r));
+                    let right = Arc::new(BoolExprAst::And(not_l, r));
+                    Arc::new(BoolExprAst::Or(left, right))
+                }
+            };
+            stack.push(node);
         }
-
-        // Need to reconstruct from BDD using factorisation.
-        let ast = self.to_ast_uncached();
-
-        // Try to store it (may fail if another thread beat us to it, that's fine).
-        let _ = self.ast_cache.set(Arc::clone(&ast));
-
-        ast
-    }
-
-    /// Reconstruct an optimised AST from the BDD (pure compute, no caching).
-    ///
-    /// Extracts cubes from the BDD and applies algebraic factorisation to produce a compact, readable
-    /// expression. Caching is owned solely by [`get_or_create_ast`](Self::get_or_create_ast), its only
-    /// caller.
-    fn to_ast_uncached(&self) -> Arc<BoolExprAst> {
-        // Get cubes and factorise.
-        let cubes = self.get_or_create_cubes();
-
-        // Convert cubes to the (literals, include) format expected by factorisation
-        let cube_terms: Vec<(std::collections::BTreeMap<Symbol, bool>, bool)> = cubes
-            .iter()
-            .map(|cube| (super::minterm_literals(cube), true))
-            .collect();
-
-        // Use factorisation to build a nice AST (caching is the caller's responsibility).
-        crate::expression::factorization::factorise_cubes_to_ast(cube_terms)
+        stack.pop().expect("postfix program produced no result")
     }
 
     /// Fold the expression tree depth-first from leaves to root
@@ -174,7 +179,7 @@ impl<B: super::context::Brand> BoolExpr<B> {
     where
         F: Fn(ExprNode<T>) -> T,
     {
-        let ast = self.get_or_create_ast();
+        let ast = self.to_ast();
         Self::fold_ast(&ast, f)
     }
 
@@ -232,8 +237,8 @@ impl<B: super::context::Brand> BoolExpr<B> {
     ///         ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
     ///     },
     /// );
-    /// // The fold runs over the canonical (BDD-reconstructed) tree, so the exact depth depends on
-    /// // that form; for a two-variable expression it is at least one level deep.
+    /// // The fold runs over the expression's own syntactic tree; for this two-variable expression
+    /// // it is at least one level deep.
     /// assert!(max_depth >= 1);
     /// ```
     ///
@@ -300,7 +305,7 @@ impl<B: super::context::Brand> BoolExpr<B> {
         D: Fn(ExprNode<()>, &C) -> (C, C),
         G: Fn(ExprNode<T>, C) -> T,
     {
-        let ast = self.get_or_create_ast();
+        let ast = self.to_ast();
         Self::fold_with_context_ast(&ast, root_context, &descend, &combine)
     }
 

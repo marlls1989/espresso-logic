@@ -32,14 +32,15 @@
 //!   (fully-expanded minterms over an explicit, widenable variable set), and [`Bdd::minimize`].
 //! - Introspection: [`Bdd::collect_variables`], [`Bdd::node_count`], [`Bdd::var_count`].
 //!
-//! # Construction in tests today
+//! # Construction
 //!
-//! The ergonomic public macros (`bdd_context!` / `sync_bdd_context!`) that mint a brand per call arrive
-//! with the 5.0 breaking cut. Until then a context is constructed in-crate against a brand type that
-//! implements the sealed [`Brand`] trait (the seal permits in-crate impls).
+//! A context is minted by the [`bdd_context!`](crate::bdd_context) (single-threaded) or
+//! [`sync_bdd_context!`](crate::sync_bdd_context) (thread-safe) macro, each of which mints a fresh
+//! brand per call so handles of two different contexts can never be combined. A [`BoolExpr`] is built
+//! into a handle with [`BddContext::build`] / [`BddContext::parse`], and a handle is lowered back to a
+//! factored [`BoolExpr`] with [`Bdd::to_expr`].
 //!
-//! Syntactic construction from a Boolean expression (`BddContext::build(&BoolExpr)`, `parse`, and
-//! `Bdd::to_expr()`) also arrives with the breaking cut, alongside the new owned-RPN `BoolExpr`.
+//! [`BoolExpr`]: crate::BoolExpr
 
 mod brand;
 mod context;
@@ -48,6 +49,14 @@ mod handle;
 pub use brand::Brand;
 pub use context::{BddContext, SyncBddContext};
 pub use handle::Bdd;
+
+/// Items the `bdd_context!` / `sync_bdd_context!` macros need to name at their (possibly downstream)
+/// call sites. Not part of the documented public API; named only by those macros.
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
+    pub use super::brand::brand_seal::Sealed;
+}
 
 #[cfg(test)]
 mod tests;

@@ -2,56 +2,60 @@
 // Supports standard boolean operators with proper precedence:
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 //
-// Each rule builds a postfix (reverse-Polish) `Vec<Op>` bottom-up; the caller realises the top-level
-// program into a `BoolExpr` against a chosen store via `build_postfix` (so the global and scoped
-// parsers share this grammar).
+// Each rule builds a reverse-Polish (postfix) `Vec<RpnToken>` bottom-up; the caller wraps the
+// top-level program directly into an owned `BoolExpr` (no BDD, no context). The grammar keeps accepting
+// both the `*`/`+`/`~` and the `&`/`|`/`!` spellings, but both lower to the single canonical token set.
+//
+// `Token` is imported under the alias `RpnToken` to avoid colliding with lalrpop's own internal
+// `Token` lexer type in the generated parser.
 
-use crate::expression::builder::Op;
+use crate::expression::rpn::Token as RpnToken;
+use crate::Symbol;
 
 grammar;
 
 // Main entry point: the postfix program.
-pub Expr: Vec<Op> = {
+pub Expr: Vec<RpnToken> = {
     <ops:OrExpr> => ops,
 };
 
 // OR has lowest precedence (supports both + and |)
-OrExpr: Vec<Op> = {
-    <mut l:OrExpr> "+" <r:XorExpr> => { l.extend(r); l.push(Op::Or); l },
-    <mut l:OrExpr> "|" <r:XorExpr> => { l.extend(r); l.push(Op::Or); l },
+OrExpr: Vec<RpnToken> = {
+    <mut l:OrExpr> "+" <r:XorExpr> => { l.extend(r); l.push(RpnToken::Or); l },
+    <mut l:OrExpr> "|" <r:XorExpr> => { l.extend(r); l.push(RpnToken::Or); l },
     XorExpr,
 };
 
 // XOR sits between OR and AND
-XorExpr: Vec<Op> = {
-    <mut l:XorExpr> "^" <r:AndExpr> => { l.extend(r); l.push(Op::Xor); l },
+XorExpr: Vec<RpnToken> = {
+    <mut l:XorExpr> "^" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Xor); l },
     AndExpr,
 };
 
 // AND has higher precedence (supports both * and &)
-AndExpr: Vec<Op> = {
-    <mut l:AndExpr> "*" <r:NotExpr> => { l.extend(r); l.push(Op::And); l },
-    <mut l:AndExpr> "&" <r:NotExpr> => { l.extend(r); l.push(Op::And); l },
+AndExpr: Vec<RpnToken> = {
+    <mut l:AndExpr> "*" <r:NotExpr> => { l.extend(r); l.push(RpnToken::And); l },
+    <mut l:AndExpr> "&" <r:NotExpr> => { l.extend(r); l.push(RpnToken::And); l },
     NotExpr,
 };
 
 // NOT has highest precedence
-NotExpr: Vec<Op> = {
-    "~" <mut e:NotExpr> => { e.push(Op::Not); e },
-    "!" <mut e:NotExpr> => { e.push(Op::Not); e },
+NotExpr: Vec<RpnToken> = {
+    "~" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
+    "!" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
     Term,
 };
 
 // Base terms
-Term: Vec<Op> = {
+Term: Vec<RpnToken> = {
     // Variables (identifiers)
-    <v:Ident> => vec![Op::Var(v.to_string())],
+    <v:Ident> => vec![RpnToken::Var(Symbol::from(v))],
 
     // Constants
-    "0" => vec![Op::Const(false)],
-    "1" => vec![Op::Const(true)],
-    "true" => vec![Op::Const(true)],
-    "false" => vec![Op::Const(false)],
+    "0" => vec![RpnToken::Const(false)],
+    "1" => vec![RpnToken::Const(true)],
+    "true" => vec![RpnToken::Const(true)],
+    "false" => vec![RpnToken::Const(false)],
 
     // Parenthesized expressions (still a postfix program — only the top-level `Expr` realises one)
     "(" <e:OrExpr> ")" => e,

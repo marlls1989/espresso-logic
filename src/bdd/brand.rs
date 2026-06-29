@@ -40,12 +40,6 @@ pub trait Brand: brand_seal::Sealed + Copy + 'static {
     /// The interior-mutability cell a context for this brand owns. Selecting
     /// [`LocalCell`](crate::expression::manager_cell::LocalCell) gives a single-threaded context;
     /// selecting [`SyncCell`](crate::expression::manager_cell::SyncCell) gives a `Send + Sync` one.
-    //
-    // `ManagerCell` is a crate-private (`pub(crate)`) trait, so this public associated type carries a
-    // bound less visible than the trait — normally a `private_bounds` warning. It is benign here and
-    // transitional: `Brand` is sealed, so no downstream code can implement it or name `Cell`, and the
-    // engine (hence `ManagerCell`) is crate-internal until the 5.0 cut relocates it into this module.
-    #[allow(private_bounds)]
     type Cell: ManagerCell;
 }
 

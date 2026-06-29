@@ -1,104 +1,113 @@
-//! Display and Debug formatting for boolean expressions
+//! Display and Debug formatting for [`BoolExpr`].
+//!
+//! Rendering walks the expression's own reverse-Polish token stream and reconstructs the operator tree
+//! with **minimal parentheses**, using the canonical spellings `&` (AND), `|` (OR), `^` (XOR),
+//! `!` (NOT) and `1`/`0` for the constants. The output reflects the expression's **syntactic**
+//! structure, not a canonical sum-of-products.
 
-use super::context::Brand;
-use super::{BoolExpr, ExprNode};
+use super::rpn::Token;
+use super::BoolExpr;
 use std::fmt;
 
-/// Context for formatting expressions with minimal parentheses: the operator the current node sits
-/// directly inside, which decides whether the node needs wrapping parentheses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OpContext {
-    None, // Top level or inside parentheses
-    And,  // Inside an AND operation
-    Or,   // Inside an OR operation
-    Not,  // Inside a NOT operation
-}
+// Binding-tightness levels, highest binds tightest. NOT > AND > XOR > OR mirrors the parser's
+// precedence (parentheses () > NOT > AND > XOR > OR). An atom (variable/constant) binds tighter than
+// any operator. A subexpression is wrapped in parentheses only when its own top-level operator binds
+// *more loosely* than the position it sits in requires; since AND/OR/XOR are associative, equal-level
+// children never need wrapping, which is what keeps the parenthesisation minimal.
+const PREC_ATOM: u8 = 4;
+const PREC_NOT: u8 = 3;
+const PREC_AND: u8 = 2;
+const PREC_XOR: u8 = 1;
+const PREC_OR: u8 = 0;
 
-impl<B: Brand> BoolExpr<B> {
-    /// Format with operator-precedence context to minimise parentheses.
-    ///
-    /// Renders via [`fold_with_context`](BoolExpr::fold_with_context) — an iterative walk — so a deeply
-    /// nested expression can't overflow the call stack while formatting. The top-down context is the
-    /// surrounding operator; a node wraps itself in parentheses only when its precedence requires it
-    /// (an `AND` inside a `NOT`, or an `OR` inside an `AND`/`NOT`). A `NOT` never needs parens itself —
-    /// its compound operand wraps via this same rule — and a variable/constant never does.
-    fn fmt_with_context(&self, f: &mut fmt::Formatter<'_>, ctx: OpContext) -> fmt::Result {
-        let rendered = self.fold_with_context(
-            ctx,
-            // descend: a node's children sit "inside" that node's operator.
-            |node, _parent| match node {
-                ExprNode::And(..) => (OpContext::And, OpContext::And),
-                ExprNode::Or(..) => (OpContext::Or, OpContext::Or),
-                ExprNode::Not(()) => (OpContext::Not, OpContext::Not),
-                ExprNode::Variable(_) | ExprNode::Constant(_) => (OpContext::None, OpContext::None),
-            },
-            // combine: build each node's string, parenthesising by its own surrounding context.
-            |node, ctx| match node {
-                ExprNode::Variable(name) => name.to_string(),
-                ExprNode::Constant(val) => if val { "1" } else { "0" }.to_string(),
-                ExprNode::Not(inner) => format!("~{inner}"),
-                ExprNode::And(left, right) => {
-                    let s = format!("{left} * {right}");
-                    if ctx == OpContext::Not {
-                        format!("({s})")
-                    } else {
-                        s
-                    }
-                }
-                ExprNode::Or(left, right) => {
-                    let s = format!("{left} + {right}");
-                    if ctx == OpContext::And || ctx == OpContext::Not {
-                        format!("({s})")
-                    } else {
-                        s
-                    }
-                }
-            },
-        );
-        write!(f, "{rendered}")
-    }
-}
-
-/// Debug formatting for boolean expressions
+/// Render a token stream to a string with minimal parentheses.
 ///
-/// Formats expressions with minimal parentheses based on operator precedence.
-/// Uses standard boolean algebra notation: `*` for AND, `+` for OR, `~` for NOT.
+/// An iterative postfix fold: each operand on the stack carries `(text, precedence)`, where
+/// `precedence` is the binding-tightness of its top-level operator. Combining wraps a child whenever
+/// its precedence is below what the surrounding operator needs. No recursion, so a deeply nested
+/// expression can't overflow the call stack.
+fn render(tokens: &[Token]) -> String {
+    // Wrap `s` in parentheses if its top operator (`have`) binds more loosely than `need`.
+    fn wrap(s: String, have: u8, need: u8) -> String {
+        if have < need {
+            format!("({s})")
+        } else {
+            s
+        }
+    }
+
+    let mut stack: Vec<(String, u8)> = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        match token {
+            Token::Var(name) => stack.push((name.to_string(), PREC_ATOM)),
+            Token::Const(value) => {
+                stack.push(((if *value { "1" } else { "0" }).to_string(), PREC_ATOM));
+            }
+            Token::Not => {
+                let (s, p) = stack.pop().expect("display: underflow on NOT");
+                // `!` binds tighter than every binary operator, so any binary operand is wrapped.
+                stack.push((format!("!{}", wrap(s, p, PREC_NOT)), PREC_NOT));
+            }
+            Token::And => {
+                let (rs, rp) = stack.pop().expect("display: underflow on AND");
+                let (ls, lp) = stack.pop().expect("display: underflow on AND");
+                stack.push((
+                    format!("{} & {}", wrap(ls, lp, PREC_AND), wrap(rs, rp, PREC_AND)),
+                    PREC_AND,
+                ));
+            }
+            Token::Xor => {
+                let (rs, rp) = stack.pop().expect("display: underflow on XOR");
+                let (ls, lp) = stack.pop().expect("display: underflow on XOR");
+                stack.push((
+                    format!("{} ^ {}", wrap(ls, lp, PREC_XOR), wrap(rs, rp, PREC_XOR)),
+                    PREC_XOR,
+                ));
+            }
+            Token::Or => {
+                let (rs, rp) = stack.pop().expect("display: underflow on OR");
+                let (ls, lp) = stack.pop().expect("display: underflow on OR");
+                stack.push((
+                    format!("{} | {}", wrap(ls, lp, PREC_OR), wrap(rs, rp, PREC_OR)),
+                    PREC_OR,
+                ));
+            }
+        }
+    }
+    stack.pop().map(|(s, _)| s).unwrap_or_default()
+}
+
+/// Debug formatting for boolean expressions.
+///
+/// Renders with minimal parentheses based on operator precedence, using `&`/`|`/`^`/`!` and `1`/`0`.
 ///
 /// # Examples
 ///
 /// ```
 /// use espresso_logic::BoolExpr;
 ///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let c = BoolExpr::variable("c");
-/// let expr = a.and(&b).or(&c);
-///
-/// println!("{:?}", expr);  // Outputs: a * b + c (no unnecessary parentheses)
+/// let expr = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
+/// assert_eq!(format!("{:?}", expr), "a & b | c"); // no unnecessary parentheses
 /// ```
-impl<B: Brand> fmt::Debug for BoolExpr<B> {
+impl fmt::Debug for BoolExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.fmt_with_context(f, OpContext::None)
+        write!(f, "{}", render(self.tokens()))
     }
 }
 
-/// Display formatting for boolean expressions
-///
-/// Delegates to the `Debug` implementation. Use `{}` or `{:?}` interchangeably.
+/// Display formatting for boolean expressions. Delegates to the [`Debug`] implementation; use `{}` or
+/// `{:?}` interchangeably.
 ///
 /// # Examples
 ///
 /// ```
 /// use espresso_logic::BoolExpr;
 ///
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let expr = a.and(&b);
-///
-/// println!("{}", expr);  // Same as println!("{:?}", expr)
+/// let expr = BoolExpr::var("a") & BoolExpr::var("b");
+/// assert_eq!(format!("{}", expr), "a & b");
 /// ```
-impl<B: Brand> fmt::Display for BoolExpr<B> {
+impl fmt::Display for BoolExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }

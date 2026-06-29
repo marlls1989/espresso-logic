@@ -17,6 +17,7 @@ use super::brand::Brand;
 use crate::cover::{Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, Symbols};
 use crate::expression::manager::{BddManager, BddNode, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
+use crate::expression::BoolExpr;
 use crate::Symbol;
 
 /// A borrowed, `Copy` handle to a canonical BDD root within one context.
@@ -405,6 +406,22 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
     pub fn minimize(self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.to_cubes().minimize()
+    }
+
+    // ---- Lowering back to a syntactic expression ----------------------------------------------
+
+    /// Lower this function to an owned, factored [`BoolExpr`].
+    ///
+    /// Enumerates the function's ON-set with [`to_cubes`](Self::to_cubes), then applies algebraic
+    /// **direct factorisation** to that cube set (the same path as [`Cover::to_expr`]) to produce a
+    /// compact multi-level expression — it does **not** re-canonicalise through the BDD. The resulting
+    /// `BoolExpr` is syntactic; building it back here yields the same canonical handle, but its token
+    /// structure reflects the factored cubes, not this BDD's node graph.
+    #[must_use]
+    pub fn to_expr(self) -> BoolExpr {
+        self.to_cubes()
+            .to_expr_by_index(0)
+            .expect("to_cubes yields a single-output cover, so output index 0 is in bounds")
     }
 }
 

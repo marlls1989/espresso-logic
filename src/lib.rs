@@ -371,22 +371,17 @@ pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
+pub use bdd::{Bdd, BddContext, Brand, SyncBddContext};
 pub use espresso::EspressoConfig;
-#[doc(hidden)]
-pub use expression::__brand_seal;
-pub use expression::{Bdd, BddBuilder, BddContext, BoolExpr, Brand, ExprNode, Global};
+pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
 
-// Re-export procedural macro
-pub use espresso_logic_macros::expr;
-
-/// Create a fresh, branded [`BddContext`] with a private BDD manager.
+/// Create a fresh, single-threaded [`BddContext`] with a private BDD manager.
 ///
-/// Each call mints a unique brand so expressions from two different contexts cannot be combined — it
-/// is a compile error, not a runtime check. This is the scoped, isolated alternative to the
-/// [`Global`]-brand free constructors ([`BoolExpr::variable`] and friends), which share one
-/// process-global manager. A context gives a private node table (isolation and locality); like
-/// `Global`, it is `Arc<RwLock<…>>`-backed, so its expressions stay `Send`/`Sync`.
+/// Each call mints a unique brand, so handles ([`Bdd`]) from two different contexts cannot be combined
+/// — it is a compile error, not a runtime check. The context owns an independent node table; there is
+/// no process-global manager. The resulting `BddContext` is `!Send`/`!Sync`; use
+/// [`sync_bdd_context!`](crate::sync_bdd_context) for a thread-safe one.
 ///
 /// - `bdd_context!()` — an anonymous brand, unique to this call site/invocation.
 /// - `bdd_context!(Name)` — a named brand. The name is only a readable label: each call still mints a
@@ -395,22 +390,12 @@ pub use espresso_logic_macros::expr;
 ///   Give distinct contexts distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
-/// use espresso_logic::bdd_context;
+/// use espresso_logic::{bdd_context, BoolExpr};
 ///
 /// let ctx = bdd_context!();
 /// let a = ctx.var("a");
 /// let b = ctx.var("b");
-/// assert_eq!(&a * &b, ctx.parse("a * b").unwrap());
-/// ```
-///
-/// Expressions from two distinct contexts cannot be combined:
-///
-/// ```compile_fail
-/// use espresso_logic::bdd_context;
-///
-/// let c1 = bdd_context!();
-/// let c2 = bdd_context!();
-/// let _ = &c1.var("a") * &c2.var("b"); // error: distinct brands cannot mix
+/// assert!((a & b).equivalent_to(ctx.build(&BoolExpr::parse("a & b").unwrap())));
 /// ```
 #[macro_export]
 macro_rules! bdd_context {
@@ -418,9 +403,44 @@ macro_rules! bdd_context {
         $crate::bdd_context!(__EspressoBddBrand)
     };
     ($name:ident) => {{
+        #[derive(Clone, Copy)]
         struct $name;
-        impl $crate::__brand_seal::Sealed for $name {}
-        $crate::BddContext::<$name>::new()
+        impl $crate::bdd::__macro_support::Sealed for $name {}
+        impl $crate::bdd::Brand for $name {
+            type Cell = $crate::bdd::__macro_support::LocalCell;
+        }
+        $crate::bdd::BddContext::<$name>::new()
+    }};
+}
+
+/// Create a fresh, thread-safe [`SyncBddContext`] with a private BDD manager.
+///
+/// Like [`bdd_context!`](crate::bdd_context), but the minted brand selects a `RwLock`-backed cell, so
+/// the resulting [`SyncBddContext`] is `Send + Sync` and can be moved to, or shared by reference
+/// across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from two
+/// contexts never mix (a compile error).
+///
+/// ```
+/// use espresso_logic::{sync_bdd_context, BoolExpr};
+///
+/// let ctx = sync_bdd_context!();
+/// let a = ctx.var("a");
+/// let b = ctx.var("b");
+/// assert!((a | b).equivalent_to(ctx.build(&BoolExpr::parse("a | b").unwrap())));
+/// ```
+#[macro_export]
+macro_rules! sync_bdd_context {
+    () => {
+        $crate::sync_bdd_context!(__EspressoSyncBddBrand)
+    };
+    ($name:ident) => {{
+        #[derive(Clone, Copy)]
+        struct $name;
+        impl $crate::bdd::__macro_support::Sealed for $name {}
+        impl $crate::bdd::Brand for $name {
+            type Cell = $crate::bdd::__macro_support::SyncCell;
+        }
+        $crate::bdd::SyncBddContext::<$name>::new()
     }};
 }
 

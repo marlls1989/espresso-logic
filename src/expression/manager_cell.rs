@@ -28,6 +28,11 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+// These items are exposed (doc-hidden) so the `bdd_context!` / `sync_bdd_context!` macros — which
+// expand at the caller's site — can name the cell a freshly-minted brand selects. They are not part of
+// the documented public API: [`ManagerCell`]'s methods reference the crate-private [`BddManager`], so
+// no downstream type can actually implement it; the trait is sealed in practice by that privacy.
+
 /// A cloneable handle to a shared, interior-mutable [`BddManager`].
 ///
 /// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). The BDD engine in
@@ -36,7 +41,8 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 ///
 /// `Clone` is a refcount bump (`Rc::clone` / `Arc::clone`): every clone shares the same underlying
 /// manager.
-pub(crate) trait ManagerCell: Clone + cell_seal::Sealed {
+#[doc(hidden)]
+pub trait ManagerCell: Clone + cell_seal::Sealed {
     /// Shared-borrow guard, dereferencing to the [`BddManager`] for read-only access.
     type ReadGuard<'a>: core::ops::Deref<Target = BddManager>
     where
@@ -68,13 +74,11 @@ pub(crate) trait ManagerCell: Clone + cell_seal::Sealed {
 /// Single-threaded cell: `Rc<RefCell<BddManager>>`. `!Send`/`!Sync`.
 ///
 /// The single-threaded canonical [`BddContext`](crate::bdd::BddContext) owns one of these (selected by
-/// its brand's [`Cell`](crate::bdd::Brand::Cell)). No non-test in-crate code yet *constructs* a
-/// `LocalCell`-branded context — the brand types that select this cell are minted by the canonical
-/// layer's tests (and, after the 5.0 cut, the `bdd_context!` macro) — so it is dead code in a plain
-/// `cargo build` of the library; the engine is generic over it and it is exercised by tests.
-#[allow(dead_code)]
+/// its brand's [`Cell`](crate::bdd::Brand::Cell)); the [`bdd_context!`](crate::bdd_context) macro mints
+/// `LocalCell`-branded contexts.
+#[doc(hidden)]
 #[derive(Clone)]
-pub(crate) struct LocalCell(Rc<RefCell<BddManager>>);
+pub struct LocalCell(Rc<RefCell<BddManager>>);
 
 impl cell_seal::Sealed for LocalCell {}
 
@@ -103,21 +107,11 @@ impl ManagerCell for LocalCell {
 ///
 /// Lock poisoning **propagates**: [`read`](ManagerCell::read)/[`write`](ManagerCell::write) `unwrap()`
 /// the guard, so a panic while the manager is borrowed poisons the lock for every subsequent access.
+///
+/// The [`sync_bdd_context!`](crate::sync_bdd_context) macro mints `SyncCell`-branded contexts.
+#[doc(hidden)]
 #[derive(Clone)]
-pub(crate) struct SyncCell(Arc<RwLock<BddManager>>);
-
-impl SyncCell {
-    /// Wrap an existing `Arc<RwLock<BddManager>>` (the process-global manager shares one such handle).
-    pub(crate) fn from_arc(inner: Arc<RwLock<BddManager>>) -> Self {
-        SyncCell(inner)
-    }
-
-    /// Recover the underlying `Arc<RwLock<BddManager>>` (the storage handle the existing branded
-    /// expressions and contexts still hold by value).
-    pub(crate) fn into_arc(self) -> Arc<RwLock<BddManager>> {
-        self.0
-    }
-}
+pub struct SyncCell(Arc<RwLock<BddManager>>);
 
 impl cell_seal::Sealed for SyncCell {}
 
@@ -142,8 +136,10 @@ impl ManagerCell for SyncCell {
     }
 }
 
-pub(crate) mod cell_seal {
+#[doc(hidden)]
+pub mod cell_seal {
     /// Sealing supertrait for [`ManagerCell`](super::ManagerCell): only this module's two cells
-    /// implement it, so the trait cannot be implemented downstream.
-    pub(crate) trait Sealed {}
+    /// implement it. (`ManagerCell` is in any case un-implementable downstream — its methods name the
+    /// crate-private `BddManager` — so this seal is belt-and-braces.)
+    pub trait Sealed {}
 }
