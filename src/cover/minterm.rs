@@ -555,6 +555,151 @@ impl<L: Label> Minterm<L> {
     }
 }
 
+impl<L: Label> Minterm<L> {
+    /// The number of variables on which `self` and `other` disagree, aligned by variable identity.
+    ///
+    /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
+    /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
+    /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
+    /// minterms (e.g. the output of [`expand_over`](Self::expand_over)), where this is exactly the
+    /// Hamming distance. `hamming_distance == disagreement().len()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
+    /// let b = Minterm::anonymous(&[Some(true), Some(true),  Some(false)]);
+    /// assert_eq!(a.hamming_distance(&b), 2);
+    /// assert_eq!(a.hamming_distance(&a), 0);
+    /// ```
+    #[must_use]
+    pub fn hamming_distance(&self, other: &Self) -> usize {
+        if self.symbols == other.symbols {
+            // Word-wise popcount: a variable's field-intersection is empty exactly where they disagree.
+            let n = self.num_vars();
+            let mut count = 0usize;
+            for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
+                let inter = x & y;
+                let nonempty = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
+                let valid = valid_even_mask(k, n);
+                // One even bit per variable whose field-intersection is empty.
+                count += (valid & !nonempty).count_ones() as usize;
+            }
+            count
+        } else {
+            self.merged_fields(other).filter(|(sf, of)| sf & of == 0).count()
+        }
+    }
+
+    /// The variables on which `self` and `other` disagree (see [`hamming_distance`](Self::hamming_distance)
+    /// for the disagreement rule). The labels are returned cloned; ordering is unspecified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::from_symbols(
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     [Some(true), Some(false), Some(true)],
+    /// );
+    /// let b = Minterm::from_symbols(
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     [Some(true), Some(true), Some(false)],
+    /// );
+    /// let mut d = a.disagreement(&b);
+    /// d.sort();
+    /// assert_eq!(d, vec!["b".to_string(), "c".to_string()]);
+    /// ```
+    #[must_use]
+    pub fn disagreement(&self, other: &Self) -> Vec<L> {
+        if self.symbols == other.symbols {
+            let labels = self.symbols.labels();
+            (0..self.num_vars())
+                .filter(|&i| field_at(&self.values, i) & field_at(&other.values, i) == 0)
+                .map(|i| labels[i].clone())
+                .collect()
+        } else {
+            // Merge-join over the two sorted-identity label sequences; only variables present on both
+            // sides with disjoint fields can disagree (a single-sided variable reads as don't-care).
+            let (la, lb) = (self.symbols.labels(), other.symbols.labels());
+            let (sa, sb) = (self.symbols.sorted_order(), other.symbols.sorted_order());
+            let (mut i, mut j) = (0usize, 0usize);
+            let mut out = Vec::new();
+            while i < sa.len() && j < sb.len() {
+                let (ia, ib) = (sa[i] as usize, sb[j] as usize);
+                match la[ia].identity(ia).cmp(&lb[ib].identity(ib)) {
+                    Ordering::Less => i += 1,
+                    Ordering::Greater => j += 1,
+                    Ordering::Equal => {
+                        if field_at(&self.values, ia) & field_at(&other.values, ib) == 0 {
+                            out.push(la[ia].clone());
+                        }
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    /// Enumerate every fully-assigned minterm covered by `self`, expressed over the `target` header.
+    ///
+    /// This is the inverse of minimisation ("maximise"): `self` is first re-expressed over `target`
+    /// (variables of `target` absent from `self` become don't-care, variables of `self` absent from
+    /// `target` are dropped — see [`project_onto`](Self::project_onto)), then every remaining don't-care
+    /// is split into both polarities. The result is the `2^k` concrete minterms (where `k` is the number
+    /// of don't-cares after projection), each assigning **every** variable in `target`, all sharing
+    /// `target` as their canonical header (so they stay on the fast-comparison path and are usable as
+    /// `BTreeSet`/`HashSet` keys). Expanding an already-maximal minterm over its own header is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbols};
+    /// use std::collections::BTreeSet;
+    ///
+    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect());
+    /// // a fixed true, b don't-care → both polarities of b.
+    /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
+    /// let got: BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+    /// let want: BTreeSet<_> = [
+    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]),
+    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(true)]),
+    /// ]
+    /// .into_iter()
+    /// .collect();
+    /// assert_eq!(got, want);
+    /// ```
+    #[must_use]
+    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> Vec<Minterm<L>> {
+        let base = self.project_onto(target);
+        let positions: Vec<usize> = (0..base.num_vars())
+            .filter(|&i| field_at(&base.values, i) == FIELD_DC)
+            .collect();
+        let k = positions.len();
+        let mut out = Vec::with_capacity(1usize << k);
+        for mask in 0u64..(1u64 << k) {
+            let mut words: Vec<u64> = base.values.to_vec();
+            for (b, &pos) in positions.iter().enumerate() {
+                let field = if (mask >> b) & 1 == 1 {
+                    FIELD_TRUE
+                } else {
+                    FIELD_FALSE
+                };
+                let shift = (pos % VARS_PER_WORD) * 2;
+                let wi = pos / VARS_PER_WORD;
+                words[wi] = (words[wi] & !(0b11u64 << shift)) | ((field as u64) << shift);
+            }
+            out.push(Minterm::from_packed_words(Arc::clone(target), words.into()));
+        }
+        out
+    }
+}
+
 /// Merge-join iterator backing [`Minterm::merged_fields`]; a variable absent from one side reads as
 /// don't-care (`FIELD_DC`).
 struct MergedFields<'a, L> {

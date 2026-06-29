@@ -124,7 +124,7 @@ pub use minterm::{Minterm, MintermIter};
 pub use output_set::OutputSet;
 pub use symbols::Symbols;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Represents the type of cover (F, FD, FR, or FDR)
@@ -365,6 +365,40 @@ where
             output_symbols: Symbols::new(output_vars),
             cubes: Vec::new(),
             cover_type,
+        }
+    }
+}
+
+impl<I: Label, O: Clone> Cover<I, O> {
+    /// Expand every cube into its fully-assigned minterms over the explicit header `vars`.
+    ///
+    /// The inverse of minimisation ("maximise"): each cube's input pattern is re-expressed over `vars`
+    /// and every don't-care (and every variable of `vars` absent from the cube) is split into both
+    /// polarities, so each surviving cube assigns **every** variable in `vars`. `vars` MAY be a superset
+    /// of the cover's inputs (absent variables widen into both polarities); input variables not in `vars`
+    /// are dropped. Output columns and per-cube set tags are preserved; duplicate cubes are removed
+    /// (first-seen order kept). The result shares one canonical input header, so its minterms stay on the
+    /// fast-comparison path. Maximising an already-maximal cover over the same `vars` is a no-op.
+    ///
+    /// See [`Cube::expand_to`] / [`Minterm::expand_over`] for the per-cube primitive.
+    #[must_use]
+    pub fn maximize(&self, vars: &[I]) -> Cover<I, O> {
+        let target = Symbols::new(vars.iter().cloned().collect());
+        let mut seen: HashSet<Cube<I, O>> = HashSet::new();
+        let mut cubes = Vec::new();
+        for cube in &self.cubes {
+            for inputs in cube.inputs.expand_over(&target) {
+                let new = Cube::new(inputs, cube.outputs.clone(), cube.set);
+                if seen.insert(new.clone()) {
+                    cubes.push(new);
+                }
+            }
+        }
+        Cover {
+            input_symbols: target,
+            output_symbols: Arc::clone(&self.output_symbols),
+            cubes,
+            cover_type: self.cover_type,
         }
     }
 }
