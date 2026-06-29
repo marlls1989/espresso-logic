@@ -111,8 +111,8 @@ mod display;
 pub mod error;
 mod eval;
 pub(crate) mod factorization;
-mod manager;
-mod manager_cell;
+pub(crate) mod manager;
+pub(crate) mod manager_cell;
 mod operators;
 mod parser;
 

@@ -351,6 +351,7 @@
 //! - [`doc::cli`] - Command-line tool documentation
 
 // Public modules
+pub mod bdd;
 pub mod cover;
 pub mod error;
 pub mod espresso;

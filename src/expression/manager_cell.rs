@@ -49,10 +49,8 @@ pub(crate) trait ManagerCell: Clone + cell_seal::Sealed {
     /// A fresh cell wrapping a manager seeded with the two terminal nodes
     /// ([`new_empty`](BddManager::new_empty)).
     ///
-    /// Not yet called: the existing contexts construct their storage via
-    /// [`BddManager::new_store`](super::manager::BddManager) / the process-global singleton; the future
-    /// `BddContext`/`SyncBddContext` rework will mint their cells through this.
-    #[allow(dead_code)]
+    /// The canonical BDD layer's [`BddContext`](crate::bdd::BddContext) /
+    /// [`SyncBddContext`](crate::bdd::SyncBddContext) mint their cells through this.
     fn new_empty() -> Self;
 
     /// Take a shared borrow of the manager. Must not overlap a [`write`](Self::write) on the same cell
@@ -69,8 +67,11 @@ pub(crate) trait ManagerCell: Clone + cell_seal::Sealed {
 
 /// Single-threaded cell: `Rc<RefCell<BddManager>>`. `!Send`/`!Sync`.
 ///
-/// Not yet wired into any context — it exists so the engine is generic over both cells from the start;
-/// the future single-threaded `BddContext` will own one.
+/// The single-threaded canonical [`BddContext`](crate::bdd::BddContext) owns one of these (selected by
+/// its brand's [`Cell`](crate::bdd::Brand::Cell)). No non-test in-crate code yet *constructs* a
+/// `LocalCell`-branded context — the brand types that select this cell are minted by the canonical
+/// layer's tests (and, after the 5.0 cut, the `bdd_context!` macro) — so it is dead code in a plain
+/// `cargo build` of the library; the engine is generic over it and it is exercised by tests.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct LocalCell(Rc<RefCell<BddManager>>);
