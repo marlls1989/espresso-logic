@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.2.0] - 2026-06-29
 
 Additive, fully backward-compatible: a scoped, branded alternative to the process-global BDD manager.
 The global path is unchanged and stays the default, so existing code, doctests, and `Send`/`Sync`
@@ -13,12 +13,14 @@ behaviour are unaffected.
 
 ### Added
 
-- Scoped, branded BDD contexts. `bdd_context!()` (an anonymous, unique brand) or `bdd_context!(Name)`
-  (a named brand) creates a `BddContext` that owns a private, independent BDD manager — its own node
-  table, with no lock contention or cache pollution from unrelated global expressions. `ctx.var`,
-  `ctx.constant`, `ctx.parse`, and `ctx.build` produce expressions branded to that context. Combining
-  expressions from two distinct (anonymous) contexts is a compile error — the brand is an invariant
-  type parameter, not a runtime check.
+- Scoped, branded BDD contexts. `bdd_context!()` (an anonymous brand) or `bdd_context!(Name)` (a named
+  brand, where the name is a readable label only) creates a `BddContext` that owns a private,
+  independent BDD manager — its own node table, with no lock contention or cache pollution from
+  unrelated global expressions. Every call mints a *distinct* brand. `ctx.var`, `ctx.constant`,
+  `ctx.parse`, and `ctx.build` produce expressions branded to that context. Combining expressions from
+  two distinct contexts is a compile error — the brand is an invariant type parameter, not a runtime
+  check. `Brand` is sealed: every brand is either `Global` or minted by `bdd_context!`, so a brand
+  always maps to exactly one manager.
 - `BoolExpr` gained a defaulted brand parameter, `BoolExpr<B = Global>`. Bare `BoolExpr` is
   `BoolExpr<Global>` — the process-global expression every existing API already returns — so no
   annotation, signature, or trait-impl changes are needed. Every brand (global and scoped) is backed by

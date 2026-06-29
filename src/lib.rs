@@ -371,6 +371,8 @@ pub use cover::{
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
+#[doc(hidden)]
+pub use expression::__brand_seal;
 pub use expression::{Bdd, BddBuilder, BddContext, BoolExpr, Brand, ExprNode, Global};
 pub use symbol::Symbol;
 
@@ -386,8 +388,10 @@ pub use espresso_logic_macros::expr;
 /// `Global`, it is `Arc<RwLock<…>>`-backed, so its expressions stay `Send`/`Sync`.
 ///
 /// - `bdd_context!()` — an anonymous brand, unique to this call site/invocation.
-/// - `bdd_context!(Name)` — a named brand. Two contexts of the *same* name share a brand, so mixing
-///   their expressions type-checks; prefer the anonymous form unless you specifically need a named one.
+/// - `bdd_context!(Name)` — a named brand. The name is only a readable label: each call still mints a
+///   *distinct* brand (mixing two contexts is always a compile error, even two named the same), but a
+///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
+///   Give distinct contexts distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
 /// use espresso_logic::bdd_context;
@@ -409,14 +413,12 @@ pub use espresso_logic_macros::expr;
 /// ```
 #[macro_export]
 macro_rules! bdd_context {
-    () => {{
-        struct __EspressoBddBrand;
-        impl $crate::Brand for __EspressoBddBrand {}
-        $crate::BddContext::<__EspressoBddBrand>::new()
-    }};
+    () => {
+        $crate::bdd_context!(__EspressoBddBrand)
+    };
     ($name:ident) => {{
         struct $name;
-        impl $crate::Brand for $name {}
+        impl $crate::__brand_seal::Sealed for $name {}
         $crate::BddContext::<$name>::new()
     }};
 }

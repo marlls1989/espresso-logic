@@ -121,6 +121,8 @@ pub use error::{ExpressionParseError, ParseBoolExprError};
 pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
 pub use builder::{Bdd, BddBuilder};
+#[doc(hidden)]
+pub use context::__brand_seal;
 pub use context::{BddContext, Brand, Global};
 
 // Re-export manager types for internal use
@@ -158,7 +160,7 @@ use std::sync::{Arc, OnceLock};
 /// `BoolExpr<B = Global>` is parameterised by a **brand** that selects which BDD manager backs it.
 /// The default, `Global`, is the process-global manager that all the free constructors
 /// ([`variable`](Self::variable), [`parse`](Self::parse), [`build`](Self::build), the `expr!` macro)
-/// use — bare `BoolExpr` means `BoolExpr<Global>`. A scoped [`BddContext`](crate::BddContext) (created
+/// use — bare `BoolExpr` means `BoolExpr<Global>`. A scoped [`BddContext`] (created
 /// with [`bdd_context!`](crate::bdd_context)) mints its own brand and a private, independent manager;
 /// expressions of two distinct brands cannot be combined (a compile error). Both storage models are
 /// `Arc<RwLock<…>>`, so `BoolExpr` is `Send`/`Sync` for every brand.
@@ -197,7 +199,7 @@ use std::sync::{Arc, OnceLock};
 ///
 /// `BoolExpr` is `Send`/`Sync` for every brand: each manager is `Arc<RwLock<…>>`-backed, so multiple
 /// threads can safely create and manipulate expressions concurrently. A scoped
-/// [`BddContext`](crate::BddContext) gives **isolation and locality** — its own node table, with no
+/// [`BddContext`] gives **isolation and locality** — its own node table, with no
 /// lock contention or cache pollution from unrelated global expressions — not a different
 /// concurrency model.
 ///
@@ -433,23 +435,26 @@ impl<B: Brand> BoolExpr<B> {
             return BoolExpr::constant_in(store, false);
         }
 
-        // OR the product terms, each an AND of its fixed literals (empty cube = tautology).
-        let expr = cubes
-            .iter()
-            .map(|cube| {
-                cube.vars()
-                    .iter()
-                    .zip(cube.iter())
-                    .filter_map(|(name, val)| match val {
-                        Some(true) => Some(BoolExpr::var_in(store.clone(), name.as_ref())),
-                        Some(false) => Some(BoolExpr::var_in(store.clone(), name.as_ref()).not()),
-                        None => None,
-                    })
-                    .reduce(|acc, f| acc.and(&f))
-                    .unwrap_or_else(|| BoolExpr::constant_in(store.clone(), true))
-            })
-            .reduce(|acc, t| acc.or(&t))
-            .unwrap();
+        // OR the product terms, each an AND of its fixed literals (empty cube = tautology), composing
+        // BDD handles in a single build activation rather than one per literal.
+        let expr = builder::build_in(store, |b| {
+            cubes
+                .iter()
+                .map(|cube| {
+                    cube.vars()
+                        .iter()
+                        .zip(cube.iter())
+                        .filter_map(|(name, val)| match val {
+                            Some(true) => Some(b.var(name.as_ref())),
+                            Some(false) => Some(b.not(b.var(name.as_ref()))),
+                            None => None,
+                        })
+                        .reduce(|acc, f| b.and(acc, f))
+                        .unwrap_or_else(|| b.constant(true))
+                })
+                .reduce(|acc, t| b.or(acc, t))
+                .unwrap()
+        });
 
         // The cached cubes must cover every variable the resulting function depends on, otherwise
         // `to_cubes()` would report a SOP inconsistent with the BDD.
@@ -491,9 +496,10 @@ pub(crate) fn minterm_literals(
 /// they represent the same logical function.
 impl<B: Brand> PartialEq for BoolExpr<B> {
     fn eq(&self, other: &Self) -> bool {
-        // BDDs are equal if they share the same manager and have the same root node. Within one brand
-        // (a single manager) this is exact canonical equality; the brand type parameter already keeps
-        // expressions of different (anonymous) contexts from being compared at all.
+        // BDDs are equal if they share the same manager and have the same root node. A brand maps to
+        // exactly one manager (Brand is sealed), so within one brand this is exact canonical equality;
+        // the invariant brand type parameter keeps expressions of different contexts from being
+        // compared at all.
         self.store_ident() == other.store_ident() && self.root == other.root
     }
 }

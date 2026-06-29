@@ -102,7 +102,7 @@ impl BddManager {
     /// A fresh, empty manager seeded with the two terminal nodes (`FALSE_NODE = 0`, `TRUE_NODE = 1`).
     ///
     /// Used both for the global singleton and for every scoped context's store (via
-    /// [`ManagerStore::new_shared`]).
+    /// [`new_store`](Self::new_store)).
     pub(super) fn new_empty() -> Self {
         BddManager {
             nodes: vec![

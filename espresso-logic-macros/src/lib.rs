@@ -235,8 +235,11 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
 pub fn expr(input: TokenStream) -> TokenStream {
     // An optional leading context operand selects the scoped form: `expr!(ctx, a * b)` builds in `ctx`,
     // while `expr!(a * b)` builds in the global manager. The boolean grammar never contains a top-level
-    // comma, so the first one (if any) unambiguously separates the context expression from the body.
-    let (context, body_tokens) = split_leading_context(input.into());
+    // comma, so the first one (if any) separates the context expression from the body.
+    let (context, body_tokens) = match split_leading_context(input.into()) {
+        Ok(split) => split,
+        Err(e) => return e,
+    };
 
     let parser = match syn::parse2::<BoolExprParser>(body_tokens) {
         Ok(parser) => parser,
@@ -260,35 +263,46 @@ pub fn expr(input: TokenStream) -> TokenStream {
     TokenStream::from(tokens)
 }
 
-/// Split a macro input on its first top-level (depth-0) comma into `(context, body)`.
+/// Split a macro input on its top-level (depth-0) commas into `(context, body)`.
 ///
-/// Returns `(Some(context_tokens), body_tokens)` when a top-level comma is present (the scoped form),
-/// or `(None, all_tokens)` otherwise (the global form). Commas nested inside a group (e.g. a call's
+/// Returns `(Some(context_tokens), body_tokens)` for the scoped form `expr!(ctx, body)`, or
+/// `(None, all_tokens)` for the global form `expr!(body)`. Commas nested inside a group (e.g. a call's
 /// argument list) are not top-level and never split.
+///
+/// A valid boolean body never contains a top-level comma, so anything beyond a single
+/// `context, body` split is a malformed invocation (a surplus comma, or an empty context or body).
+/// Those are reported as a clear `compile_error!` rather than silently mis-parsing the first operand
+/// as a context — which would otherwise surface as a baffling `no method named build` error.
 fn split_leading_context(
     input: proc_macro2::TokenStream,
-) -> (Option<proc_macro2::TokenStream>, proc_macro2::TokenStream) {
-    use proc_macro2::{TokenStream, TokenTree};
+) -> std::result::Result<(Option<proc_macro2::TokenStream>, proc_macro2::TokenStream), TokenStream>
+{
+    use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 
-    let mut context = TokenStream::new();
-    let mut iter = input.into_iter();
-    let mut found = false;
-    for tree in iter.by_ref() {
-        if let TokenTree::Punct(ref p) = tree {
-            if p.as_char() == ',' {
-                found = true;
-                break;
-            }
+    // Accumulate the top-level comma-separated segments.
+    let mut segments: Vec<TokenStream2> = vec![TokenStream2::new()];
+    for tree in input {
+        match tree {
+            TokenTree::Punct(ref p) if p.as_char() == ',' => segments.push(TokenStream2::new()),
+            _ => segments
+                .last_mut()
+                .expect("segments is never empty")
+                .extend(std::iter::once(tree)),
         }
-        context.extend(std::iter::once(tree));
     }
 
-    if found {
-        // Everything after the comma is the boolean-expression body.
-        let body: TokenStream = iter.collect();
-        (Some(context), body)
-    } else {
-        // No top-level comma: `context` accumulated the whole input as the body.
-        (None, context)
+    let err = |msg: &str| Err(TokenStream::from(quote! { compile_error!(#msg); }));
+
+    match segments.as_slice() {
+        // Global form: no top-level comma.
+        [body] if !body.is_empty() => Ok((None, body.clone())),
+        // Scoped form: `context, body`, both non-empty.
+        [context, body] if !context.is_empty() && !body.is_empty() => {
+            Ok((Some(context.clone()), body.clone()))
+        }
+        _ => err(
+            "expr! takes an optional context expression and a single comma before one boolean \
+             expression: `expr!(a * b)` or `expr!(ctx, a * b)`",
+        ),
     }
 }

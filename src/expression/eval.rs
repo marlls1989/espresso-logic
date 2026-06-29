@@ -10,11 +10,12 @@ use std::hash::Hash;
 impl<B: Brand> BoolExpr<B> {
     /// Check whether two boolean expressions are logically equivalent.
     ///
-    /// Every `BoolExpr` is a root into one shared, **canonical** reduced-ordered BDD (all
-    /// expressions live in the same global manager), so two expressions denote the same function
-    /// **iff their BDD roots are equal**. Equivalence is therefore an exact, constant-time check —
-    /// identical to the [`==`](BoolExpr) operator — with no fallible step and no exponential
-    /// truth-table evaluation.
+    /// Every `BoolExpr` is a root into a **canonical** reduced-ordered BDD shared by all expressions of
+    /// its brand `B` (one manager per brand — the process-global one for [`Global`](crate::Global), a
+    /// private one per scoped [`BddContext`](crate::BddContext)), so two same-brand expressions denote
+    /// the same function **iff their BDD roots are equal**. Equivalence is therefore an exact,
+    /// constant-time check — identical to the [`==`](BoolExpr) operator — with no fallible step and no
+    /// exponential truth-table evaluation.
     ///
     /// # Examples
     ///
