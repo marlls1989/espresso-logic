@@ -2097,6 +2097,33 @@ fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
 }
 
 #[test]
+fn from_expr_and_from_bdd_agree() {
+    use std::collections::BTreeSet;
+
+    let minterms = |c: &Cover<Symbol, Anonymous>| -> BTreeSet<Minterm<Symbol>> {
+        c.cubes().map(|cube| cube.inputs().clone()).collect()
+    };
+
+    let expr = crate::BoolExpr::var("a") & crate::BoolExpr::var("b");
+    let ctx = crate::bdd_context!();
+    let bdd = ctx.build(&expr); // Bdd is Copy, so it survives the by-value `From`
+
+    // The `Bdd → Cover` primitive and the `BoolExpr` wrapper agree for the same function.
+    let from_bdd: Cover<Symbol, Anonymous> = Cover::from(bdd);
+    let from_expr: Cover<Symbol, Anonymous> = Cover::from(&expr);
+    assert_eq!(from_bdd.num_outputs(), 1);
+    assert_eq!(minterms(&from_bdd), minterms(&from_expr));
+
+    // a & b has exactly one ON-set cube fixing a=1, b=1.
+    let expected: BTreeSet<Minterm<Symbol>> = bdd.to_minterms(&["a", "b"]).into_iter().collect();
+    assert_eq!(minterms(&from_bdd), expected);
+
+    // The owned and borrowed `From<BoolExpr>` forms agree too.
+    let from_owned: Cover<Symbol, Anonymous> = Cover::from(expr.clone());
+    assert_eq!(minterms(&from_owned), minterms(&from_expr));
+}
+
+#[test]
 fn relabel_outputs_keeps_inputs() {
     let mut named = Cover::new(CoverType::F);
     named

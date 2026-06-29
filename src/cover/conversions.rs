@@ -10,6 +10,9 @@ use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
+use crate::bdd::{Bdd, Brand};
+use crate::expression::BoolExpr;
+use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
 
@@ -44,6 +47,76 @@ pub(crate) fn anonymous_cover_from_raw(
         output_symbols,
         cubes,
         cover_type,
+    }
+}
+
+/// The `Bdd → Cover` primitive: enumerate a handle's ON-set as a single-output, anonymous-output
+/// [`Cover<Symbol, Anonymous>`](Cover) via [`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes).
+///
+/// This is the single source of truth for materialising a BDD as a cover. The `BoolExpr` conversions
+/// below funnel through it, and the named-output [`Cover::add_bdd`]/[`Cover::add_expr`] share the same
+/// underlying [`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes) extraction. The output is **anonymous**
+/// (`O = Anonymous`) — a Boolean function has no output name; label it with
+/// [`relabel_outputs`](Cover::relabel_outputs) if needed.
+///
+/// ```
+/// use espresso_logic::{bdd_context, Anonymous, Cover, Symbol};
+///
+/// let ctx = bdd_context!();
+/// let f = ctx.var("a") & ctx.var("b");
+/// let cover: Cover<Symbol, Anonymous> = f.into();
+/// assert_eq!(cover.num_outputs(), 1);
+/// ```
+impl<'ctx, B: Brand> From<Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: Bdd<'ctx, B>) -> Self {
+        bdd.to_cubes()
+    }
+}
+
+/// Borrowed counterpart of [`From<Bdd>`](From). [`Bdd`](crate::bdd::Bdd) is `Copy`, so this just copies
+/// the handle and defers to the by-value primitive.
+impl<'ctx, B: Brand> From<&Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: &Bdd<'ctx, B>) -> Self {
+        bdd.to_cubes()
+    }
+}
+
+/// Convert a `BoolExpr` into a single-output, anonymous-output [`Cover<Symbol, Anonymous>`](Cover).
+///
+/// A free [`BoolExpr`] has no cubes, so it is first built into a [`Bdd`](crate::bdd::Bdd) in a private,
+/// temporary context (which canonicalises it), then materialised through the
+/// [`From<Bdd>`](From) primitive above — the same temporary-context mediation as
+/// [`Cover::add_expr`]. The output is anonymous; an expression has no output name.
+///
+/// ```
+/// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};
+///
+/// let expr = BoolExpr::var("a") & BoolExpr::var("b");
+/// let cover: Cover<Symbol, Anonymous> = expr.into();
+/// assert_eq!(cover.num_outputs(), 1);
+/// ```
+impl From<BoolExpr> for Cover<Symbol, Anonymous> {
+    fn from(expr: BoolExpr) -> Self {
+        Cover::from(&expr)
+    }
+}
+
+/// Borrowed counterpart of [`From<BoolExpr>`](From): builds the expression in a temporary context and
+/// funnels through the [`From<Bdd>`](From) primitive, without taking ownership.
+///
+/// ```
+/// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};
+///
+/// let a = BoolExpr::var("a");
+/// let cover = Cover::<Symbol, Anonymous>::from(&a);
+/// assert_eq!(cover.num_outputs(), 1);
+/// ```
+impl From<&BoolExpr> for Cover<Symbol, Anonymous> {
+    fn from(expr: &BoolExpr) -> Self {
+        // The temporary context lives for this call; the handle borrows it and is consumed by the
+        // `Bdd → Cover` primitive before this function returns.
+        let ctx = crate::bdd_context!();
+        Cover::from(ctx.build(expr))
     }
 }
 
