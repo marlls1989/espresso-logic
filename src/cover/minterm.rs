@@ -1005,4 +1005,155 @@ mod tests {
         assert!(f < t);
         assert!(dc < t);
     }
+
+    // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
+
+    /// {a:1,b:0,c:1} vs {a:1,b:1,c:0} disagree on exactly {b, c}: distance 2.
+    #[test]
+    fn hamming_distance_and_disagreement_set() {
+        let s = syms(&["a", "b", "c"]);
+        let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(true)]);
+        let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(true), Some(false)]);
+
+        assert_eq!(a.hamming_distance(&b), 2);
+
+        let mut got = a.disagreement(&b);
+        got.sort();
+        assert_eq!(got, vec![Symbol::from("b"), Symbol::from("c")]);
+        // The disagreement relation is symmetric.
+        let mut got_rev = b.disagreement(&a);
+        got_rev.sort();
+        assert_eq!(got_rev, vec![Symbol::from("b"), Symbol::from("c")]);
+    }
+
+    /// Equal minterms are at distance 0 with an empty disagreement set.
+    #[test]
+    fn hamming_distance_zero_for_equal_minterms() {
+        let s = syms(&["a", "b"]);
+        let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
+        let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
+        assert_eq!(a.hamming_distance(&b), 0);
+        assert!(a.disagreement(&b).is_empty());
+    }
+
+    /// `hamming_distance` always equals the cardinality of `disagreement`, exhaustively over a
+    /// shared header.
+    #[test]
+    fn hamming_distance_equals_disagreement_len() {
+        let s = syms(&["a", "b", "c"]);
+        let opts = [Some(false), Some(true), None];
+        for &x0 in &opts {
+            for &x1 in &opts {
+                for &x2 in &opts {
+                    for &y0 in &opts {
+                        for &y1 in &opts {
+                            for &y2 in &opts {
+                                let a = Minterm::from_symbols(Arc::clone(&s), [x0, x1, x2]);
+                                let b = Minterm::from_symbols(Arc::clone(&s), [y0, y1, y2]);
+                                assert_eq!(a.hamming_distance(&b), a.disagreement(&b).len());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The shared-header (popcount fast) path and the differently-permuted-header (merge-join slow)
+    /// path must give identical distance and disagreement sets. Mirrors `merge_path_matches_shared_path`.
+    #[test]
+    fn hamming_path_matches_shared_path() {
+        // a = {a:1, b:0, c:1}; b = {a:1, b:1, c:0}.
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(false), Some(true)]);
+        let b_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(true), Some(false)]);
+        // The same two functions over independent, differently-permuted headers (slow path).
+        let a_perm =
+            Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(true), Some(true), Some(false)]);
+        let b_perm =
+            Minterm::from_symbols(syms(&["b", "c", "a"]), [Some(true), Some(false), Some(true)]);
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+
+        assert_eq!(
+            a_shared.hamming_distance(&b_shared),
+            a_perm.hamming_distance(&b_perm)
+        );
+
+        let mut d_shared = a_shared.disagreement(&b_shared);
+        d_shared.sort();
+        let mut d_perm = a_perm.disagreement(&b_perm);
+        d_perm.sort();
+        assert_eq!(d_shared, d_perm);
+        assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
+    }
+
+    // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
+
+    /// `a` fixed, expanded over [a, b], splits b into both polarities: {a:1,b:0}, {a:1,b:1}.
+    #[test]
+    fn expand_over_splits_absent_dont_care() {
+        let vars = syms(&["a", "b"]);
+        // b is don't-care in the source.
+        let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), None]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+    }
+
+    /// Widening over an absent variable c (present in `vars`, absent from the source header) splits c
+    /// into both polarities, yielding 4 minterms.
+    #[test]
+    fn expand_over_widens_with_absent_variable() {
+        let src = syms(&["a", "b"]);
+        let target = syms(&["a", "b", "c"]);
+        // a fixed true, b fixed false; c is absent from the source so it widens.
+        let m = Minterm::from_symbols(src, [Some(true), Some(false)]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&target).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 2);
+    }
+
+    /// A fully-don't-care minterm over a 2-variable header yields the full 4-minterm cube.
+    #[test]
+    fn expand_over_dont_care_yields_full_cube() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols(Arc::clone(&vars), [None, None]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(true)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 4);
+    }
+
+    /// Expanding an already-fully-assigned minterm over its own header is a no-op (one minterm, equal
+    /// to itself).
+    #[test]
+    fn expand_over_is_idempotent_when_already_maximal() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]);
+        let got = m.expand_over(&vars);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], m);
+    }
 }

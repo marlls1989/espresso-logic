@@ -3,6 +3,7 @@
 use super::pla::{PLAWriter, PlaCover};
 use super::*;
 use crate::Symbol;
+use std::sync::Arc;
 
 #[test]
 fn test_cover_creation() {
@@ -2107,4 +2108,114 @@ fn relabel_outputs_keeps_inputs() {
         .unwrap();
     assert_eq!(anon_in.output_labels(), named.output_labels());
     assert_eq!(anon_in.num_inputs(), named.num_inputs());
+}
+
+// --- Requirement 2: cube / cover expansion over an explicit variable set -----------------------
+
+/// Collect a cover's input minterms as a `BTreeSet` (they share one canonical header after
+/// `maximize`, so they compare on the fast path).
+fn input_minterm_set(cover: &Cover<Symbol, Symbol>) -> std::collections::BTreeSet<Minterm<Symbol>> {
+    cover.cubes().map(|c| c.inputs().clone()).collect()
+}
+
+/// A cube `a=1` expanded over [a, b] yields exactly {a:1,b:0}, {a:1,b:1}.
+#[test]
+fn cube_expand_to_splits_unconstrained_var() {
+    let cube = Cube::<Symbol, Symbol>::with_labels(
+        &[("a", Some(true))],
+        &[("f", true)],
+        CubeType::F,
+    )
+    .unwrap();
+    let got: std::collections::BTreeSet<_> = cube
+        .expand_to(&[Symbol::from("a"), Symbol::from("b")])
+        .into_iter()
+        .collect();
+    let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(got, want);
+}
+
+/// A cube `a=1` expanded over [a, b, c] (c absent from the cube) splits c into both polarities,
+/// yielding 4 minterms.
+#[test]
+fn cube_expand_to_widens_with_absent_var() {
+    let cube = Cube::<Symbol, Symbol>::with_labels(
+        &[("a", Some(true))],
+        &[("f", true)],
+        CubeType::F,
+    )
+    .unwrap();
+    let got: std::collections::BTreeSet<_> = cube
+        .expand_to(&[Symbol::from("a"), Symbol::from("b"), Symbol::from("c")])
+        .into_iter()
+        .collect();
+    let header = Symbols::new(
+        [Symbol::from("a"), Symbol::from("b"), Symbol::from("c")]
+            .into_iter()
+            .collect(),
+    );
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false), Some(true)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(got, want);
+    assert_eq!(got.len(), 4);
+}
+
+/// `Cover::maximize` of an already-maximal cover over the same variables is a no-op: the input
+/// minterm set is unchanged and every cube assigns every variable.
+#[test]
+fn cover_maximize_is_idempotent_when_already_maximal() {
+    let vars = [Symbol::from("a"), Symbol::from("b")];
+    // An already-maximal cover: both cubes assign every variable, no don't-cares.
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [
+            Cube::with_labels(&[("a", Some(true)), ("b", Some(false))], &[("f", true)], CubeType::F)
+                .unwrap(),
+            Cube::with_labels(&[("a", Some(true)), ("b", Some(true))], &[("f", true)], CubeType::F)
+                .unwrap(),
+        ],
+    );
+
+    let maximised = cover.maximize(&vars);
+    // Same input minterm set as the input (idempotent).
+    assert_eq!(input_minterm_set(&maximised), input_minterm_set(&cover));
+    // Re-maximising changes nothing further.
+    let twice = maximised.maximize(&vars);
+    assert_eq!(input_minterm_set(&twice), input_minterm_set(&maximised));
+    // Every minterm is fully assigned (no don't-cares left).
+    for cube in maximised.cubes() {
+        assert!(cube.inputs().iter().all(|v| v.is_some()));
+    }
+}
+
+/// `Cover::maximize` expands a cube with a don't-care into both polarities over the explicit header.
+#[test]
+fn cover_maximize_expands_dont_care() {
+    let vars = [Symbol::from("a"), Symbol::from("b")];
+    // a=1, b unconstrained → should expand to {a:1,b:0}, {a:1,b:1}.
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap()],
+    );
+    let maximised = cover.maximize(&vars);
+    let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(input_minterm_set(&maximised), want);
 }
