@@ -123,7 +123,8 @@ fn evaluate_truth_tables() {
         assert_eq!(or.evaluate(&m), av || bv);
         assert_eq!(xor.evaluate(&m), av ^ bv);
         assert_eq!(not_a.evaluate(&m), !av);
-        assert_eq!(nested.evaluate(&m), (av && bv) || !av);
+        // `a & b | !a` simplifies by absorption to `b | !a`.
+        assert_eq!(nested.evaluate(&m), bv || !av);
     }
 }
 
