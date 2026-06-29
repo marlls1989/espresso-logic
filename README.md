@@ -31,7 +31,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "4.1"
+espresso-logic = "4.2"
 ```
 
 ### Boolean Expression Minimisation

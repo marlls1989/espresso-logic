@@ -95,9 +95,6 @@ impl<B: Brand> Copy for Bdd<'_, B> {}
 /// [`BddContext::build`]: crate::BddContext::build
 pub struct BddBuilder<'b, B: Brand = Global> {
     store: Store,
-    /// Identity of the store, used only to debug-assert that a [`graft`](Self::graft)ed expression
-    /// belongs to it. Equal to `self.store.ident()`.
-    ident: *const (),
     /// Invariant brand (see [`Bdd`]); the builder owns the store, so `'b` is carried only as a marker.
     _marker: BuilderBrand<'b, B>,
 }
@@ -132,14 +129,14 @@ impl<'b, B: Brand> BddBuilder<'b, B> {
     ///
     /// This is how an in-scope `BoolExpr` is grafted into a larger expression — the lowering target of
     /// the `expr!` macro's variable operands. The expression must belong to the same manager as the
-    /// builder. For the [`Global`] brand and for any single scoped context this always holds, so it is
-    /// a `debug_assert!`; the brand type parameter already rules out splicing across two *distinct*
-    /// (anonymous) contexts at compile time. The only way to trip the assert is to reuse a *named*
-    /// brand across two separate contexts — an opt-in hazard.
+    /// builder, which always holds: [`Brand`] is sealed, so a brand always maps to exactly one manager
+    /// ([`Global`] is process-global; each scoped brand is minted by [`bdd_context!`](crate::bdd_context)
+    /// for one context), and the invariant brand type parameter rules out splicing across contexts at
+    /// compile time. The `debug_assert!` therefore only guards this internal invariant.
     pub fn graft(&self, expr: &BoolExpr<B>) -> Bdd<'b, B> {
         debug_assert!(
-            expr.store_ident() == self.ident,
-            "grafted BoolExpr must share the builder's BDD manager (named brand reused across contexts?)"
+            expr.store_ident() == Arc::as_ptr(&self.store).cast::<()>(),
+            "grafted BoolExpr must share the builder's BDD manager"
         );
         Self::wrap(expr.root_node())
     }
@@ -177,11 +174,9 @@ where
     B: Brand,
     F: for<'b> FnOnce(&BddBuilder<'b, B>) -> Bdd<'b, B>,
 {
-    let ident = Arc::as_ptr(&store).cast::<()>();
     let root = {
         let builder = BddBuilder {
             store: store.clone(),
-            ident,
             _marker: PhantomData,
         };
         f(&builder).node

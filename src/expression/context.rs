@@ -28,10 +28,31 @@ use std::marker::PhantomData;
 /// A brand: a zero-sized type identifying one BDD namespace.
 ///
 /// [`Global`] is the default brand (the shared, process-global manager). Scoped brands are minted by
-/// the [`bdd_context!`](crate::bdd_context) macro, which implements this (empty) marker trait for a
-/// fresh local type. The brand flows through [`BoolExpr<B>`](crate::BoolExpr) as an invariant type
-/// parameter, so two distinct (anonymous) brands never unify and their expressions cannot be mixed.
-pub trait Brand: 'static {}
+/// the [`bdd_context!`](crate::bdd_context) macro, which mints a fresh local type per call. The brand
+/// flows through [`BoolExpr<B>`](crate::BoolExpr) as an invariant type parameter, so two distinct
+/// brands never unify and their expressions cannot be mixed.
+///
+/// This trait is sealed: it cannot be implemented outside this crate. Every brand is therefore either
+/// [`Global`] or a type minted by the [`bdd_context!`](crate::bdd_context) macro, which guarantees a
+/// brand always corresponds to exactly one manager — so same-brand expressions always share a store.
+///
+/// ```compile_fail
+/// use espresso_logic::Brand;
+///
+/// struct MyBrand;
+/// impl Brand for MyBrand {} // error: `Brand` is sealed; only this crate can implement it
+/// ```
+pub trait Brand: __brand_seal::Sealed {}
+
+impl<T: __brand_seal::Sealed> Brand for T {}
+
+#[doc(hidden)]
+pub mod __brand_seal {
+    /// Sealing supertrait for [`Brand`](super::Brand). Implemented only by [`Global`](super::Global)
+    /// and by the types the [`bdd_context!`](crate::bdd_context) macro mints; not part of the public
+    /// API.
+    pub trait Sealed: 'static {}
+}
 
 /// The default brand: the shared, process-global BDD manager.
 ///
@@ -39,7 +60,7 @@ pub trait Brand: 'static {}
 /// constructors shares one canonical, `Send`/`Sync` manager.
 pub struct Global;
 
-impl Brand for Global {}
+impl __brand_seal::Sealed for Global {}
 
 /// An owned, scoped BDD namespace.
 ///
