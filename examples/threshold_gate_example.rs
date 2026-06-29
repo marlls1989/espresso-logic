@@ -1,10 +1,10 @@
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_context, BoolExpr, Cover, CoverType, Minimizable};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Compute XOR of two boolean expressions using expr! macro
+/// Compute the XOR of two boolean expressions using the bitwise operators.
 fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
-    expr!(a * !b + !a * b)
+    (a & !b) | (!a & b)
 }
 
 // ============================================================================
@@ -261,39 +261,37 @@ fn main() -> std::io::Result<()> {
     // Build BDD-backed expressions (for actual minimization)
     // ========================================================================
 
-    // Define all combinations for activation (at least 4 high)
-    let activation = expr!(
-        // All 5 high
-        "a" * "b" * "c" * "d" * "e" +
-        // Any 4 high (5 choose 4 = 5 combinations)
-        "a" * "b" * "c" * "d" * !"e" +
-        "a" * "b" * "c" * !"d" * "e" +
-        "a" * "b" * !"c" * "d" * "e" +
-        "a" * !"b" * "c" * "d" * "e" +
-        !"a" * "b" * "c" * "d" * "e"
-    );
+    // Define all combinations for activation (at least 4 high): all 5 high, then
+    // any 4 high (5 choose 4 = 5 combinations).
+    let activation = BoolExpr::parse(
+        "a & b & c & d & e \
+         | a & b & c & d & !e \
+         | a & b & c & !d & e \
+         | a & b & !c & d & e \
+         | a & !b & c & d & e \
+         | !a & b & c & d & e",
+    )?;
 
-    // Define all combinations for deactivation (at most 1 high)
-    let deactivation = expr!(
-        // All 5 low
-        !"a" * !"b" * !"c" * !"d" * !"e" +
-        // Any 1 high (5 combinations)
-        "a" * !"b" * !"c" * !"d" * !"e" +
-        !"a" * "b" * !"c" * !"d" * !"e" +
-        !"a" * !"b" * "c" * !"d" * !"e" +
-        !"a" * !"b" * !"c" * "d" * !"e" +
-        !"a" * !"b" * !"c" * !"d" * "e"
-    );
+    // Define all combinations for deactivation (at most 1 high): all 5 low, then
+    // any 1 high (5 combinations).
+    let deactivation = BoolExpr::parse(
+        "!a & !b & !c & !d & !e \
+         | a & !b & !c & !d & !e \
+         | !a & b & !c & !d & !e \
+         | !a & !b & c & !d & !e \
+         | !a & !b & !c & d & !e \
+         | !a & !b & !c & !d & e",
+    )?;
 
     // Hold region is XOR of activation and negation of deactivation
     let hold = xor(&activation, &deactivation.not());
 
     // Two equivalent formulations of next_q:
-    // Version 1: Using deactivation directly - (activation + q) * !deactivation
-    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    // Version 1: Using deactivation directly - (activation | q) & !deactivation
+    let next_q_v1 = (&activation | BoolExpr::var("q")) & !&deactivation;
 
-    // Version 2: Using hold - activation + q * hold (where hold = activation XOR !deactivation)
-    let next_q_v2 = expr!(activation + "q" * hold);
+    // Version 2: Using hold - activation | q & hold (where hold = activation XOR !deactivation)
+    let next_q_v2 = &activation | (BoolExpr::var("q") & &hold);
 
     // ========================================================================
     // DEMONSTRATE BDD PRE-MINIMIZATION IMPACT
@@ -460,10 +458,16 @@ fn main() -> std::io::Result<()> {
     println!("next_q_v2 (minimized) = {}", min_next_q_v2);
     println!();
 
-    if min_next_q_v1.equivalent_to(&min_next_q_v2) {
+    // Logical equality is now a canonical BDD comparison: build both expressions
+    // in a shared context and compare the resulting handles.
+    let ctx = bdd_context!();
+    if ctx
+        .build(&min_next_q_v1)
+        .equivalent_to(ctx.build(&min_next_q_v2))
+    {
         println!("✓ Both formulations are logically equivalent!");
-        println!("  - Version 1: (activation + q) * !deactivation");
-        println!("  - Version 2: activation + q * hold");
+        println!("  - Version 1: (activation | q) & !deactivation");
+        println!("  - Version 2: activation | q & hold");
         println!("  where hold = activation XOR !deactivation");
     } else {
         println!("✗ Formulations differ (unexpected!)");
