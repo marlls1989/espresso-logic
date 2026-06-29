@@ -112,6 +112,7 @@ pub mod error;
 mod eval;
 pub(crate) mod factorization;
 mod manager;
+mod manager_cell;
 mod operators;
 mod parser;
 
@@ -128,6 +129,7 @@ pub use context::{BddContext, Brand, Global};
 // Re-export manager types for internal use
 use crate::Symbol;
 use manager::{BddManager, NodeId, Store, FALSE_NODE, TRUE_NODE};
+use manager_cell::SyncCell;
 
 use std::sync::{Arc, OnceLock};
 
@@ -353,9 +355,10 @@ impl<B: Brand> BoolExpr<B> {
 
     /// Create a variable expression in the given store (creating the variable on first use).
     pub(crate) fn var_in(store: Store, name: &str) -> Self {
-        let var_id = BddManager::make_var(&store, name);
-        let node = BddManager::make_node(&store, var_id, FALSE_NODE, TRUE_NODE);
-        BoolExpr::from_store(store, node)
+        let cell = SyncCell::from_arc(store);
+        let var_id = BddManager::make_var(&cell, name);
+        let node = BddManager::make_node(&cell, var_id, FALSE_NODE, TRUE_NODE);
+        BoolExpr::from_store(cell.into_arc(), node)
     }
 
     /// Create a constant expression in the given store.

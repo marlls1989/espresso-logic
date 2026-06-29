@@ -56,9 +56,9 @@
 
 use super::context::{Brand, Global};
 use super::manager::{BddManager, NodeId, Store, FALSE_NODE, TRUE_NODE};
+use super::manager_cell::{ManagerCell, SyncCell};
 use super::BoolExpr;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 /// Marker that is **invariant** in both the builder lifetime `'b` and the brand `B`, so neither can be
 /// widened or narrowed. Carried by [`Bdd`] and [`BddBuilder`] to brand handles to one builder activation
@@ -94,8 +94,8 @@ impl<B: Brand> Copy for Bdd<'_, B> {}
 ///
 /// [`BddContext::build`]: crate::BddContext::build
 pub struct BddBuilder<'b, B: Brand = Global> {
-    store: Store,
-    /// Invariant brand (see [`Bdd`]); the builder owns the store, so `'b` is carried only as a marker.
+    cell: SyncCell,
+    /// Invariant brand (see [`Bdd`]); the builder owns the cell, so `'b` is carried only as a marker.
     _marker: BuilderBrand<'b, B>,
 }
 
@@ -110,9 +110,9 @@ impl<'b, B: Brand> BddBuilder<'b, B> {
 
     /// A variable by name (creating it in the manager's ordering on first use).
     pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<'b, B> {
-        let var_id = BddManager::make_var(&self.store, name.as_ref());
+        let var_id = BddManager::make_var(&self.cell, name.as_ref());
         Self::wrap(BddManager::make_node(
-            &self.store,
+            &self.cell,
             var_id,
             FALSE_NODE,
             TRUE_NODE,
@@ -135,7 +135,7 @@ impl<'b, B: Brand> BddBuilder<'b, B> {
     /// compile time. The `debug_assert!` therefore only guards this internal invariant.
     pub fn graft(&self, expr: &BoolExpr<B>) -> Bdd<'b, B> {
         debug_assert!(
-            expr.store_ident() == Arc::as_ptr(&self.store).cast::<()>(),
+            expr.store_ident() == self.cell.as_ptr(),
             "grafted BoolExpr must share the builder's BDD manager"
         );
         Self::wrap(expr.root_node())
@@ -143,27 +143,27 @@ impl<'b, B: Brand> BddBuilder<'b, B> {
 
     /// Logical NOT: `ite(a, false, true)`.
     pub fn not(&self, a: Bdd<'b, B>) -> Bdd<'b, B> {
-        Self::wrap(BddManager::ite(&self.store, a.node, FALSE_NODE, TRUE_NODE))
+        Self::wrap(BddManager::ite(&self.cell, a.node, FALSE_NODE, TRUE_NODE))
     }
 
     /// Logical AND: `ite(a, b, false)`.
     pub fn and(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
-        Self::wrap(BddManager::ite(&self.store, a.node, b.node, FALSE_NODE))
+        Self::wrap(BddManager::ite(&self.cell, a.node, b.node, FALSE_NODE))
     }
 
     /// Logical OR: `ite(a, true, b)`.
     pub fn or(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
-        Self::wrap(BddManager::ite(&self.store, a.node, TRUE_NODE, b.node))
+        Self::wrap(BddManager::ite(&self.cell, a.node, TRUE_NODE, b.node))
     }
 
     /// Logical XOR: `ite(a, ¬b, b)`.
     pub fn xor(&self, a: Bdd<'b, B>, b: Bdd<'b, B>) -> Bdd<'b, B> {
-        Self::wrap(BddManager::xor(&self.store, a.node, b.node))
+        Self::wrap(BddManager::xor(&self.cell, a.node, b.node))
     }
 
     /// If-then-else: `ite(f, g, h)` — the primitive all the others are built from.
     pub fn ite(&self, f: Bdd<'b, B>, g: Bdd<'b, B>, h: Bdd<'b, B>) -> Bdd<'b, B> {
-        Self::wrap(BddManager::ite(&self.store, f.node, g.node, h.node))
+        Self::wrap(BddManager::ite(&self.cell, f.node, g.node, h.node))
     }
 }
 
@@ -174,14 +174,15 @@ where
     B: Brand,
     F: for<'b> FnOnce(&BddBuilder<'b, B>) -> Bdd<'b, B>,
 {
+    let cell = SyncCell::from_arc(store);
     let root = {
         let builder = BddBuilder {
-            store: store.clone(),
+            cell: cell.clone(),
             _marker: PhantomData,
         };
         f(&builder).node
     };
-    BoolExpr::from_store(store, root)
+    BoolExpr::from_store(cell.into_arc(), root)
 }
 
 impl BoolExpr<Global> {

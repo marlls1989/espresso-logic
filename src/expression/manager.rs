@@ -7,6 +7,7 @@
 //! - Operation caching for boolean operations
 //! - Variable ordering (first-seen / insertion order)
 
+use super::manager_cell::ManagerCell;
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock, Weak};
@@ -121,22 +122,26 @@ impl BddManager {
         Arc::new(RwLock::new(BddManager::new_empty()))
     }
 
-    /// Get or create the variable id for `name`, managing the manager's lock itself.
+    /// Get or create the variable id for `name`, managing the cell's borrow itself.
     ///
-    /// Read-mostly: an already-known variable resolves under a shared read lock (concurrent lookups run
-    /// in parallel); only a genuinely new variable escalates to the write lock to append it.
-    pub(super) fn make_var(lock: &RwLock<Self>, name: &str) -> VarId {
+    /// Read-mostly: an already-known variable resolves under a shared borrow (concurrent lookups run in
+    /// parallel on a [`SyncCell`](super::manager_cell::SyncCell)); only a genuinely new variable escalates
+    /// to an exclusive borrow to append it. The shared borrow is dropped before the exclusive borrow is
+    /// taken, so the read→write hand-off never overlaps two borrows of the same cell — required for the
+    /// [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` (which would panic on overlap) and the
+    /// `SyncCell`'s `RwLock` (which would deadlock).
+    pub(super) fn make_var<C: ManagerCell>(cell: &C, name: &str) -> VarId {
         {
-            let manager = lock.read().unwrap();
+            let manager = cell.read();
             if let Some(id) = manager.var_id(name) {
                 return id;
             }
         }
-        // Re-check under the write lock: another thread may have appended `name` meanwhile.
-        lock.write().unwrap().get_or_create_var(name)
+        // Re-check under the exclusive borrow: another thread may have appended `name` meanwhile.
+        cell.write().get_or_create_var(name)
     }
 
-    /// Read-only lookup of an existing variable id — the shared-lock fast path of
+    /// Read-only lookup of an existing variable id — the shared-borrow fast path of
     /// [`make_var`](Self::make_var).
     fn var_id(&self, name: &str) -> Option<VarId> {
         self.var_to_id.get(&Symbol::from(name)).copied()
@@ -160,27 +165,34 @@ impl BddManager {
         self.id_to_var.get(id)
     }
 
-    /// Get or create a canonical decision node, managing the manager's lock itself.
+    /// Get or create a canonical decision node, managing the cell's borrow itself.
     ///
-    /// Read-mostly hash-consing: the reduction rule needs no lock, an already-interned node resolves
-    /// under a shared read lock (concurrent lookups run in parallel), and only a brand-new node
-    /// escalates to the write lock. NodeIds are stable, so the id returned from the read path stays
-    /// valid after the lock is released.
-    pub(super) fn make_node(lock: &RwLock<Self>, var: VarId, low: NodeId, high: NodeId) -> NodeId {
-        // Reduction rule (no lock): a redundant test collapses to its child.
+    /// Read-mostly hash-consing: the reduction rule needs no borrow, an already-interned node resolves
+    /// under a shared borrow (concurrent lookups run in parallel on a
+    /// [`SyncCell`](super::manager_cell::SyncCell)), and only a brand-new node escalates to an exclusive
+    /// borrow. The shared borrow is dropped before the exclusive borrow is taken, so the two never
+    /// overlap (see [`make_var`](Self::make_var)). NodeIds are stable, so the id returned from the read
+    /// path stays valid after its borrow is released.
+    pub(super) fn make_node<C: ManagerCell>(
+        cell: &C,
+        var: VarId,
+        low: NodeId,
+        high: NodeId,
+    ) -> NodeId {
+        // Reduction rule (no borrow): a redundant test collapses to its child.
         if low == high {
             return low;
         }
         let key = (var, low, high);
-        // Shared-lock fast path: an existing canonical node needs no write lock.
+        // Shared-borrow fast path: an existing canonical node needs no exclusive borrow.
         {
-            let manager = lock.read().unwrap();
+            let manager = cell.read();
             if let Some(&existing) = manager.unique_table.get(&key) {
                 return existing;
             }
         }
-        // Append path: re-check under the write lock (another thread may have interned it), then insert.
-        lock.write().unwrap().insert_node(var, low, high)
+        // Append path: re-check under the exclusive borrow (another thread may have interned it), insert.
+        cell.write().insert_node(var, low, high)
     }
 
     /// Intern a decision node, re-checking the unique table. Caller holds the write lock.
@@ -211,26 +223,28 @@ impl BddManager {
         self.nodes.get(id)
     }
 
-    /// If-Then-Else (`if f then g else h`), managing the manager's lock itself.
+    /// If-Then-Else (`if f then g else h`), managing the cell's borrow itself.
     ///
-    /// The fundamental BDD operation all others derive from. Read-mostly: a **single read lock is held
-    /// across the whole traversal**, shared by every read step — cache/terminal lookups
-    /// ([`ite_resolved`](Self::ite_resolved)), Shannon expansion ([`ite_expand`](Self::ite_expand)),
-    /// reading back child results, and the final result read. It is dropped *only* to **commit** a
-    /// resolved triple (the lone write), then re-acquired: read-then-write on the same lock would
-    /// deadlock, so the read lock is released for exactly the duration of that write. Each commit interns
-    /// the result node and records its cache entry as one atomic transaction (never released with a node
-    /// created but its result uncached). So re-deriving an existing expression resolves under one read
-    /// lock with no writes at all (parallel across threads), and even a fresh computation takes the write
-    /// lock only momentarily, once per committed triple.
+    /// The fundamental BDD operation all others derive from. Read-mostly, but — unlike a held-guard
+    /// design — **no borrow spans more than a single step**: each `Solve`/`Combine` step takes its own
+    /// short-lived shared borrow to read (resolve/expand/read children) and, only when a triple must be
+    /// committed, a separate short-lived exclusive borrow to intern the node and record its cache entry.
+    /// A shared borrow is never live when the exclusive borrow is taken, which is the discipline the
+    /// [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires (overlapping `borrow()` then
+    /// `borrow_mut()` would panic) and the [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires
+    /// (read→write on the same lock would deadlock). NodeIds and cache entries are stable / monotonic, so
+    /// releasing the borrow between steps never invalidates an id read in an earlier step. Each commit
+    /// interns the node and records its cache entry as one transaction (never released with a node created
+    /// but its result uncached), so re-deriving an existing expression resolves entirely on shared borrows
+    /// (parallel across threads on the `SyncCell`), and even a fresh computation takes the exclusive
+    /// borrow only momentarily, once per committed triple.
     ///
     /// Evaluated **iteratively** with an explicit work-stack rather than recursion, so a tall BDD (deep
     /// variable ordering) can't overflow the call stack. Memoisation is preserved exactly: every
     /// sub-triple is resolved through `ite_resolved` (terminal cases + `ite_cache`), so shared
     /// sub-problems collapse to cache hits, keeping the walk linear in the number of distinct reachable
-    /// triples, not exponential. NodeIds are stable, so an id read under one lock stays valid for use
-    /// after that lock is released.
-    pub(super) fn ite(lock: &RwLock<Self>, f: NodeId, g: NodeId, h: NodeId) -> NodeId {
+    /// triples, not exponential.
+    pub(super) fn ite<C: ManagerCell>(cell: &C, f: NodeId, g: NodeId, h: NodeId) -> NodeId {
         /// One unit of work. `Solve` resolves a triple (expanding it if needed); `Combine` runs
         /// after a triple's two children are resolved and builds the result node for it.
         enum Work {
@@ -244,20 +258,23 @@ impl BddManager {
         }
 
         let mut stack = vec![Work::Solve(f, g, h)];
-        // One read lock held across the whole traversal — every read step (Solve's resolve/expand,
-        // Combine's cache/child reads, and the final result read) shares it. It is dropped *only* when a
-        // Combine must commit (a write), then re-acquired: read-then-write on the same `RwLock` would
-        // deadlock, so the read lock is released for exactly the duration of the write and no longer.
-        let mut guard = lock.read().unwrap();
         while let Some(work) = stack.pop() {
             match work {
                 Work::Solve(f, g, h) => {
-                    // Bail if the triple is already resolved (terminal or memoised), otherwise
-                    // Shannon-expand around the topmost variable — both under the held read lock.
-                    if guard.ite_resolved(f, g, h).is_some() {
+                    // Resolve or Shannon-expand under one short-lived shared borrow, released at the end
+                    // of this block (before any later step takes its own borrow).
+                    let expanded = {
+                        let manager = cell.read();
+                        if manager.ite_resolved(f, g, h).is_some() {
+                            None
+                        } else {
+                            Some(manager.ite_expand(f, g, h))
+                        }
+                    };
+                    // Bail if the triple was already resolved (terminal or memoised).
+                    let Some((top_var, low, high)) = expanded else {
                         continue;
-                    }
-                    let (top_var, low, high) = guard.ite_expand(f, g, h);
+                    };
                     // Schedule both cofactor triples and a Combine that runs once they're resolved
                     // (Combine pushed first → pops last, LIFO).
                     stack.push(Work::Combine {
@@ -275,51 +292,54 @@ impl BddManager {
                     low,
                     high,
                 } => {
-                    // A diamond can schedule the same Combine twice; the first caches the result, so skip
-                    // if it is already there (keep holding the read lock). Otherwise both children are
-                    // resolved by now — read their ids under the held read lock.
-                    if guard.ite_cache.contains_key(&triple) {
-                        continue;
-                    }
-                    let low_id = guard
-                        .ite_resolved(low.0, low.1, low.2)
-                        .expect("ITE low child unresolved at combine time - BDD scheduling bug");
-                    let high_id = guard
-                        .ite_resolved(high.0, high.1, high.2)
-                        .expect("ITE high child unresolved at combine time - BDD scheduling bug");
-                    // Committing this triple is an append (to `ite_cache`, and possibly `nodes`) — the
-                    // only thing that forces dropping the read lock. Drop it, then under the write lock
-                    // intern the node and record its cache entry as one transaction (never released with
-                    // a node created but its result uncached), re-checking in case another thread
-                    // committed it meanwhile. Then re-acquire the read lock and carry on.
-                    drop(guard);
-                    {
-                        let mut manager = lock.write().unwrap();
-                        if !manager.ite_cache.contains_key(&triple) {
-                            let result = manager.insert_node(top_var, low_id, high_id);
-                            manager.ite_cache.insert(triple, result);
+                    // Read the resolved children under one short-lived shared borrow. A diamond can
+                    // schedule the same Combine twice; the first caches the result, so skip if it is
+                    // already there.
+                    let children = {
+                        let manager = cell.read();
+                        if manager.ite_cache.contains_key(&triple) {
+                            None
+                        } else {
+                            let low_id = manager.ite_resolved(low.0, low.1, low.2).expect(
+                                "ITE low child unresolved at combine time - BDD scheduling bug",
+                            );
+                            let high_id = manager.ite_resolved(high.0, high.1, high.2).expect(
+                                "ITE high child unresolved at combine time - BDD scheduling bug",
+                            );
+                            Some((low_id, high_id))
                         }
+                    };
+                    let Some((low_id, high_id)) = children else {
+                        continue;
+                    };
+                    // Commit under a separate short-lived exclusive borrow — taken only after the shared
+                    // borrow above has been dropped, so the two never overlap. Intern the node and record
+                    // its cache entry as one transaction, re-checking in case another thread committed it
+                    // meanwhile.
+                    let mut manager = cell.write();
+                    if !manager.ite_cache.contains_key(&triple) {
+                        let result = manager.insert_node(top_var, low_id, high_id);
+                        manager.ite_cache.insert(triple, result);
                     }
-                    guard = lock.read().unwrap();
                 }
             }
         }
 
-        // The read lock is still held here, so the final result read needs no new acquisition.
-        guard.ite_resolved(f, g, h).expect(
+        // Final result read under its own short-lived shared borrow.
+        cell.read().ite_resolved(f, g, h).expect(
             "top-level ITE triple unresolved after iterative evaluation - BDD scheduling bug",
         )
     }
 
-    /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`, managing the manager's lock itself.
+    /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`, managing the cell's borrow itself.
     ///
     /// Built from [`ite`](Self::ite) (so it inherits the same hash-consing and memoisation and stays
     /// canonical): `¬g = ite(g, FALSE, TRUE)`, then select `¬g` when `f` is true and `g` when `f` is
-    /// false. Each sub-`ite` does its own read-mostly locking. Shared by
+    /// false. Each sub-`ite` does its own read-mostly borrowing. Shared by
     /// [`BoolExpr::xor`](crate::BoolExpr::xor) and the public BDD builder.
-    pub(super) fn xor(lock: &RwLock<Self>, f: NodeId, g: NodeId) -> NodeId {
-        let not_g = Self::ite(lock, g, FALSE_NODE, TRUE_NODE);
-        Self::ite(lock, f, not_g, g)
+    pub(super) fn xor<C: ManagerCell>(cell: &C, f: NodeId, g: NodeId) -> NodeId {
+        let not_g = Self::ite(cell, g, FALSE_NODE, TRUE_NODE);
+        Self::ite(cell, f, not_g, g)
     }
 
     /// Resolve an ITE triple **without** Shannon expansion.
@@ -405,5 +425,71 @@ impl BddManager {
             // Variable doesn't appear in this branch
             (node_id, node_id)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expression::manager_cell::{LocalCell, SyncCell};
+
+    /// Build `(a & b) | (a ^ c)` over an arbitrary cell, exercising `make_var`, `make_node`, `ite`, and
+    /// `xor` and returning the root and the variable arity. Used to assert both cells produce the same
+    /// canonical structure through the *single* generic engine.
+    fn build_sample<C: ManagerCell>(cell: &C) -> (NodeId, usize) {
+        let a = BddManager::make_var(cell, "a");
+        let b = BddManager::make_var(cell, "b");
+        let c = BddManager::make_var(cell, "c");
+        let a_node = BddManager::make_node(cell, a, FALSE_NODE, TRUE_NODE);
+        let b_node = BddManager::make_node(cell, b, FALSE_NODE, TRUE_NODE);
+        let c_node = BddManager::make_node(cell, c, FALSE_NODE, TRUE_NODE);
+
+        let and = BddManager::ite(cell, a_node, b_node, FALSE_NODE);
+        let xor = BddManager::xor(cell, a_node, c_node);
+        let or = BddManager::ite(cell, and, TRUE_NODE, xor);
+        (or, cell.read().id_to_var.len())
+    }
+
+    /// The `RefCell`-backed [`LocalCell`] must drive the engine without panicking — the borrow
+    /// discipline (no shared borrow live when an exclusive borrow is taken) is the riskiest part of the
+    /// engine abstraction, and a `RefCell` panics on overlap where the `RwLock` would deadlock.
+    #[test]
+    fn engine_runs_on_local_cell() {
+        let cell = LocalCell::new_empty();
+        let (root, arity) = build_sample(&cell);
+        assert_eq!(arity, 3);
+        // Re-deriving an identical expression must hit the caches and yield the same canonical root.
+        let (root2, _) = build_sample(&cell);
+        assert_eq!(root, root2);
+    }
+
+    /// The `RwLock`-backed [`SyncCell`] must produce the *same* canonical root and arity as the
+    /// `LocalCell` — the two cells share one generic engine, so structure must be identical.
+    #[test]
+    fn both_cells_agree() {
+        let local = LocalCell::new_empty();
+        let sync = SyncCell::new_empty();
+        let (local_root, local_arity) = build_sample(&local);
+        let (sync_root, sync_arity) = build_sample(&sync);
+        assert_eq!(local_root, sync_root);
+        assert_eq!(local_arity, sync_arity);
+    }
+
+    /// A deeply nested chain must not overflow the stack on either cell (the engine is iterative) and
+    /// must not trip the `RefCell`'s borrow discipline.
+    #[test]
+    fn deep_chain_on_local_cell() {
+        let cell = LocalCell::new_empty();
+        let names: Vec<String> = (0..400).map(|i| format!("v{i}")).collect();
+        let mut acc = {
+            let id = BddManager::make_var(&cell, &names[0]);
+            BddManager::make_node(&cell, id, FALSE_NODE, TRUE_NODE)
+        };
+        for name in &names[1..] {
+            let id = BddManager::make_var(&cell, name);
+            let node = BddManager::make_node(&cell, id, FALSE_NODE, TRUE_NODE);
+            acc = BddManager::ite(&cell, acc, node, FALSE_NODE); // acc & node
+        }
+        assert_ne!(acc, FALSE_NODE);
     }
 }
