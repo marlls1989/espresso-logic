@@ -9,7 +9,9 @@
 //! `B` — i.e. when they came from the same context. Mixing handles from two different contexts is a
 //! compile error, enforced by the invariant brand parameter; there is no runtime check.
 
-use std::collections::BTreeSet;
+use std::borrow::Borrow;
+use std::collections::{BTreeSet, HashMap};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -218,6 +220,45 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
             "handles of the same brand+lifetime must share one manager"
         );
         self.root == other.root
+    }
+
+    // ---- Evaluation ---------------------------------------------------------------------------
+
+    /// Evaluate this function under a variable `assignment`.
+    ///
+    /// This is the canonical evaluation: it follows a single root→terminal path, branching at each
+    /// decision node on the assigned value of that node's variable, so the cost is O(path length)
+    /// — at most the number of variables the function depends on — regardless of how large the
+    /// original syntactic expression was, and shared subfunctions are visited once. **A variable
+    /// absent from `assignment` reads as `false`** (partial assignments are allowed). The key type
+    /// may be any `Borrow<str>` (`&str`, `String`, [`Symbol`], `Arc<str>`, …).
+    ///
+    /// [`BoolExpr::evaluate`](crate::BoolExpr::evaluate) computes the same Boolean result by folding
+    /// the syntactic token stream (O(expression size), no context); prefer this BDD form when
+    /// evaluating one function over many assignments, and the syntactic form for a one-shot check on
+    /// a free expression.
+    #[must_use]
+    pub fn evaluate<K>(self, assignment: &HashMap<K, bool>) -> bool
+    where
+        K: Borrow<str> + Eq + Hash,
+    {
+        let mgr = self.mgr.read();
+        let mut node = self.root;
+        loop {
+            match mgr.get_node(node) {
+                Some(BddNode::Terminal(value)) => return *value,
+                Some(BddNode::Decision { var, low, high }) => {
+                    let name = mgr
+                        .var_name(*var)
+                        .expect("decision node variable must have a name");
+                    let set = assignment.get(name.as_str()).copied().unwrap_or(false);
+                    node = if set { *high } else { *low };
+                }
+                None => panic!(
+                    "Invalid node ID {node} encountered during evaluation - this indicates a bug in the BDD implementation"
+                ),
+            }
+        }
     }
 
     // ---- Introspection ------------------------------------------------------------------------

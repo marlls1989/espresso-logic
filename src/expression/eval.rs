@@ -16,6 +16,12 @@ impl BoolExpr {
     /// **A variable not present in `assignment` is treated as `false`** (partial assignments are
     /// allowed; unspecified inputs default to `false`).
     ///
+    /// This is the syntactic evaluation, costing O(expression size) as it folds every token. For the
+    /// canonical form — O(path length), independent of the original expression size, with shared
+    /// subfunctions visited once — build the expression into a context and use
+    /// [`Bdd::evaluate`](crate::Bdd::evaluate); prefer that when evaluating one function over many
+    /// assignments.
+    ///
     /// # Examples
     ///
     /// ```

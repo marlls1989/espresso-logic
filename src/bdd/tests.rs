@@ -113,6 +113,47 @@ fn restrict_acceptance_table() {
 }
 
 #[test]
+fn evaluate_matches_boolexpr_over_truth_table() {
+    use crate::BoolExpr;
+    use std::collections::HashMap;
+
+    let ctx: BddContext<Local> = BddContext::new();
+    // f = a & b | !c, exercised on both surfaces.
+    let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
+    let f = ctx.build(&expr);
+
+    for mask in 0..8u32 {
+        let assignment: HashMap<Symbol, bool> = [("a", 0), ("b", 1), ("c", 2)]
+            .into_iter()
+            .map(|(name, bit)| (Symbol::from(name), (mask >> bit) & 1 == 1))
+            .collect();
+        let expected = (assignment[&Symbol::from("a")] && assignment[&Symbol::from("b")])
+            || !assignment[&Symbol::from("c")];
+        // The canonical BDD evaluation and the syntactic RPN fold must agree, and both match the oracle.
+        assert_eq!(f.evaluate(&assignment), expected);
+        assert_eq!(expr.evaluate(&assignment), expected);
+    }
+}
+
+#[test]
+fn evaluate_absent_variable_reads_false() {
+    use std::collections::HashMap;
+
+    let ctx: BddContext<Local> = BddContext::new();
+    let f = ctx.var("a") & ctx.var("b");
+
+    // Only `a` assigned ⇒ `b` reads false ⇒ a & b is false.
+    let only_a: HashMap<&str, bool> = HashMap::from([("a", true)]);
+    assert!(!f.evaluate(&only_a));
+    // Empty assignment ⇒ both false.
+    let empty: HashMap<&str, bool> = HashMap::new();
+    assert!(!f.evaluate(&empty));
+    // A constant ignores the (empty) assignment.
+    assert!(ctx.constant(true).evaluate(&empty));
+    assert!(!ctx.constant(false).evaluate(&empty));
+}
+
+#[test]
 fn restrict_absent_variable_is_noop() {
     let ctx: BddContext<Local> = BddContext::new();
     let a = ctx.var("a");
