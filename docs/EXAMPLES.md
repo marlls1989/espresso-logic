@@ -1,370 +1,339 @@
 # Usage Examples
 
-This guide provides comprehensive examples for using espresso-logic.
+This guide provides examples for using espresso-logic across its two layers: the owned, syntactic
+[`BoolExpr`], and the canonical [`Bdd`] context layer. See
+[BOOLEAN_EXPRESSIONS.md](BOOLEAN_EXPRESSIONS.md) for the deep dive.
 
 ## Table of Contents
 
 - [Boolean Expressions](#boolean-expressions)
+- [Binary Decision Diagrams](#binary-decision-diagrams)
 - [Truth Tables](#truth-tables)
 - [Multiple Outputs](#multiple-outputs)
 - [PLA Files](#pla-files)
-- [Expression Operations](#expression-operations)
-- [Binary Decision Diagrams (BDDs)](#binary-decision-diagrams-bdds)
 - [Low-Level API](#low-level-api)
 - [Concurrent Execution](#concurrent-execution)
 
 ## Boolean Expressions
 
-### Basic Usage
+### Building expressions
+
+`BoolExpr` is an owned value composed with the bitwise operators `&`, `|`, `^`, `!`:
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    // Three styles of building expressions
-    
-    // Style 1: String literals (most concise); `^` is the built-in XOR operator
-    let xor = expr!("a" ^ "b");
-    println!("XOR: {}", xor);
-    
-    // Style 2: Variables
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    let expr = expr!(a * b + a * b * c);
-    let minimized = expr.minimize()?;
-    println!("Minimized: {}", minimized);  // Output: a * b
-    
-    // Style 3: Mixed
-    let complex = expr!(a * "b" + !"c" * b);
-    
-    Ok(())
-}
+let a = BoolExpr::var("a");
+let b = BoolExpr::var("b");
+let c = BoolExpr::var("c");
+
+let xor = &a ^ &b;
+let sop = (&a & &b) | (!&a & &c);
+
+println!("{xor}");
+println!("{sop}");
 ```
 
-### Parsing Expressions
+### Parsing expressions
 
 ```rust
-use espresso_logic::{BoolExpr, Minimizable};
+use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    // Parse from string (mathematical notation)
-    let expr = BoolExpr::parse("(a + b) * (c + d)")?;
-    let minimized = expr.minimize()?;
-    println!("Result: {}", minimized);
-    
-    // Parse complex expressions
-    let complex = BoolExpr::parse("a*b + b*c + a*c")?;
-    let simple = complex.minimize()?;
-    
-    Ok(())
-}
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+// The grammar accepts both `*`/`+`/`~` and `&`/`|`/`!`, which may be mixed.
+let maths   = BoolExpr::parse("(a + b) * (c + d)")?;
+let bitwise = BoolExpr::parse("(a | b) & (c | d)")?;
+assert_eq!(maths, bitwise);
+
+let mixed = BoolExpr::parse("a * b | c & d")?;
+println!("{mixed}");
+# Ok(())
+# }
 ```
 
-### Alternative Parser Syntax (v3.1+)
-
-The parser supports both mathematical (`*`, `+`) and logical (`&`, `|`) operator notations:
+### Evaluation
 
 ```rust
-use espresso_logic::{BoolExpr, Minimizable};
+use espresso_logic::BoolExpr;
+use std::collections::HashMap;
 
-fn main() -> std::io::Result<()> {
-    // Mathematical notation
-    let math = BoolExpr::parse("a * b + c")?;
-    
-    // Logical notation (v3.1+)
-    let logical = BoolExpr::parse("a & b | c")?;
-    
-    // Mixed notation (v3.1+)
-    let mixed = BoolExpr::parse("a * b | c & d")?;
-    
-    // All three are equivalent for minimisation
-    println!("Math: {}", math);
-    println!("Logical: {}", logical);
-    
-    Ok(())
-}
+let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+
+let mut assignment: HashMap<&str, bool> = HashMap::new();
+assignment.insert("a", true);
+assignment.insert("b", false);
+// (a & b) | !a  with a=true, b=false  =  false
+assert_eq!(expr.evaluate(&assignment), false);
 ```
 
-### Expression Composition (v3.0+)
-
-Seamlessly compose expressions from different sources:
+### Variables
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    // Parse expressions from user input
-    let user_func1 = BoolExpr::parse("a * b + c")?;
-    let user_func2 = BoolExpr::parse("d + e * f")?;
-    let user_func3 = BoolExpr::parse("g * h")?;
-    
-    println!("User function 1: {}", user_func1);
-    println!("User function 2: {}", user_func2);
-    println!("User function 3: {}", user_func3);
-    
-    // Compose them using expr! macro - clean and readable
-    let combined = expr!(user_func1 * user_func2 + !user_func3);
-    println!("Combined: {}", combined);
-    
-    // Build more complex compositions
-    let condition = BoolExpr::parse("enable")?;
-    let output = expr!(condition * user_func1 + !condition * user_func2);
-    println!("Conditional (enable ? func1 : func2): {}", output);
-    
-    // Compose minimized sub-expressions
-    let minimized1 = user_func1.minimize()?;
-    let minimized2 = user_func2.minimize()?;
-    let final_expr = expr!(minimized1 + minimized2);
-    println!("Composed minimized expressions: {}", final_expr);
-    
-    Ok(())
-}
+let expr = BoolExpr::parse("a & b | c & d").unwrap();
+let names: Vec<String> = expr.variables().iter().map(|s| s.to_string()).collect();
+assert_eq!(names, ["a", "b", "c", "d"]);
 ```
 
-See `examples/expression_composition.rs` for a complete working example.
+## Binary Decision Diagrams
 
-### Operator Overloading
+`BoolExpr` is purely syntactic. For canonical, semantic work — logical equivalence, cofactors,
+quantification — build into a [`Bdd`] handle from a [`BddContext`]. Each context owns a private
+manager; mint one with [`bdd_context!`] (or [`sync_bdd_context!`] for a thread-safe context).
+
+### Construction and operations
 
 ```rust
-use espresso_logic::{BoolExpr, Minimizable};
+use espresso_logic::{bdd_context, BoolExpr};
 
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let ctx = bdd_context!();
 
-    // AND: * operator
-    let and = &a * &b;
+let a = ctx.var("a");
+let b = ctx.var("b");
+let c = ctx.var("c");
 
-    // OR: + operator
-    let or = &a + &b;
+// Handles are Copy; operators work by value and by reference.
+let f = (a & b) | (!a & c);
 
-    // NOT: ! operator
-    let not = !&a;
+// Build from a BoolExpr or parse directly into the context.
+let g = ctx.build(&BoolExpr::parse("a & b | !a & c")?);
+let h = ctx.parse("a & b | !a & c")?;
 
-    // XOR: ^ operator
-    let xor = &a ^ &b;
+assert!(f.equivalent_to(g));
+assert!(f.equivalent_to(h));
+# Ok(())
+# }
+```
 
-    // Complex expressions
-    let complex = (&a * &b) + ((!&a) * c);
+### Equivalence checking
 
-    // Minimize
-    let minimized = complex.minimize()?;
-    
-    Ok(())
-}
+```rust
+use espresso_logic::bdd_context;
+
+let ctx = bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+
+// Commutativity holds at the function level (BoolExpr equality would not see this).
+assert!((a & b).equivalent_to(b & a));
+
+// The consensus term is redundant.
+let consensus = (a & b) | (!a & ctx.var("c")) | (b & ctx.var("c"));
+let reduced   = (a & b) | (!a & ctx.var("c"));
+assert!(consensus.equivalent_to(reduced));
+```
+
+### Cofactors, quantification and queries
+
+```rust
+use espresso_logic::bdd_context;
+
+let ctx = bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+let f = a & b;
+
+// Restrict (Shannon cofactor): f|a=true == b.
+assert!(f.restrict("a", true).equivalent_to(b));
+
+// Quantification.
+assert!(f.forall(&["a"]).is_contradiction()); // ∀a. (a & b) == false
+assert!(f.exists(&["a"]).equivalent_to(b));    // ∃a. (a & b) == b
+
+// Constant queries.
+assert!((a | !a).is_tautology());
+assert!((a & !a).is_contradiction());
+```
+
+### Materialisation and lowering
+
+```rust
+use espresso_logic::bdd_context;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let ctx = bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+let c = ctx.var("c");
+
+let f = (a & b) | (a & b & c); // logically just a & b
+
+// Enumerate cubes / minterms.
+let cubes = f.to_cubes();
+assert_eq!(cubes.num_cubes(), 1);
+let minterms = f.to_minterms(&["a", "b"]);
+assert_eq!(minterms.len(), 1);
+
+// Minimise the ON-set, and lower to a factored expression.
+let minimized = f.minimize()?;
+assert_eq!(minimized.num_cubes(), 1);
+let factored = f.to_expr();
+assert!(ctx.build(&factored).equivalent_to(a & b));
+# Ok(())
+# }
 ```
 
 ## Truth Tables
 
-### Building from Truth Tables
+### Building from truth tables
 
 ```rust
 use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
-fn main() -> std::io::Result<()> {
-    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
 
-    // XOR function: a XOR b (ON-set only)
-    // Inputs: [a, b], Output: [f]
-    cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
-    cover.push(Cube::anonymous(&[Some(true),  Some(false)], &[true], CubeType::F));  // 10 -> 1
+// XOR function: inputs [a, b], output [f]
+cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));  // 01 -> 1
+cover.push(Cube::anonymous(&[Some(true),  Some(false)], &[true], CubeType::F)); // 10 -> 1
 
-    cover = cover.minimize()?;
-    println!("Minimized to {} cubes", cover.num_cubes());
-    
-    Ok(())
-}
+cover = cover.minimize()?;
+println!("Minimised to {} cubes", cover.num_cubes());
+# Ok(())
+# }
 ```
 
-### Using Don't Cares
+### Using don't-cares
 
 ```rust
 use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 
-fn main() -> std::io::Result<()> {
-    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
-    
-    // Use None for don't care values
-    cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F));  // 1- -> 1
-    cover.push(Cube::anonymous(&[None, Some(true)], &[true], CubeType::F));  // -1 -> 1
-    
-    cover = cover.minimize()?;
-    
-    Ok(())
-}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+
+// `None` is a don't-care input value.
+cover.push(Cube::anonymous(&[Some(true), None], &[true], CubeType::F)); // 1- -> 1
+cover.push(Cube::anonymous(&[None, Some(true)], &[true], CubeType::F)); // -1 -> 1
+
+cover = cover.minimize()?;
+# Ok(())
+# }
 ```
 
 ## Multiple Outputs
 
-### Named Outputs
-
-**This is the correct way to get multiple minimized expressions (including intermediates):**
-
-```rust
-use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    // Add multiple outputs with names
-    cover.add_expr(&expr!(a * b), "and_output")?;
-    cover.add_expr(&expr!(a + c), "or_output")?;
-    cover.add_expr(&expr!(a * b + b * c), "complex_output")?;
-    
-    // Minimise all together (single call minimises ALL outputs efficiently)
-    cover = cover.minimize()?;
-    
-    // Retrieve minimized expressions
-    for (name, expr) in cover.to_exprs() {
-        println!("{}: {}", name, expr);
-    }
-    
-    Ok(())
-}
-```
-
-### Multiple Outputs with Composition
-
-When you need both intermediate and final minimized expressions:
+A [`Cover`] is multi-output. Add each function as a named output and minimise once to optimise them
+together.
 
 ```rust
-use espresso_logic::{Cover, CoverType, BoolExpr, expr, Minimizable};
+use espresso_logic::{bdd_context, Cover, CoverType, Minimizable};
 
-fn main() -> std::io::Result<()> {
-    let mut cover = Cover::new(CoverType::F);
-    
-    // Define expressions (don't minimise individually!)
-    let expr1 = expr!("a" * "b" + "c" * "d");
-    let expr2 = expr!("x" * "y" + "z");
-    let composed = expr!(expr1 * expr2);
-    
-    // Add all as separate outputs
-    cover.add_expr(&expr1, "intermediate1")?;
-    cover.add_expr(&expr2, "intermediate2")?;
-    cover.add_expr(&composed, "final")?;
-    
-    // Single minimize call gets optimal results for ALL outputs
-    cover = cover.minimize()?;
-    
-    // Now you have minimized versions of all expressions
-    for (name, expr) in cover.to_exprs() {
-        println!("{}: {}", name, expr);
-    }
-    
-    Ok(())
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let ctx = bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+let c = ctx.var("c");
+
+let mut cover = Cover::new(CoverType::F);
+cover.add_bdd(&(a & b), "and_out")?;
+cover.add_bdd(&(a | c), "or_out")?;
+cover.add_bdd(&((a & b) | (b & c)), "complex_out")?;
+
+let minimized = cover.minimize()?;
+
+for (name, expr) in minimized.to_exprs() {
+    println!("{name}: {expr}");
 }
+# Ok(())
+# }
 ```
 
-### Real-World Example: 5-Input Threshold Gate
-
-A threshold gate with complex activation/deactivation regions demonstrates dramatic minimisation and proper expression composition.
-
-Run with: `cargo run --example threshold_gate_example`
+The same works from syntactic expressions with [`Cover::add_expr`]:
 
 ```rust
-use espresso_logic::{Cover, CoverType, expr, BoolExpr, Minimizable};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 
-/// Compute XOR of two boolean expressions. `^` is a built-in operator, so this helper is just
-/// `expr!(a ^ b)` (equivalently `a.xor(b)`) — shown here only to name the operation in the example.
-fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
-    expr!(a ^ b)
-}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(&BoolExpr::parse("a & b | c & d")?, "f1")?;
+cover.add_expr(&BoolExpr::parse("x & y | z")?, "f2")?;
 
-fn main() -> std::io::Result<()> {
-    // 5-input threshold gate: activate on ≥4 high, deactivate on ≤1 high
-    
-    // Activation: at least 4 of 5 inputs high (6 combinations)
-    let activation = expr!(
-        "a" * "b" * "c" * "d" * "e" +
-        "a" * "b" * "c" * "d" * !"e" +
-        "a" * "b" * "c" * !"d" * "e" +
-        "a" * "b" * !"c" * "d" * "e" +
-        "a" * !"b" * "c" * "d" * "e" +
-        !"a" * "b" * "c" * "d" * "e"
-    );
-    
-    // Deactivation: at most 1 of 5 inputs high (6 combinations)
-    let deactivation = expr!(
-        !"a" * !"b" * !"c" * !"d" * !"e" +
-        "a" * !"b" * !"c" * !"d" * !"e" +
-        !"a" * "b" * !"c" * !"d" * !"e" +
-        !"a" * !"b" * "c" * !"d" * !"e" +
-        !"a" * !"b" * !"c" * "d" * !"e" +
-        !"a" * !"b" * !"c" * !"d" * "e"
-    );
-    
-    // Hold region: XOR of activation and negation of deactivation
-    let hold = xor(&activation, &deactivation.not());
-    
-    // Next-state function, two equivalent formulations (set on activation, hold when not deactivating)
-    let next_q_v1 = expr!((activation + "q") * !deactivation);
-    let next_q_v2 = expr!(activation + "q" * hold);
-    
-    // Add all functions to a single cover
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&activation, "activation")?;
-    cover.add_expr(&deactivation, "deactivation")?;
-    cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q_v1, "next_q_v1")?;
-    cover.add_expr(&next_q_v2, "next_q_v2")?;
-    
-    let minimized = cover.minimize()?;
-    
-    // Demonstrates why BDD is superior to naive De Morgan expansion:
-    //
-    // Naive DNF (De Morgan's laws): hold 375,840 cubes, next_q 20,220-375,846 cubes (exponential!)
-    // BDD canonical DNF:             hold 14 cubes,  next_q 19 cubes (26,845x and 1,064x better!)
-    // After Espresso:                hold 10 cubes,  next_q 15 cubes (further optimised)
-    //
-    // BDD avoids exponential blowup while providing canonical representation
-    
-    Ok(())
+let minimized = cover.minimize()?;
+for (name, expr) in minimized.to_exprs() {
+    println!("{name}: {expr}");
 }
+# Ok(())
+# }
 ```
 
-**Key points:**
-- **Helper function `xor()`**: Returns `BoolExpr` for clean composition
-- **Complex expressions**: `hold` (an XOR of compound terms) reduces to 10 cubes after minimisation
-- **Stateful logic**: `next_q_v1`/`next_q_v2` efficiently combine activation with feedback
-- **No early minimisation**: Compose all expressions first, minimise once
-- **Multiple outputs**: All five functions optimised together in one call
+### Composing functions: a 5-input threshold gate
+
+A threshold gate that activates when at least four of five inputs are high, deactivates when at most
+one is high, and holds otherwise. The activation and deactivation regions are composed at the `Bdd`
+layer, and the outputs are minimised together. The BDD layer canonicalises each function, so the
+negation in the next-state logic does not blow up into an exponential sum-of-products.
+
+```rust
+use espresso_logic::{bdd_context, Cover, CoverType, Minimizable};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let ctx = bdd_context!();
+
+// Activation: at least 4 of 5 inputs high.
+let activation = ctx.parse(
+    "a & b & c & d & e \
+   | a & b & c & d & !e \
+   | a & b & c & !d & e \
+   | a & b & !c & d & e \
+   | a & !b & c & d & e \
+   | !a & b & c & d & e",
+)?;
+
+// Deactivation: at most 1 of 5 inputs high.
+let deactivation = ctx.parse(
+    "!a & !b & !c & !d & !e \
+   | a & !b & !c & !d & !e \
+   | !a & b & !c & !d & !e \
+   | !a & !b & c & !d & !e \
+   | !a & !b & !c & d & !e \
+   | !a & !b & !c & !d & e",
+)?;
+
+let q = ctx.var("q");
+
+// Next-state function: set on activation, hold while not deactivating.
+let next_q = (activation | q) & !deactivation;
+
+let mut cover = Cover::new(CoverType::F);
+cover.add_bdd(&activation, "activation")?;
+cover.add_bdd(&deactivation, "deactivation")?;
+cover.add_bdd(&next_q, "next_q")?;
+
+let minimized = cover.minimize()?;
+for (name, expr) in minimized.to_exprs() {
+    println!("{name} = {expr}");
+}
+# Ok(())
+# }
+```
 
 ## PLA Files
 
-### Reading and Writing
+### Reading and writing
 
 ```rust,no_run
 use espresso_logic::{CoverType, Minimizable, PlaCover, Symbol, PLAWriter};
 
-fn main() -> std::io::Result<()> {
-    // Read from file
-    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
-    
-    println!("Inputs: {}", cover.num_inputs());
-    println!("Outputs: {}", cover.num_outputs());
-    println!("Cubes before: {}", cover.num_cubes());
-    
-    // Minimize
-    cover = cover.minimize()?;
-    
-    println!("Cubes after: {}", cover.num_cubes());
-    
-    // Write result
-    cover.to_pla_file("output.pla", CoverType::F)?;
-    
-    Ok(())
-}
+# fn main() -> std::io::Result<()> {
+// Read from a PLA file into a `PlaCover` (the variant reflects which label sections were present).
+let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
+
+println!("Inputs: {}", cover.num_inputs());
+println!("Outputs: {}", cover.num_outputs());
+println!("Cubes before: {}", cover.num_cubes());
+
+cover = cover.minimize()?;
+
+println!("Cubes after: {}", cover.num_cubes());
+
+cover.to_pla_file("output.pla", CoverType::F)?;
+# Ok(())
+# }
 ```
 
-### PLA File Format
-
-Example PLA file:
+### PLA file format
 
 ```text
 .i 2        # 2 inputs
@@ -377,369 +346,140 @@ Example PLA file:
 .e          # end
 ```
 
-See [PLA_FORMAT.md](PLA_FORMAT.md) for complete PLA file format specification.
+See [PLA_FORMAT.md](PLA_FORMAT.md) for the complete specification.
 
-## Expression Operations
+### Inspecting cubes
 
-### Semantic Equality
+```rust,no_run
+use espresso_logic::{Minimizable, PlaCover, Symbol};
 
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+# fn main() -> std::io::Result<()> {
+let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
 
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+println!("Before: {} cubes", cover.num_cubes());
+cover = cover.minimize()?;
+println!("After: {} cubes", cover.num_cubes());
 
-    // Check logical equivalence
-    let expr1 = expr!(a * b);
-    let expr2 = expr!(b * a);
-    assert!(expr1.equivalent_to(&expr2));
-
-    // Different structure, same logic
-    let expr3 = expr!(a * b + a * b * "c");
-    let expr4 = expr!(a * b);
-    assert!(expr3.equivalent_to(&expr4));
-}
-```
-
-### Evaluation
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-use std::collections::HashMap;
-use std::sync::Arc;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let expr = expr!(a * b + !a);
-
-    // Create assignment
-    let mut assignment = HashMap::new();
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), false);
-
-    // Evaluate
-    let result = expr.evaluate(&assignment);
-    // a*b + !a  with a=true, b=false  =  (true AND false) OR (NOT true)  =  false
-    println!("Result: {}", result);  // false
-}
-```
-
-### Collecting Variables
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-fn main() {
-    let expr = expr!("a" * "b" + "c" * "d");
-
-    // Get all variables (sorted)
-    let vars = expr.collect_variables();
-    println!("Variables: {:?}", vars);  // {"a", "b", "c", "d"}
-}
-```
-
-## Binary Decision Diagrams (BDDs)
-
-Every `BoolExpr` **is** a Binary Decision Diagram internally: a canonical reduced-ordered BDD, giving canonical form, efficient operations, and automatic simplification. There is no separate BDD type to convert to or from.
-
-### Basic BDD Construction
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    // Create expressions (already BDDs internally)
-    let true_expr = BoolExpr::constant(true);
-    let false_expr = BoolExpr::constant(false);
-
-    // Create from variable (already a BDD)
-    let a = BoolExpr::variable("a");
-
-    // Build expression (uses BDD operations internally)
-    let expr = BoolExpr::variable("a").and(&BoolExpr::variable("b"));
-
-    // All expressions ARE BDDs - no conversion needed
-    println!("BDD has {} nodes", expr.node_count());
-}
-```
-
-### BDD Operations
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-
-    // All operations use efficient BDD algorithms
-    let a_and_b = a.and(&b);
-    let a_or_b = a.or(&b);
-    let not_a = a.not();
-
-    // Complex expression: (a AND b) OR (NOT a AND c)
-    let complex = a.and(&b).or(&a.not().and(&c));
-
-    // All expressions ARE BDDs with canonical representation
-    println!("Complex BDD has {} nodes", complex.node_count());
-    println!("Uses {} variables", complex.var_count());
-}
-```
-
-### Working with the BDD Representation
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-
-    // Create expression (already a BDD internally)
-    let expr = a.and(&b).or(&b.and(&c));
-
-    // Already in canonical BDD form
-    println!("BDD has {} nodes", expr.node_count());
-
-    // Display uses algebraic factorisation
-    println!("Expression: {}", expr);
-}
-```
-
-### Equivalence Checking with BDDs
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    
-    // Two equivalent expressions (commutative)
-    let expr1 = a.and(&b);
-    let expr2 = b.and(&a);
-    
-    // BoolExpr is BDD-backed: equivalent expressions share the same
-    // canonical internal structure, so they compare equal directly.
-    assert_eq!(expr1, expr2);
-    assert_eq!(expr1.node_count(), expr2.node_count());
-    
-    println!("Expressions are equivalent!");
-}
-```
-
-### BDD Properties and Inspection
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let expr = a.and(&b).or(&a.not());
-    
-    // Check BDD properties
-    println!("Is terminal: {}", expr.is_terminal());
-    println!("Is true: {}", expr.is_true());
-    println!("Is false: {}", expr.is_false());
-    println!("Node count: {}", expr.node_count());
-    println!("Variable count: {}", expr.var_count());
-    
-    // Extract the product terms (paths to TRUE) as minterms
-    let minterms = expr.to_cubes();
-    println!("Number of minterms: {}", minterms.len());
-    for minterm in minterms.iter() {
-        println!("  Minterm: {:?}", minterm);
+// `PlaCover` is a sum type over which label sections the file carried; match to reach the concrete
+// `Cover` and inspect its cubes.
+if let PlaCover::InputsOutputsNamed(c) = &cover {
+    for cube in c.cubes() {
+        println!("Cube: {:?}", cube);
     }
 }
-```
-
-### BDD Automatic Optimisation
-
-```rust
-use espresso_logic::BoolExpr;
-
-fn main() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    // Consensus theorem: a*b + ~a*c + b*c
-    // The b*c term is redundant
-    let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
-    
-    println!("Original expression: {}", expr);
-    
-    // BDD automatically recognises redundancy
-    let cubes = expr.to_cubes();
-    
-    println!("BDD has {} cubes (redundancy eliminated)", cubes.len());
-    // Outputs: 2 cubes (b*c was redundant and eliminated)
-    
-    // The factored display already shows the simplified form
-    println!("Simplified: {}", expr);
-}
-```
-
-### Using BDDs for Efficient Minimisation
-
-```rust
-use espresso_logic::{BoolExpr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    
-    // Redundant expression
-    let expr = a.and(&b).or(&a.and(&b).and(&c));
-    
-    // Minimization workflow (introduced in v3.1 with BDDs):
-    // 1. Expression → BDD (efficient canonical form)
-    // 2. BDD → Cover cubes (optimised extraction)
-    // 3. Cover → Minimized cover (Espresso algorithm)
-    
-    let minimized = expr.minimize()?;
-    println!("Minimized: {}", minimized);  // Output: a * b
-    
-    Ok(())
-}
+# Ok(())
+# }
 ```
 
 ## Low-Level API
 
-### Direct Espresso Usage
+### Direct Espresso usage
 
 ```rust
 use espresso_logic::espresso::{EspressoCover, CubeType};
 
-fn main() -> std::io::Result<()> {
-    // Build cover from cubes
-    let cubes = [
-        (&[0, 1][..], &[1][..]),  // 01 -> 1
-        (&[1, 0][..], &[1][..]),  // 10 -> 1
-    ];
-    let f = EspressoCover::from_cubes(&cubes, 2, 1)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    
-    // Minimize
-    let (minimized, _d, _r) = f.minimize(None, None);
-    
-    // Extract results
-    let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
-    println!("Result: {} cubes", result_cubes.len());
-    
-    Ok(())
-}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let cubes = [
+    (&[0, 1][..], &[1][..]), // 01 -> 1
+    (&[1, 0][..], &[1][..]), // 10 -> 1
+];
+let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+
+let (minimized, _d, _r) = f.minimize(None, None);
+
+let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
+println!("Result: {} cubes", result_cubes.len());
+# Ok(())
+# }
 ```
 
-### Custom Configuration
+### Custom configuration
 
 ```rust
 use espresso_logic::espresso::Espresso;
 use espresso_logic::EspressoConfig;
 
-fn main() -> std::io::Result<()> {
-    // Custom configuration
-    let mut config = EspressoConfig::default();
-    config.single_expand = true;
-    config.use_super_gasp = false;
-    
-    // Create instance with config
-    let _esp = Espresso::new(2, 1, &config);
-    
-    // Now all operations use this configuration
-    // ...
-    
-    Ok(())
-}
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut config = EspressoConfig::default();
+config.single_expand = true;
+config.use_super_gasp = false;
+
+let _esp = Espresso::new(2, 1, &config);
+# Ok(())
+# }
 ```
 
 ## Concurrent Execution
 
-### Thread-Safe High-Level API
+### Covers across threads
+
+A [`Cover`] is `Send + Sync`; the thread-local Espresso instance is created lazily on the first
+`minimize()`:
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 use std::thread;
 
-fn main() -> std::io::Result<()> {
-    let handles: Vec<_> = (0..4).map(|i| {
-        thread::spawn(move || -> std::io::Result<String> {
-            let expr = expr!("a" * "b" + "a" * "c" + "b" * "c");
-            let minimized = expr.minimize()?;
-            Ok(format!("Thread {}: {}", i, minimized))
-        })
-    }).collect();
-    
-    for handle in handles {
-        println!("{}", handle.join().unwrap()?);
-    }
-    
-    Ok(())
+# fn main() -> std::io::Result<()> {
+let handles: Vec<_> = (0..4).map(|_| {
+    thread::spawn(move || -> std::io::Result<usize> {
+        let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+        cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F));
+        cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
+        cover = cover.minimize()?;
+        Ok(cover.num_cubes())
+    })
+}).collect();
+
+for handle in handles {
+    println!("Result: {} cubes", handle.join().unwrap()?);
 }
+# Ok(())
+# }
 ```
 
-### Parallel Cover Processing
+### A thread-safe BDD context
 
-```rust,no_run
-use espresso_logic::{Cover, Minimizable, PlaCover, Symbol};
+[`sync_bdd_context!`] mints a `Send + Sync` context that can be shared by reference across threads:
+
+```rust
+use espresso_logic::sync_bdd_context;
 use std::thread;
 
-fn main() -> std::io::Result<()> {
-    let files = vec!["a.pla", "b.pla", "c.pla", "d.pla"];
-    
-    let handles: Vec<_> = files.into_iter().map(|file| {
-        thread::spawn(move || -> std::io::Result<usize> {
-            let mut cover = PlaCover::<Symbol>::from_pla_file(file)?;
-            cover = cover.minimize()?;
-            Ok(cover.num_cubes())
-        })
-    }).collect();
-    
-    for handle in handles {
-        println!("Result: {} cubes", handle.join().unwrap()?);
-    }
-    
-    Ok(())
-}
+let ctx = sync_bdd_context!();
+let a = ctx.var("a");
+let b = ctx.var("b");
+let f = a & b;
+
+thread::scope(|s| {
+    s.spawn(|| {
+        assert!(f.equivalent_to(ctx.var("a") & ctx.var("b")));
+    });
+});
 ```
 
-## Advanced Examples
-
-### Inspecting Cubes
+### Parallel cover processing
 
 ```rust,no_run
 use espresso_logic::{Minimizable, PlaCover, Symbol};
+use std::thread;
 
-fn main() -> std::io::Result<()> {
-    let mut cover = PlaCover::<Symbol>::from_pla_file("input.pla")?;
-    
-    // Get cubes before minimisation
-    let before_count = cover.num_cubes();
-    println!("Before: {} cubes", before_count);
-    
-    cover = cover.minimize()?;
-    
-    // Get cubes after minimisation
-    let after_count = cover.num_cubes();
-    println!("After: {} cubes", after_count);
-    
-    // `PlaCover` is a sum type over which label sections the file carried; match to reach the
-    // concrete `Cover` and inspect its cubes.
-    if let PlaCover::InputsOutputsNamed(c) = &cover {
-        for cube in c.cubes() {
-            println!("Cube: {:?}", cube);
-        }
-    }
-    
-    Ok(())
+# fn main() -> std::io::Result<()> {
+let files = vec!["a.pla", "b.pla", "c.pla", "d.pla"];
+
+let handles: Vec<_> = files.into_iter().map(|file| {
+    thread::spawn(move || -> std::io::Result<usize> {
+        let mut cover = PlaCover::<Symbol>::from_pla_file(file)?;
+        cover = cover.minimize()?;
+        Ok(cover.num_cubes())
+    })
+}).collect();
+
+for handle in handles {
+    println!("Result: {} cubes", handle.join().unwrap()?);
 }
+# Ok(())
+# }
 ```
 
 ## Running Examples
@@ -747,42 +487,15 @@ fn main() -> std::io::Result<()> {
 The repository includes runnable examples:
 
 ```bash
-# Boolean expressions
-cargo run --example boolean_expressions
-
-# XOR function
 cargo run --example xor_function
-
-# PLA processing
 cargo run --example pla_file
-
-# Low-level API
 cargo run --example espresso_direct_api
-
-# Concurrent execution
-cargo run --example concurrent_transparent
-
-# Expression macro
-cargo run --example expr_macro_demo
-
-# Inspect cubes
-cargo run --example inspect_cubes
-
-# Expression composition (v3.0+)
-cargo run --example expression_composition
-
-# Threshold gate example (v3.1+)
-cargo run --example threshold_gate_example
-
-# C-element example (v3.1+)
-cargo run --example c_element_example
 ```
 
-### New in v3.1
-
-The following examples demonstrate new features in v3.1:
-
-- **expression_composition.rs** - Shows how to compose expressions from parsed functions, variables, and minimized results
-- **threshold_gate_example.rs** - 5-input threshold gate showing dramatic minimisation and proper composition of complex functions
-- **c_element_example.rs** - C-element (Muller C-element) demonstrating proper asynchronous circuit design with set/reset logic
-
+[`BoolExpr`]: crate::BoolExpr
+[`Bdd`]: crate::bdd::Bdd
+[`BddContext`]: crate::bdd::BddContext
+[`Cover`]: crate::Cover
+[`Cover::add_expr`]: crate::Cover::add_expr
+[`bdd_context!`]: crate::bdd_context
+[`sync_bdd_context!`]: crate::sync_bdd_context

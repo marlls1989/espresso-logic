@@ -22,8 +22,10 @@
 //!
 //! The high-level API provides easy-to-use abstractions with automatic resource management:
 //!
-//! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, the `expr!` macro, and a low-level
-//!   [`BoolExpr::build`] closure builder
+//! - **[`BoolExpr`]** - Owned, syntactic Boolean expressions with parsing, the bitwise operators
+//!   (`&`, `|`, `^`, `!`) and evaluation
+//! - **[`Bdd`]** - Canonical BDD handles from a [`BddContext`] (or thread-safe [`SyncBddContext`]) for
+//!   logical equivalence, cofactors and quantification
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
 //! - **[`Cube`]** / **[`Minterm`]** / **[`OutputSet`]** - A `Cover`'s product terms: a [`Cube`] pairs an
 //!   input [`Minterm`] (a label-carrying row of tri-state values, `1`/`0`/`-`) with an [`OutputSet`]
@@ -66,65 +68,54 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! The `expr!` macro provides three styles:
-//!
-//! ```
-//! use espresso_logic::{BoolExpr, expr, Minimizable};
-//!
-//! # fn main() -> std::io::Result<()> {
-//! // Style 1: String literals (most concise - no declarations)
-//! let xor = expr!("a" * !"b" + !"a" * "b");
-//! println!("{}", xor);  // Output: a * ~b + ~a * b (minimal parentheses)
-//!
-//! // Style 2: Existing BoolExpr variables
-//! let a = BoolExpr::variable("a");
-//! let b = BoolExpr::variable("b");
-//! let c = BoolExpr::variable("c");
-//! let redundant = expr!(a * b + a * b * c);
-//!
-//! // Minimise it (returns a new minimised expression)
-//! let minimized = redundant.minimize()?;
-//! println!("Minimised: {}", minimized);  // Output: a * b
-//!
-//! // Check logical equivalence (create new instance for comparison)
-//! let redundant2 = expr!(a * b + a * b * c);
-//! assert!(redundant2.equivalent_to(&minimized));
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Parse expressions from strings:
-//!
-//! ```
-//! use espresso_logic::{BoolExpr, Minimizable};
-//!
-//! # fn main() -> std::io::Result<()> {
-//! // Parse using standard operators: +, ^, *, ~, ! (or & and |)
-//! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
-//!
-//! // Minimise using Espresso algorithm
-//! let minimised = expr.minimize()?;
-//! println!("Minimised: {}", minimised);
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Build dynamically with the low-level closure builder ([`BoolExpr::build`]) — one BDD manager lock for
-//! the whole expression, no intermediate allocations, and a natural fit for runtime-shaped construction:
+//! [`BoolExpr`] is an owned, syntactic value, composed with the bitwise operators `&` (AND), `|` (OR),
+//! `^` (XOR), `!` (NOT), by value or by reference:
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! // AND-reduce a runtime slice of variables.
-//! let names = ["a", "b", "c"];
-//! let all = BoolExpr::build(|f| {
-//!     names
-//!         .iter()
-//!         .map(|n| f.var(n))
-//!         .reduce(|acc, v| f.and(acc, v))
-//!         .unwrap_or_else(|| f.constant(true))
-//! });
-//! assert_eq!(all, BoolExpr::parse("a * b * c").unwrap());
+//! let a = BoolExpr::var("a");
+//! let b = BoolExpr::var("b");
+//!
+//! // XOR, built from the operators.
+//! let xor = (&a & !&b) | (!&a & &b);
+//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! ```
+//!
+//! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+//! let expr = BoolExpr::parse("a & b | !a & !b")?;
+//! println!("{expr}");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! `BoolExpr` is purely syntactic: `a & b` and `b & a` are different values, and equality compares the
+//! token structure, not the Boolean function. For canonical, semantic work — logical equivalence,
+//! cofactors, quantification — build a [`Bdd`] handle in a [`BddContext`] minted by
+//! [`bdd_context!`](crate::bdd_context):
+//!
+//! ```
+//! use espresso_logic::{bdd_context, BoolExpr};
+//!
+//! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+//! let ctx = bdd_context!();
+//! let a = ctx.var("a");
+//! let b = ctx.var("b");
+//!
+//! // Handles are Copy; the BDD layer canonicalises, so logical laws hold.
+//! assert!((a & b).equivalent_to(b & a));
+//! assert!((a | !a).is_tautology());
+//!
+//! // Build a parsed expression into the same context and compare functions.
+//! let parsed = ctx.parse("a & b")?;
+//! assert!((a & b).equivalent_to(parsed));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! #### Using Cover with Expressions
