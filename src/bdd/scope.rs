@@ -47,6 +47,23 @@ use crate::expression::{BoolExpr, ParseBoolExprError};
 ///     a
 /// });
 /// ```
+///
+/// Nor can two scopes' handles meet, even nested over the same builder — the invariant `'s` lifetimes do
+/// not unify, so there is no need for a runtime same-manager check on the scoped operators:
+///
+/// ```compile_fail
+/// use espresso_logic::bdd_builder;
+///
+/// let builder = bdd_builder!();
+/// builder.scope(|outer| {
+///     let a = outer.var("a");
+///     builder.scope(|inner| {
+///         let _ = a & inner.var("b"); // error: `a`'s scope lifetime differs from `inner`'s
+///         inner.var("c")
+///     });
+///     outer.var("d")
+/// });
+/// ```
 pub struct ScopedBdd<'s, B: Brand, C: ManagerCell> {
     root: NodeId,
     cell: &'s C,
@@ -83,50 +100,36 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
         self.root
     }
 
-    /// Assert two handles share one manager. The shared `'s` already ties both to one scope; this guards
-    /// against a future change that lets two scopes' lifetimes coincide (mirrors the owned handle's
-    /// runtime backstop against a brand clash).
-    fn assert_same(self, other: Self) {
-        debug_assert!(
-            self.cell.as_ptr() == other.cell.as_ptr(),
-            "ScopedBdd handles from different builders"
-        );
-    }
+    // The owned [`Bdd`] operators assert at runtime that two operands share a manager, a backstop against a
+    // brand clash (two builders that happen to share a brand type). A [`ScopedBdd`] needs no such check:
+    // its invariant `'s` brands it to exactly one scope, hence one builder and one cell, and two scopes'
+    // lifetimes never unify — even nested, or over the same builder — so two handles reaching an operator
+    // here provably borrow the same cell. The compile-time guarantee is exercised by the nested-scope
+    // `compile_fail` doctest on [`ScopedBdd`]. The encodings are shared with the owned handle via
+    // [`super::encoding`] so the two layers cannot drift.
 
     /// Logical AND: `self ∧ other`. Equivalent to the `&` operator.
     #[must_use]
     pub fn and(self, other: Self) -> Self {
-        self.assert_same(other);
-        Self::from_root(
-            self.cell,
-            BddManager::ite(self.cell, self.root, other.root, FALSE_NODE),
-        )
+        Self::from_root(self.cell, super::encoding::and(self.cell, self.root, other.root))
     }
 
     /// Logical OR: `self ∨ other`. Equivalent to the `|` operator.
     #[must_use]
     pub fn or(self, other: Self) -> Self {
-        self.assert_same(other);
-        Self::from_root(
-            self.cell,
-            BddManager::ite(self.cell, self.root, TRUE_NODE, other.root),
-        )
+        Self::from_root(self.cell, super::encoding::or(self.cell, self.root, other.root))
     }
 
     /// Logical XOR: `self ⊕ other`. Equivalent to the `^` operator.
     #[must_use]
     pub fn xor(self, other: Self) -> Self {
-        self.assert_same(other);
-        Self::from_root(self.cell, BddManager::xor(self.cell, self.root, other.root))
+        Self::from_root(self.cell, super::encoding::xor(self.cell, self.root, other.root))
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator.
     #[must_use]
     pub fn complement(self) -> Self {
-        Self::from_root(
-            self.cell,
-            BddManager::ite(self.cell, self.root, FALSE_NODE, TRUE_NODE),
-        )
+        Self::from_root(self.cell, super::encoding::not(self.cell, self.root))
     }
 }
 

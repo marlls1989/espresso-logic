@@ -144,7 +144,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn and(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::ite(&self.cell, self.root, other.root, FALSE_NODE);
+        let root = super::encoding::and(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -152,7 +152,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn or(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::ite(&self.cell, self.root, TRUE_NODE, other.root);
+        let root = super::encoding::or(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -160,14 +160,14 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::xor(&self.cell, self.root, other.root);
+        let root = super::encoding::xor(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
     #[must_use]
     pub fn complement(self) -> Self {
-        let root = BddManager::ite(&self.cell, self.root, FALSE_NODE, TRUE_NODE);
+        let root = super::encoding::not(&self.cell, self.root);
         Self::from_root(&self.cell, root)
     }
 

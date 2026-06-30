@@ -897,3 +897,31 @@ fn minimize_reduces_redundancy() {
     let rebuilt = builder.build_cover(&min);
     assert!(rebuilt.equivalent_to(&a));
 }
+
+// ---- Brand clash: the runtime same-manager backstop -----------------------------------------------
+//
+// `bdd_builder!` mints a brand per call *site*: the brand is a local `struct` defined once where the macro
+// expands. Wrapping one invocation in a closure and calling it twice therefore yields two builders with the
+// *same* brand type but *different* managers, whose handles type-check together. The always-on same-manager
+// assert is the only guard against then computing across the two managers; these tests build exactly that
+// clash and prove each assert fires (so removing the assert would let the bug through silently).
+
+#[test]
+#[should_panic(expected = "different managers")]
+fn owned_operator_across_clashing_brands_panics() {
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let two = make();
+    // One call site, so `one` and `two` share a brand type but own different managers: this type-checks,
+    // then trips the runtime backstop.
+    let _ = one.var("x") & two.var("x");
+}
+
+#[test]
+#[should_panic(expected = "different manager")]
+fn lift_across_clashing_brands_panics() {
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let foreign = make().var("x");
+    let _ = one.scope(|s| s.lift(&foreign));
+}

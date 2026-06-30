@@ -49,6 +49,7 @@
 
 mod brand;
 mod builder;
+mod encoding;
 mod handle;
 mod scope;
 
