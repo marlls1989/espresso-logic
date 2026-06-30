@@ -2,7 +2,7 @@
 //!
 //! This module provides [`BoolExpr`], an **owned, context-free, syntactic** Boolean expression. A
 //! `BoolExpr` is a value: it can be built, composed, parsed, displayed and folded with no manager,
-//! context or brand. Internally it is a flat reverse-Polish token stream (see [`rpn`]).
+//! context or brand. Internally it is a flat reverse-Polish token stream.
 //!
 //! `BoolExpr` is purely syntactic. It does **not** canonicalise: `a & b` and `b & a` are *different*
 //! expressions, and equality ([`Eq`]) compares the token structure, not the Boolean function. For

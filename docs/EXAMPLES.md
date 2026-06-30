@@ -53,17 +53,22 @@ println!("{mixed}");
 
 ### Evaluation
 
+Evaluation is a semantic operation, so it goes through the `Bdd` layer: build the expression into a
+context and evaluate the handle.
+
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{bdd_context, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+let ctx = bdd_context!();
+let f = ctx.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
 assignment.insert("a", true);
 assignment.insert("b", false);
 // (a & b) | !a  with a=true, b=false  =  false
-assert_eq!(expr.evaluate(&assignment), false);
+assert_eq!(f.evaluate(&assignment), false);
 ```
 
 ### Variables

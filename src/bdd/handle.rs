@@ -233,10 +233,9 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
     /// absent from `assignment` reads as `false`** (partial assignments are allowed). The key type
     /// may be any `Borrow<str>` (`&str`, `String`, [`Symbol`], `Arc<str>`, …).
     ///
-    /// [`BoolExpr::evaluate`](crate::BoolExpr::evaluate) computes the same Boolean result by folding
-    /// the syntactic token stream (O(expression size), no context); prefer this BDD form when
-    /// evaluating one function over many assignments, and the syntactic form for a one-shot check on
-    /// a free expression.
+    /// Evaluation is a semantic operation, so it lives here rather than on the syntactic
+    /// [`BoolExpr`](crate::BoolExpr): build the expression into a context with
+    /// [`BddContext::build`](crate::bdd::BddContext::build) first.
     #[must_use]
     pub fn evaluate<K>(self, assignment: &HashMap<K, bool>) -> bool
     where

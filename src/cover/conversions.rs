@@ -73,8 +73,8 @@ impl<'ctx, B: Brand> From<Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
     }
 }
 
-/// Borrowed counterpart of [`From<Bdd>`](From). [`Bdd`](crate::bdd::Bdd) is `Copy`, so this just copies
-/// the handle and defers to the by-value primitive.
+/// Borrowed counterpart of the `From<Bdd>` impl. [`Bdd`] is `Copy`, so this just
+/// copies the handle and defers to the by-value primitive.
 impl<'ctx, B: Brand> From<&Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
     fn from(bdd: &Bdd<'ctx, B>) -> Self {
         bdd.to_cubes()
@@ -83,10 +83,10 @@ impl<'ctx, B: Brand> From<&Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
 
 /// Convert a `BoolExpr` into a single-output, anonymous-output [`Cover<Symbol, Anonymous>`](Cover).
 ///
-/// A free [`BoolExpr`] has no cubes, so it is first built into a [`Bdd`](crate::bdd::Bdd) in a private,
-/// temporary context (which canonicalises it), then materialised through the
-/// [`From<Bdd>`](From) primitive above — the same temporary-context mediation as
-/// [`Cover::add_expr`]. The output is anonymous; an expression has no output name.
+/// A free [`BoolExpr`] has no cubes, so it is first built into a [`Bdd`] in a private,
+/// temporary context (which canonicalises it), then materialised through the `From<Bdd>` primitive
+/// above — the same temporary-context mediation as [`Cover::add_expr`]. The output is anonymous; an
+/// expression has no output name.
 ///
 /// ```
 /// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};
@@ -101,8 +101,8 @@ impl From<BoolExpr> for Cover<Symbol, Anonymous> {
     }
 }
 
-/// Borrowed counterpart of [`From<BoolExpr>`](From): builds the expression in a temporary context and
-/// funnels through the [`From<Bdd>`](From) primitive, without taking ownership.
+/// Borrowed counterpart of the `From<BoolExpr>` impl: builds the expression in a temporary context and
+/// funnels through the `From<Bdd>` primitive, without taking ownership.
 ///
 /// ```
 /// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};

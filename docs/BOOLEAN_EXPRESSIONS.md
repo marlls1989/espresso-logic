@@ -8,9 +8,10 @@ that sits beside it.
 The API is split into two layers with distinct responsibilities:
 
 - **[`BoolExpr`]** is an **owned, syntactic** Boolean expression. It carries no manager, context or
-  brand: build it, compose it with the bitwise operators, parse it from text, display it, and evaluate
-  it under an assignment — all as a plain value. It does **not** canonicalise. `a & b` and `b & a` are
-  different expressions, and equality compares syntax, not the Boolean function.
+  brand: build it, compose it with the bitwise operators, parse it from text, display it, and fold over
+  its structure — all as a plain value. It does **not** canonicalise. `a & b` and `b & a` are different
+  expressions, and equality compares syntax, not the Boolean function. Semantic operations (evaluation,
+  equivalence) are done through the `Bdd` layer.
 
 - **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddContext`] (or
   the thread-safe [`SyncBddContext`]), which owns a private BDD manager. Within one context every
@@ -144,25 +145,29 @@ assert_eq!(format!("{}", !(&a & &b)), "!(a & b)");
 
 ### Evaluation
 
-[`BoolExpr::evaluate`] folds the expression under a variable assignment. The map key may be any
-`Borrow<str>` (`&str`, `String`, `Symbol`, `Arc<str>`, …). A variable absent from the map is treated
-as `false`:
+Evaluation is a semantic operation, so it lives on [`Bdd`], not on the syntactic `BoolExpr`: build the
+expression into a context and evaluate the resulting handle. [`Bdd::evaluate`] follows a single
+root-to-terminal path, so its cost is bounded by the variables the function depends on rather than the
+size of the original expression. The map key may be any `Borrow<str>` (`&str`, `String`, `Symbol`,
+`Arc<str>`, …); a variable absent from the map is treated as `false`:
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{bdd_context, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+let ctx = bdd_context!();
+let f = ctx.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
 assignment.insert("a", true);
 assignment.insert("b", false);
 // (a & b) | !a  with a=true, b=false  =  false | false  =  false
-assert_eq!(expr.evaluate(&assignment), false);
+assert_eq!(f.evaluate(&assignment), false);
 
 assignment.insert("a", false);
 // (a & b) | !a  with a=false  =  false | true  =  true
-assert_eq!(expr.evaluate(&assignment), true);
+assert_eq!(f.evaluate(&assignment), true);
 ```
 
 ### Syntactic variables
@@ -590,9 +595,9 @@ match cover.minimize() {
 
 [`BoolExpr`]: crate::BoolExpr
 [`BoolExpr::parse`]: crate::BoolExpr::parse
-[`BoolExpr::evaluate`]: crate::BoolExpr::evaluate
 [`BoolExpr::variables`]: crate::BoolExpr::variables
 [`Bdd`]: crate::bdd::Bdd
+[`Bdd::evaluate`]: crate::bdd::Bdd::evaluate
 [`Bdd::equivalent_to`]: crate::bdd::Bdd::equivalent_to
 [`Bdd::restrict`]: crate::bdd::Bdd::restrict
 [`Bdd::cofactor`]: crate::bdd::Bdd::cofactor
