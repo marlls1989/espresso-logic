@@ -111,19 +111,28 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     /// Logical AND: `self ∧ other`. Equivalent to the `&` operator.
     #[must_use]
     pub fn and(self, other: Self) -> Self {
-        Self::from_root(self.cell, super::encoding::and(self.cell, self.root, other.root))
+        Self::from_root(
+            self.cell,
+            super::encoding::and(self.cell, self.root, other.root),
+        )
     }
 
     /// Logical OR: `self ∨ other`. Equivalent to the `|` operator.
     #[must_use]
     pub fn or(self, other: Self) -> Self {
-        Self::from_root(self.cell, super::encoding::or(self.cell, self.root, other.root))
+        Self::from_root(
+            self.cell,
+            super::encoding::or(self.cell, self.root, other.root),
+        )
     }
 
     /// Logical XOR: `self ⊕ other`. Equivalent to the `^` operator.
     #[must_use]
     pub fn xor(self, other: Self) -> Self {
-        Self::from_root(self.cell, super::encoding::xor(self.cell, self.root, other.root))
+        Self::from_root(
+            self.cell,
+            super::encoding::xor(self.cell, self.root, other.root),
+        )
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator.

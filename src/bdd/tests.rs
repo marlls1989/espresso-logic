@@ -871,16 +871,18 @@ fn scope_or_and_constant_compose() {
 #[test]
 fn scope_operand_reused_without_clone() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
-    assert!(builder.scope(|s| {
-        let a = s.var("a");
-        a | !a
-    })
-    .is_tautology());
-    assert!(builder.scope(|s| {
-        let a = s.var("a");
-        a & !a
-    })
-    .is_contradiction());
+    assert!(builder
+        .scope(|s| {
+            let a = s.var("a");
+            a | !a
+        })
+        .is_tautology());
+    assert!(builder
+        .scope(|s| {
+            let a = s.var("a");
+            a & !a
+        })
+        .is_contradiction());
 }
 
 // ---- minimize -------------------------------------------------------------------------------------

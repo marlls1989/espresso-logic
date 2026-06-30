@@ -206,10 +206,14 @@ fn parse_graft_operand(input: ParseStream) -> Result<proc_macro2::TokenStream> {
                 input.parse::<Ident>()?.to_tokens(&mut tokens);
             }
             if input.peek(syn::token::Paren) {
-                input.parse::<proc_macro2::TokenTree>()?.to_tokens(&mut tokens);
+                input
+                    .parse::<proc_macro2::TokenTree>()?
+                    .to_tokens(&mut tokens);
             }
         } else if input.peek(syn::token::Paren) || input.peek(syn::token::Bracket) {
-            input.parse::<proc_macro2::TokenTree>()?.to_tokens(&mut tokens);
+            input
+                .parse::<proc_macro2::TokenTree>()?
+                .to_tokens(&mut tokens);
         } else {
             break;
         }
