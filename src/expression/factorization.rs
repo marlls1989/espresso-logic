@@ -402,6 +402,7 @@ fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expr;
 
     /// Whether two expressions denote the same Boolean function. `BoolExpr` is syntactic, so
     /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
@@ -473,7 +474,7 @@ mod tests {
         let a = BoolExpr::var("a");
         let b = BoolExpr::var("b");
         let c = BoolExpr::var("c");
-        let unfactored = a.and(&b).or(&a.and(&c));
+        let unfactored = expr!(a & b | a & c);
 
         // Should be logically equivalent
         assert!(equiv(&unfactored, &factored));
@@ -507,7 +508,7 @@ mod tests {
         let a = BoolExpr::var("a");
         let b = BoolExpr::var("b");
         let c = BoolExpr::var("c");
-        let original = a.and(&b).or(&a.and(&c));
+        let original = expr!(a & b | a & c);
 
         // Factorisation must preserve the Boolean function.
         assert!(equiv(&original, &factored));
@@ -557,7 +558,7 @@ mod tests {
         let b = BoolExpr::var("b");
         let c = BoolExpr::var("c");
         let d = BoolExpr::var("d");
-        let original = a.and(&b).and(&c).or(&a.and(&b).and(&d));
+        let original = expr!(a & b & c | a & b & d);
 
         // Should be logically equivalent
         assert!(equiv(&original, &factored));

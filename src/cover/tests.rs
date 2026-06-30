@@ -2,6 +2,7 @@
 
 use super::pla::{PLAWriter, PlaCover};
 use super::*;
+use crate::expr;
 use crate::Symbol;
 use std::sync::Arc;
 
@@ -541,7 +542,7 @@ fn test_add_expr_basic() {
 
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
-    let expr = a.and(&b);
+    let expr = expr!(a & b);
 
     cover.add_expr(&expr, "output").unwrap();
 
@@ -562,13 +563,13 @@ fn test_add_expr_variable_matching() {
     let c = crate::BoolExpr::var("c");
 
     // Add first expression with variables a and b
-    cover.add_expr(&a.and(&b), "out1").unwrap();
+    cover.add_expr(&expr!(a & b), "out1").unwrap();
     assert_eq!(cover.num_inputs(), 2);
     assert_eq!(cover.input_labels()[0].as_ref(), "a");
     assert_eq!(cover.input_labels()[1].as_ref(), "b");
 
     // Add second expression with variables b and c (b should match, c appended)
-    cover.add_expr(&b.and(&c), "out2").unwrap();
+    cover.add_expr(&expr!(b & c), "out2").unwrap();
     assert_eq!(cover.num_inputs(), 3);
     assert_eq!(cover.input_labels()[0].as_ref(), "a");
     assert_eq!(cover.input_labels()[1].as_ref(), "b");
@@ -600,12 +601,12 @@ fn test_add_expr_to_different_cover_types() {
 
     // F type
     let mut f_cover = Cover::new(CoverType::F);
-    f_cover.add_expr(&a.and(&b), "out").unwrap();
+    f_cover.add_expr(&expr!(a & b), "out").unwrap();
     assert_eq!(f_cover.cover_type(), CoverType::F);
 
     // FD type
     let mut fd_cover = Cover::new(CoverType::FD);
-    fd_cover.add_expr(&a.or(&b), "out").unwrap();
+    fd_cover.add_expr(&expr!(a | b), "out").unwrap();
     assert_eq!(fd_cover.cover_type(), CoverType::FD);
 
     // FR type
@@ -615,7 +616,7 @@ fn test_add_expr_to_different_cover_types() {
 
     // FDR type
     let mut fdr_cover = Cover::new(CoverType::FDR);
-    fdr_cover.add_expr(&a.not(), "out").unwrap();
+    fdr_cover.add_expr(&expr!(!a), "out").unwrap();
     assert_eq!(fdr_cover.cover_type(), CoverType::FDR);
 }
 
@@ -628,9 +629,9 @@ fn test_add_expr_multiple_outputs() {
     let c = crate::BoolExpr::var("c");
 
     // Add three different expressions
-    cover.add_expr(&a.and(&b), "and_result").unwrap();
-    cover.add_expr(&a.or(&c), "or_result").unwrap();
-    cover.add_expr(&b.not(), "not_result").unwrap();
+    cover.add_expr(&expr!(a & b), "and_result").unwrap();
+    cover.add_expr(&expr!(a | c), "or_result").unwrap();
+    cover.add_expr(&expr!(!b), "not_result").unwrap();
 
     assert_eq!(cover.num_outputs(), 3);
     assert_eq!(cover.output_labels()[0].as_ref(), "and_result");
@@ -654,7 +655,7 @@ fn test_add_expr_variable_ordering_preserved() {
 
     // Add expression with variables in non-alphabetical order
     // Variables in BoolExpr are sorted alphabetically internally
-    cover.add_expr(&z.and(&a).and(&m), "out").unwrap();
+    cover.add_expr(&expr!(z & a & m), "out").unwrap();
 
     // Variables should be in alphabetical order (a, m, z)
     assert_eq!(cover.num_inputs(), 3);
@@ -672,7 +673,7 @@ fn test_to_expr_basic() {
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
-    cover.add_expr(&a.and(&b), "result").unwrap();
+    cover.add_expr(&expr!(a & b), "result").unwrap();
 
     let retrieved = cover.to_expr("result").unwrap();
 
@@ -690,7 +691,7 @@ fn to_expr_and_from_pla_string_accept_owned_string() {
     let mut cover = Cover::new(CoverType::F);
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
-    cover.add_expr(&a.and(&b), "result").unwrap();
+    cover.add_expr(&expr!(a & b), "result").unwrap();
     let from_string = cover.to_expr(String::from("result")).unwrap();
     let from_str = cover.to_expr("result").unwrap();
     // `to_expr` is deterministic, so the two forms produce structurally identical expressions.
@@ -711,7 +712,7 @@ fn test_to_expr_by_index() {
     let a = crate::BoolExpr::var("a");
 
     cover.add_expr(&a, "out0").unwrap();
-    cover.add_expr(&a.not(), "out1").unwrap();
+    cover.add_expr(&expr!(!a), "out1").unwrap();
 
     let expr0 = cover.to_expr_by_index(0).unwrap();
     let expr1 = cover.to_expr_by_index(1).unwrap();
@@ -779,7 +780,7 @@ fn to_exprs_works_for_any_string_input_label() {
     let mut cover = Cover::new(CoverType::F);
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
-    cover.add_expr(&a.and(&b), "out").unwrap();
+    cover.add_expr(&expr!(a & b), "out").unwrap();
 
     let in_syms = Symbols::new(
         cover
@@ -809,7 +810,7 @@ fn test_to_exprs_after_minimization() {
     let c = crate::BoolExpr::var("c");
 
     // Add redundant expression: a*b + a*b*c
-    let redundant = a.and(&b).or(&a.and(&b).and(&c));
+    let redundant = expr!(a & b | a & b & c);
     cover.add_expr(&redundant, "out").unwrap();
 
     let cubes_before = cover.num_cubes();
@@ -944,7 +945,7 @@ fn test_complex_expression_with_minimization() {
     let c = crate::BoolExpr::var("c");
 
     // Consensus theorem: a*b + ~a*c + b*c (b*c is redundant)
-    let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
+    let expr = expr!(a & b | !a & c | b & c);
     cover.add_expr(&expr, "consensus").unwrap();
 
     // BDD automatically optimizes during conversion, so we get 2 cubes directly
@@ -975,10 +976,9 @@ fn test_expression_with_constants() {
     let mut cover = Cover::new(CoverType::F);
 
     let a = crate::BoolExpr::var("a");
-    let t = crate::BoolExpr::constant(true);
 
     // Expression with constant: a * true = a
-    let expr = a.and(&t);
+    let expr = expr!(a & 1);
     cover.add_expr(&expr, "out").unwrap();
 
     // Should have one variable
@@ -993,7 +993,7 @@ fn test_pla_roundtrip_with_expressions() {
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
-    cover.add_expr(&a.and(&b), "output").unwrap();
+    cover.add_expr(&expr!(a & b), "output").unwrap();
 
     // Convert to PLA string
     let pla_string = cover.to_pla_string(CoverType::F).unwrap();
@@ -1794,8 +1794,8 @@ fn test_minimize_preserves_structure() {
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
-    cover.add_expr(&a.and(&b), "out1").unwrap();
-    cover.add_expr(&a.or(&b), "out2").unwrap();
+    cover.add_expr(&expr!(a & b), "out1").unwrap();
+    cover.add_expr(&expr!(a | b), "out2").unwrap();
 
     let inputs_before = cover.num_inputs();
     let outputs_before = cover.num_outputs();
@@ -2060,7 +2060,7 @@ fn merge_overlays_colliding_named_outputs() {
 fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
     let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
-    let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
+    let expr = expr!(a & b | a & b); // redundant on purpose
 
     // A free `BoolExpr` has no cubes; go through a BDD builder to materialise the ON-set cover.
     let builder = crate::bdd_builder!();
@@ -2082,7 +2082,7 @@ fn from_expr_and_from_bdd_agree() {
         c.cubes().map(|cube| cube.inputs().clone()).collect()
     };
 
-    let expr = crate::BoolExpr::var("a") & crate::BoolExpr::var("b");
+    let expr = expr!("a" & "b");
     let builder = crate::bdd_builder!();
     let bdd = builder.build(&expr); // a refcounted clone keeps the manager alive past the by-value `From`
 

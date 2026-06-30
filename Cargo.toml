@@ -108,6 +108,10 @@ path = "examples/expression_composition.rs"
 name = "expr_macro_demo"
 path = "examples/expr_macro_demo.rs"
 
+[[example]]
+name = "dynamic_fold"
+path = "examples/dynamic_fold.rs"
+
 [[bench]]
 name = "pla_benchmarks"
 harness = false

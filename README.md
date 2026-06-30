@@ -17,7 +17,7 @@ Espresso takes Boolean functions and produces minimal or near-minimal equivalent
 
 ## Features
 
-- **Boolean Expressions** - Parse and compose expressions with the `expr!` macro — AND/OR/XOR/NOT in mathematical (`*`, `+`, `^`, `~`) or logical (`&`, `|`) notation — plus a low-level `BoolExpr::build` closure builder and a `BoolExpr::ite` if-then-else
+- **Boolean Expressions** - Parse and compose expressions with the `expr!` macro — AND/OR/XOR/NOT in mathematical (`*`, `+`, `^`, `~`) or logical (`&`, `|`) notation — plus the `BoolExpr::build` closure builder (which `expr!` lowers to) and a `BoolExpr::ite` if-then-else
 - **Cover API** - Direct truth table manipulation with automatic dimension management for precise control
 - **Multi-Output Functions** - Minimise multiple outputs simultaneously in a single cover
 - **Advanced Minimisation** - Both heuristic (fast, ~99% optimal) and exact (guaranteed minimal) algorithms
@@ -37,17 +37,17 @@ espresso-logic = "4.2"
 ### Boolean Expression Minimisation
 
 ```rust
-use espresso_logic::{expr, Minimizable};
+use espresso_logic::{expr, Cover, Minimizable};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build an expression with redundant terms
+    // Build an expression with redundant terms (math or logical spellings both work).
     let redundant = expr!("a" * "b" + "a" * "b" * "c");
     println!("Original: {}", redundant);
-    
-    // Minimise it
-    let minimised = redundant.minimize()?;
-    println!("Minimised: {}", minimised);  // Output: a * b
-    
+
+    // Minimise it: route the expression through a cover, then read the result back.
+    let minimised = Cover::from(&redundant).minimize()?.to_expr_by_index(0)?;
+    println!("Minimised: {}", minimised);  // a & b  (Display uses canonical spellings)
+
     Ok(())
 }
 ```
@@ -116,38 +116,39 @@ Use when you need to:
 - Use high-level operators and the `expr!` macro
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::{expr, Cover, Minimizable};
 
 let xor = expr!("a" * !"b" + !"a" * "b");
-let minimised = xor.minimize()?;
+let minimised = Cover::from(&xor).minimize()?;
 ```
 
-Expressions built this way share a process-global BDD manager (so independently built expressions
-compare canonically, and `BoolExpr` is `Send`/`Sync`).
+`BoolExpr` is an owned, syntactic value — it carries no manager and is `Send`/`Sync`. Compose it with
+the `expr!` macro (which lowers to the `BoolExpr::build` closure builder) or parse it from text;
+equality is *syntactic*, so `a & b` and `b & a` are different values.
 
-### BddContext - Scoped, branded expressions
+### Bdd - Canonical, semantic functions
 
-When you want a private BDD namespace — isolated from the global manager, with its own node table and
-no contention from unrelated expressions — create a context with `bdd_context!()`. Each context owns an
-independent manager, and its expressions are *branded* to it, so mixing expressions from two different
-contexts is a compile error rather than a silent bug. (Like the global API, a context is
-`Arc<RwLock<…>>`-backed, so its expressions remain `Send`/`Sync`.)
+When you need the Boolean *function* rather than its syntax — logical equivalence, cofactors,
+quantification, tautology checks — build expressions into a BDD. A builder owns a private node table
+and hands out `Bdd` handles branded to it, so handles from two different builders cannot be mixed (a
+compile error, not a runtime check). Mint one with `bdd_builder!` (single-threaded) or
+`sync_bdd_builder!` (`Send + Sync`); a `Bdd` handle is `Clone` and itself `Send`/`Sync` under the
+sync builder.
 
 ```rust
-use espresso_logic::{bdd_context, expr, Minimizable};
+use espresso_logic::{bdd_builder, Minimizable};
 
-let ctx = bdd_context!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let f = &a * &b + !&a * !&b;                  // operators, like the global API
-assert_eq!(f, ctx.parse("a * b + ~a * ~b")?); // or parse / `expr!(ctx, ...)`
-let minimised = f.minimize()?;                // minimises within the same context
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 
-// let other = bdd_context!();
-// let _ = &a * &other.var("c");              // compile error: brands cannot mix
+// Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
+let f = a.clone() & b.clone();
+assert!(f.equivalent_to(&builder.parse("a & b").unwrap()));
+assert!((a.clone() | !a.clone()).is_tautology());
+
+let minimised = f.minimize().unwrap();        // minimise the function to a cover
 ```
-
-The global `BoolExpr` API above and `BddContext` coexist; `Global` is simply the default brand.
 
 ### Cover - For Truth Tables and Multi-Output Functions
 

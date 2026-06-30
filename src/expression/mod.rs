@@ -12,14 +12,18 @@
 //!
 //! # Construction
 //!
-//! - [`BoolExpr::var`] / [`BoolExpr::constant`] — leaves.
-//! - The bitwise operators `&` (AND), `|` (OR), `^` (XOR), `!` (NOT), by value and by reference.
+//! - [`expr!`](crate::expr) — infix Boolean syntax; the recommended way to compose. It is sugar
+//!   for [`BoolExpr::build`], the closure builder it lowers to; reach for `build` directly when
+//!   construction is data-driven (looping/folding a runtime set of variables).
 //! - [`BoolExpr::parse`] / [`str::parse`] — from text.
+//! - [`BoolExpr::var`] / [`BoolExpr::constant`] — leaves. The bitwise operators `&` (AND), `|`
+//!   (OR), `^` (XOR), `!` (NOT) and the named methods also compose, but each reallocates the token
+//!   stream, so `expr!`/`build` are preferred beyond a couple of terms.
 //!
 //! ```
-//! use espresso_logic::BoolExpr;
+//! use espresso_logic::{expr, BoolExpr};
 //!
-//! let f = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("c");
+//! let f = expr!("a" & "b" | !"c");
 //! let g = BoolExpr::parse("a & b | !c").unwrap();
 //! // Structural equality: the same syntactic tree.
 //! assert_eq!(f, g);

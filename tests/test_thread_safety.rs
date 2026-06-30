@@ -239,7 +239,7 @@ fn test_stress_concurrent() {
 
 #[test]
 fn concurrent_symbol_covers() {
-    use espresso_logic::{BoolExpr, Symbol};
+    use espresso_logic::{expr, BoolExpr, Symbol};
 
     // The other cases all minimise an anonymous 2x1 XOR. This one builds per-thread `Symbol`-labelled
     // covers with distinct names, exercising the shared `Symbol` intern pool and the labelled
@@ -252,7 +252,7 @@ fn concurrent_symbol_covers() {
                 let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
                 // a*b + a*~b  ==  a  (so b drops out under minimisation)
                 cover
-                    .add_expr(&a.and(&b).or(&a.and(&b.not())), format!("out{t}"))
+                    .add_expr(&expr!(a & b | a & !b), format!("out{t}"))
                     .unwrap();
                 let min = cover.minimize().unwrap();
                 assert!(min.num_cubes() >= 1);

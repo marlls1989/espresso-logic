@@ -18,21 +18,22 @@ This guide provides examples for using espresso-logic across its two layers: the
 
 ### Building expressions
 
-`BoolExpr` is an owned value composed with the bitwise operators `&`, `|`, `^`, `!`:
+`BoolExpr` is an owned value. Compose it with the [`expr!`](crate::expr) macro — infix syntax
+where string literals are fresh variables (`*`/`&` AND, `+`/`|` OR, `^` XOR, `~`/`!` NOT):
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::expr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
-let c = BoolExpr::var("c");
-
-let xor = &a ^ &b;
-let sop = (&a & &b) | (!&a & &c);
+let xor = expr!("a" ^ "b");
+let sop = expr!("a" & "b" | !"a" & "c");
 
 println!("{xor}");
 println!("{sop}");
 ```
+
+`expr!` is sugar for [`BoolExpr::build`](crate::BoolExpr::build), the closure builder it lowers
+to. Use `build` directly when construction is data-driven (looping or folding a runtime set of
+variables); see [Boolean Expression API](BOOLEAN_EXPRESSIONS.md) for that comparison.
 
 ### Parsing expressions
 
@@ -57,9 +58,9 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 builder and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, expr, Minterm, Symbol, Symbols};
 
-let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+let expr = expr!("a" & "b" | !"a");
 let builder = bdd_builder!();
 let f = builder.build(&expr);
 

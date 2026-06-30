@@ -126,11 +126,11 @@ fn restrict_acceptance_table() {
 
 #[test]
 fn evaluate_matches_truth_table() {
-    use crate::BoolExpr;
+    use crate::expr;
 
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     // f = a & b | !c.
-    let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
+    let expr = expr!("a" & "b" | !"c");
     let f = builder.build(&expr);
 
     for mask in 0..8u32 {

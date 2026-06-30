@@ -6,6 +6,7 @@
 //! `BddBuilder` (whose `equivalent_to` is O(1) canonical).
 
 use super::BoolExpr;
+use crate::expr;
 use std::collections::HashSet;
 
 /// Whether two expressions denote the same Boolean function. `BoolExpr` equality is *syntactic*, so
@@ -119,7 +120,7 @@ fn fold_walks_the_token_structure_including_xor() {
     use super::ExprNode;
 
     // f = (a ^ b) | !c — counts each operator node; the fold must visit a real Xor node.
-    let expr = (BoolExpr::var("a") ^ BoolExpr::var("b")) | !BoolExpr::var("c");
+    let expr = expr!("a" ^ "b" | !"c");
 
     let (ops, xors) = expr.fold(|node: ExprNode<(usize, usize)>| match node {
         ExprNode::Variable(_) | ExprNode::Constant(_) => (0, 0),
@@ -184,11 +185,11 @@ fn display_uses_canonical_spellings_minimal_parens() {
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
 
-    assert_eq!((&a & &b | &c).to_string(), "a & b | c");
-    assert_eq!(((&a | &b) & &c).to_string(), "(a | b) & c");
-    assert_eq!((!(&a & &b)).to_string(), "!(a & b)");
-    assert_eq!((!&a & &b).to_string(), "!a & b");
-    assert_eq!((&a ^ &b).to_string(), "a ^ b");
+    assert_eq!(expr!(a & b | c).to_string(), "a & b | c");
+    assert_eq!(expr!((a | b) & c).to_string(), "(a | b) & c");
+    assert_eq!(expr!(!(a & b)).to_string(), "!(a & b)");
+    assert_eq!(expr!(!a & b).to_string(), "!a & b");
+    assert_eq!(expr!(a ^ b).to_string(), "a ^ b");
     assert_eq!(BoolExpr::constant(true).to_string(), "1");
     assert_eq!(BoolExpr::constant(false).to_string(), "0");
 }
@@ -197,10 +198,10 @@ fn display_uses_canonical_spellings_minimal_parens() {
 fn display_reparses_to_equivalent() {
     // Display is syntactic, but parsing its output must recover an equivalent function.
     let exprs = [
-        BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("c"),
-        (BoolExpr::var("a") | BoolExpr::var("b")) & BoolExpr::var("c"),
-        BoolExpr::var("a") ^ BoolExpr::var("b") ^ BoolExpr::var("c"),
-        !(BoolExpr::var("a") & (BoolExpr::var("b") | BoolExpr::var("c"))),
+        expr!("a" & "b" | !"c"),
+        expr!(("a" | "b") & "c"),
+        expr!("a" ^ "b" ^ "c"),
+        expr!(!("a" & ("b" | "c"))),
     ];
     for expr in &exprs {
         let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
@@ -217,11 +218,11 @@ fn display_round_trips_right_nested_associative() {
     // re-parsing rebuilds the *same syntactic tree* — not merely an equivalent function. (`BoolExpr`
     // equality is structural.)
     let exprs = [
-        BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c")),
-        BoolExpr::var("a") | (BoolExpr::var("b") | BoolExpr::var("c")),
-        BoolExpr::var("a") ^ (BoolExpr::var("b") ^ BoolExpr::var("c")),
-        BoolExpr::var("a") & (BoolExpr::var("b") | BoolExpr::var("c")),
-        BoolExpr::var("a") | (BoolExpr::var("b") ^ BoolExpr::var("c")),
+        expr!("a" & ("b" & "c")),
+        expr!("a" | ("b" | "c")),
+        expr!("a" ^ ("b" ^ "c")),
+        expr!("a" & ("b" | "c")),
+        expr!("a" | ("b" ^ "c")),
     ];
     for expr in &exprs {
         let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
@@ -232,21 +233,15 @@ fn display_round_trips_right_nested_associative() {
     }
 
     // Minimal parentheses: the right-nested form keeps them, the left-nested form drops them.
-    assert_eq!(
-        (BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c"))).to_string(),
-        "a & (b & c)"
-    );
-    assert_eq!(
-        ((BoolExpr::var("a") & BoolExpr::var("b")) & BoolExpr::var("c")).to_string(),
-        "a & b & c"
-    );
+    assert_eq!(expr!("a" & ("b" & "c")).to_string(), "a & (b & c)");
+    assert_eq!(expr!(("a" & "b") & "c").to_string(), "a & b & c");
 }
 
 // ---- Syntactic variables --------------------------------------------------------------------------
 
 #[test]
 fn variables_are_syntactic() {
-    let f = BoolExpr::var("b") & (BoolExpr::var("a") | !BoolExpr::var("a"));
+    let f = expr!("b" & ("a" | !"a"));
     let vars: Vec<String> = f.variables().iter().map(|s| s.to_string()).collect();
     // Syntactic scan reports every occurring variable (a appears even though a | !a is a tautology).
     assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
@@ -257,7 +252,7 @@ fn variables_are_syntactic() {
 #[test]
 fn bdd_build_matches_parse() {
     let builder = crate::bdd_builder!();
-    let f = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
+    let f = expr!("a" & "b" | "c");
     let built = builder.build(&f);
     let parsed = builder.parse("a & b | c").unwrap();
     assert!(built.equivalent_to(&parsed));
@@ -267,15 +262,15 @@ fn bdd_build_matches_parse() {
 fn bdd_build_canonicalises_commutativity() {
     let builder = crate::bdd_builder!();
     // a & b and b & a are different BoolExpr values but the same Bdd.
-    let ab = builder.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
-    let ba = builder.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
+    let ab = builder.build(&expr!("a" & "b"));
+    let ba = builder.build(&expr!("b" & "a"));
     assert!(ab.equivalent_to(&ba));
 }
 
 #[test]
 fn to_expr_round_trips_semantically() {
     let builder = crate::bdd_builder!();
-    let f = (BoolExpr::var("a") & BoolExpr::var("b")) | (BoolExpr::var("a") & BoolExpr::var("c"));
+    let f = expr!(("a" & "b") | ("a" & "c"));
     let bdd = builder.build(&f);
     let recovered = bdd.to_expr();
     // to_expr is factored/syntactic, so compare semantically through the BDD layer.
@@ -285,7 +280,7 @@ fn to_expr_round_trips_semantically() {
 #[test]
 fn sync_context_build_works() {
     let builder = crate::sync_bdd_builder!();
-    let f = BoolExpr::var("a") ^ BoolExpr::var("b");
+    let f = expr!("a" ^ "b");
     assert!(builder
         .build(&f)
         .equivalent_to(&builder.parse("a ^ b").unwrap()));

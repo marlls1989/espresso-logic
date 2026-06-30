@@ -1,7 +1,7 @@
 //! Comprehensive tests for boolean expression functionality
 
 use espresso_logic::{
-    bdd_builder, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol, Symbols,
+    bdd_builder, expr, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol, Symbols,
 };
 
 /// Build a complete `Minterm<Symbol>` fixing each `(name, value)` pair, for `Bdd::evaluate`.
@@ -14,7 +14,7 @@ fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
 fn test_cover_trait_basics() {
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let expr = &a & &b;
+    let expr = expr!(a & b);
 
     // Should be able to use Cover with expressions
     let cover = {
@@ -80,7 +80,7 @@ fn test_xnor_expression() {
     // XNOR: a*b + ~a*~b
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let xnor = (&a & &b) | (!&a & !&b);
+    let xnor = expr!(a & b | !a & !b);
 
     let builder = bdd_builder!();
     let xnor_bdd = builder.build(&xnor);
@@ -112,7 +112,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
 
-    let expr = (&a & &b) | (&a & &b & &c);
+    let expr = expr!(a & b | a & b & c);
 
     // Minimise via Cover/Espresso and recover the factored expression.
     let cover = {
@@ -165,7 +165,7 @@ fn test_de_morgan_laws() {
     let builder = bdd_builder!();
 
     // ~(a * b) = ~a + ~b (De Morgan's law)
-    let expr1 = !(&a & &b);
+    let expr1 = expr!(!(a & b));
     let expr1_bdd = builder.build(&expr1);
 
     // Test ~(a*b).
@@ -183,7 +183,7 @@ fn test_de_morgan_laws() {
     ); // ~(0*1) = 1
 
     // ~(a + b) = ~a * ~b (De Morgan's law)
-    let expr2 = !(&a | &b);
+    let expr2 = expr!(!(a | b));
     let expr2_bdd = builder.build(&expr2);
 
     // Test ~(a+b).
@@ -205,7 +205,7 @@ fn test_de_morgan_laws() {
 fn test_cube_iteration() {
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let expr = &a & &b;
+    let expr = expr!(a & b);
 
     // Should be able to iterate cubes via Cover
     let cover = {
@@ -233,7 +233,7 @@ fn test_cube_iteration() {
 fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let expr = &a & &b;
+    let expr = expr!(a & b);
 
     // Should be able to convert to PLA string via Cover
     let cover = {
@@ -329,7 +329,7 @@ fn test_complex_parentheses() {
     let c = BoolExpr::var("c");
 
     // Test with operator syntax
-    let expr1 = (&a | &b) & &c;
+    let expr1 = expr!((a | b) & c);
     let cover1 = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
@@ -355,7 +355,7 @@ fn test_nested_parentheses_operators() {
     let d = BoolExpr::var("d");
 
     // Operator syntax with nested grouping
-    let expr1 = &a & (&b | &c);
+    let expr1 = expr!(a & (b | c));
     let cover1 = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
@@ -368,7 +368,7 @@ fn test_nested_parentheses_operators() {
     assert_eq!(expr1.variables(), expr2.variables());
 
     // More complex: (a + b) * (c + d)
-    let expr3 = (&a | &b) & (&c | &d);
+    let expr3 = expr!((a | b) & (c | d));
     let expr4 = BoolExpr::parse("(a + b) * (c + d)").unwrap();
     assert_eq!(expr3.variables(), expr4.variables());
 }
@@ -534,10 +534,10 @@ fn test_cover_empty_to_expr() {
 #[test]
 fn test_composition_nested_sub_expressions() {
     // Build deeply nested composition: ((a*b) + (c+d)) * e
-    let level1_a = BoolExpr::var("a") & BoolExpr::var("b");
-    let level1_b = BoolExpr::var("c") | BoolExpr::var("d");
-    let level2 = &level1_a | &level1_b;
-    let level3 = &level2 & BoolExpr::var("e");
+    let level1_a = expr!("a" & "b");
+    let level1_b = expr!("c" | "d");
+    let level2 = expr!(level1_a | level1_b);
+    let level3 = expr!(level2 & "e");
 
     let expected = BoolExpr::parse("((a * b) + (c + d)) * e").unwrap();
 
@@ -552,9 +552,9 @@ fn test_composition_nested_sub_expressions() {
 #[test]
 fn test_composition_with_cover_integration() {
     // Build expression through composition, then use with Cover
-    let term1 = BoolExpr::var("a") & BoolExpr::var("b");
-    let term2 = BoolExpr::var("c") | BoolExpr::var("d");
-    let composed = &term1 & &term2; // (a*b) * (c+d) = a*b*c + a*b*d
+    let term1 = expr!("a" & "b");
+    let term2 = expr!("c" | "d");
+    let composed = expr!(term1 & term2); // (a*b) * (c+d) = a*b*c + a*b*d
 
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&composed, "output").unwrap();

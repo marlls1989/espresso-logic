@@ -68,19 +68,34 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! [`BoolExpr`] is an owned, syntactic value, composed with the bitwise operators `&` (AND), `|` (OR),
-//! `^` (XOR), `!` (NOT), by value or by reference:
+//! [`BoolExpr`] is an owned, syntactic value. Compose it with the [`expr!`](crate::expr) macro,
+//! which reads as infix Boolean syntax — string literals are fresh variables, `!`/`~` is NOT,
+//! `*`/`&` AND, `^` XOR, `+`/`|` OR:
+//!
+//! ```
+//! use espresso_logic::expr;
+//!
+//! // XOR.
+//! let xor = expr!("a" & !"b" | !"a" & "b");
+//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! ```
+//!
+//! `expr!` is sugar for [`BoolExpr::build`], the closure builder it lowers to. Reach for `build`
+//! directly when construction is data-driven — looping or folding a runtime set of variables,
+//! which fixed macro syntax cannot express:
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! let a = BoolExpr::var("a");
-//! let b = BoolExpr::var("b");
-//!
-//! // XOR, built from the operators.
-//! let xor = (&a & !&b) | (!&a & &b);
-//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! let names = ["a", "b", "c"];
+//! let conj = BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
+//! println!("{conj}");  // a & b & c
 //! ```
+//!
+//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) and the equivalent
+//! [`and`](BoolExpr::and)/[`or`](BoolExpr::or)/[`xor`](BoolExpr::xor)/[`not`](BoolExpr::not)
+//! methods also compose `BoolExpr`s, but each operator reallocates the token stream, so
+//! `expr!`/`build` are preferred beyond a couple of terms.
 //!
 //! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
 //!
@@ -124,12 +139,10 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+//! use espresso_logic::{expr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let a = BoolExpr::var("a");
-//! let b = BoolExpr::var("b");
-//! let expr = a.and(&b).or(&a.and(&b.not()));
+//! let expr = expr!("a" & "b" | "a" & !"b");
 //!
 //! // Create cover and add expression
 //! let mut cover = Cover::new(CoverType::F);
