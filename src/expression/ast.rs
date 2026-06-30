@@ -33,6 +33,8 @@ pub enum ExprNode<'a, T> {
     And(T, T),
     /// Logical OR with results from left and right subtrees
     Or(T, T),
+    /// Logical exclusive-or with results from left and right subtrees
+    Xor(T, T),
     /// Logical NOT with result from inner subtree
     Not(T),
     /// A constant boolean value
@@ -51,6 +53,8 @@ pub(crate) enum BoolExprAst {
     And(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical OR of two expressions
     Or(Arc<BoolExprAst>, Arc<BoolExprAst>),
+    /// Logical exclusive-or of two expressions
+    Xor(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical NOT of an expression
     Not(Arc<BoolExprAst>),
     /// A constant value (true or false)
@@ -76,7 +80,7 @@ impl Drop for BoolExprAst {
         fn take_children(node: &mut BoolExprAst, stack: &mut Vec<Arc<BoolExprAst>>) {
             match node {
                 BoolExprAst::Not(a) => stack.push(std::mem::replace(a, placeholder())),
-                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) => {
+                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) | BoolExprAst::Xor(a, b) => {
                     stack.push(std::mem::replace(a, placeholder()));
                     stack.push(std::mem::replace(b, placeholder()));
                 }
@@ -100,10 +104,9 @@ impl BoolExpr {
     /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
     /// A plain postfix-to-tree fold over the tokens (iterative, an explicit `Arc<BoolExprAst>` stack,
-    /// so a deep expression can't overflow the call stack). [`BoolExprAst`] has no XOR node, so an
-    /// `^` token is expanded to its AND/OR/NOT definition `a ^ b = (a & !b) | (!a & b)` — this keeps
-    /// the fold/`ExprNode` surface (And/Or/Not/Variable/Constant) unchanged. The walk is **syntactic**:
-    /// it mirrors how the expression was built, not a canonical form.
+    /// so a deep expression can't overflow the call stack). Every token maps to its own AST node,
+    /// `^` included, so the reconstructed tree is faithful to the token stream. The walk is
+    /// **syntactic**: it mirrors how the expression was built, not a canonical form.
     fn to_ast(&self) -> Arc<BoolExprAst> {
         let mut stack: Vec<Arc<BoolExprAst>> = Vec::with_capacity(self.tokens().len());
         for token in self.tokens() {
@@ -125,14 +128,9 @@ impl BoolExpr {
                     Arc::new(BoolExprAst::Or(l, r))
                 }
                 Token::Xor => {
-                    // a ^ b = (a & !b) | (!a & b)
                     let r = stack.pop().expect("postfix underflow on XOR");
                     let l = stack.pop().expect("postfix underflow on XOR");
-                    let not_l = Arc::new(BoolExprAst::Not(Arc::clone(&l)));
-                    let not_r = Arc::new(BoolExprAst::Not(Arc::clone(&r)));
-                    let left = Arc::new(BoolExprAst::And(l, not_r));
-                    let right = Arc::new(BoolExprAst::And(not_l, r));
-                    Arc::new(BoolExprAst::Or(left, right))
+                    Arc::new(BoolExprAst::Xor(l, r))
                 }
             };
             stack.push(node);
@@ -162,7 +160,7 @@ impl BoolExpr {
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
-    ///     ExprNode::And(l, r) | ExprNode::Or(l, r) => l + r + 1,
+    ///     ExprNode::And(l, r) | ExprNode::Or(l, r) | ExprNode::Xor(l, r) => l + r + 1,
     ///     ExprNode::Not(inner) => inner + 1,
     /// });
     ///
@@ -234,7 +232,7 @@ impl BoolExpr {
     ///     |node, depth| match node {
     ///         ExprNode::Variable(_) | ExprNode::Constant(_) => depth,
     ///         ExprNode::Not(inner) => inner,
-    ///         ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
+    ///         ExprNode::And(l, r) | ExprNode::Or(l, r) | ExprNode::Xor(l, r) => l.max(r),
     ///     },
     /// );
     /// // The fold runs over the expression's own syntactic tree; for this two-variable expression
@@ -267,6 +265,8 @@ impl BoolExpr {
     ///                 vec![cube]
     ///             }
     ///             ExprNode::Constant(_) => vec![],
+    ///             // This naive lowering does not expand XOR; the sample expression contains none.
+    ///             ExprNode::Xor(_, _) => unreachable!("sample expression has no XOR"),
     ///             ExprNode::Not(inner) => inner, // flag was already flipped on the way down
     ///             // OR (or AND under negation): union the cube lists.
     ///             ExprNode::Or(mut l, r) | ExprNode::And(mut l, r) if negate => {
@@ -332,6 +332,7 @@ impl BoolExpr {
             Enter(&'a BoolExprAst, C),
             ExitAnd(C),
             ExitOr(C),
+            ExitXor(C),
             ExitNot(C),
         }
         let mut work = vec![Work::Enter(ast, root_context)];
@@ -364,6 +365,12 @@ impl BoolExpr {
                         work.push(Work::Enter(right, right_ctx));
                         work.push(Work::Enter(left, left_ctx));
                     }
+                    BoolExprAst::Xor(left, right) => {
+                        let (left_ctx, right_ctx) = descend(ExprNode::Xor((), ()), &ctx);
+                        work.push(Work::ExitXor(ctx));
+                        work.push(Work::Enter(right, right_ctx));
+                        work.push(Work::Enter(left, left_ctx));
+                    }
                 },
                 Work::ExitAnd(ctx) => {
                     let right = results.pop().expect("And right result");
@@ -374,6 +381,11 @@ impl BoolExpr {
                     let right = results.pop().expect("Or right result");
                     let left = results.pop().expect("Or left result");
                     results.push(combine(ExprNode::Or(left, right), ctx));
+                }
+                Work::ExitXor(ctx) => {
+                    let right = results.pop().expect("Xor right result");
+                    let left = results.pop().expect("Xor left result");
+                    results.push(combine(ExprNode::Xor(left, right), ctx));
                 }
                 Work::ExitNot(ctx) => {
                     let inner = results.pop().expect("Not inner result");

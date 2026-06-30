@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use crate::cover::{Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, Symbols};
-use crate::expression::manager::{BddManager, BddNode, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::expression::manager::{BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
 use crate::expression::BoolExpr;
 use crate::Symbol;
@@ -246,8 +246,8 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
         let mut node = self.root;
         loop {
             match mgr.get_node(node) {
-                Some(BddNode::Terminal(value)) => return *value,
-                Some(BddNode::Decision { var, low, high }) => {
+                Some(ManagerNode::Terminal(value)) => return *value,
+                Some(ManagerNode::Decision { var, low, high }) => {
                     let name = mgr
                         .var_name(*var)
                         .expect("decision node variable must have a name");
@@ -290,8 +290,8 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
             }
             count += 1;
             match mgr.get_node(node) {
-                Some(BddNode::Terminal(_)) => {}
-                Some(BddNode::Decision { low, high, .. }) => {
+                Some(ManagerNode::Terminal(_)) => {}
+                Some(ManagerNode::Decision { low, high, .. }) => {
                     stack.push(*low);
                     stack.push(*high);
                 }
@@ -323,8 +323,8 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
                 continue;
             }
             match mgr.get_node(node) {
-                Some(BddNode::Terminal(_)) => {}
-                Some(BddNode::Decision { var, low, high }) => {
+                Some(ManagerNode::Terminal(_)) => {}
+                Some(ManagerNode::Decision { var, low, high }) => {
                     vars.insert(*var);
                     stack.push(*low);
                     stack.push(*high);
@@ -376,7 +376,7 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
             match work {
                 Work::SetPath(i, value) => path[i] = value,
                 Work::Node(node) => match mgr.get_node(node) {
-                    Some(BddNode::Terminal(true)) => {
+                    Some(ManagerNode::Terminal(true)) => {
                         let inputs =
                             Minterm::from_symbols(Arc::clone(&symbols), path.iter().copied());
                         let outputs = OutputSet::from_symbols(
@@ -385,8 +385,8 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
                         );
                         cubes.push(Cube::new(inputs, outputs, CubeType::F));
                     }
-                    Some(BddNode::Terminal(false)) => {}
-                    Some(BddNode::Decision { var, low, high }) => {
+                    Some(ManagerNode::Terminal(false)) => {}
+                    Some(ManagerNode::Decision { var, low, high }) => {
                         let var_name = mgr.var_name(*var).expect(
                             "Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation",
                         );
@@ -555,5 +555,187 @@ impl<B: Brand> Bdd<'_, B> {
     #[must_use]
     pub fn variables(self) -> BTreeSet<Symbol> {
         self.collect_variables().into_iter().collect()
+    }
+}
+
+/// One node of a [`Bdd`], as seen by [`Bdd::fold`] and [`Bdd::fold_with_context`].
+///
+/// A reduced ordered BDD is a directed acyclic graph of Shannon decision nodes over two terminals, so
+/// the fold surface mirrors that structure directly: a [`Terminal`](BddNode::Terminal) leaf, or a
+/// [`Decision`](BddNode::Decision) testing one `variable` with a `low` (variable = false) and `high`
+/// (variable = true) child — **not** the And/Or/Not shape of a syntactic
+/// [`BoolExpr`](crate::BoolExpr) (which folds over [`ExprNode`](crate::ExprNode)).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BddNode<'a, T> {
+    /// A terminal leaf — the constant `false` or `true`.
+    Terminal(bool),
+    /// A decision node testing `variable`: take `low` when it is false, `high` when it is true.
+    Decision {
+        /// The tested variable's name.
+        variable: &'a str,
+        /// Result for the `variable = false` branch.
+        low: T,
+        /// Result for the `variable = true` branch.
+        high: T,
+    },
+}
+
+impl<'ctx, B: Brand> Bdd<'ctx, B> {
+    /// Fold the decision diagram bottom-up, combining each node's children results with `f`.
+    ///
+    /// Walks the BDD **as a BDD**: `f` sees a [`BddNode::Terminal`] for each terminal and a
+    /// [`BddNode::Decision`] (carrying its already-folded `low`/`high` results) for each decision node.
+    /// Results are memoised per node, so a shared subgraph is folded exactly once — the cost is
+    /// O(distinct reachable nodes), keeping the fold bounded by the diagram rather than the number of
+    /// paths. The walk is iterative (explicit work-stack), so a tall diagram cannot overflow the call
+    /// stack. `T: Clone` because a shared child's folded result is reused by each parent.
+    ///
+    /// For a fold over a syntactic expression's And/Or/Xor/Not structure, see
+    /// [`BoolExpr::fold`](crate::BoolExpr::fold).
+    pub fn fold<T, F>(self, f: F) -> T
+    where
+        F: Fn(BddNode<'_, T>) -> T + Copy,
+        T: Clone,
+    {
+        enum Work {
+            Visit(NodeId),
+            Combine(NodeId),
+        }
+        let mgr = self.mgr.read();
+        let mut memo: HashMap<NodeId, T> = HashMap::new();
+        let mut stack = vec![Work::Visit(self.root)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Visit(node) => {
+                    if memo.contains_key(&node) {
+                        continue;
+                    }
+                    match mgr.get_node(node) {
+                        Some(ManagerNode::Terminal(value)) => {
+                            memo.insert(node, f(BddNode::Terminal(*value)));
+                        }
+                        // Schedule the combine after both children have been folded (LIFO: push
+                        // Combine first so it pops last).
+                        Some(ManagerNode::Decision { low, high, .. }) => {
+                            stack.push(Work::Combine(node));
+                            stack.push(Work::Visit(*high));
+                            stack.push(Work::Visit(*low));
+                        }
+                        None => panic!(
+                            "Invalid node ID {node} encountered during fold - this indicates a bug in the BDD implementation"
+                        ),
+                    }
+                }
+                Work::Combine(node) => {
+                    // A shared node can be scheduled to combine more than once; the first wins.
+                    if memo.contains_key(&node) {
+                        continue;
+                    }
+                    let (var, low, high) = match mgr.get_node(node) {
+                        Some(ManagerNode::Decision { var, low, high }) => (*var, *low, *high),
+                        _ => unreachable!("combine is scheduled only for decision nodes"),
+                    };
+                    let name = mgr
+                        .var_name(var)
+                        .expect("decision node variable must have a name");
+                    let low_t = memo
+                        .get(&low)
+                        .cloned()
+                        .expect("low child folded before combine");
+                    let high_t = memo
+                        .get(&high)
+                        .cloned()
+                        .expect("high child folded before combine");
+                    let result = f(BddNode::Decision {
+                        variable: name.as_str(),
+                        low: low_t,
+                        high: high_t,
+                    });
+                    memo.insert(node, result);
+                }
+            }
+        }
+        memo.remove(&self.root)
+            .expect("root node folded after the walk")
+    }
+
+    /// Fold the decision diagram with a context that flows **top-down**, mirroring
+    /// [`BoolExpr::fold_with_context`](crate::BoolExpr::fold_with_context) over the BDD structure.
+    ///
+    /// - **`descend`** runs on the way *down*. Given a decision node's shape ([`BddNode<()>`], carrying
+    ///   the tested `variable`) and its own context, it returns the `(low, high)` contexts to hand to
+    ///   that node's two children. It is never called on a terminal.
+    /// - **`combine`** runs on the way *back up*. Given a node whose children already hold their folded
+    ///   results ([`BddNode<T>`]) plus that node's own context, it produces this node's result.
+    ///
+    /// Because the context can differ along each path, results are **not** memoised: the diagram is
+    /// unfolded into a tree, so the cost can be exponential in the diagram size in the worst case (use
+    /// [`fold`](Self::fold) when no top-down context is needed). The walk is iterative, so depth alone
+    /// cannot overflow the call stack.
+    ///
+    /// [`BddNode<()>`]: BddNode
+    /// [`BddNode<T>`]: BddNode
+    pub fn fold_with_context<C, T, D, G>(self, root_context: C, descend: D, combine: G) -> T
+    where
+        D: Fn(BddNode<'_, ()>, &C) -> (C, C),
+        G: Fn(BddNode<'_, T>, C) -> T,
+    {
+        enum Work<C> {
+            Enter(NodeId, C),
+            Combine(NodeId, C),
+        }
+        let mgr = self.mgr.read();
+        let mut work = vec![Work::Enter(self.root, root_context)];
+        let mut results: Vec<T> = Vec::new();
+        while let Some(frame) = work.pop() {
+            match frame {
+                Work::Enter(node, ctx) => match mgr.get_node(node) {
+                    Some(ManagerNode::Terminal(value)) => {
+                        results.push(combine(BddNode::Terminal(*value), ctx));
+                    }
+                    Some(ManagerNode::Decision { var, low, high }) => {
+                        let name = mgr
+                            .var_name(*var)
+                            .expect("decision node variable must have a name");
+                        let (low_ctx, high_ctx) = descend(
+                            BddNode::Decision {
+                                variable: name.as_str(),
+                                low: (),
+                                high: (),
+                            },
+                            &ctx,
+                        );
+                        work.push(Work::Combine(node, ctx));
+                        work.push(Work::Enter(*high, high_ctx));
+                        work.push(Work::Enter(*low, low_ctx));
+                    }
+                    None => panic!(
+                        "Invalid node ID {node} encountered during fold - this indicates a bug in the BDD implementation"
+                    ),
+                },
+                Work::Combine(node, ctx) => {
+                    let var = match mgr.get_node(node) {
+                        Some(ManagerNode::Decision { var, .. }) => *var,
+                        _ => unreachable!("combine is scheduled only for decision nodes"),
+                    };
+                    let name = mgr
+                        .var_name(var)
+                        .expect("decision node variable must have a name");
+                    let high = results.pop().expect("high child result");
+                    let low = results.pop().expect("low child result");
+                    results.push(combine(
+                        BddNode::Decision {
+                            variable: name.as_str(),
+                            low,
+                            high,
+                        },
+                        ctx,
+                    ));
+                }
+            }
+        }
+        results
+            .pop()
+            .expect("fold_with_context produced a result")
     }
 }

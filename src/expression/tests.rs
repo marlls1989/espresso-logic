@@ -6,26 +6,14 @@
 //! `BddContext` (whose `equivalent_to` is O(1) canonical).
 
 use super::BoolExpr;
-use crate::Symbol;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-/// All `2^n` assignments over `vars`, as `Symbol -> bool` maps.
-fn all_assignments(vars: &[&str]) -> Vec<HashMap<Symbol, bool>> {
-    (0..(1u32 << vars.len()))
-        .map(|mask| {
-            vars.iter()
-                .enumerate()
-                .map(|(i, v)| (Symbol::from(*v), (mask >> i) & 1 == 1))
-                .collect()
-        })
-        .collect()
-}
-
-/// Whether two expressions evaluate identically over every assignment to `vars`.
-fn evaluates_same(a: &BoolExpr, b: &BoolExpr, vars: &[&str]) -> bool {
-    all_assignments(vars)
-        .iter()
-        .all(|m| a.evaluate(m) == b.evaluate(m))
+/// Whether two expressions denote the same Boolean function. `BoolExpr` equality is *syntactic*, so
+/// semantic equivalence is checked through the canonical BDD layer: both are built into one context and
+/// compared by `equivalent_to` (an O(1) canonical-root comparison).
+fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
+    let ctx = crate::bdd_context!();
+    ctx.build(a).equivalent_to(ctx.build(b))
 }
 
 // ---- Construction and structural equality ---------------------------------------------------------
@@ -103,39 +91,42 @@ fn operators_match_named_methods() {
     assert_eq!(!&a, a.not());
 }
 
-// ---- Evaluation -----------------------------------------------------------------------------------
+// ---- Operator structure ---------------------------------------------------------------------------
 
 #[test]
-fn evaluate_truth_tables() {
+fn operators_build_the_expected_functions() {
+    // The bitwise operators construct the corresponding Boolean functions; checked canonically by
+    // building into a context (evaluation/equivalence are BDD-layer concerns — see `bdd::tests`).
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
+    let ctx = crate::bdd_context!();
+    let (ba, bb) = (ctx.var("a"), ctx.var("b"));
 
-    let and = &a & &b;
-    let or = &a | &b;
-    let xor = &a ^ &b;
-    let not_a = !&a;
-    let nested = (&a & &b) | !&a; // a & b | !a
-
-    for m in all_assignments(&["a", "b"]) {
-        let av = m[&Symbol::from("a")];
-        let bv = m[&Symbol::from("b")];
-        assert_eq!(and.evaluate(&m), av && bv);
-        assert_eq!(or.evaluate(&m), av || bv);
-        assert_eq!(xor.evaluate(&m), av ^ bv);
-        assert_eq!(not_a.evaluate(&m), !av);
-        // `a & b | !a` simplifies by absorption to `b | !a`.
-        assert_eq!(nested.evaluate(&m), bv || !av);
-    }
+    assert!(ctx.build(&(&a & &b)).equivalent_to(ba & bb));
+    assert!(ctx.build(&(&a | &b)).equivalent_to(ba | bb));
+    assert!(ctx.build(&(&a ^ &b)).equivalent_to(ba ^ bb));
+    assert!(ctx.build(&!&a).equivalent_to(!ba));
 }
 
+// ---- Folding over tokens --------------------------------------------------------------------------
+
 #[test]
-fn evaluate_missing_var_is_false() {
-    let expr = BoolExpr::var("a") & BoolExpr::var("b");
-    let only_a: HashMap<&str, bool> = HashMap::from([("a", true)]);
-    assert!(!expr.evaluate(&only_a));
-    let empty: HashMap<&str, bool> = HashMap::new();
-    assert!(!BoolExpr::var("a").evaluate(&empty));
-    assert!(BoolExpr::constant(true).evaluate(&empty));
+fn fold_walks_the_token_structure_including_xor() {
+    use super::ExprNode;
+
+    // f = (a ^ b) | !c — counts each operator node; the fold must visit a real Xor node.
+    let expr = (BoolExpr::var("a") ^ BoolExpr::var("b")) | !BoolExpr::var("c");
+
+    let (ops, xors) = expr.fold(|node: ExprNode<(usize, usize)>| match node {
+        ExprNode::Variable(_) | ExprNode::Constant(_) => (0, 0),
+        ExprNode::Not((o, x)) => (o + 1, x),
+        ExprNode::And((lo, lx), (ro, rx)) | ExprNode::Or((lo, lx), (ro, rx)) => {
+            (lo + ro + 1, lx + rx)
+        }
+        ExprNode::Xor((lo, lx), (ro, rx)) => (lo + ro + 1, lx + rx + 1),
+    });
+    assert_eq!(ops, 3); // ^, |, !
+    assert_eq!(xors, 1); // the fold saw the XOR token, not an And/Or/Not expansion
 }
 
 // ---- Parsing --------------------------------------------------------------------------------------
@@ -144,7 +135,7 @@ fn evaluate_missing_var_is_false() {
 fn parse_round_trips_semantically() {
     let parsed = BoolExpr::parse("a & b | c").unwrap();
     let built = (BoolExpr::var("a") & BoolExpr::var("b")) | BoolExpr::var("c");
-    assert!(evaluates_same(&parsed, &built, &["a", "b", "c"]));
+    assert!(equivalent(&parsed, &built));
 }
 
 #[test]
@@ -166,20 +157,16 @@ fn parse_respects_precedence() {
     // a | b & c parses as a | (b & c); not (a | b) & c.
     let parsed = BoolExpr::parse("a | b & c").unwrap();
     let expected = BoolExpr::var("a") | (BoolExpr::var("b") & BoolExpr::var("c"));
-    assert!(evaluates_same(&parsed, &expected, &["a", "b", "c"]));
+    assert!(equivalent(&parsed, &expected));
     // Differs semantically from the other grouping.
     let other = (BoolExpr::var("a") | BoolExpr::var("b")) & BoolExpr::var("c");
-    assert!(!evaluates_same(&parsed, &other, &["a", "b", "c"]));
+    assert!(!equivalent(&parsed, &other));
 }
 
 #[test]
 fn from_str_works() {
     let expr: BoolExpr = "a ^ b".parse().unwrap();
-    assert!(evaluates_same(
-        &expr,
-        &(BoolExpr::var("a") ^ BoolExpr::var("b")),
-        &["a", "b"]
-    ));
+    assert!(equivalent(&expr, &(BoolExpr::var("a") ^ BoolExpr::var("b"))));
 }
 
 // ---- Display --------------------------------------------------------------------------------------
@@ -211,7 +198,7 @@ fn display_reparses_to_equivalent() {
     for expr in &exprs {
         let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
         assert!(
-            evaluates_same(expr, &reparsed, &["a", "b", "c"]),
+            equivalent(expr, &reparsed),
             "display `{expr}` did not reparse equivalently"
         );
     }
@@ -253,8 +240,8 @@ fn to_expr_round_trips_semantically() {
     let f = (BoolExpr::var("a") & BoolExpr::var("b")) | (BoolExpr::var("a") & BoolExpr::var("c"));
     let bdd = ctx.build(&f);
     let recovered = bdd.to_expr();
-    // to_expr is factored/syntactic, so compare semantically over all assignments.
-    assert!(evaluates_same(&f, &recovered, &["a", "b", "c"]));
+    // to_expr is factored/syntactic, so compare semantically through the BDD layer.
+    assert!(equivalent(&f, &recovered));
 }
 
 #[test]

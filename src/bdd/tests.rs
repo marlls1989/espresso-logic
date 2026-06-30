@@ -113,12 +113,12 @@ fn restrict_acceptance_table() {
 }
 
 #[test]
-fn evaluate_matches_boolexpr_over_truth_table() {
+fn evaluate_matches_truth_table() {
     use crate::BoolExpr;
     use std::collections::HashMap;
 
     let ctx: BddContext<Local> = BddContext::new();
-    // f = a & b | !c, exercised on both surfaces.
+    // f = a & b | !c.
     let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
     let f = ctx.build(&expr);
 
@@ -129,9 +129,77 @@ fn evaluate_matches_boolexpr_over_truth_table() {
             .collect();
         let expected = (assignment[&Symbol::from("a")] && assignment[&Symbol::from("b")])
             || !assignment[&Symbol::from("c")];
-        // The canonical BDD evaluation and the syntactic RPN fold must agree, and both match the oracle.
         assert_eq!(f.evaluate(&assignment), expected);
-        assert_eq!(expr.evaluate(&assignment), expected);
+    }
+}
+
+#[test]
+fn fold_collects_support_variables() {
+    use super::BddNode;
+    use std::collections::BTreeSet;
+
+    let ctx: BddContext<Local> = BddContext::new();
+    let f = (ctx.var("a") & ctx.var("b")) | ctx.var("c");
+
+    // Fold the decision diagram into the set of tested variables (union is sharing-safe). The result
+    // must match the handle's own support.
+    let vars: BTreeSet<String> = f.fold(|node: BddNode<BTreeSet<String>>| match node {
+        BddNode::Terminal(_) => BTreeSet::new(),
+        BddNode::Decision {
+            variable,
+            low,
+            high,
+        } => {
+            let mut set = low;
+            set.extend(high);
+            set.insert(variable.to_string());
+            set
+        }
+    });
+    let expected: BTreeSet<String> = f
+        .collect_variables()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(vars, expected);
+}
+
+#[test]
+fn fold_with_context_evaluates_via_path_descent() {
+    use super::BddNode;
+    use std::collections::HashMap;
+
+    let ctx: BddContext<Local> = BddContext::new();
+    let f = (ctx.var("a") & ctx.var("b")) | !ctx.var("c");
+
+    // Re-implement evaluation with the top-down context carrying the assignment: descend selects the
+    // branch for each variable, combine reads it back. Must agree with Bdd::evaluate.
+    for mask in 0..8u32 {
+        let assignment: HashMap<Symbol, bool> = [("a", 0), ("b", 1), ("c", 2)]
+            .into_iter()
+            .map(|(name, bit)| (Symbol::from(name), (mask >> bit) & 1 == 1))
+            .collect();
+
+        let via_fold = f.fold_with_context(
+            (),
+            |_node, ()| ((), ()),
+            |node, ()| match node {
+                BddNode::Terminal(value) => value,
+                BddNode::Decision {
+                    variable,
+                    low,
+                    high,
+                } => {
+                    let set = assignment.get(&Symbol::from(variable)).copied().unwrap_or(false);
+                    if set {
+                        high
+                    } else {
+                        low
+                    }
+                }
+            },
+        );
+        assert_eq!(via_fold, f.evaluate(&assignment));
     }
 }
 

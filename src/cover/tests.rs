@@ -2072,8 +2072,6 @@ fn merge_overlays_colliding_named_outputs() {
 
 #[test]
 fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
-    use std::collections::HashMap;
-
     let a = crate::BoolExpr::variable("a");
     let b = crate::BoolExpr::variable("b");
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
@@ -2086,14 +2084,8 @@ fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
 
     // Reconstruction is index-addressed (no output name needed) and recovers the function.
     let back = cover.to_expr_by_index(0).unwrap();
-    // `to_expr` is factored/syntactic, so compare semantically over every assignment.
-    for mask in 0..4u32 {
-        let m: HashMap<Symbol, bool> = [("a", mask & 1 == 1), ("b", mask & 2 == 2)]
-            .into_iter()
-            .map(|(n, v)| (Symbol::from(n), v))
-            .collect();
-        assert_eq!(expr.evaluate(&m), back.evaluate(&m));
-    }
+    // `to_expr` is factored/syntactic, so compare semantically through the BDD layer.
+    assert!(ctx.build(&expr).equivalent_to(ctx.build(&back)));
 }
 
 #[test]

@@ -362,7 +362,7 @@ pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
-pub use bdd::{Bdd, BddContext, Brand, SyncBddContext};
+pub use bdd::{Bdd, BddContext, BddNode, Brand, SyncBddContext};
 pub use espresso::EspressoConfig;
 pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;

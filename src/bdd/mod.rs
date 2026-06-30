@@ -48,7 +48,7 @@ mod handle;
 
 pub use brand::Brand;
 pub use context::{BddContext, SyncBddContext};
-pub use handle::Bdd;
+pub use handle::{Bdd, BddNode};
 
 /// Items the `bdd_context!` / `sync_bdd_context!` macros need to name at their (possibly downstream)
 /// call sites. Not part of the documented public API; named only by those macros.

@@ -279,9 +279,9 @@ fn count_operators(expr: &BoolExpr) -> usize {
         match node {
             ExprNode::Constant(_) | ExprNode::Variable(_) => 0,
             ExprNode::Not(inner_count) => inner_count + 1,
-            ExprNode::And(left_count, right_count) | ExprNode::Or(left_count, right_count) => {
-                left_count + right_count + 1
-            }
+            ExprNode::And(left_count, right_count)
+            | ExprNode::Or(left_count, right_count)
+            | ExprNode::Xor(left_count, right_count) => left_count + right_count + 1,
         }
     })
 }
@@ -331,6 +331,7 @@ fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
         ExprNode::Variable(name) => BoolExpr::var(name),
         ExprNode::And(left, right) => left.and(&right),
         ExprNode::Or(left, right) => left.or(&right),
+        ExprNode::Xor(left, right) => left.xor(&right),
         ExprNode::Not(inner) => inner.not(),
     })
 }
@@ -338,23 +339,13 @@ fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
-    /// Two expressions are logically equivalent iff they evaluate equally over every assignment to
-    /// `vars`. `BoolExpr` is syntactic, so equivalence is checked semantically by truth-table here
-    /// (the BDD layer offers an O(1) canonical `equivalent_to`).
-    fn equiv(a: &BoolExpr, b: &BoolExpr, vars: &[&str]) -> bool {
-        for mask in 0..(1u32 << vars.len()) {
-            let assignment: HashMap<Symbol, bool> = vars
-                .iter()
-                .enumerate()
-                .map(|(i, v)| (Symbol::from(*v), (mask >> i) & 1 == 1))
-                .collect();
-            if a.evaluate(&assignment) != b.evaluate(&assignment) {
-                return false;
-            }
-        }
-        true
+    /// Whether two expressions denote the same Boolean function. `BoolExpr` is syntactic, so
+    /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
+    /// comparison once both are built into one context).
+    fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
+        let ctx = crate::bdd_context!();
+        ctx.build(a).equivalent_to(ctx.build(b))
     }
 
     #[test]
@@ -422,7 +413,7 @@ mod tests {
         let unfactored = a.and(&b).or(&a.and(&c));
 
         // Should be logically equivalent
-        assert!(equiv(&unfactored, &factored, &["a", "b", "c"]));
+        assert!(equiv(&unfactored, &factored));
 
         // Factored version should have fewer operators
         let unfactored_ops = count_operators(&unfactored);
@@ -455,26 +446,8 @@ mod tests {
         let c = BoolExpr::variable("c");
         let original = a.and(&b).or(&a.and(&c));
 
-        // Verify equivalence by testing all input combinations
-        for a_val in [false, true] {
-            for b_val in [false, true] {
-                for c_val in [false, true] {
-                    let mut assignment = HashMap::new();
-                    assignment.insert(Symbol::from("a"), a_val);
-                    assignment.insert(Symbol::from("b"), b_val);
-                    assignment.insert(Symbol::from("c"), c_val);
-
-                    let original_result = original.evaluate(&assignment);
-                    let factored_result = factored.evaluate(&assignment);
-
-                    assert_eq!(
-                        original_result, factored_result,
-                        "Factorisation changed logic for a={}, b={}, c={}",
-                        a_val, b_val, c_val
-                    );
-                }
-            }
-        }
+        // Factorisation must preserve the Boolean function.
+        assert!(equiv(&original, &factored));
     }
 
     #[test]
@@ -488,16 +461,16 @@ mod tests {
         let factored = factorise_cubes(cubes);
 
         let a = BoolExpr::variable("a");
-        assert!(equiv(&a, &factored, &["a"]));
+        assert!(equiv(&a, &factored));
 
         // Empty cubes (constant false)
         let factored_false = factorise_cubes(vec![]);
-        assert!(equiv(&factored_false, &BoolExpr::constant(false), &[]));
+        assert!(equiv(&factored_false, &BoolExpr::constant(false)));
 
         // Tautology (empty product term = constant true)
         let cubes_true = vec![(BTreeMap::new(), true)];
         let factored_true = factorise_cubes(cubes_true);
-        assert!(equiv(&factored_true, &BoolExpr::constant(true), &[]));
+        assert!(equiv(&factored_true, &BoolExpr::constant(true)));
     }
 
     #[test]
@@ -524,7 +497,7 @@ mod tests {
         let original = a.and(&b).and(&c).or(&a.and(&b).and(&d));
 
         // Should be logically equivalent
-        assert!(equiv(&original, &factored, &["a", "b", "c", "d"]));
+        assert!(equiv(&original, &factored));
 
         // Should have fewer operators
         let original_ops = count_operators(&original);

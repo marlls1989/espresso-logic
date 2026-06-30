@@ -1,7 +1,7 @@
 //! Owned, syntactic Boolean expressions.
 //!
 //! This module provides [`BoolExpr`], an **owned, context-free, syntactic** Boolean expression. A
-//! `BoolExpr` is a value: it can be built, composed, parsed, displayed and evaluated with no manager,
+//! `BoolExpr` is a value: it can be built, composed, parsed, displayed and folded with no manager,
 //! context or brand. Internally it is a flat reverse-Polish token stream (see [`rpn`]).
 //!
 //! `BoolExpr` is purely syntactic. It does **not** canonicalise: `a & b` and `b & a` are *different*
@@ -29,7 +29,6 @@
 mod ast;
 mod display;
 pub mod error;
-mod eval;
 pub(crate) mod factorization;
 pub(crate) mod manager;
 pub(crate) mod manager_cell;
@@ -53,7 +52,9 @@ use std::sync::Arc;
 ///
 /// A `BoolExpr` is a value with no manager, context or brand: build it, compose it with the bitwise
 /// operators, [`parse`](Self::parse) it from text, [`Display`](std::fmt::Display) it, and
-/// [`evaluate`](Self::evaluate) it under a variable assignment — all without a context.
+/// [`fold`](Self::fold) over its structure — all without a context. Semantic operations (logical
+/// equivalence, evaluation, cofactors) live on [`Bdd`](crate::bdd::Bdd); build the expression into a
+/// context first.
 ///
 /// # Equality is *syntactic*, not semantic
 ///
