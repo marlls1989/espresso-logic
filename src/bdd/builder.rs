@@ -26,7 +26,6 @@ use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
 use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
-use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 use crate::Symbol;
 
@@ -110,29 +109,33 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     #[must_use]
     pub fn build_cover<I: StringLabel, O>(&self, cover: &Cover<I, O>) -> Bdd<B, C> {
         use crate::cover::CubeType;
-        let mut acc = self.constant(false);
-        for cube in cover.cubes() {
-            if cube.cube_type() != CubeType::F {
-                continue;
-            }
-            // Product term: AND of this cube's fixed literals (don't-cares skipped). A fully
-            // don't-care cube is the constant `true`.
-            let mut term = self.constant(true);
-            let labels = cube.inputs().vars();
-            for (label, value) in labels.iter().zip(cube.inputs().iter()) {
-                match value {
-                    Some(true) => {
-                        term = term & self.var(label.as_ref());
-                    }
-                    Some(false) => {
-                        term = term & !self.var(label.as_ref());
-                    }
-                    None => {}
+        // Composed inside a `scope`: the OR-of-products fold runs on `Copy`, by-reference handles, so the
+        // doubly-nested loop pays no per-operation refcount bump — only the returned root is materialised.
+        self.scope(|s| {
+            let mut acc = s.constant(false);
+            for cube in cover.cubes() {
+                if cube.cube_type() != CubeType::F {
+                    continue;
                 }
+                // Product term: AND of this cube's fixed literals (don't-cares skipped). A fully
+                // don't-care cube is the constant `true`.
+                let mut term = s.constant(true);
+                let labels = cube.inputs().vars();
+                for (label, value) in labels.iter().zip(cube.inputs().iter()) {
+                    match value {
+                        Some(true) => {
+                            term = term & s.var(label.as_ref());
+                        }
+                        Some(false) => {
+                            term = term & !s.var(label.as_ref());
+                        }
+                        None => {}
+                    }
+                }
+                acc = acc | term;
             }
-            acc = acc | term;
-        }
-        acc
+            acc
+        })
     }
 
     /// Build a [`Bdd`] handle from an owned, syntactic [`BoolExpr`].
@@ -143,17 +146,12 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// iteratively with an explicit value stack (no recursion), so an arbitrarily deep expression cannot
     /// overflow the call stack. The result is canonical, so two expressions denoting the same function
     /// build to the *same* handle.
+    ///
+    /// Composed inside a [`scope`](Self::scope) so the fold runs on `Copy`, by-reference handles (one
+    /// refcount bump for the returned root, not one per node); [`Scope::build`] does the postfix fold.
     #[must_use]
     pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
-        rpn::fold_postfix(
-            expr.tokens(),
-            |name| self.var(name.as_str()),
-            |value| self.constant(value),
-            |a| a.complement(),
-            |l, r| l.and(&r),
-            |l, r| l.or(&r),
-            |l, r| l.xor(&r),
-        )
+        self.scope(|s| s.build(expr))
     }
 
     /// Compose a [`Bdd`] through a [`Scope`] of `Copy`, by-reference handles, returning the owned root.
