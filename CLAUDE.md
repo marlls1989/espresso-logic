@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Rust bindings to the UC Berkeley Espresso heuristic logic minimiser. A `build.rs` compiles the vendored C implementation (`espresso-src/`) and generates FFI bindings with bindgen; the Rust crate layers safe, thread-safe, idiomatic APIs on top. Published as `espresso-logic` on crates.io (currently v4.0.x).
+Rust bindings to the UC Berkeley Espresso heuristic logic minimiser. A `build.rs` compiles the vendored C implementation (`espresso-src/`) and generates FFI bindings with bindgen; the Rust crate layers safe, thread-safe, idiomatic APIs on top. Published as `espresso-logic` on crates.io (currently v5.0.x).
 
 ## Common commands
 
