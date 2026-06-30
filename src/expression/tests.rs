@@ -177,6 +177,50 @@ fn from_str_works() {
     ));
 }
 
+/// Conformance: the `expr!` proc-macro and the `BoolExpr::parse` grammar are independent parsers (Rust
+/// tokens vs runtime text), but must agree. Each case asserts they build the **structurally identical**
+/// `BoolExpr` (equality is syntactic), pinning precedence, associativity, and every operator spelling so a
+/// future change to either parser that diverges is caught in CI.
+#[test]
+fn macro_and_parser_agree() {
+    macro_rules! same {
+        ($built:expr, $text:literal) => {{
+            let parsed = BoolExpr::parse($text).expect("parses");
+            assert_eq!($built, parsed, "expr! and parse disagree on `{}`", $text);
+        }};
+    }
+
+    // Precedence: AND binds tighter than XOR binds tighter than OR.
+    same!(expr!("a" | "b" & "c"), "a | b & c");
+    same!(expr!("a" ^ "b" & "c"), "a ^ b & c");
+    same!(expr!("a" | "b" ^ "c"), "a | b ^ c");
+    same!(expr!("a" | "b" & "c" ^ "d"), "a | b & c ^ d");
+
+    // Left-associativity of each binary operator.
+    same!(expr!("a" & "b" & "c"), "a & b & c");
+    same!(expr!("a" | "b" | "c"), "a | b | c");
+    same!(expr!("a" ^ "b" ^ "c"), "a ^ b ^ c");
+
+    // Parentheses override precedence.
+    same!(expr!(("a" | "b") & "c"), "(a | b) & c");
+    same!(expr!("a" & ("b" | "c")), "a & (b | c)");
+
+    // NOT binds tightest; double negation nests.
+    same!(expr!(!"a"), "!a");
+    same!(expr!(!!"a"), "!!a");
+    same!(expr!(!("a" & "b")), "!(a & b)");
+
+    // Constants.
+    same!(expr!("a" & 1), "a & 1");
+    same!(expr!("a" | 0), "a | 0");
+
+    // Every spelling: the macro's `*`/`+`/`~` build the same tree as the parser's `&`/`|`/`!`.
+    same!(expr!("a" * "b"), "a & b");
+    same!(expr!("a" + "b"), "a | b");
+    same!(expr!(~"a"), "!a");
+    same!(expr!(~"a" * "b" + "c"), "!a & b | c");
+}
+
 // ---- Display --------------------------------------------------------------------------------------
 
 #[test]
