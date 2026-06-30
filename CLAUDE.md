@@ -11,7 +11,7 @@ Rust bindings to the UC Berkeley Espresso heuristic logic minimiser. A `build.rs
 ```bash
 cargo build                      # builds C + bindgen + Rust
 cargo build --features cli       # also builds the `espresso` CLI binary (needs clap)
-cargo test                       # unit + integration + ~235 doctests
+cargo test                       # unit + integration + ~161 doctests
 cargo test --test test_integration         # single integration test file
 cargo test --test test_memory_safety -- --nocapture --test-threads=1
 cargo test name_of_test          # single test by name substring
@@ -40,7 +40,8 @@ Two API levels sit over the C FFI. Re-exports at the crate root are defined in `
 - `src/espresso/` — low-level safe wrapper (`Espresso`, `EspressoCover`, `EspressoConfig`). Thread-local singleton with reference counting. **Critical constraint:** all covers/instances on a thread must share the same dimensions (#inputs, #outputs); creating different dimensions fails until every `EspressoCover` is dropped. Use this layer for access to separate ON/DC/OFF-set covers, or for lower per-call overhead (the high-level API also validates the cover and rebuilds an output `Cover`): measured ~10–14% faster on small covers but only ~1–5% / within noise on large ones — see the `api_overhead` group in `benches/pla_benchmarks.rs`.
 
 **High-level layer (the recommended/default API)**
-- `src/expression/` — `BoolExpr`, the `expr!` macro (from the `espresso-logic-macros` proc-macro crate), and string parsing via a lalrpop grammar (`parser`). Backed internally by BDDs (`bdd.rs`, `manager.rs`) for canonical form and cheap AND/OR/NOT; `factorization.rs`, `eval.rs`, `operators.rs`, `display.rs` round it out. Single-output, expression-oriented.
+- `src/expression/` — `BoolExpr`, an **owned, syntactic** Boolean expression: a flat reverse-Polish `Token` stream (`rpn.rs`) with no canonicalisation (`a & b` and `b & a` are distinct values). Composed via the `expr!` macro (from the `espresso-logic-macros` proc-macro crate) and the `BoolExpr::build` arena builder (`builder.rs`, `ExprBuilder`/`Expr`), parsed from text via a lalrpop grammar (`parser`, `bool_expr.lalrpop`); `ast.rs` (`ExprNode` plus `fold`/`fold_with_context`), `operators.rs`, `display.rs`, and `factorization.rs` round it out. `manager.rs`/`manager_cell.rs` hold the shared BDD manager internals (`BddManager`, the `ManagerCell` storage cells) the BDD layer is built over.
+- `src/bdd/` — the **canonical BDD layer**, where the semantic operations live. `Bdd<B, C>` (an owned, refcounted `Clone` handle; `handle.rs`) is minted by a `BddBuilder<B, C>` (`builder.rs`) parameterised by two orthogonal type parameters: a sealed `Brand` `B` (`brand.rs`, uniqueness only) and a `ManagerCell` `C` (`LocalCell`/`SyncCell`, storage backend and thread-safety). Builders come from the `bdd_builder!` / `sync_bdd_builder!` macros — there is **no process-global manager**; each builder owns its own. Operations: `&`/`|`/`^`/`!`, `ite`, `restrict`/`cofactor`/`forall`/`exists`, `equivalent_to`, `evaluate`, `to_cubes`/`to_minterms`, `minimize`, `to_expr`, `fold`; `Bdd::builder` recovers a builder onto a stored handle's manager. `scope.rs` adds `BddBuilder::scope`, composing `Copy`, by-reference `ScopedBdd` handles (and `Scope::lift` to splice an owned handle in).
 - `src/cover/` — `Cover<I, O>`, `Cube<I, O>`, `Minterm<L>`, `Symbols<L>`, `CoverType` (F / FD / FR / FDR), `CubeType`. Sum-of-products / truth-table representation with **automatic dynamic dimension management** (hides the low-level dimension constraint). Multi-output capable. The input/output **label types are generic with no default** — `Symbol` is not privileged; a variable side is either a real label (`Symbol`/`String`/`Arc<str>`/`u32`/…) or the zero-sized `Anonymous` (positional). The label trait family lives in `label.rs` (`Label` + its `Identity`, plus `StringLabel`/`PlaLabel`/`ReconcilableLabel`, all sealed); `symbols.rs` is the per-cover label table (immutable, identity order built eagerly), `minterm.rs` the unified tri-state row, `cubes.rs` the `Cube`. `minimisation.rs` implements the `Minimizable` trait (`minimize`, `minimize_exact`, `minimize_with_config`); `pla/` handles Berkeley PLA file I/O — **reading yields a `PlaCover<S>`** (a sum type whose variant records which `.ilb`/`.ob` label sections the file carried), writing goes through the `PLAWriter` trait.
 
 **CLI**
@@ -56,4 +57,4 @@ Two crates: the root `espresso-logic` and `espresso-logic-macros/` (proc-macro p
 ## Conventions
 
 - British spelling ("minimise", "optimisation") is used in prose and docs throughout; match it in new documentation.
-- Doctests are part of the suite (~235 of them) — code examples in `//!`/`///` comments must compile and pass.
+- Doctests are part of the suite (~161 of them) — code examples in `//!`/`///` comments must compile and pass.
