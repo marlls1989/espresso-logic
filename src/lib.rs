@@ -395,8 +395,10 @@ pub use symbol::Symbol;
 ///
 /// # Operands
 ///
-/// - an identifier in scope — spliced in as an existing `BoolExpr`; a non-`BoolExpr` operand is a type
-///   error at the splice;
+/// - an expression in scope — spliced in as an existing `BoolExpr`. This is a *postfix* expression: a bare
+///   identifier, but also a path (`mod::EXPR`), field access (`self.gate`), method/function call
+///   (`make_expr()`, `self.gate()`), or index (`gates[0]`). A non-`BoolExpr` operand is a type error at the
+///   splice. An operand needing a top-level binary operator must be bound to a local first;
 /// - `"x"` — a fresh variable named `x`;
 /// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
 ///
@@ -411,6 +413,12 @@ pub use symbol::Symbol;
 /// let b = BoolExpr::var("b");
 /// assert_eq!(expr!(a & !b), a.clone() & !b.clone());          // splice existing expressions
 /// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y")); // fresh variables
+///
+/// // Graft operands may be paths, field accesses, or calls — any postfix expression.
+/// struct Gates { reset: BoolExpr }
+/// let g = Gates { reset: BoolExpr::var("r") };
+/// fn make() -> BoolExpr { BoolExpr::var("m") }
+/// assert_eq!(expr!(g.reset | make()), g.reset.clone() | make());
 /// ```
 ///
 /// Only `0` and `1` are valid integer constants; any other integer is rejected at compile time:

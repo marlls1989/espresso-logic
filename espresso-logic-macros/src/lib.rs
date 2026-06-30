@@ -4,13 +4,15 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{Ident, Token};
 
 /// AST for Boolean expressions.
 enum Expr {
-    Variable(Ident),
+    /// An existing expression to splice in via `graft` — its captured tokens (a path, field access,
+    /// method/function call, index, or a bare identifier; see [`parse_graft_operand`]).
+    Graft(proc_macro2::TokenStream),
     StringLiteral(syn::LitStr),
     Constant(bool),
     Not(Box<Expr>),
@@ -22,13 +24,13 @@ enum Expr {
 impl Expr {
     /// Emit the body of a [`BoolExpr::build`] closure: an expression over the closure's [`Expr`] handles.
     ///
-    /// `builder` is the closure's (hygienic) parameter ident. An identifier in scope is grafted in as an
+    /// `builder` is the closure's (hygienic) parameter ident. An in-scope expression is grafted in as an
     /// existing `BoolExpr`; a string literal becomes a fresh variable; a `0`/`1` becomes a constant. The
     /// operators compose the handles directly (the handle is `Copy` and implements `& | ^ !`).
     fn to_expr_tokens(&self, builder: &Ident) -> proc_macro2::TokenStream {
         match self {
-            // An in-scope `BoolExpr`, spliced in.
-            Expr::Variable(ident) => quote! { #builder.graft(&(#ident)) },
+            // An in-scope `BoolExpr`, spliced in. A non-`BoolExpr` operand is a type error at this call.
+            Expr::Graft(expr) => quote! { #builder.graft(&(#expr)) },
             Expr::StringLiteral(lit) => quote! { #builder.var(#lit) },
             Expr::Constant(value) => quote! { #builder.constant(#value) },
             Expr::Not(inner) => {
@@ -164,9 +166,56 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
             )),
         }
     } else {
-        let ident: Ident = input.parse()?;
-        Ok(Expr::Variable(ident))
+        Ok(Expr::Graft(parse_graft_operand(input)?))
     }
+}
+
+/// Parse a graft operand — an in-scope expression to splice in via `graft` — capturing its tokens.
+///
+/// Accepts a *postfix* expression: a leading `self` or a (possibly `::`-rooted) path, followed by any number
+/// of field accesses (`.field`), method calls (`.method(args)`), function calls (`(args)`), and indexes
+/// (`[index]`). Argument and index groups are captured whole (their delimiters bound them), so the
+/// expressions inside them are unrestricted. Parsing stops before any binary operator, leaving it for the
+/// surrounding precedence parser — so the macro's own `&`/`|`/`^`/`+`/`*` are never mistaken for Rust
+/// operators. An operand that itself needs a top-level binary operator must be bound to a local first.
+fn parse_graft_operand(input: ParseStream) -> Result<proc_macro2::TokenStream> {
+    let mut tokens = proc_macro2::TokenStream::new();
+
+    // Leading primary: `self`, or a path of identifiers with an optional leading `::`.
+    if input.peek(Token![self]) {
+        input.parse::<Token![self]>()?.to_tokens(&mut tokens);
+    } else {
+        if input.peek(Token![::]) {
+            input.parse::<Token![::]>()?.to_tokens(&mut tokens);
+        }
+        input.parse::<Ident>()?.to_tokens(&mut tokens);
+        while input.peek(Token![::]) {
+            input.parse::<Token![::]>()?.to_tokens(&mut tokens);
+            input.parse::<Ident>()?.to_tokens(&mut tokens);
+        }
+    }
+
+    // Postfix chain: field access / tuple index, method or function calls, and indexing. A `(…)`/`[…]`
+    // group is pulled as one token tree, capturing its delimiters and inner tokens verbatim.
+    loop {
+        if input.peek(Token![.]) {
+            input.parse::<Token![.]>()?.to_tokens(&mut tokens);
+            if input.peek(syn::LitInt) {
+                input.parse::<syn::LitInt>()?.to_tokens(&mut tokens);
+            } else {
+                input.parse::<Ident>()?.to_tokens(&mut tokens);
+            }
+            if input.peek(syn::token::Paren) {
+                input.parse::<proc_macro2::TokenTree>()?.to_tokens(&mut tokens);
+            }
+        } else if input.peek(syn::token::Paren) || input.peek(syn::token::Bracket) {
+            input.parse::<proc_macro2::TokenTree>()?.to_tokens(&mut tokens);
+        } else {
+            break;
+        }
+    }
+
+    Ok(tokens)
 }
 
 /// Resolve the path to the `espresso-logic` crate for use in the macro's output.

@@ -247,6 +247,48 @@ fn variables_are_syntactic() {
     assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
 }
 
+// ---- Graft operands (the expr! splice form) -------------------------------------------------------
+
+#[test]
+fn graft_accepts_postfix_expressions() {
+    // A bare local, the original splice form.
+    let a = BoolExpr::var("a");
+    assert_eq!(expr!(a & "b"), a.clone() & BoolExpr::var("b"));
+
+    // A field access and a method call on it.
+    struct Gates {
+        set: BoolExpr,
+        reset: BoolExpr,
+    }
+    impl Gates {
+        fn enable(&self) -> BoolExpr {
+            self.set.clone() & self.reset.clone()
+        }
+    }
+    let g = Gates {
+        set: BoolExpr::var("s"),
+        reset: BoolExpr::var("r"),
+    };
+    assert_eq!(expr!(g.set | g.reset), g.set.clone() | g.reset.clone());
+    assert_eq!(expr!(g.enable() ^ "t"), g.enable() ^ BoolExpr::var("t"));
+
+    // A `::` path to a function call.
+    mod helpers {
+        use super::BoolExpr;
+        pub fn z() -> BoolExpr {
+            BoolExpr::var("z")
+        }
+    }
+    assert_eq!(expr!(helpers::z() | "w"), helpers::z() | BoolExpr::var("w"));
+
+    // Indexing into a slice of expressions.
+    let gates = [BoolExpr::var("x"), BoolExpr::var("y")];
+    assert_eq!(
+        expr!(gates[0] & gates[1]),
+        gates[0].clone() & gates[1].clone()
+    );
+}
+
 // ---- Bridge to the BDD layer ----------------------------------------------------------------------
 
 #[test]
