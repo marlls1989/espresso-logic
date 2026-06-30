@@ -549,7 +549,9 @@ fn test_composition_nested_sub_expressions() {
     // Logical equality is now decided canonically by the BDD layer: build both sides into one builder
     // and compare roots.
     let builder = bdd_builder!();
-    assert!(builder.build(&level3).equivalent_to(builder.build(&expected)));
+    assert!(builder
+        .build(&level3)
+        .equivalent_to(&builder.build(&expected)));
 }
 
 #[test]
@@ -573,7 +575,9 @@ fn test_composition_with_cover_integration() {
 
     // Canonical equivalence via the BDD layer.
     let builder = bdd_builder!();
-    assert!(builder.build(&retrieved).equivalent_to(builder.build(&expected)));
+    assert!(builder
+        .build(&retrieved)
+        .equivalent_to(&builder.build(&expected)));
 }
 
 // ========== Negative Tests (Error Handling) ==========

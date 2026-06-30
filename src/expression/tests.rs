@@ -13,7 +13,7 @@ use std::collections::HashSet;
 /// compared by `equivalent_to` (an O(1) canonical-root comparison).
 fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
     let builder = crate::bdd_builder!();
-    builder.build(a).equivalent_to(builder.build(b))
+    builder.build(a).equivalent_to(&builder.build(b))
 }
 
 // ---- Construction and structural equality ---------------------------------------------------------
@@ -102,10 +102,14 @@ fn operators_build_the_expected_functions() {
     let builder = crate::bdd_builder!();
     let (ba, bb) = (builder.var("a"), builder.var("b"));
 
-    assert!(builder.build(&(&a & &b)).equivalent_to(ba & bb));
-    assert!(builder.build(&(&a | &b)).equivalent_to(ba | bb));
-    assert!(builder.build(&(&a ^ &b)).equivalent_to(ba ^ bb));
-    assert!(builder.build(&!&a).equivalent_to(!ba));
+    assert!(builder
+        .build(&(&a & &b))
+        .equivalent_to(&(ba.clone() & bb.clone())));
+    assert!(builder
+        .build(&(&a | &b))
+        .equivalent_to(&(ba.clone() | bb.clone())));
+    assert!(builder.build(&(&a ^ &b)).equivalent_to(&(ba.clone() ^ bb)));
+    assert!(builder.build(&!&a).equivalent_to(&!ba));
 }
 
 // ---- Folding over tokens --------------------------------------------------------------------------
@@ -166,7 +170,10 @@ fn parse_respects_precedence() {
 #[test]
 fn from_str_works() {
     let expr: BoolExpr = "a ^ b".parse().unwrap();
-    assert!(equivalent(&expr, &(BoolExpr::var("a") ^ BoolExpr::var("b"))));
+    assert!(equivalent(
+        &expr,
+        &(BoolExpr::var("a") ^ BoolExpr::var("b"))
+    ));
 }
 
 // ---- Display --------------------------------------------------------------------------------------
@@ -222,7 +229,7 @@ fn bdd_build_matches_parse() {
     let f = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
     let built = builder.build(&f);
     let parsed = builder.parse("a & b | c").unwrap();
-    assert!(built.equivalent_to(parsed));
+    assert!(built.equivalent_to(&parsed));
 }
 
 #[test]
@@ -231,7 +238,7 @@ fn bdd_build_canonicalises_commutativity() {
     // a & b and b & a are different BoolExpr values but the same Bdd.
     let ab = builder.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
     let ba = builder.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
-    assert!(ab.equivalent_to(ba));
+    assert!(ab.equivalent_to(&ba));
 }
 
 #[test]
@@ -248,5 +255,7 @@ fn to_expr_round_trips_semantically() {
 fn sync_context_build_works() {
     let builder = crate::sync_bdd_builder!();
     let f = BoolExpr::var("a") ^ BoolExpr::var("b");
-    assert!(builder.build(&f).equivalent_to(builder.parse("a ^ b").unwrap()));
+    assert!(builder
+        .build(&f)
+        .equivalent_to(&builder.parse("a ^ b").unwrap()));
 }

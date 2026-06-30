@@ -7,10 +7,14 @@
 //!
 //! Two cells exist:
 //!
-//! - [`LocalCell`] — `Rc<RefCell<BddManager>>`, single-threaded (`!Send`/`!Sync`), the basis for a
-//!   future thread-local builder.
-//! - [`SyncCell`] — `Arc<RwLock<BddManager>>`, `Send`/`Sync`, what the current process-global manager
-//!   and every existing branded expression route through.
+//! - [`LocalCell`] — `Rc<RefCell<BddManager>>`, single-threaded (`!Send`/`!Sync`), backing a
+//!   single-threaded builder.
+//! - [`SyncCell`] — `Arc<RwLock<BddManager>>`, `Send`/`Sync`, backing a thread-safe builder.
+//!
+//! [`ManagerCell`] is the second of a BDD handle's two orthogonal type parameters: a
+//! [`Brand`](crate::bdd::Brand) marks one namespace for uniqueness, while the cell selects the storage
+//! backend (single-threaded versus thread-safe). The two are independent — any brand pairs with either
+//! cell.
 //!
 //! The trait is **sealed** (via [`cell_seal::Sealed`]): no downstream crate can add another cell, so the
 //! engine's borrow discipline only ever has to be correct for these two.
@@ -28,20 +32,19 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-// These items are exposed (doc-hidden) so the `bdd_builder!` / `sync_bdd_builder!` macros — which
-// expand at the caller's site — can name the cell a freshly-minted brand selects. They are not part of
-// the documented public API: [`ManagerCell`]'s methods reference the crate-private [`BddManager`], so
-// no downstream type can actually implement it; the trait is sealed in practice by that privacy.
-
-/// A cloneable handle to a shared, interior-mutable [`BddManager`].
+/// The storage backend a BDD builder and its handles share: a cloneable handle to one shared,
+/// interior-mutable [`BddManager`].
 ///
-/// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). The BDD engine in
-/// [`manager`](super::manager) is generic over this trait, so its node-construction and `ite` logic is
-/// written exactly once and shared by both the single-threaded and the thread-safe builders.
+/// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). It is the second of a
+/// handle's two orthogonal type parameters — a [`Brand`](crate::bdd::Brand) marks the namespace, this
+/// cell selects single-threaded or thread-safe storage. The BDD engine in [`manager`](super::manager) is
+/// generic over this trait, so its node-construction and `ite` logic is written exactly once and shared
+/// by both backends.
 ///
 /// `Clone` is a refcount bump (`Rc::clone` / `Arc::clone`): every clone shares the same underlying
-/// manager.
-#[doc(hidden)]
+/// manager. A [`BddBuilder`](crate::bdd::BddBuilder) owns one cell; each [`Bdd`](crate::bdd::Bdd) handle
+/// it mints holds its own refcounted clone, so a handle keeps its manager alive independently of the
+/// builder.
 pub trait ManagerCell: Clone + cell_seal::Sealed {
     /// Shared-borrow guard, dereferencing to the [`BddManager`] for read-only access.
     type ReadGuard<'a>: core::ops::Deref<Target = BddManager>
@@ -55,8 +58,7 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
     /// A fresh cell wrapping a manager seeded with the two terminal nodes
     /// ([`new_empty`](BddManager::new_empty)).
     ///
-    /// The canonical BDD layer's [`BddBuilder`](crate::bdd::BddBuilder) /
-    /// [`SyncBddBuilder`](crate::bdd::SyncBddBuilder) mint their cells through this.
+    /// The canonical BDD layer's [`BddBuilder`](crate::bdd::BddBuilder) mints its cell through this.
     fn new_empty() -> Self;
 
     /// Take a shared borrow of the manager. Must not overlap a [`write`](Self::write) on the same cell
@@ -73,10 +75,8 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
 
 /// Single-threaded cell: `Rc<RefCell<BddManager>>`. `!Send`/`!Sync`.
 ///
-/// The single-threaded canonical [`BddBuilder`](crate::bdd::BddBuilder) owns one of these (selected by
-/// its brand's [`Cell`](crate::bdd::Brand::Cell)); the [`bdd_builder!`](crate::bdd_builder) macro mints
-/// `LocalCell`-branded builders.
-#[doc(hidden)]
+/// A [`BddBuilder`](crate::bdd::BddBuilder) parameterised by this cell is single-threaded and pays no
+/// synchronisation cost; the [`bdd_builder!`](crate::bdd_builder) macro mints builders over it.
 #[derive(Clone)]
 pub struct LocalCell(Rc<RefCell<BddManager>>);
 
@@ -108,8 +108,8 @@ impl ManagerCell for LocalCell {
 /// Lock poisoning **propagates**: [`read`](ManagerCell::read)/[`write`](ManagerCell::write) `unwrap()`
 /// the guard, so a panic while the manager is borrowed poisons the lock for every subsequent access.
 ///
-/// The [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints `SyncCell`-branded builders.
-#[doc(hidden)]
+/// A [`BddBuilder`](crate::bdd::BddBuilder) parameterised by this cell is `Send + Sync`; the
+/// [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints builders over it.
 #[derive(Clone)]
 pub struct SyncCell(Arc<RwLock<BddManager>>);
 

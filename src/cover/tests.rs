@@ -793,21 +793,11 @@ fn to_exprs_works_for_any_string_input_label() {
     let arc_cover: Cover<Arc<str>, Arc<str>> = cover.relabel(in_syms, out_syms).unwrap();
 
     // to_expr_by_index / to_exprs / to_expr all work on an `Arc<str>`-labelled cover.
-    assert_eq!(
-        arc_cover
-            .to_expr_by_index(0)
-            .unwrap()
-            .variables()
-            .len(),
-        2
-    );
+    assert_eq!(arc_cover.to_expr_by_index(0).unwrap().variables().len(), 2);
     let pairs: Vec<_> = arc_cover.to_exprs().collect();
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].0.as_ref(), "out"); // (&O, BoolExpr) — output label borrowed
-    assert_eq!(
-        arc_cover.to_expr("out").unwrap().variables().len(),
-        2
-    );
+    assert_eq!(arc_cover.to_expr("out").unwrap().variables().len(), 2);
 }
 
 #[test]
@@ -2085,7 +2075,7 @@ fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
     // Reconstruction is index-addressed (no output name needed) and recovers the function.
     let back = cover.to_expr_by_index(0).unwrap();
     // `to_expr` is factored/syntactic, so compare semantically through the BDD layer.
-    assert!(builder.build(&expr).equivalent_to(builder.build(&back)));
+    assert!(builder.build(&expr).equivalent_to(&builder.build(&back)));
 }
 
 #[test]
@@ -2098,10 +2088,10 @@ fn from_expr_and_from_bdd_agree() {
 
     let expr = crate::BoolExpr::var("a") & crate::BoolExpr::var("b");
     let builder = crate::bdd_builder!();
-    let bdd = builder.build(&expr); // Bdd is Copy, so it survives the by-value `From`
+    let bdd = builder.build(&expr); // a refcounted clone keeps the manager alive past the by-value `From`
 
     // The `Bdd → Cover` primitive and the `BoolExpr` wrapper agree for the same function.
-    let from_bdd: Cover<Symbol, Anonymous> = Cover::from(bdd);
+    let from_bdd: Cover<Symbol, Anonymous> = Cover::from(bdd.clone());
     let from_expr: Cover<Symbol, Anonymous> = Cover::from(&expr);
     assert_eq!(from_bdd.num_outputs(), 1);
     assert_eq!(minterms(&from_bdd), minterms(&from_expr));
@@ -2151,12 +2141,9 @@ fn input_minterm_set(cover: &Cover<Symbol, Symbol>) -> std::collections::BTreeSe
 /// A cube `a=1` expanded over [a, b] yields exactly {a:1,b:0}, {a:1,b:1}.
 #[test]
 fn cube_expand_to_splits_unconstrained_var() {
-    let cube = Cube::<Symbol, Symbol>::with_labels(
-        &[("a", Some(true))],
-        &[("f", true)],
-        CubeType::F,
-    )
-    .unwrap();
+    let cube =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F)
+            .unwrap();
     let got: std::collections::BTreeSet<_> = cube
         .expand_to(&[Symbol::from("a"), Symbol::from("b")])
         .into_iter()
@@ -2175,12 +2162,9 @@ fn cube_expand_to_splits_unconstrained_var() {
 /// yielding 4 minterms.
 #[test]
 fn cube_expand_to_widens_with_absent_var() {
-    let cube = Cube::<Symbol, Symbol>::with_labels(
-        &[("a", Some(true))],
-        &[("f", true)],
-        CubeType::F,
-    )
-    .unwrap();
+    let cube =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F)
+            .unwrap();
     let got: std::collections::BTreeSet<_> = cube
         .expand_to(&[Symbol::from("a"), Symbol::from("b"), Symbol::from("c")])
         .into_iter()
@@ -2211,10 +2195,18 @@ fn cover_maximize_is_idempotent_when_already_maximal() {
     let cover = Cover::<Symbol, Symbol>::from_cubes(
         CoverType::F,
         [
-            Cube::with_labels(&[("a", Some(true)), ("b", Some(false))], &[("f", true)], CubeType::F)
-                .unwrap(),
-            Cube::with_labels(&[("a", Some(true)), ("b", Some(true))], &[("f", true)], CubeType::F)
-                .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(false))],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(true))],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
         ],
     );
 

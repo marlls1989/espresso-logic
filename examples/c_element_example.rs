@@ -347,7 +347,7 @@ fn main() -> std::io::Result<()> {
     let builder = bdd_builder!();
     if builder
         .build(&min_next_q_v1)
-        .equivalent_to(builder.build(&min_next_q_v2))
+        .equivalent_to(&builder.build(&min_next_q_v2))
     {
         println!("✓ Both formulations are logically equivalent!");
         println!("  - Version 1: (activation | q) & !deactivation");

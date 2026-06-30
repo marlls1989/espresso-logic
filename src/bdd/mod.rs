@@ -3,17 +3,20 @@
 //! This module provides a builder-scoped, canonical BDD engine for Boolean functions. It is built
 //! around three pieces:
 //!
-//! - a [`Brand`] — a sealed, zero-sized marker type that names one BDD namespace and selects, at the
-//!   type level, whether its builder is single-threaded or thread-safe;
-//! - a builder — [`BddBuilder`] (single-threaded) or [`SyncBddBuilder`] (`Send + Sync`) — that owns an
-//!   independent BDD manager and hands out handles branded to it;
-//! - a [`Bdd`] handle — a lightweight, `Copy` borrow into a builder denoting one canonical function.
+//! - a [`Brand`] — a sealed, zero-sized marker type that names one BDD namespace for uniqueness;
+//! - a [`ManagerCell`] — the storage backend, [`LocalCell`] (single-threaded) or [`SyncCell`]
+//!   (`Send + Sync`);
+//! - a builder — [`BddBuilder`], parameterised by both, that owns an independent BDD manager and hands out
+//!   handles branded to it;
+//! - a [`Bdd`] handle — a lightweight, refcounted (`Clone`, not `Copy`) owner of a clone of the builder's
+//!   manager, denoting one canonical function.
 //!
-//! Each builder owns its own manager: there is no process-global state and no default brand. Because a
-//! handle borrows its builder and carries the builder's brand as an invariant type parameter, two
-//! handles can be combined only when they came from the *same* builder — combining handles from two
-//! different builders is a compile error, and the borrow checker prevents a handle from outliving its
-//! builder.
+//! The brand and the storage backend are orthogonal: the brand selects no behaviour (it only keeps handles
+//! of two builders from unifying), while the cell alone determines thread-safety. Each builder owns its own
+//! manager: there is no process-global state and no default brand. Because a handle carries the builder's
+//! brand as an invariant type parameter, two handles can be combined only when they came from the *same*
+//! builder — combining handles of two different brands is a compile error. A handle holds a refcounted
+//! clone of the manager, so it can outlive the builder.
 //!
 //! # Canonicity
 //!
@@ -35,10 +38,10 @@
 //! # Construction
 //!
 //! A builder is minted by the [`bdd_builder!`](crate::bdd_builder) (single-threaded) or
-//! [`sync_bdd_builder!`](crate::sync_bdd_builder) (thread-safe) macro, each of which mints a fresh
-//! brand per call so handles of two different builders can never be combined. A [`BoolExpr`] is built
-//! into a handle with [`BddBuilder::build`] / [`BddBuilder::parse`], and a handle is lowered back to a
-//! factored [`BoolExpr`] with [`Bdd::to_expr`].
+//! [`sync_bdd_builder!`](crate::sync_bdd_builder) (thread-safe) macro, each of which mints a fresh brand
+//! per call — paired with [`LocalCell`] or [`SyncCell`] respectively — so handles of two different builders
+//! can never be combined. A [`BoolExpr`] is built into a handle with [`BddBuilder::build`] /
+//! [`BddBuilder::parse`], and a handle is lowered back to a factored [`BoolExpr`] with [`Bdd::to_expr`].
 //!
 //! [`BoolExpr`]: crate::BoolExpr
 
@@ -46,16 +49,17 @@ mod brand;
 mod builder;
 mod handle;
 
+pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
 pub use brand::Brand;
-pub use builder::{BddBuilder, SyncBddBuilder};
+pub use builder::BddBuilder;
 pub use handle::{Bdd, BddNode};
 
 /// Items the `bdd_builder!` / `sync_bdd_builder!` macros need to name at their (possibly downstream)
 /// call sites. Not part of the documented public API; named only by those macros.
 #[doc(hidden)]
 pub mod __macro_support {
-    pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
     pub use super::brand::brand_seal::Sealed;
+    pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
 }
 
 #[cfg(test)]

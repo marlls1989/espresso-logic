@@ -99,15 +99,15 @@ let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
 
-// Handles are Copy; operators work by value and by reference.
-let f = (a & b) | (!a & c);
+// Handles are Clone (a refcount bump), not Copy; operators work by value and by reference.
+let f = (a.clone() & b) | (!a & c);
 
 // Build from a BoolExpr or parse directly into the builder.
 let g = builder.build(&BoolExpr::parse("a & b | !a & c")?);
 let h = builder.parse("a & b | !a & c")?;
 
-assert!(f.equivalent_to(g));
-assert!(f.equivalent_to(h));
+assert!(f.equivalent_to(&g));
+assert!(f.equivalent_to(&h));
 # Ok(())
 # }
 ```
@@ -122,12 +122,12 @@ let a = builder.var("a");
 let b = builder.var("b");
 
 // Commutativity holds at the function level (BoolExpr equality would not see this).
-assert!((a & b).equivalent_to(b & a));
+assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
 
 // The consensus term is redundant.
-let consensus = (a & b) | (!a & builder.var("c")) | (b & builder.var("c"));
-let reduced   = (a & b) | (!a & builder.var("c"));
-assert!(consensus.equivalent_to(reduced));
+let consensus = (a.clone() & b.clone()) | (!a.clone() & builder.var("c")) | (b.clone() & builder.var("c"));
+let reduced   = (a.clone() & b) | (!a & builder.var("c"));
+assert!(consensus.equivalent_to(&reduced));
 ```
 
 ### Cofactors, quantification and queries
@@ -138,18 +138,18 @@ use espresso_logic::bdd_builder;
 let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
-let f = a & b;
+let f = a.clone() & b.clone();
 
 // Restrict (Shannon cofactor): f|a=true == b.
-assert!(f.restrict("a", true).equivalent_to(b));
+assert!(f.restrict("a", true).equivalent_to(&b));
 
 // Quantification.
 assert!(f.forall(&["a"]).is_contradiction()); // ∀a. (a & b) == false
-assert!(f.exists(&["a"]).equivalent_to(b));    // ∃a. (a & b) == b
+assert!(f.exists(&["a"]).equivalent_to(&b));    // ∃a. (a & b) == b
 
 // Constant queries.
-assert!((a | !a).is_tautology());
-assert!((a & !a).is_contradiction());
+assert!((a.clone() | !a.clone()).is_tautology());
+assert!((a.clone() & !a).is_contradiction());
 ```
 
 ### Materialisation and lowering
@@ -163,7 +163,7 @@ let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
 
-let f = (a & b) | (a & b & c); // logically just a & b
+let f = (a.clone() & b.clone()) | (a.clone() & b.clone() & c); // logically just a & b
 
 // Enumerate cubes / minterms.
 let cubes = f.to_cubes();
@@ -175,7 +175,7 @@ assert_eq!(minterms.len(), 1);
 let minimized = f.minimize()?;
 assert_eq!(minimized.num_cubes(), 1);
 let factored = f.to_expr();
-assert!(builder.build(&factored).equivalent_to(a & b));
+assert!(builder.build(&factored).equivalent_to(&(a & b)));
 # Ok(())
 # }
 ```
@@ -232,9 +232,9 @@ let b = builder.var("b");
 let c = builder.var("c");
 
 let mut cover = Cover::new(CoverType::F);
-cover.add_bdd(&(a & b), "and_out")?;
-cover.add_bdd(&(a | c), "or_out")?;
-cover.add_bdd(&((a & b) | (b & c)), "complex_out")?;
+cover.add_bdd(&(a.clone() & b.clone()), "and_out")?;
+cover.add_bdd(&(a.clone() | c.clone()), "or_out")?;
+cover.add_bdd(&((a & b.clone()) | (b & c)), "complex_out")?;
 
 let minimized = cover.minimize()?;
 
@@ -299,7 +299,7 @@ let deactivation = builder.parse(
 let q = builder.var("q");
 
 // Next-state function: set on activation, hold while not deactivating.
-let next_q = (activation | q) & !deactivation;
+let next_q = (activation.clone() | q) & !deactivation.clone();
 
 let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&activation, "activation")?;
@@ -458,7 +458,7 @@ let f = a & b;
 
 thread::scope(|s| {
     s.spawn(|| {
-        assert!(f.equivalent_to(builder.var("a") & builder.var("b")));
+        assert!(f.equivalent_to(&(builder.var("a") & builder.var("b"))));
     });
 });
 ```

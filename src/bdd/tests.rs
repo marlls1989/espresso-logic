@@ -1,53 +1,50 @@
 //! Tests for the canonical BDD layer.
 //!
-//! Two in-crate brand types are declared here: `Local` selects the single-threaded
-//! [`LocalCell`](crate::expression::manager_cell::LocalCell) and `Sync` the thread-safe
+//! Two in-crate brand types are declared here, `BrandA` and `BrandB`. A brand marks one namespace for
+//! uniqueness only; it selects no storage backend, so each pairs freely with either
+//! [`LocalCell`](crate::expression::manager_cell::LocalCell) or
 //! [`SyncCell`](crate::expression::manager_cell::SyncCell). The sealed [`Brand`] trait permits these
-//! in-crate impls; downstream code cannot add brands. The public `bdd_builder!` / `sync_bdd_builder!`
-//! macros that would mint these for callers arrive with the 5.0 breaking cut.
+//! in-crate impls; downstream code mints brands through the public `bdd_builder!` / `sync_bdd_builder!`
+//! macros.
 
 use super::brand::{brand_seal, Brand};
-use super::{BddBuilder, SyncBddBuilder};
+use super::BddBuilder;
 use crate::cover::{Cover, CoverType, Cube, CubeType, Minterm, Symbols};
 use crate::expression::manager_cell::{LocalCell, SyncCell};
 use crate::Symbol;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// Single-threaded test brand (selects [`LocalCell`]).
+/// First test brand.
 #[derive(Clone, Copy)]
-struct Local;
-impl brand_seal::Sealed for Local {}
-impl Brand for Local {
-    type Cell = LocalCell;
-}
+struct BrandA;
+impl brand_seal::Sealed for BrandA {}
+impl Brand for BrandA {}
 
-/// Thread-safe test brand (selects [`SyncCell`]).
+/// Second test brand.
 #[derive(Clone, Copy)]
-struct Sync;
-impl brand_seal::Sealed for Sync {}
-impl Brand for Sync {
-    type Cell = SyncCell;
-}
+struct BrandB;
+impl brand_seal::Sealed for BrandB {}
+impl Brand for BrandB {}
 
-// ---- Send/Sync asymmetry between the two builder kinds ---------------------------------------------
+// ---- Send/Sync follows the storage cell, not the brand --------------------------------------------
 
-/// `SyncBddBuilder` (SyncCell brand) is `Send + Sync`; asserting these bounds compiles only if they
-/// hold. The `!Send`/`!Sync` of `BddBuilder` (LocalCell brand) is checked by `local_context_not_send`
-/// below, which fails to compile if a `LocalCell`-branded builder were ever made `Send`.
+/// A [`SyncCell`]-backed builder is `Send + Sync`; asserting these bounds compiles only if they hold. The
+/// `!Send`/`!Sync` of a [`LocalCell`]-backed builder is checked by `context_send_asymmetry` below.
 #[test]
 fn sync_context_is_send_and_sync() {
     fn assert_send<T: std::marker::Send>() {}
     fn assert_sync<T: std::marker::Sync>() {}
-    assert_send::<SyncBddBuilder<Sync>>();
-    assert_sync::<SyncBddBuilder<Sync>>();
+    assert_send::<BddBuilder<BrandB, SyncCell>>();
+    assert_sync::<BddBuilder<BrandB, SyncCell>>();
     // And a handle into it is Send + Sync too.
-    assert_send::<super::Bdd<'static, Sync>>();
-    assert_sync::<super::Bdd<'static, Sync>>();
+    assert_send::<super::Bdd<BrandB, SyncCell>>();
+    assert_sync::<super::Bdd<BrandB, SyncCell>>();
 }
 
-/// Compile-time witness that a `LocalCell`-branded builder is **not** `Send`/`Sync`, while a
-/// `SyncCell`-branded one is.
+/// Compile-time witness that thread-safety follows the storage cell, not the brand: a
+/// [`LocalCell`]-backed builder is `!Send` and a [`SyncCell`]-backed one is `Send`, whatever brand each
+/// carries.
 ///
 /// Stable autoref-specialisation (Kalbertodt / dtolnay): a blanket trait impl over **all** `T` provides
 /// the `false` fallback, while an **inherent** method on `Probe<T>` gated on `T: Send` provides `true`.
@@ -84,30 +81,38 @@ fn context_send_asymmetry() {
         }};
     }
 
-    // SyncCell-branded SyncBddBuilder is Send; LocalCell-branded builders are not.
-    assert!(is_send!(SyncBddBuilder<Sync>));
-    assert!(!is_send!(BddBuilder<Local>));
-    assert!(!is_send!(SyncBddBuilder<Local>));
+    // The storage cell determines Send; the brand is irrelevant.
+    assert!(is_send!(BddBuilder<BrandB, SyncCell>));
+    assert!(!is_send!(BddBuilder<BrandA, LocalCell>));
+    // Same brand, opposite cells: the cell alone flips Send.
+    assert!(is_send!(BddBuilder<BrandA, SyncCell>));
+    assert!(!is_send!(BddBuilder<BrandB, LocalCell>));
 }
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
 #[test]
 fn restrict_acceptance_table() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
 
     // (a & b).restrict("a", true) ≡ b
-    assert!((a & b).restrict("a", true).equivalent_to(b));
+    assert!((a.clone() & b.clone())
+        .restrict("a", true)
+        .equivalent_to(&b));
     // (a & b).restrict("a", false) ≡ false
-    assert!((a & b).restrict("a", false).is_contradiction());
+    assert!((a.clone() & b.clone())
+        .restrict("a", false)
+        .is_contradiction());
     // (a | b).restrict("a", false) ≡ b
-    assert!((a | b).restrict("a", false).equivalent_to(b));
+    assert!((a.clone() | b.clone())
+        .restrict("a", false)
+        .equivalent_to(&b));
     // (a | b).forall(&["a"]) ≡ b
-    assert!((a | b).forall(&["a"]).equivalent_to(b));
+    assert!((a.clone() | b.clone()).forall(&["a"]).equivalent_to(&b));
     // (a & b).exists(&["a"]) ≡ b
-    assert!((a & b).exists(&["a"]).equivalent_to(b));
+    assert!((a.clone() & b.clone()).exists(&["a"]).equivalent_to(&b));
     // (a ^ b).forall(&["a"]) ≡ false
     assert!((a ^ b).forall(&["a"]).is_contradiction());
 }
@@ -117,7 +122,7 @@ fn evaluate_matches_truth_table() {
     use crate::BoolExpr;
     use std::collections::HashMap;
 
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     // f = a & b | !c.
     let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
     let f = builder.build(&expr);
@@ -138,7 +143,7 @@ fn fold_collects_support_variables() {
     use super::BddNode;
     use std::collections::BTreeSet;
 
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let f = (builder.var("a") & builder.var("b")) | builder.var("c");
 
     // Fold the decision diagram into the set of tested variables (union is sharing-safe). The result
@@ -169,7 +174,7 @@ fn fold_with_context_evaluates_via_path_descent() {
     use super::BddNode;
     use std::collections::HashMap;
 
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let f = (builder.var("a") & builder.var("b")) | !builder.var("c");
 
     // Re-implement evaluation with the top-down builder carrying the assignment: descend selects the
@@ -190,7 +195,10 @@ fn fold_with_context_evaluates_via_path_descent() {
                     low,
                     high,
                 } => {
-                    let set = assignment.get(&Symbol::from(variable)).copied().unwrap_or(false);
+                    let set = assignment
+                        .get(&Symbol::from(variable))
+                        .copied()
+                        .unwrap_or(false);
                     if set {
                         high
                     } else {
@@ -207,7 +215,7 @@ fn fold_with_context_evaluates_via_path_descent() {
 fn evaluate_absent_variable_reads_false() {
     use std::collections::HashMap;
 
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let f = builder.var("a") & builder.var("b");
 
     // Only `a` assigned ⇒ `b` reads false ⇒ a & b is false.
@@ -223,57 +231,73 @@ fn evaluate_absent_variable_reads_false() {
 
 #[test]
 fn restrict_absent_variable_is_noop() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let c = builder.var("c");
     let f = a & b; // depends only on a, b
 
     // c.restrict("a", true) ≡ c  — restricting an absent variable is a no-op
-    assert!(c.restrict("a", true).equivalent_to(c));
+    assert!(c.restrict("a", true).equivalent_to(&c));
     // restricting a variable absent from `f` leaves f unchanged
-    assert!(f.restrict("z", true).equivalent_to(f));
-    assert!(f.restrict("z", false).equivalent_to(f));
+    assert!(f.restrict("z", true).equivalent_to(&f));
+    assert!(f.restrict("z", false).equivalent_to(&f));
 }
 
 #[test]
 fn restrict_to_constant() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a & b;
 
     // Restricting both support variables collapses to a constant.
     assert!(f.restrict("a", true).restrict("b", true).is_tautology());
-    assert!(f.restrict("a", true).restrict("b", false).is_contradiction());
-    assert!(f.restrict("a", false).restrict("b", true).is_contradiction());
+    assert!(f
+        .restrict("a", true)
+        .restrict("b", false)
+        .is_contradiction());
+    assert!(f
+        .restrict("a", false)
+        .restrict("b", true)
+        .is_contradiction());
 }
 
 #[test]
 fn cofactor_is_restrict() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a & b;
-    assert!(f.cofactor("a", true).equivalent_to(f.restrict("a", true)));
-    assert!(f.cofactor("a", false).equivalent_to(f.restrict("a", false)));
+    assert!(f.cofactor("a", true).equivalent_to(&f.restrict("a", true)));
+    assert!(f
+        .cofactor("a", false)
+        .equivalent_to(&f.restrict("a", false)));
 }
 
 #[test]
 fn forall_exists_multiple_vars() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let c = builder.var("c");
 
     // ∀a,b. (a & b & c) = c restricted to a&b both polarities = false (since a=0 kills it)
-    assert!((a & b & c).forall(&["a", "b"]).is_contradiction());
+    assert!((a.clone() & b.clone() & c.clone())
+        .forall(&["a", "b"])
+        .is_contradiction());
     // ∃a,b. (a & b & c) = c
-    assert!((a & b & c).exists(&["a", "b"]).equivalent_to(c));
+    assert!((a.clone() & b.clone() & c.clone())
+        .exists(&["a", "b"])
+        .equivalent_to(&c));
     // Quantifying over no variables is the identity.
     let empty: &[&str] = &[];
-    assert!((a & b).forall(empty).equivalent_to(a & b));
-    assert!((a & b).exists(empty).equivalent_to(a & b));
+    assert!((a.clone() & b.clone())
+        .forall(empty)
+        .equivalent_to(&(a.clone() & b.clone())));
+    assert!((a.clone() & b.clone())
+        .exists(empty)
+        .equivalent_to(&(a & b)));
 }
 
 // ---- Requirement 2: minterm enumeration -----------------------------------------------------------
@@ -295,7 +319,7 @@ fn minterm(header: &Arc<Symbols<Symbol>>, values: &[(&str, bool)]) -> Minterm<Sy
 
 #[test]
 fn to_minterms_xor_two_vars() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a ^ b;
@@ -313,7 +337,7 @@ fn to_minterms_xor_two_vars() {
 
 #[test]
 fn to_minterms_widen_with_absent_variable() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a ^ b;
@@ -334,7 +358,7 @@ fn to_minterms_widen_with_absent_variable() {
 
 #[test]
 fn to_minterms_true_is_full_cube() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let t = builder.constant(true);
 
     let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
@@ -352,7 +376,7 @@ fn to_minterms_true_is_full_cube() {
 
 #[test]
 fn to_minterms_single_var_splits_other() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
 
     // a.to_minterms(&[a, b]) == { a:1,b:0 ; a:1,b:1 } — b split, a fixed.
@@ -369,10 +393,10 @@ fn to_minterms_single_var_splits_other() {
 
 #[test]
 fn to_minterms_is_idempotent_and_deterministic() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
-    let f = (a & b) | (!a & !b); // a == b
+    let f = (a.clone() & b.clone()) | (!a & !b); // a == b
 
     let once = f.to_minterms(&["a", "b"]);
     let twice = f.to_minterms(&["a", "b"]);
@@ -393,16 +417,16 @@ fn to_minterms_is_idempotent_and_deterministic() {
 #[test]
 fn to_minterms_matches_cube_expand_to() {
     // Mirror to_minterms against the Cube::expand_to / Cover::maximize primitive directly.
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let f = a; // a=1, b unconstrained
 
-    let via_handle: BTreeSet<Minterm<Symbol>> =
-        f.to_minterms(&["a", "b"]).into_iter().collect();
+    let via_handle: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b"]).into_iter().collect();
 
     // a=1 cube expanded over [a, b]
-    let cube = Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("o", true)], CubeType::F)
-        .unwrap();
+    let cube =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("o", true)], CubeType::F)
+            .unwrap();
     let via_cube: BTreeSet<Minterm<Symbol>> = cube
         .expand_to(&[Symbol::new("a"), Symbol::new("b")])
         .into_iter()
@@ -414,7 +438,7 @@ fn to_minterms_matches_cube_expand_to() {
 
 #[test]
 fn tautology_and_contradiction() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let t = builder.constant(true);
     let f = builder.constant(false);
@@ -425,52 +449,52 @@ fn tautology_and_contradiction() {
     assert!(!f.is_tautology());
 
     // a | !a is a tautology; a & !a is a contradiction.
-    assert!((a | !a).is_tautology());
-    assert!((a & !a).is_contradiction());
+    assert!((a.clone() | !a.clone()).is_tautology());
+    assert!((a.clone() & !a).is_contradiction());
 }
 
 // ---- Operators and canonicity ---------------------------------------------------------------------
 
 #[test]
 fn operators_commute_and_canonicalise() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
 
     // a & b ≡ b & a; a | b ≡ b | a; canonical roots are identical so PartialEq holds too.
-    assert_eq!(a & b, b & a);
-    assert_eq!(a | b, b | a);
-    assert!((a & b).equivalent_to(b & a));
+    assert_eq!(a.clone() & b.clone(), b.clone() & a.clone());
+    assert_eq!(a.clone() | b.clone(), b.clone() | a.clone());
+    assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
 
     // De Morgan: !(a & b) ≡ !a | !b
-    assert!((!(a & b)).equivalent_to(!a | !b));
-    assert!((!(a | b)).equivalent_to(!a & !b));
+    assert!((!(a.clone() & b.clone())).equivalent_to(&(!a.clone() | !b.clone())));
+    assert!((!(a.clone() | b.clone())).equivalent_to(&(!a & !b)));
 }
 
 #[test]
 fn operator_ref_combinations_compile_and_agree() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
 
-    let by_value = a & b;
+    let by_value = a.clone() & b.clone();
     // Bind references through variables so the `&Bdd` operator impls (not the value impls) are
-    // genuinely exercised — a literal `&a & b` over a `Copy` operand would be linted away.
+    // genuinely exercised.
     let (ra, rb) = (&a, &b);
-    assert!((ra & b).equivalent_to(by_value));
-    assert!((a & rb).equivalent_to(by_value));
-    assert!((ra & rb).equivalent_to(by_value));
-    assert!((!ra).equivalent_to(!a));
+    assert!((ra & b.clone()).equivalent_to(&by_value));
+    assert!((a.clone() & rb).equivalent_to(&by_value));
+    assert!((ra & rb).equivalent_to(&by_value));
+    assert!((!ra).equivalent_to(&!a));
 }
 
 #[test]
 fn equivalent_to_is_root_identity() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     // Two syntactically different but logically equal builds share one canonical root.
-    let f = (a & b) | (a & !b); // == a
-    assert!(f.equivalent_to(a));
+    let f = (a.clone() & b.clone()) | (a.clone() & !b); // == a
+    assert!(f.equivalent_to(&a));
     assert_eq!(f, a);
 }
 
@@ -499,18 +523,17 @@ fn xor_cover() -> Cover<Symbol, Symbol> {
 
 #[test]
 fn build_cover_round_trip() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let cover = xor_cover();
     let f = builder.build_cover(&cover);
 
     // f is exactly a ⊕ b.
     let a = builder.var("a");
     let b = builder.var("b");
-    assert!(f.equivalent_to(a ^ b));
+    assert!(f.equivalent_to(&(a ^ b)));
 
     // The minterm set of build_cover(cover) matches the cover's own maximised minterm set.
-    let from_handle: BTreeSet<Minterm<Symbol>> =
-        f.to_minterms(&["a", "b"]).into_iter().collect();
+    let from_handle: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b"]).into_iter().collect();
     let from_cover: BTreeSet<Minterm<Symbol>> = cover
         .maximize(&[Symbol::new("a"), Symbol::new("b")])
         .cubes()
@@ -520,12 +543,12 @@ fn build_cover_round_trip() {
 
     // Rebuilding from to_cubes() reproduces the same canonical handle.
     let rebuilt = builder.build_cover(&f.to_cubes());
-    assert!(rebuilt.equivalent_to(f));
+    assert!(rebuilt.equivalent_to(&f));
 }
 
 #[test]
 fn to_cubes_is_anonymous_single_output_onset() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a & b;
@@ -540,24 +563,24 @@ fn to_cubes_is_anonymous_single_output_onset() {
 #[test]
 fn both_context_kinds_agree() {
     // Single-threaded.
-    let local: BddBuilder<Local> = BddBuilder::new();
+    let local: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let la = local.var("a");
     let lb = local.var("b");
     let lc = local.var("c");
-    let lf = (la & lb) | (la ^ lc);
+    let lf = (la.clone() & lb) | (la.clone() ^ lc);
     let local_minterms: BTreeSet<Minterm<Symbol>> =
         lf.to_minterms(&["a", "b", "c"]).into_iter().collect();
-    let local_taut = (la | !la).is_tautology();
+    let local_taut = (la.clone() | !la).is_tautology();
 
     // Thread-safe.
-    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
     let sa = sync.var("a");
     let sb = sync.var("b");
     let sc = sync.var("c");
-    let sf = (sa & sb) | (sa ^ sc);
+    let sf = (sa.clone() & sb) | (sa.clone() ^ sc);
     let sync_minterms: BTreeSet<Minterm<Symbol>> =
         sf.to_minterms(&["a", "b", "c"]).into_iter().collect();
-    let sync_taut = (sa | !sa).is_tautology();
+    let sync_taut = (sa.clone() | !sa).is_tautology();
 
     assert_eq!(local_minterms, sync_minterms);
     assert_eq!(local_taut, sync_taut);
@@ -566,17 +589,17 @@ fn both_context_kinds_agree() {
 
 #[test]
 fn sync_context_is_send_across_threads() {
-    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
     // Build something, then move the builder into another thread and use it there.
     {
         let a = sync.var("a");
         let b = sync.var("b");
-        assert!((a & b).restrict("a", true).equivalent_to(b));
+        assert!((a & b.clone()).restrict("a", true).equivalent_to(&b));
     }
     let handle = std::thread::spawn(move || {
         let a = sync.var("a");
         let b = sync.var("b");
-        let f = (a & b) | (!a & !b);
+        let f = (a.clone() & b.clone()) | (!a & !b);
         f.to_minterms(&["a", "b"]).len()
     });
     let n = handle.join().unwrap();
@@ -585,7 +608,7 @@ fn sync_context_is_send_across_threads() {
 
 #[test]
 fn sync_context_shared_by_reference_across_threads() {
-    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
     let shared = std::sync::Arc::new(sync);
     let c1 = std::sync::Arc::clone(&shared);
     let c2 = std::sync::Arc::clone(&shared);
@@ -607,13 +630,13 @@ fn sync_context_shared_by_reference_across_threads() {
 
 #[test]
 fn minimize_reduces_redundancy() {
-    let builder: BddBuilder<Local> = BddBuilder::new();
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     // (a & b) | (a & !b) == a — minimisation should collapse to a single cube fixing only `a`.
-    let f = (a & b) | (a & !b);
+    let f = (a.clone() & b.clone()) | (a.clone() & !b);
     let min = f.minimize().expect("minimisation succeeds");
     // The function still equals `a`.
     let rebuilt = builder.build_cover(&min);
-    assert!(rebuilt.equivalent_to(a));
+    assert!(rebuilt.equivalent_to(&a));
 }

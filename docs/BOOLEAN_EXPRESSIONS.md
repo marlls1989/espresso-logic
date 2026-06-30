@@ -13,8 +13,8 @@ The API is split into two layers with distinct responsibilities:
   expressions, and equality compares syntax, not the Boolean function. Semantic operations (evaluation,
   equivalence) are done through the `Bdd` layer.
 
-- **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddBuilder`] (or
-  the thread-safe [`SyncBddBuilder`]), which owns a private BDD manager. Within one builder every
+- **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddBuilder`]
+  (single-threaded or thread-safe), which owns a private BDD manager. Within one builder every
   Boolean function has exactly one root, so logical equivalence is an O(1) comparison and operations
   such as cofactors, quantification and tautology checks are available.
 
@@ -213,7 +213,7 @@ equality, build both into the BDD layer and use [`Bdd::equivalent_to`].
 A BDD builder owns a private manager and hands out [`Bdd`] handles branded to it. Mint one with the
 [`bdd_builder!`] macro (single-threaded, `!Send`) or [`sync_bdd_builder!`] (`Send + Sync`). Each call
 mints a distinct brand, so handles from two different builders cannot be combined — a compile error,
-not a runtime check. A `Bdd` borrows its builder and is `Copy`.
+not a runtime check. A `Bdd` is `Clone` (a refcount bump), not `Copy`.
 
 ```rust
 use espresso_logic::bdd_builder;
@@ -221,8 +221,8 @@ use espresso_logic::bdd_builder;
 let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
-let f = a & b;            // handles are Copy; no clones needed
-assert!(f.equivalent_to(builder.var("a") & builder.var("b")));
+let f = a & b;            // handles are Clone (a refcount bump), not Copy
+assert!(f.equivalent_to(&(builder.var("a") & builder.var("b"))));
 ```
 
 An optional readable brand name appears in mismatch diagnostics; each call still mints a distinct
@@ -252,7 +252,7 @@ let expr = BoolExpr::parse("a & b")?;
 let from_expr = builder.build(&expr);     // build a syntactic expression
 let parsed = builder.parse("a & b")?;     // parse and build in one step
 
-assert!(from_expr.equivalent_to(parsed));
+assert!(from_expr.equivalent_to(&parsed));
 # Ok(())
 # }
 ```
@@ -270,8 +270,8 @@ let a = builder.var("a");
 let b = builder.var("b");
 
 // if-then-else: s ? a : b
-let mux = s.ite(a, b);
-assert!(mux.equivalent_to((s & a) | (!s & b)));
+let mux = s.clone().ite(a.clone(), b.clone());
+assert!(mux.equivalent_to(&((s.clone() & a) | (!s & b))));
 ```
 
 ### Logical equivalence
@@ -287,11 +287,11 @@ let a = builder.var("a");
 let b = builder.var("b");
 
 // Commutativity and the consensus theorem hold at the function level.
-assert!((a & b).equivalent_to(b & a));
+assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
 
-let consensus = (a & b) | (!a & builder.var("c")) | (b & builder.var("c"));
-let reduced   = (a & b) | (!a & builder.var("c"));
-assert!(consensus.equivalent_to(reduced)); // the b & c term is redundant
+let consensus = (a.clone() & b.clone()) | (!a.clone() & builder.var("c")) | (b.clone() & builder.var("c"));
+let reduced   = (a.clone() & b.clone()) | (!a & builder.var("c"));
+assert!(consensus.equivalent_to(&reduced)); // the b & c term is redundant
 ```
 
 ### Cofactors and quantification
@@ -305,14 +305,14 @@ use espresso_logic::bdd_builder;
 let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
-let f = a & b;
+let f = a & b.clone();
 
 // f|a=true == b
-assert!(f.restrict("a", true).equivalent_to(b));
+assert!(f.restrict("a", true).equivalent_to(&b.clone()));
 
 // ∀a. (a & b) == false; ∃a. (a & b) == b
 assert!(f.forall(&["a"]).is_contradiction());
-assert!(f.exists(&["a"]).equivalent_to(b));
+assert!(f.exists(&["a"]).equivalent_to(&b));
 ```
 
 ### Constant queries
@@ -323,8 +323,8 @@ use espresso_logic::bdd_builder;
 let builder = bdd_builder!();
 let a = builder.var("a");
 
-assert!((a | !a).is_tautology());
-assert!((a & !a).is_contradiction());
+assert!((a.clone() | !a.clone()).is_tautology());
+assert!((a.clone() & !a).is_contradiction());
 ```
 
 ### Introspection
@@ -335,7 +335,7 @@ use espresso_logic::bdd_builder;
 let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
-let f = (a & b) | (!a & b);
+let f = (a.clone() & b.clone()) | (!a & b);
 
 // f depends only on b after canonicalisation.
 assert_eq!(f.var_count(), 1);
@@ -382,13 +382,13 @@ let b = builder.var("b");
 let c = builder.var("c");
 
 // (a & b) | (a & b & c) is just a & b.
-let f = (a & b) | (a & b & c);
+let f = (a.clone() & b.clone()) | (a.clone() & b.clone() & c);
 
 let minimized = f.minimize()?;
 assert_eq!(minimized.num_cubes(), 1);
 
 let factored = f.to_expr();
-assert!(builder.build(&factored).equivalent_to(a & b));
+assert!(builder.build(&factored).equivalent_to(&(a & b)));
 # Ok(())
 # }
 ```
@@ -444,8 +444,8 @@ let b = builder.var("b");
 let c = builder.var("c");
 
 let mut cover = Cover::new(CoverType::F);
-cover.add_bdd(&(a & b), "p")?;
-cover.add_bdd(&((a & b) | (b & c)), "q")?;
+cover.add_bdd(&(a.clone() & b.clone()), "p")?;
+cover.add_bdd(&((a & b.clone()) | (b & c)), "q")?;
 
 let minimized = cover.minimize()?;
 
@@ -519,11 +519,11 @@ let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
-let xor = a ^ b;
-assert!(xor.equivalent_to((a & !b) | (!a & b)));
+let xor = a.clone() ^ b.clone();
+assert!(xor.equivalent_to(&((a.clone() & !b.clone()) | (!a.clone() & b.clone()))));
 
-let xnor = !(a ^ b);
-assert!(xnor.equivalent_to((a & b) | (!a & !b)));
+let xnor = !(a.clone() ^ b.clone());
+assert!(xnor.equivalent_to(&((a.clone() & b.clone()) | (!a & !b))));
 ```
 
 ### Majority function
@@ -537,9 +537,9 @@ let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
 
-let majority = (a & b) | (b & c) | (a & c);
+let majority = (a.clone() & b.clone()) | (b & c.clone()) | (a & c);
 let parsed = builder.build(&BoolExpr::parse("a & b | b & c | a & c")?);
-assert!(majority.equivalent_to(parsed));
+assert!(majority.equivalent_to(&parsed));
 # Ok(())
 # }
 ```
@@ -553,8 +553,8 @@ let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
-assert!((!(a & b)).equivalent_to(!a | !b));
-assert!((!(a | b)).equivalent_to(!a & !b));
+assert!((!(a.clone() & b.clone())).equivalent_to(&(!a.clone() | !b.clone())));
+assert!((!(a.clone() | b.clone())).equivalent_to(&(!a & !b)));
 ```
 
 ## Error handling
@@ -609,7 +609,6 @@ match cover.minimize() {
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
 [`BddBuilder`]: crate::bdd::BddBuilder
-[`SyncBddBuilder`]: crate::bdd::SyncBddBuilder
 [`Cover`]: crate::Cover
 [`Cover::add_bdd`]: crate::Cover::add_bdd
 [`Cover::add_expr`]: crate::Cover::add_expr

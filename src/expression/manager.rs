@@ -71,8 +71,7 @@ pub struct BddManager {
 impl BddManager {
     /// A fresh, empty manager seeded with the two terminal nodes (`FALSE_NODE = 0`, `TRUE_NODE = 1`).
     ///
-    /// Every [`BddBuilder`](crate::bdd::BddBuilder) / [`SyncBddBuilder`](crate::bdd::SyncBddBuilder)
-    /// owns one of these (minted through its cell's
+    /// Every [`BddBuilder`](crate::bdd::BddBuilder) owns one of these (minted through its cell's
     /// [`new_empty`](super::manager_cell::ManagerCell::new_empty)).
     pub(crate) fn new_empty() -> Self {
         BddManager {
@@ -355,11 +354,7 @@ impl BddManager {
             ) {
                 // Terminals carry no variable: restricting cannot change a constant.
                 BddNode::Terminal(_) => None,
-                BddNode::Decision {
-                    var: v,
-                    low,
-                    high,
-                } => Some((*v, *low, *high)),
+                BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
             }
         };
 

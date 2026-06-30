@@ -345,7 +345,7 @@ mod tests {
     /// comparison once both are built into one builder).
     fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
         let builder = crate::bdd_builder!();
-        builder.build(a).equivalent_to(builder.build(b))
+        builder.build(a).equivalent_to(&builder.build(b))
     }
 
     #[test]

@@ -24,7 +24,7 @@
 //!
 //! - **[`BoolExpr`]** - Owned, syntactic Boolean expressions with parsing, the bitwise operators
 //!   (`&`, `|`, `^`, `!`) and evaluation
-//! - **[`Bdd`]** - Canonical BDD handles from a [`BddBuilder`] (or thread-safe [`SyncBddBuilder`]) for
+//! - **[`Bdd`]** - Canonical BDD handles from a [`BddBuilder`] (single-threaded or thread-safe) for
 //!   logical equivalence, cofactors and quantification
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
 //! - **[`Cube`]** / **[`Minterm`]** / **[`OutputSet`]** - A `Cover`'s product terms: a [`Cube`] pairs an
@@ -107,13 +107,13 @@
 //! let a = builder.var("a");
 //! let b = builder.var("b");
 //!
-//! // Handles are Copy; the BDD layer canonicalises, so logical laws hold.
-//! assert!((a & b).equivalent_to(b & a));
-//! assert!((a | !a).is_tautology());
+//! // Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
+//! assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
+//! assert!((a.clone() | !a.clone()).is_tautology());
 //!
 //! // Build a parsed expression into the same builder and compare functions.
 //! let parsed = builder.parse("a & b")?;
-//! assert!((a & b).equivalent_to(parsed));
+//! assert!((a & b).equivalent_to(&parsed));
 //! # Ok(())
 //! # }
 //! ```
@@ -357,12 +357,12 @@ pub mod symbol;
 pub mod sys;
 
 // Re-export high-level public API
+pub use bdd::{Bdd, BddBuilder, BddNode, Brand, LocalCell, ManagerCell, SyncCell};
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
-pub use bdd::{Bdd, BddBuilder, BddNode, Brand, SyncBddBuilder};
 pub use espresso::EspressoConfig;
 pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
@@ -386,7 +386,7 @@ pub use symbol::Symbol;
 /// let builder = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a & b).equivalent_to(builder.build(&BoolExpr::parse("a & b").unwrap())));
+/// assert!((a & b).equivalent_to(&builder.build(&BoolExpr::parse("a & b").unwrap())));
 /// ```
 #[macro_export]
 macro_rules! bdd_builder {
@@ -397,19 +397,17 @@ macro_rules! bdd_builder {
         #[derive(Clone, Copy)]
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
-        impl $crate::bdd::Brand for $name {
-            type Cell = $crate::bdd::__macro_support::LocalCell;
-        }
-        $crate::bdd::BddBuilder::<$name>::new()
+        impl $crate::bdd::Brand for $name {}
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell>::new()
     }};
 }
 
-/// Create a fresh, thread-safe [`SyncBddBuilder`] with a private BDD manager.
+/// Create a fresh, thread-safe [`BddBuilder`] over a [`SyncCell`] with a private BDD manager.
 ///
-/// Like [`bdd_builder!`](crate::bdd_builder), but the minted brand selects a `RwLock`-backed cell, so
-/// the resulting [`SyncBddBuilder`] is `Send + Sync` and can be moved to, or shared by reference
-/// across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from two
-/// builders never mix (a compile error).
+/// Like [`bdd_builder!`](crate::bdd_builder), but pairs the minted brand with a `RwLock`-backed
+/// [`SyncCell`], so the resulting [`BddBuilder`] is `Send + Sync` and can be moved to, or shared by
+/// reference across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from
+/// two builders never mix (a compile error).
 ///
 /// ```
 /// use espresso_logic::{sync_bdd_builder, BoolExpr};
@@ -417,7 +415,7 @@ macro_rules! bdd_builder {
 /// let builder = sync_bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a | b).equivalent_to(builder.build(&BoolExpr::parse("a | b").unwrap())));
+/// assert!((a | b).equivalent_to(&builder.build(&BoolExpr::parse("a | b").unwrap())));
 /// ```
 #[macro_export]
 macro_rules! sync_bdd_builder {
@@ -428,10 +426,8 @@ macro_rules! sync_bdd_builder {
         #[derive(Clone, Copy)]
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
-        impl $crate::bdd::Brand for $name {
-            type Cell = $crate::bdd::__macro_support::SyncCell;
-        }
-        $crate::bdd::SyncBddBuilder::<$name>::new()
+        impl $crate::bdd::Brand for $name {}
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell>::new()
     }};
 }
 

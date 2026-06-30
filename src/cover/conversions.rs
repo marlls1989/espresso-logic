@@ -10,7 +10,7 @@ use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
-use crate::bdd::{Bdd, Brand};
+use crate::bdd::{Bdd, Brand, ManagerCell};
 use crate::expression::BoolExpr;
 use crate::Symbol;
 use std::fmt;
@@ -67,16 +67,16 @@ pub(crate) fn anonymous_cover_from_raw(
 /// let cover: Cover<Symbol, Anonymous> = f.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<'builder, B: Brand> From<Bdd<'builder, B>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: Bdd<'builder, B>) -> Self {
+impl<B: Brand, C: ManagerCell> From<Bdd<B, C>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: Bdd<B, C>) -> Self {
         bdd.to_cubes()
     }
 }
 
-/// Borrowed counterpart of the `From<Bdd>` impl. [`Bdd`] is `Copy`, so this just
-/// copies the handle and defers to the by-value primitive.
-impl<'builder, B: Brand> From<&Bdd<'builder, B>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: &Bdd<'builder, B>) -> Self {
+/// Borrowed counterpart of the `From<Bdd>` impl: [`Bdd::to_cubes`] already borrows `&self`, so this
+/// defers straight to it.
+impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: &Bdd<B, C>) -> Self {
         bdd.to_cubes()
     }
 }

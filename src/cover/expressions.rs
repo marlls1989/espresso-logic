@@ -22,9 +22,9 @@ impl Cover<Symbol, Symbol> {
     /// variables are matched by name with existing variables, and new variables are appended.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
-    pub fn add_bdd<S: AsRef<str>, B: crate::bdd::Brand>(
+    pub fn add_bdd<S: AsRef<str>, B: crate::bdd::Brand, C: crate::bdd::ManagerCell>(
         &mut self,
-        bdd: &crate::bdd::Bdd<'_, B>,
+        bdd: &crate::bdd::Bdd<B, C>,
         output_name: S,
     ) -> Result<(), AddExprError> {
         let output_name = output_name.as_ref();

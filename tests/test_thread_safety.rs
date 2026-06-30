@@ -271,29 +271,30 @@ fn concurrent_symbol_covers() {
 }
 
 /// Many threads build the **same** overlapping expressions against one shared, thread-safe
-/// [`SyncBddBuilder`], hammering its read-mostly double-checked locking (concurrent node interning) and
-/// the ITE cache-commit transaction. Canonicity must hold under contention: identical expressions
-/// reduce to one shared root, so every thread's handles must be `equivalent_to` the reference, with no
-/// deadlock, panic, or duplicate nodes (a duplicated node would give a different root and fail the
+/// [`SyncCell`]-backed [`BddBuilder`], hammering its read-mostly double-checked locking (concurrent node
+/// interning) and the ITE cache-commit transaction. Canonicity must hold under contention: identical
+/// expressions reduce to one shared root, so every thread's handles must be `equivalent_to` the reference,
+/// with no deadlock, panic, or duplicate nodes (a duplicated node would give a different root and fail the
 /// equivalence check).
 #[test]
 fn concurrent_shared_manager_building_stays_canonical() {
-    use espresso_logic::{sync_bdd_builder, Bdd, BoolExpr, Brand, SyncBddBuilder};
+    use espresso_logic::{sync_bdd_builder, Bdd, BddBuilder, BoolExpr, Brand, ManagerCell};
 
     // A suite of varied shapes over shared variable names, exercising var/and/or/not/xor/ite, the
     // expression `build`, and the parser — all against the one shared builder.
-    fn build_suite<B: Brand>(builder: &SyncBddBuilder<B>) -> Vec<Bdd<'_, B>> {
+    fn build_suite<B: Brand, C: ManagerCell>(builder: &BddBuilder<B, C>) -> Vec<Bdd<B, C>> {
         let a = builder.var("share_a");
         let b = builder.var("share_b");
         let c = builder.var("share_c");
         vec![
-            (a ^ b) ^ c,             // XOR chain
-            (a & b) | (b & c) | (a & c), // majority
+            (a.clone() ^ b.clone()) ^ c.clone(), // XOR chain
+            (a.clone() & b.clone()) | (b.clone() & c.clone()) | (a.clone() & c.clone()), // majority
             builder.parse("share_a * share_b + ~share_c").unwrap(),
             // Same function as the parsed entry above, but constructed via owned `BoolExpr` operators
             // and fed through `builder.build`; canonicity means it must reduce to the same root.
             builder.build(
-                &((BoolExpr::var("share_a") & BoolExpr::var("share_b")) | !BoolExpr::var("share_c")),
+                &((BoolExpr::var("share_a") & BoolExpr::var("share_b"))
+                    | !BoolExpr::var("share_c")),
             ),
             a.ite(b, c),
         ]
@@ -302,7 +303,8 @@ fn concurrent_shared_manager_building_stays_canonical() {
     const THREADS: usize = 16;
     const ITERS: usize = 200;
 
-    // One thread-safe builder, shared by reference across every worker (`SyncBddBuilder` is Send + Sync).
+    // One thread-safe builder, shared by reference across every worker (a SyncCell-backed builder is
+    // Send + Sync).
     let builder = sync_bdd_builder!();
 
     // Reference built on the main thread.
@@ -329,7 +331,7 @@ fn concurrent_shared_manager_building_stays_canonical() {
             assert_eq!(suite.len(), reference.len());
             for (got, want) in suite.iter().zip(reference.iter()) {
                 assert!(
-                    got.equivalent_to(*want),
+                    got.equivalent_to(want),
                     "concurrent builds against the shared builder must yield identical canonical BDDs"
                 );
             }

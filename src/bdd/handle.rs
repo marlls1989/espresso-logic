@@ -1,13 +1,19 @@
-//! The borrowed, `Copy` BDD handle.
+//! The owned, refcounted BDD handle.
 //!
-//! A [`Bdd`] is a lightweight handle into a [`BddBuilder`](super::BddBuilder) /
-//! [`SyncBddBuilder`](super::SyncBddBuilder): a shared reference to the builder's cell plus the
-//! canonical root node it denotes. Because it borrows the cell (`&'builder B::Cell`) rather than owning
-//! it, it is `Copy` — `a & b`, `&a & b`, etc. all work without clones or deref gymnastics.
+//! A [`Bdd`] is a lightweight handle into a [`BddBuilder`](super::BddBuilder): a refcounted clone of the
+//! builder's storage cell plus the canonical root node it denotes. Because it owns a clone of the cell
+//! (rather than borrowing the builder), it keeps its manager alive and can be stored, returned, or
+//! outlive the builder that minted it.
 //!
-//! Two handles can be combined only when they share the same lifetime `'builder` **and** the same brand
-//! `B` — i.e. when they came from the same builder. Mixing handles from two different builders is a
-//! compile error, enforced by the invariant brand parameter; there is no runtime check.
+//! A handle carries two orthogonal type parameters: a [`Brand`] `B` (uniqueness only) and a
+//! [`ManagerCell`] `C` (the storage backend). Two handles can be combined only when they share both — i.e.
+//! when they came from the same builder. Mixing handles of two different brands is a compile error,
+//! enforced by the invariant brand parameter. As a runtime backstop against a brand clash (two builders
+//! that happen to share a brand type), every binary operation asserts the two handles point at the same
+//! manager.
+//!
+//! The handle is [`Clone`] (a refcount bump) but **not** `Copy`: operators consume their operands by
+//! value, with reference variants for reuse, while derivation and query methods borrow `&self`.
 
 use std::borrow::Borrow;
 use std::collections::{BTreeSet, HashMap};
@@ -17,39 +23,26 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use crate::cover::{Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, Symbols};
-use crate::expression::manager::{BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::expression::manager::{
+    BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE,
+};
 use crate::expression::manager_cell::ManagerCell;
 use crate::expression::BoolExpr;
 use crate::Symbol;
 
-/// A borrowed, `Copy` handle to a canonical BDD root within one builder.
+/// An owned, refcounted handle to a canonical BDD root within one builder.
 ///
-/// `mgr` borrows the owning builder's cell, so the handle cannot outlive the builder (a compile error,
-/// not a runtime one). `root` is the canonical node id; the brand `B` is carried as an invariant
-/// type-level marker (`PhantomData<fn() -> B>`) so handles of different builders never unify.
+/// `cell` is a refcounted clone of the owning builder's storage cell, so the handle keeps its manager
+/// alive and is independent of the builder's lifetime. `root` is the canonical node id; the brand `B` is
+/// carried as an invariant type-level marker (`PhantomData<fn() -> B>`) so handles of different builders
+/// never unify, and `C` is the storage backend.
 ///
 /// # Canonicity
 ///
 /// Within one builder every Boolean function has exactly one root node, so two handles denote the same
 /// function **iff** their roots are equal — making [`equivalent_to`](Self::equivalent_to) an O(1) id
-/// comparison. The brand+lifetime pairing guarantees both handles share the same manager before such a
-/// comparison is even type-correct.
-///
-/// # Lifetime soundness
-///
-/// A handle borrows its builder, so it cannot escape:
-///
-/// ```compile_fail
-/// use espresso_logic::bdd::{Bdd, BddBuilder, Brand};
-/// fn escape<B: Brand>() {
-///     let f;
-///     {
-///         let builder: BddBuilder<B> = BddBuilder::new();
-///         f = builder.var("a"); // borrows builder
-///     } // builder dropped here
-///     let _ = f.node_count(); // error: `builder` does not live long enough
-/// }
-/// ```
+/// comparison. The brand pairing guarantees both handles share the same manager before such a comparison
+/// is even type-correct; the manager-pointer assert is a runtime backstop against a brand clash.
 ///
 /// # Cross-builder mixing is a compile error
 ///
@@ -58,35 +51,49 @@ use crate::Symbol;
 ///
 /// ```compile_fail
 /// use espresso_logic::bdd::{BddBuilder, Brand};
-/// fn mix<B1: Brand, B2: Brand>(c1: &BddBuilder<B1>, c2: &BddBuilder<B2>) {
+/// use espresso_logic::bdd::__macro_support::LocalCell;
+/// fn mix<B1: Brand, B2: Brand>(c1: &BddBuilder<B1, LocalCell>, c2: &BddBuilder<B2, LocalCell>) {
 ///     let a = c1.var("a");
 ///     let b = c2.var("b");
 ///     let _ = a & b; // error: distinct brands `B1` and `B2` do not unify
 /// }
 /// ```
-pub struct Bdd<'builder, B: Brand> {
-    mgr: &'builder B::Cell,
+pub struct Bdd<B: Brand, C: ManagerCell> {
+    cell: C,
     root: NodeId,
     _brand: PhantomData<fn() -> B>,
 }
 
-impl<B: Brand> Clone for Bdd<'_, B> {
+impl<B: Brand, C: ManagerCell> Clone for Bdd<B, C> {
     fn clone(&self) -> Self {
-        *self
+        Bdd {
+            cell: self.cell.clone(),
+            root: self.root,
+            _brand: PhantomData,
+        }
     }
 }
 
-impl<B: Brand> Copy for Bdd<'_, B> {}
-
-impl<'builder, B: Brand> Bdd<'builder, B> {
-    /// Wrap a raw root node into a handle bound to `mgr`. Crate-internal: only the builder and the
-    /// operator impls mint handles, so every `Bdd` is guaranteed to denote a node in `mgr`.
-    pub(super) fn from_root(mgr: &'builder B::Cell, root: NodeId) -> Self {
+impl<B: Brand, C: ManagerCell> Bdd<B, C> {
+    /// Wrap a raw root node into a handle owning a refcounted clone of `cell`. Crate-internal: only the
+    /// builder and the operator impls mint handles, so every `Bdd` is guaranteed to denote a node in
+    /// `cell`'s manager.
+    pub(super) fn from_root(cell: &C, root: NodeId) -> Self {
         Bdd {
-            mgr,
+            cell: cell.clone(),
             root,
             _brand: PhantomData,
         }
+    }
+
+    /// Assert that two handles share one manager. A type-correct pair of handles came from the same
+    /// builder unless two builders happen to share a brand type (a clash); this catches that at runtime so
+    /// a mismatched pair never silently computes against the wrong manager.
+    fn assert_same_manager(&self, other: &Self) {
+        assert!(
+            self.cell.as_ptr() == other.cell.as_ptr(),
+            "BDD handles come from different managers (a brand clash); mixing them is a bug"
+        );
     }
 
     // ---- Boolean operations -------------------------------------------------------------------
@@ -94,36 +101,41 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// Logical AND of two handles: `self ∧ other`. Equivalent to the `&` operator.
     #[must_use]
     pub fn and(self, other: Self) -> Self {
-        let root = BddManager::ite(self.mgr, self.root, other.root, FALSE_NODE);
-        Self::from_root(self.mgr, root)
+        self.assert_same_manager(&other);
+        let root = BddManager::ite(&self.cell, self.root, other.root, FALSE_NODE);
+        Self::from_root(&self.cell, root)
     }
 
     /// Logical OR of two handles: `self ∨ other`. Equivalent to the `|` operator.
     #[must_use]
     pub fn or(self, other: Self) -> Self {
-        let root = BddManager::ite(self.mgr, self.root, TRUE_NODE, other.root);
-        Self::from_root(self.mgr, root)
+        self.assert_same_manager(&other);
+        let root = BddManager::ite(&self.cell, self.root, TRUE_NODE, other.root);
+        Self::from_root(&self.cell, root)
     }
 
     /// Logical XOR of two handles: `self ⊕ other`. Equivalent to the `^` operator.
     #[must_use]
     pub fn xor(self, other: Self) -> Self {
-        let root = BddManager::xor(self.mgr, self.root, other.root);
-        Self::from_root(self.mgr, root)
+        self.assert_same_manager(&other);
+        let root = BddManager::xor(&self.cell, self.root, other.root);
+        Self::from_root(&self.cell, root)
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
     #[must_use]
     pub fn complement(self) -> Self {
-        let root = BddManager::ite(self.mgr, self.root, FALSE_NODE, TRUE_NODE);
-        Self::from_root(self.mgr, root)
+        let root = BddManager::ite(&self.cell, self.root, FALSE_NODE, TRUE_NODE);
+        Self::from_root(&self.cell, root)
     }
 
     /// If-then-else: `if self then g else h`. The fundamental BDD operation the others derive from.
     #[must_use]
     pub fn ite(self, g: Self, h: Self) -> Self {
-        let root = BddManager::ite(self.mgr, self.root, g.root, h.root);
-        Self::from_root(self.mgr, root)
+        self.assert_same_manager(&g);
+        self.assert_same_manager(&h);
+        let root = BddManager::ite(&self.cell, self.root, g.root, h.root);
+        Self::from_root(&self.cell, root)
     }
 
     // ---- Shannon cofactor / quantification (requirement 1) ------------------------------------
@@ -134,26 +146,26 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// result. A name that is **not** a variable of this function leaves it unchanged (a no-op);
     /// restricting every support variable collapses the function to a constant.
     #[must_use]
-    pub fn restrict<S: AsRef<str>>(self, var: S, value: bool) -> Self {
+    pub fn restrict<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
         // Resolve the name without creating it: an absent variable yields `None` → no-op.
-        let var_id = self.mgr.read().var_id(var.as_ref());
+        let var_id = self.cell.read().var_id(var.as_ref());
         match var_id {
-            None => self,
+            None => self.clone(),
             Some(id) => {
-                let root = BddManager::restrict(self.mgr, self.root, id, value);
-                Self::from_root(self.mgr, root)
+                let root = BddManager::restrict(&self.cell, self.root, id, value);
+                Self::from_root(&self.cell, root)
             }
         }
     }
 
     /// Shannon cofactor by assignment — an alias of [`restrict`](Self::restrict).
     ///
-    /// In this BDD modelling the cofactor *by a single assignment* and `restrict` are the same
-    /// operation, so `cofactor` is provided as the conventional name; both substitute `var := value` and
-    /// reduce. For a multi-variable cofactor, chain `restrict`/`cofactor` calls (or use
-    /// [`forall`](Self::forall) / [`exists`](Self::exists) to quantify).
+    /// In this BDD modelling the cofactor *by a single assignment* and `restrict` are the same operation,
+    /// so `cofactor` is provided as the conventional name; both substitute `var := value` and reduce. For a
+    /// multi-variable cofactor, chain `restrict`/`cofactor` calls (or use [`forall`](Self::forall) /
+    /// [`exists`](Self::exists) to quantify).
     #[must_use]
-    pub fn cofactor<S: AsRef<str>>(self, var: S, value: bool) -> Self {
+    pub fn cofactor<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
         self.restrict(var, value)
     }
 
@@ -163,8 +175,8 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// the function contributes a no-op cofactor (`self & self == self`). Quantifying over no variables
     /// returns `self`.
     #[must_use]
-    pub fn forall<S: AsRef<str>>(self, vars: &[S]) -> Self {
-        let mut acc = self;
+    pub fn forall<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+        let mut acc = self.clone();
         for v in vars {
             let lo = acc.restrict(v.as_ref(), false);
             let hi = acc.restrict(v.as_ref(), true);
@@ -179,8 +191,8 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// the function contributes a no-op cofactor (`self | self == self`). Quantifying over no variables
     /// returns `self`.
     #[must_use]
-    pub fn exists<S: AsRef<str>>(self, vars: &[S]) -> Self {
-        let mut acc = self;
+    pub fn exists<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+        let mut acc = self.clone();
         for v in vars {
             let lo = acc.restrict(v.as_ref(), false);
             let hi = acc.restrict(v.as_ref(), true);
@@ -194,14 +206,14 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// Whether this function is the constant `true` (a tautology). O(1): the canonical root is the TRUE
     /// terminal.
     #[must_use]
-    pub fn is_tautology(self) -> bool {
+    pub fn is_tautology(&self) -> bool {
         self.root == TRUE_NODE
     }
 
     /// Whether this function is the constant `false` (a contradiction). O(1): the canonical root is the
     /// FALSE terminal.
     #[must_use]
-    pub fn is_contradiction(self) -> bool {
+    pub fn is_contradiction(&self) -> bool {
         self.root == FALSE_NODE
     }
 
@@ -209,16 +221,12 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
 
     /// Whether `self` and `other` denote the same Boolean function. O(1).
     ///
-    /// Sharing the lifetime `'builder` and brand `B` means both handles came from the same builder, hence
-    /// the same canonical manager, so equal functions have equal roots and this reduces to a root-id
-    /// comparison. (A `debug_assert!` confirms the two cells are physically the same.)
+    /// Sharing the brand `B` means both handles came from the same builder, hence the same canonical
+    /// manager, so equal functions have equal roots and this reduces to a root-id comparison. An assert
+    /// confirms the two cells are physically the same (a runtime backstop against a brand clash).
     #[must_use]
-    pub fn equivalent_to(self, other: Self) -> bool {
-        debug_assert_eq!(
-            self.mgr.as_ptr(),
-            other.mgr.as_ptr(),
-            "handles of the same brand+lifetime must share one manager"
-        );
+    pub fn equivalent_to(&self, other: &Self) -> bool {
+        self.assert_same_manager(other);
         self.root == other.root
     }
 
@@ -237,11 +245,11 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// [`BoolExpr`](crate::BoolExpr): build the expression into a builder with
     /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
     #[must_use]
-    pub fn evaluate<K>(self, assignment: &HashMap<K, bool>) -> bool
+    pub fn evaluate<K>(&self, assignment: &HashMap<K, bool>) -> bool
     where
         K: Borrow<str> + Eq + Hash,
     {
-        let mgr = self.mgr.read();
+        let mgr = self.cell.read();
         let mut node = self.root;
         loop {
             match mgr.get_node(node) {
@@ -264,10 +272,10 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
 
     /// The variables this function depends on, sorted alphabetically by name.
     #[must_use]
-    pub fn collect_variables(self) -> Vec<Symbol> {
+    pub fn collect_variables(&self) -> Vec<Symbol> {
         let mut ids = std::collections::HashSet::new();
         self.collect_var_ids(&mut ids);
-        let mgr = self.mgr.read();
+        let mgr = self.cell.read();
         let mut names: Vec<Symbol> = ids
             .into_iter()
             .filter_map(|id| mgr.var_name(id).cloned())
@@ -278,8 +286,8 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
 
     /// Number of distinct, reachable nodes in this BDD (including reached terminals).
     #[must_use]
-    pub fn node_count(self) -> usize {
-        let mgr = self.mgr.read();
+    pub fn node_count(&self) -> usize {
+        let mgr = self.cell.read();
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![self.root];
         let mut count = 0;
@@ -304,7 +312,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
 
     /// Number of distinct variables this function depends on.
     #[must_use]
-    pub fn var_count(self) -> usize {
+    pub fn var_count(&self) -> usize {
         let mut ids = std::collections::HashSet::new();
         self.collect_var_ids(&mut ids);
         ids.len()
@@ -313,8 +321,8 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// Collect every variable id reachable from the root (iterative DFS, deduplicated on nodes so a
     /// variable labelling several nodes is never missed). One read guard for the whole walk (NodeIds are
     /// stable).
-    fn collect_var_ids(self, vars: &mut std::collections::HashSet<usize>) {
-        let mgr = self.mgr.read();
+    fn collect_var_ids(&self, vars: &mut std::collections::HashSet<usize>) {
+        let mgr = self.cell.read();
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![self.root];
         while let Some(node) = stack.pop() {
@@ -342,10 +350,10 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// Each root→TRUE path becomes one input cube: a variable on the path is fixed `Some(true)` /
     /// `Some(false)`, a variable off the path is a don't-care (`None`). Variables are carried by name
     /// (`Symbol`); the output side is a single [`Anonymous`] column, asserted by every cube — i.e. the
-    /// cover is the **characteristic function** of this BDD over its support variables. The returned
-    /// cover is an `F` (ON-set) cover.
+    /// cover is the **characteristic function** of this BDD over its support variables. The returned cover
+    /// is an `F` (ON-set) cover.
     #[must_use]
-    pub fn to_cubes(self) -> Cover<Symbol, Anonymous> {
+    pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
         // Canonical, alphabetically sorted header shared by every extracted cube.
         let vars: Arc<[Symbol]> = self.collect_variables().into_iter().collect();
         let index: std::collections::HashMap<Symbol, usize> = vars
@@ -369,7 +377,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
         let mut cubes: Vec<Cube<Symbol, Anonymous>> = Vec::new();
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
-        let mgr = self.mgr.read();
+        let mgr = self.cell.read();
         let mut stack = vec![Work::Node(self.root)];
         while let Some(work) = stack.pop() {
             match work {
@@ -422,7 +430,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     ///
     /// Built from [`to_cubes`](Self::to_cubes) via [`Cover::maximize`].
     #[must_use]
-    pub fn to_minterms<S: AsRef<str>>(self, vars: &[S]) -> Vec<Minterm<Symbol>> {
+    pub fn to_minterms<S: AsRef<str>>(&self, vars: &[S]) -> Vec<Minterm<Symbol>> {
         let header: Vec<Symbol> = vars.iter().map(|s| Symbol::new(s.as_ref())).collect();
         let maximal = self.to_cubes().maximize(&header);
         let mut minterms: Vec<Minterm<Symbol>> =
@@ -443,7 +451,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
-    pub fn minimize(self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
+    pub fn minimize(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.to_cubes().minimize()
     }
@@ -458,7 +466,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     /// `BoolExpr` is syntactic; building it back here yields the same canonical handle, but its token
     /// structure reflects the factored cubes, not this BDD's node graph.
     #[must_use]
-    pub fn to_expr(self) -> BoolExpr {
+    pub fn to_expr(&self) -> BoolExpr {
         self.to_cubes()
             .to_expr_by_index(0)
             .expect("to_cubes yields a single-output cover, so output index 0 is in bounds")
@@ -466,29 +474,25 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
 }
 
 /// Canonical equality: two handles are equal iff they denote the same function (same root within the
-/// shared manager). Only handles of the same brand+lifetime are comparable, which guarantees they share
-/// a manager.
-impl<B: Brand> PartialEq for Bdd<'_, B> {
+/// shared manager). Only handles of the same brand are comparable, which guarantees they share a manager;
+/// the manager-pointer assert is a runtime backstop against a brand clash.
+impl<B: Brand, C: ManagerCell> PartialEq for Bdd<B, C> {
     fn eq(&self, other: &Self) -> bool {
-        debug_assert_eq!(
-            self.mgr.as_ptr(),
-            other.mgr.as_ptr(),
-            "handles of the same brand+lifetime must share one manager"
-        );
+        self.assert_same_manager(other);
         self.root == other.root
     }
 }
 
-impl<B: Brand> Eq for Bdd<'_, B> {}
+impl<B: Brand, C: ManagerCell> Eq for Bdd<B, C> {}
 
 /// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
 /// [`to_cubes`](Bdd::to_cubes) for that.
-impl<B: Brand> std::fmt::Debug for Bdd<'_, B> {
+impl<B: Brand, C: ManagerCell> std::fmt::Debug for Bdd<B, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bdd")
             .field("root", &self.root)
-            .field("mgr", &self.mgr.as_ptr())
+            .field("mgr", &self.cell.as_ptr())
             .finish()
     }
 }
@@ -496,34 +500,35 @@ impl<B: Brand> std::fmt::Debug for Bdd<'_, B> {
 // ---- Operator overloading -------------------------------------------------------------------------
 //
 // Each operator is implemented for every owned/borrowed combination so `a & b`, `&a & b`, `a & &b`, and
-// `&a & &b` all type-check. Handles are `Copy`, so a `&Bdd` is dereferenced cheaply. Mixing two
-// different builders is impossible: the operands must share `'builder` and `B`, and a mismatch is a compile
-// error (see the `Bdd` type docs for a `compile_fail` example).
+// `&a & &b` all type-check. The handle is `Clone` but not `Copy`, so a borrowed operand is cloned (a
+// refcount bump) before the by-value primitive consumes it; these reference variants are load-bearing for
+// reuse. Mixing two different builders is a compile error: the operands must share the brand `B` and cell
+// `C`, and a mismatch fails to type-check (see the `Bdd` type docs for a `compile_fail` example).
 
 macro_rules! bin_op {
     ($trait:ident, $method:ident, $call:ident) => {
-        impl<'builder, B: Brand> std::ops::$trait for Bdd<'builder, B> {
-            type Output = Bdd<'builder, B>;
-            fn $method(self, rhs: Bdd<'builder, B>) -> Bdd<'builder, B> {
+        impl<B: Brand, C: ManagerCell> std::ops::$trait for Bdd<B, C> {
+            type Output = Bdd<B, C>;
+            fn $method(self, rhs: Bdd<B, C>) -> Bdd<B, C> {
                 Bdd::$call(self, rhs)
             }
         }
-        impl<'builder, B: Brand> std::ops::$trait<&Bdd<'builder, B>> for Bdd<'builder, B> {
-            type Output = Bdd<'builder, B>;
-            fn $method(self, rhs: &Bdd<'builder, B>) -> Bdd<'builder, B> {
-                Bdd::$call(self, *rhs)
+        impl<B: Brand, C: ManagerCell> std::ops::$trait<&Bdd<B, C>> for Bdd<B, C> {
+            type Output = Bdd<B, C>;
+            fn $method(self, rhs: &Bdd<B, C>) -> Bdd<B, C> {
+                Bdd::$call(self, rhs.clone())
             }
         }
-        impl<'builder, B: Brand> std::ops::$trait<Bdd<'builder, B>> for &Bdd<'builder, B> {
-            type Output = Bdd<'builder, B>;
-            fn $method(self, rhs: Bdd<'builder, B>) -> Bdd<'builder, B> {
-                Bdd::$call(*self, rhs)
+        impl<B: Brand, C: ManagerCell> std::ops::$trait<Bdd<B, C>> for &Bdd<B, C> {
+            type Output = Bdd<B, C>;
+            fn $method(self, rhs: Bdd<B, C>) -> Bdd<B, C> {
+                Bdd::$call(self.clone(), rhs)
             }
         }
-        impl<'builder, B: Brand> std::ops::$trait<&Bdd<'builder, B>> for &Bdd<'builder, B> {
-            type Output = Bdd<'builder, B>;
-            fn $method(self, rhs: &Bdd<'builder, B>) -> Bdd<'builder, B> {
-                Bdd::$call(*self, *rhs)
+        impl<B: Brand, C: ManagerCell> std::ops::$trait<&Bdd<B, C>> for &Bdd<B, C> {
+            type Output = Bdd<B, C>;
+            fn $method(self, rhs: &Bdd<B, C>) -> Bdd<B, C> {
+                Bdd::$call(self.clone(), rhs.clone())
             }
         }
     };
@@ -533,26 +538,26 @@ bin_op!(BitAnd, bitand, and);
 bin_op!(BitOr, bitor, or);
 bin_op!(BitXor, bitxor, xor);
 
-impl<'builder, B: Brand> std::ops::Not for Bdd<'builder, B> {
-    type Output = Bdd<'builder, B>;
-    fn not(self) -> Bdd<'builder, B> {
+impl<B: Brand, C: ManagerCell> std::ops::Not for Bdd<B, C> {
+    type Output = Bdd<B, C>;
+    fn not(self) -> Bdd<B, C> {
         Bdd::complement(self)
     }
 }
 
-impl<'builder, B: Brand> std::ops::Not for &Bdd<'builder, B> {
-    type Output = Bdd<'builder, B>;
-    fn not(self) -> Bdd<'builder, B> {
-        Bdd::complement(*self)
+impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
+    type Output = Bdd<B, C>;
+    fn not(self) -> Bdd<B, C> {
+        Bdd::complement(self.clone())
     }
 }
 
 /// The variables a [`Bdd`] depends on as a `BTreeSet` (a canonical-order convenience over
 /// [`collect_variables`](Bdd::collect_variables)).
-impl<B: Brand> Bdd<'_, B> {
+impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// The variables this function depends on, as a `BTreeSet<Symbol>` (canonical iteration order).
     #[must_use]
-    pub fn variables(self) -> BTreeSet<Symbol> {
+    pub fn variables(&self) -> BTreeSet<Symbol> {
         self.collect_variables().into_iter().collect()
     }
 }
@@ -579,7 +584,7 @@ pub enum BddNode<'a, T> {
     },
 }
 
-impl<'builder, B: Brand> Bdd<'builder, B> {
+impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Fold the decision diagram bottom-up, combining each node's children results with `f`.
     ///
     /// Walks the BDD **as a BDD**: `f` sees a [`BddNode::Terminal`] for each terminal and a
@@ -591,7 +596,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     ///
     /// For a fold over a syntactic expression's And/Or/Xor/Not structure, see
     /// [`BoolExpr::fold`](crate::BoolExpr::fold).
-    pub fn fold<T, F>(self, f: F) -> T
+    pub fn fold<T, F>(&self, f: F) -> T
     where
         F: Fn(BddNode<'_, T>) -> T + Copy,
         T: Clone,
@@ -600,7 +605,7 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
             Visit(NodeId),
             Combine(NodeId),
         }
-        let mgr = self.mgr.read();
+        let mgr = self.cell.read();
         let mut memo: HashMap<NodeId, T> = HashMap::new();
         let mut stack = vec![Work::Visit(self.root)];
         while let Some(work) = stack.pop() {
@@ -674,16 +679,16 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
     ///
     /// [`BddNode<()>`]: BddNode
     /// [`BddNode<T>`]: BddNode
-    pub fn fold_with_context<C, T, D, G>(self, root_context: C, descend: D, combine: G) -> T
+    pub fn fold_with_context<Ctx, T, D, G>(&self, root_context: Ctx, descend: D, combine: G) -> T
     where
-        D: Fn(BddNode<'_, ()>, &C) -> (C, C),
-        G: Fn(BddNode<'_, T>, C) -> T,
+        D: Fn(BddNode<'_, ()>, &Ctx) -> (Ctx, Ctx),
+        G: Fn(BddNode<'_, T>, Ctx) -> T,
     {
-        enum Work<C> {
-            Enter(NodeId, C),
-            Combine(NodeId, C),
+        enum Work<Ctx> {
+            Enter(NodeId, Ctx),
+            Combine(NodeId, Ctx),
         }
-        let mgr = self.mgr.read();
+        let mgr = self.cell.read();
         let mut work = vec![Work::Enter(self.root, root_context)];
         let mut results: Vec<T> = Vec::new();
         while let Some(frame) = work.pop() {
@@ -733,8 +738,6 @@ impl<'builder, B: Brand> Bdd<'builder, B> {
                 }
             }
         }
-        results
-            .pop()
-            .expect("fold_with_context produced a result")
+        results.pop().expect("fold_with_context produced a result")
     }
 }
