@@ -6,7 +6,7 @@
 //! - Serialize covers with labels back to PLA format
 //! - Use Cover with automatically named variables
 
-use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter, PlaCover, Symbol};
+use espresso_logic::{expr, Cover, CoverType, PLAWriter, PlaCover, Symbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Variable Labels Example ===\n");
@@ -87,12 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nExample 3: Cover with named variables from expressions");
     println!("-------------------------------------------------------");
 
-    let x = BoolExpr::var("x");
-    let y = BoolExpr::var("y");
-    let z = BoolExpr::var("z");
-
     // Create expression: (x AND y) OR (y AND z)
-    let expr = x.and(&y).or(&y.and(&z));
+    let expr = expr!("x" & "y" | "y" & "z");
     let mut expr_cover = Cover::new(CoverType::F);
     expr_cover.add_expr(&expr, "output").unwrap();
 

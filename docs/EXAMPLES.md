@@ -18,21 +18,22 @@ This guide provides examples for using espresso-logic across its two layers: the
 
 ### Building expressions
 
-`BoolExpr` is an owned value composed with the bitwise operators `&`, `|`, `^`, `!`:
+`BoolExpr` is an owned value. Compose it with the [`expr!`](crate::expr) macro — infix syntax
+where string literals are fresh variables (`*`/`&` AND, `+`/`|` OR, `^` XOR, `~`/`!` NOT):
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::expr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
-let c = BoolExpr::var("c");
-
-let xor = &a ^ &b;
-let sop = (&a & &b) | (!&a & &c);
+let xor = expr!("a" ^ "b");
+let sop = expr!("a" & "b" | !"a" & "c");
 
 println!("{xor}");
 println!("{sop}");
 ```
+
+`expr!` is sugar for [`BoolExpr::build`](crate::BoolExpr::build), the closure builder it lowers
+to. Use `build` directly when construction is data-driven (looping or folding a runtime set of
+variables); see [Boolean Expression API](BOOLEAN_EXPRESSIONS.md) for that comparison.
 
 ### Parsing expressions
 
@@ -57,9 +58,9 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 builder and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, expr, Minterm, Symbol, Symbols};
 
-let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+let expr = expr!("a" & "b" | !"a");
 let builder = bdd_builder!();
 let f = builder.build(&expr);
 
@@ -89,24 +90,21 @@ manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-s
 ### Construction and operations
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr};
+use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
 let builder = bdd_builder!();
 
-let a = builder.var("a");
-let b = builder.var("b");
-let c = builder.var("c");
+// Compose without `.clone()` in a scope: `ScopedBdd` handles are Copy, so an operand is reused for free.
+let f = builder.scope(|s| {
+    let a = s.var("a");
+    (a & s.var("b")) | (!a & s.var("c"))
+});
 
-// Handles are Clone (a refcount bump), not Copy; operators work by value and by reference.
-let f = (a.clone() & b) | (!a & c);
-
-// Build from a BoolExpr or parse directly into the builder.
-let g = builder.build(&BoolExpr::parse("a & b | !a & c")?);
-let h = builder.parse("a & b | !a & c")?;
+// Or parse the function straight into the builder.
+let g = builder.parse("a & b | !a & c")?;
 
 assert!(f.equivalent_to(&g));
-assert!(f.equivalent_to(&h));
 # Ok(())
 # }
 ```
@@ -295,10 +293,9 @@ let deactivation = builder.parse(
    | !a & !b & !c & !d & e",
 )?;
 
-let q = builder.var("q");
-
-// Next-state function: set on activation, hold while not deactivating.
-let next_q = (activation.clone() | q) & !deactivation.clone();
+// Next-state function: set on activation, hold while not deactivating. Compose in a scope, lifting the
+// already-built activation/deactivation handles in (a zero-cost re-view) — no `.clone()`.
+let next_q = builder.scope(|s| (s.lift(&activation) | s.var("q")) & !s.lift(&deactivation));
 
 let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&activation, "activation")?;
@@ -499,6 +496,8 @@ cargo run --example espresso_direct_api
 [`BoolExpr`]: crate::BoolExpr
 [`Bdd`]: crate::bdd::Bdd
 [`BddBuilder`]: crate::bdd::BddBuilder
+[`BddBuilder::scope`]: crate::bdd::BddBuilder::scope
+[`Scope::lift`]: crate::bdd::Scope::lift
 [`Cover`]: crate::Cover
 [`Cover::add_expr`]: crate::Cover::add_expr
 [`bdd_builder!`]: crate::bdd_builder

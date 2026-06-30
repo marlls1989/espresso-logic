@@ -124,12 +124,10 @@ impl Cover<Symbol, Symbol> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType};
+    /// use espresso_logic::{Cover, CoverType, expr};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::var("a");
-    /// let b = BoolExpr::var("b");
-    /// let expr = a.and(&b);
+    /// let expr = expr!("a" & "b");
     ///
     /// // Add expression to cover
     /// cover.add_expr(&expr, "output1").unwrap();
@@ -137,7 +135,7 @@ impl Cover<Symbol, Symbol> {
     /// assert_eq!(cover.num_outputs(), 1);
     ///
     /// // Add another expression as a second output
-    /// let expr2 = b.or(&a);
+    /// let expr2 = expr!("b" | "a");
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
     pub fn add_expr<S: AsRef<str>>(

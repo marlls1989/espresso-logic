@@ -37,6 +37,41 @@ let f = BoolExpr::constant(false);
 Variable names can be any string: a Rust-style identifier, a multi-character name such as
 `"clk_enable"`, or any other `&str`. Names are case-sensitive, so `"A"` and `"a"` are distinct.
 
+### Composing with `expr!`
+
+The recommended way to compose an expression is the [`expr!`] macro — infix Boolean syntax, where a
+string literal is a fresh variable, a bare identifier splices an existing `BoolExpr` in scope, and
+`0`/`1` are constants:
+
+```rust
+use espresso_logic::{expr, BoolExpr};
+
+// String literals are fresh variables. `&`/`*` AND, `|`/`+` OR, `^` XOR, `!`/`~` NOT.
+let xor = expr!("a" & !"b" | !"a" & "b");
+
+// A bare identifier grafts an existing BoolExpr; `0`/`1` are constants.
+let enable = BoolExpr::var("enable");
+let gated = expr!(enable & "data" | 0);
+```
+
+`expr!` lowers to a single [`BoolExpr::build`] call — it is sugar for the closure builder. `build`
+takes a closure over an auxiliary builder whose handles are `Copy` and compose with `&`/`|`/`^`/`!`,
+so the whole expression is assembled and serialised in one pass:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let f = BoolExpr::build(|b| {
+    let a = b.var("a");
+    let c = b.var("c");
+    (a ^ b.var("b")) & !c
+});
+assert_eq!(f, BoolExpr::parse("(a ^ b) & !c").unwrap());
+```
+
+Use `expr!` for a literal expression and `build` when construction is data-driven — see
+[Building from data](#building-from-data).
+
 ### Composing with operators
 
 `BoolExpr` composes through the bitwise operators: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT). Each is
@@ -71,8 +106,9 @@ let xor = a.xor(&b);
 let not = a.not();
 ```
 
-Composition concatenates token streams; the result is always a new syntactic expression, never a
-canonical form.
+Composition concatenates token streams: each operator reallocates and copies, so a long chain is
+O(n²). The result is always a new syntactic expression, never a canonical form. Prefer `expr!` or
+[`BoolExpr::build`] (above) for anything beyond a couple of terms — they assemble in a single pass.
 
 ### Parsing from text
 
@@ -154,11 +190,11 @@ the fixed variables; [`Bdd::evaluate`] restricts the function by each fixed vari
 therefore always yields `Ok`:
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, Minterm, Symbol, Symbols};
 
-let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
 let builder = bdd_builder!();
-let f = builder.build(&expr);
+// The expression is only needed as a function here, so build the BDD directly.
+let f = builder.parse("a & b | !a").unwrap();
 
 let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
 
@@ -207,6 +243,44 @@ assert_ne!(a.clone() & b.clone(), a.clone() | b.clone()); // different operator
 `a & b` and `b & a` denote the same Boolean function but are different `BoolExpr` values. For logical
 equality, build both into the BDD layer and use [`Bdd::equivalent_to`].
 
+### Building from data
+
+`expr!`'s syntax is fixed at the call site. When the variables come from data — a runtime collection
+to fold into an AND/OR tree — use [`BoolExpr::build`], whose closure is ordinary Rust:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let names = ["a", "b", "c", "d"];
+let conj = BoolExpr::build(|b| {
+    names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap()
+});
+assert_eq!(format!("{conj}"), "a & b & c & d");
+```
+
+The same fold runs on the [`Bdd`] layer, and for the *function* it is the more efficient tool. A
+builder's handles are `Clone` and canonicalise as they combine, so the fold produces a deduplicated,
+canonical `Bdd`: shared subfunctions are merged, [`equivalent_to`](Bdd::equivalent_to) is O(1), and
+repeated combination is cheaper than carrying syntax around.
+
+```rust
+use espresso_logic::bdd_builder;
+
+let names = ["a", "b", "c", "d"];
+let builder = bdd_builder!();
+let conj = names.iter().map(|n| builder.var(*n)).reduce(|x, y| x & y).unwrap();
+
+// Canonical: a fold in the opposite order is the same function.
+let other = names.iter().rev().map(|n| builder.var(*n)).reduce(|x, y| x & y).unwrap();
+assert!(conj.equivalent_to(&other));
+```
+
+The two results differ in kind. `BoolExpr::build` keeps the *syntax* (`a & b & c & d`, exactly as
+folded) — reach for it to display, persist, or minimise the expression as written. The BDD fold
+yields the canonical *function* and discards the original syntax — reach for it when the question is
+about the Boolean function (equivalence, evaluation) rather than its text. The [`Bdd`] layer is
+detailed next.
+
 ## The `Bdd` layer
 
 ### Contexts
@@ -224,6 +298,22 @@ let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b;            // handles are Clone (a refcount bump), not Copy
 assert!(f.equivalent_to(&(builder.var("a") & builder.var("b"))));
+```
+
+A handle keeps its manager alive, so it can outlive the builder. Recover a builder onto the same
+manager — and the same brand — with [`Bdd::builder`]:
+
+```rust
+use espresso_logic::bdd_builder;
+
+// Build a handle, then drop the builder that made it.
+let a = {
+    let builder = bdd_builder!();
+    builder.var("a")
+};
+// Recover a builder onto the same manager and keep building; equal functions are the identical handle.
+let builder = a.builder();
+assert!(builder.var("a").equivalent_to(&a));
 ```
 
 An optional readable brand name appears in mismatch diagnostics; each call still mints a distinct
@@ -256,6 +346,19 @@ let parsed = builder.parse("a & b")?;     // parse and build in one step
 assert!(from_expr.equivalent_to(&parsed));
 # Ok(())
 # }
+```
+
+For allocation-free composition, [`BddBuilder::scope`] hands a closure a [`Scope`] of `Copy`,
+by-reference [`ScopedBdd`] handles: the operators compose them in place with no `.clone()`, and only the
+owned [`Bdd`] for the result leaves the closure. [`Scope::lift`] splices an existing owned handle in.
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+// (a ^ b) & !c, composed from Copy handles — no `.clone()`, an operand may be reused for free.
+let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
 ```
 
 ### Operations
@@ -530,16 +633,18 @@ assert!(xnor.equivalent_to(&((a.clone() & b.clone()) | (!a & !b))));
 ### Majority function
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr};
+use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let builder = bdd_builder!();
-let a = builder.var("a");
-let b = builder.var("b");
-let c = builder.var("c");
-
-let majority = (a.clone() & b.clone()) | (b & c.clone()) | (a & c);
-let parsed = builder.build(&BoolExpr::parse("a & b | b & c | a & c")?);
+// Compose in a scope: the handles are Copy, so each variable is named twice with no `.clone()`.
+let majority = builder.scope(|s| {
+    let a = s.var("a");
+    let b = s.var("b");
+    let c = s.var("c");
+    (a & b) | (b & c) | (a & c)
+});
+let parsed = builder.parse("a & b | b & c | a & c")?;
 assert!(majority.equivalent_to(&parsed));
 # Ok(())
 # }
@@ -609,7 +714,12 @@ match cover.minimize() {
 [`Bdd::to_minterms`]: crate::bdd::Bdd::to_minterms
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
+[`Bdd::builder`]: crate::bdd::Bdd::builder
 [`BddBuilder`]: crate::bdd::BddBuilder
+[`BddBuilder::scope`]: crate::bdd::BddBuilder::scope
+[`Scope`]: crate::bdd::Scope
+[`Scope::lift`]: crate::bdd::Scope::lift
+[`ScopedBdd`]: crate::bdd::ScopedBdd
 [`Cover`]: crate::Cover
 [`Minterm`]: crate::Minterm
 [`Cover::add_bdd`]: crate::Cover::add_bdd

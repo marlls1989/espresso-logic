@@ -134,11 +134,9 @@ impl BoolExpr {
     /// Count the number of operations in an expression:
     ///
     /// ```
-    /// use espresso_logic::{BoolExpr, ExprNode};
+    /// use espresso_logic::{expr, ExprNode};
     ///
-    /// let a = BoolExpr::var("a");
-    /// let b = BoolExpr::var("b");
-    /// let expr = a.and(&b);
+    /// let expr = expr!("a" & "b");
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
@@ -187,11 +185,9 @@ impl BoolExpr {
     /// Track depth top-down and take the maximum bottom-up:
     ///
     /// ```
-    /// use espresso_logic::{BoolExpr, ExprNode};
+    /// use espresso_logic::{expr, ExprNode};
     ///
-    /// let a = BoolExpr::var("a");
-    /// let b = BoolExpr::var("b");
-    /// let expr = a.and(&b).not();
+    /// let expr = expr!(!("a" & "b"));
     ///
     /// let max_depth = expr.fold_with_context(
     ///     0,
@@ -213,7 +209,7 @@ impl BoolExpr {
     /// `combine` turns an `And` under negation into an `Or` (and vice versa):
     ///
     /// ```
-    /// use espresso_logic::{Symbol, BoolExpr, ExprNode};
+    /// use espresso_logic::{Symbol, BoolExpr, ExprNode, expr};
     /// use std::collections::BTreeMap;
     ///
     /// // Lower an expression to a (very naive) DNF: a list of cubes, each a map of literal->polarity.
@@ -258,11 +254,9 @@ impl BoolExpr {
     ///     )
     /// }
     ///
-    /// let a = BoolExpr::var("a");
-    /// let b = BoolExpr::var("b");
     /// // ~(a*b) is satisfiable, so its DNF has at least one cube. (The exact cube list depends on
     /// // the canonical form the fold walks, so we only check it is non-empty here.)
-    /// let dnf = to_dnf_naive(&a.and(&b).not());
+    /// let dnf = to_dnf_naive(&expr!(!("a" & "b")));
     /// assert!(!dnf.is_empty());
     /// ```
     ///

@@ -126,11 +126,11 @@ fn restrict_acceptance_table() {
 
 #[test]
 fn evaluate_matches_truth_table() {
-    use crate::BoolExpr;
+    use crate::expr;
 
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     // f = a & b | !c.
-    let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
+    let expr = expr!("a" & "b" | !"c");
     let f = builder.build(&expr);
 
     for mask in 0..8u32 {
@@ -752,6 +752,139 @@ fn sync_context_shared_by_reference_across_threads() {
     let _ = t2.join().unwrap();
 }
 
+// ---- recovering the builder from a handle ---------------------------------------------------------
+
+/// `Bdd::builder` recovers a builder onto the *same* manager, even after the original builder is
+/// dropped: handles it mints share the brand and manager, so they combine with the stored handle (no
+/// `assert_same_manager` panic) and a rebuilt function is canonically equal to the original.
+#[test]
+fn builder_recovers_the_same_manager() {
+    // Build a handle, then drop the builder that minted it.
+    let a = {
+        let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+        builder.var("a")
+    };
+
+    // Recover a builder onto the same manager and derive further handles.
+    let builder = a.builder();
+    let b = builder.var("b");
+
+    // Combining the recovered builder's handle with the stored one type-checks and computes.
+    let f = &a & &b;
+    assert!(f.equivalent_to(&builder.parse("a & b").unwrap()));
+    // And the recovered builder builds `a` to the very same canonical handle as the stored one.
+    assert!(builder.var("a").equivalent_to(&a));
+}
+
+/// The same round trip over the `SyncCell` backend.
+#[test]
+fn builder_recovers_the_same_manager_sync() {
+    let a = {
+        let builder: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+        builder.var("a")
+    };
+
+    let builder = a.builder();
+    let b = builder.var("b");
+
+    assert!((&a & &b).equivalent_to(&builder.parse("a & b").unwrap()));
+    assert!(builder.var("a").equivalent_to(&a));
+}
+
+// ---- scoped, by-reference builder -----------------------------------------------------------------
+
+/// `BddBuilder::scope` composes `Copy`, by-reference handles and returns the owned root, which equals the
+/// same function built with the owned operators.
+#[test]
+fn scope_composes_without_clone() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // (a ^ b) & !c, composed from Copy handles — no `.clone()`, an operand named twice for free.
+    let f = builder.scope(|s| {
+        let a = s.var("a");
+        (a ^ s.var("b")) & !s.var("c")
+    });
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    assert!(f.equivalent_to(&((a ^ b) & !c)));
+}
+
+/// The owned `Bdd` returned by `scope` shares the builder's brand and manager, so it combines with
+/// further handles the builder mints.
+#[test]
+fn scope_returns_interoperable_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let f = builder.scope(|s| s.var("a") & s.var("b"));
+    let g = builder.var("c");
+    // Combining the scope's result with a fresh owned handle type-checks and computes.
+    let h = &f | &g;
+    assert!(h.equivalent_to(&builder.parse("(a & b) | c").unwrap()));
+}
+
+/// `Scope::lift` splices an existing owned `Bdd` into the scope; the result equals composing that handle
+/// directly.
+#[test]
+fn scope_lift_round_trips() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let lifted = builder.scope(|s| s.lift(&a) & s.var("b"));
+    assert!(lifted.equivalent_to(&(a & builder.var("b"))));
+}
+
+/// `Scope::build` / `Scope::parse` agree with the owned `BddBuilder::build` / `BddBuilder::parse`.
+#[test]
+fn scope_build_and_parse_agree_with_owned() {
+    use crate::BoolExpr;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let expr = BoolExpr::parse("(a | b) & !c").unwrap();
+    let built = builder.scope(|s| s.build(&expr));
+    let parsed = builder.scope(|s| s.parse("(a | b) & !c").unwrap());
+    assert!(built.equivalent_to(&builder.build(&expr)));
+    assert!(parsed.equivalent_to(&built));
+}
+
+/// The same round trip over the `SyncCell` backend.
+#[test]
+fn scope_composes_on_sync_cell() {
+    let builder: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+    assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
+}
+
+/// `ScopedBdd`'s `|` operator and `Scope::constant` compose directly inside a closure: `a | false == a`
+/// and `a | true` is a tautology.
+#[test]
+fn scope_or_and_constant_compose() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // `|` between two scoped handles.
+    let or = builder.scope(|s| s.var("a") | s.var("b"));
+    assert!(or.equivalent_to(&builder.parse("a | b").unwrap()));
+    // `s.constant(false)` is the OR identity; `s.constant(true)` saturates.
+    let with_false = builder.scope(|s| s.var("a") | s.constant(false));
+    assert!(with_false.equivalent_to(&builder.var("a")));
+    let with_true = builder.scope(|s| s.var("a") | s.constant(true));
+    assert!(with_true.is_tautology());
+}
+
+/// A `ScopedBdd` is `Copy`, so an operand can be named twice with no `.clone()`: `a | !a` is a tautology
+/// and `a & !a` a contradiction, both reusing the single handle `a`.
+#[test]
+fn scope_operand_reused_without_clone() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    assert!(builder
+        .scope(|s| {
+            let a = s.var("a");
+            a | !a
+        })
+        .is_tautology());
+    assert!(builder
+        .scope(|s| {
+            let a = s.var("a");
+            a & !a
+        })
+        .is_contradiction());
+}
+
 // ---- minimize -------------------------------------------------------------------------------------
 
 #[test]
@@ -765,4 +898,32 @@ fn minimize_reduces_redundancy() {
     // The function still equals `a`.
     let rebuilt = builder.build_cover(&min);
     assert!(rebuilt.equivalent_to(&a));
+}
+
+// ---- Brand clash: the runtime same-manager backstop -----------------------------------------------
+//
+// `bdd_builder!` mints a brand per call *site*: the brand is a local `struct` defined once where the macro
+// expands. Wrapping one invocation in a closure and calling it twice therefore yields two builders with the
+// *same* brand type but *different* managers, whose handles type-check together. The always-on same-manager
+// assert is the only guard against then computing across the two managers; these tests build exactly that
+// clash and prove each assert fires (so removing the assert would let the bug through silently).
+
+#[test]
+#[should_panic(expected = "different managers")]
+fn owned_operator_across_clashing_brands_panics() {
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let two = make();
+    // One call site, so `one` and `two` share a brand type but own different managers: this type-checks,
+    // then trips the runtime backstop.
+    let _ = one.var("x") & two.var("x");
+}
+
+#[test]
+#[should_panic(expected = "different manager")]
+fn lift_across_clashing_brands_panics() {
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let foreign = make().var("x");
+    let _ = one.scope(|s| s.lift(&foreign));
 }

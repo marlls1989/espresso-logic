@@ -93,9 +93,9 @@ impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
 /// [`Cover::add_bdd`](crate::Cover::add_bdd), which share one manager across all of them.
 ///
 /// ```
-/// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};
+/// use espresso_logic::{Anonymous, Cover, Symbol, expr};
 ///
-/// let expr = BoolExpr::var("a") & BoolExpr::var("b");
+/// let expr = expr!("a" & "b");
 /// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```

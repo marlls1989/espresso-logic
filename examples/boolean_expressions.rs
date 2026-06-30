@@ -1,22 +1,22 @@
 //! Example: Boolean expression minimisation
 //!
 //! This example demonstrates how to construct boolean expressions with the
-//! bitwise operators, the method-based API, and string parsing, then minimise
-//! the resulting functions.
+//! `expr!` macro and with string parsing, then minimise the resulting
+//! functions. The `expr!` macro composes expressions directly: string-literal
+//! operands introduce fresh variables, bare identifiers graft existing
+//! `BoolExpr` values, and operators bind `()` > `!`/`~` > `*`/`&` > `^` >
+//! `+`/`|`. String parsing via `BoolExpr::parse` is the other entry point.
 
-use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Boolean Expression Examples ===\n");
 
-    // Example 1: Programmatic construction with the bitwise operators
-    println!("1. Programmatic Construction (using the bitwise operators):");
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-    let _c = BoolExpr::var("c");
+    // Example 1: Programmatic construction with the `expr!` macro
+    println!("1. Programmatic Construction (using the `expr!` macro):");
 
     // XOR function: a & !b | !a & b
-    let xor = (&a & !&b) | (!&a & &b);
+    let xor = expr!("a" & !"b" | !"a" & "b");
     println!("   XOR = a & !b | !a & b");
     println!("   Variables: {:?}", xor.variables());
     let mut xor_cover = Cover::new(CoverType::F);
@@ -53,10 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4. Minimisation Example:");
     println!("   Original: a & b | a & b & c (redundant term)");
 
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-    let c = BoolExpr::var("c");
-    let redundant = (&a & &b) | (&a & &b & &c);
+    let redundant = expr!("a" & "b" | "a" & "b" & "c");
 
     println!("   Before minimisation:");
     println!("      Variables: {:?}", redundant.variables());
@@ -72,9 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 5: XNOR function
     println!("5. XNOR Function (equivalence):");
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-    let xnor = (&a & &b) | (!&a & !&b);
+    let xnor = expr!("a" & "b" | !"a" & !"b");
 
     println!("   XNOR = a & b | !a & !b");
     println!("   Before minimise: {}", xnor);
@@ -89,13 +84,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 6: Three-variable function
     println!("6. Three-Variable Majority Function:");
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-    let c = BoolExpr::var("c");
-
     // Majority function: true if at least 2 of 3 inputs are true.
-    // The method-based API reads clearly for longer compositions.
-    let majority = a.and(&b).or(&b.and(&c)).or(&a.and(&c));
+    let majority = expr!("a" & "b" | "b" & "c" | "a" & "c");
     let mut majority_cover = Cover::new(CoverType::F);
     majority_cover.add_expr(&majority, "out")?;
 
@@ -109,9 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 7: Converting to PLA format
     println!("7. PLA Format Export:");
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-    let simple = a.and(&b);
+    let simple = expr!("a" & "b");
     let mut simple_cover = Cover::new(CoverType::F);
     simple_cover.add_expr(&simple, "out")?;
 
@@ -132,15 +120,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 9: De Morgan's laws in action
     println!("9. De Morgan's Laws:");
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
-
-    let demorgan1 = !(&a & &b);
+    let demorgan1 = expr!(!("a" & "b"));
     let mut cover1 = Cover::new(CoverType::F);
     cover1.add_expr(&demorgan1, "out")?;
     println!("   !(a & b) has {} variables", cover1.num_inputs());
 
-    let demorgan2 = !(&a | &b);
+    let demorgan2 = expr!(!("a" | "b"));
     let mut cover2 = Cover::new(CoverType::F);
     cover2.add_expr(&demorgan2, "out")?;
     println!("   !(a | b) has {} variables", cover2.num_inputs());

@@ -109,9 +109,9 @@ fn render(tokens: &[Token]) -> String {
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::BoolExpr;
+/// use espresso_logic::expr;
 ///
-/// let expr = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
+/// let expr = expr!("a" & "b" | "c");
 /// assert_eq!(format!("{:?}", expr), "a & b | c"); // no unnecessary parentheses
 /// ```
 impl fmt::Debug for BoolExpr {
@@ -126,9 +126,9 @@ impl fmt::Debug for BoolExpr {
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::BoolExpr;
+/// use espresso_logic::expr;
 ///
-/// let expr = BoolExpr::var("a") & BoolExpr::var("b");
+/// let expr = expr!("a" & "b");
 /// assert_eq!(format!("{}", expr), "a & b");
 /// ```
 impl fmt::Display for BoolExpr {

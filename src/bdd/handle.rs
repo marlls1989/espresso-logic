@@ -20,6 +20,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::brand::Brand;
+use super::builder::BddBuilder;
 use crate::cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
 };
@@ -87,6 +88,46 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         }
     }
 
+    /// The canonical root node this handle denotes. Crate-internal: only sibling BDD modules (e.g. the
+    /// scoped builder's [`lift`](super::scope::Scope::lift)) read it.
+    pub(super) fn root(&self) -> NodeId {
+        self.root
+    }
+
+    /// This handle's storage cell. Crate-internal: only sibling BDD modules read it (e.g. the scoped
+    /// builder's [`lift`](super::scope::Scope::lift), to assert same-manager identity).
+    pub(super) fn cell(&self) -> &C {
+        &self.cell
+    }
+
+    /// Recover a [`BddBuilder`] onto this handle's manager.
+    ///
+    /// The returned builder shares this handle's manager (a refcounted clone of the same cell) and its
+    /// brand, so handles it mints combine freely with `self`. This lets a stored `Bdd` outlive its
+    /// original builder yet still seed further construction in the same namespace.
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// // Build a handle, then drop the builder that made it.
+    /// let a = {
+    ///     let builder = bdd_builder!();
+    ///     builder.var("a")
+    /// };
+    ///
+    /// // Recover a builder onto the same manager and derive more handles.
+    /// let builder = a.builder();
+    /// let b = builder.var("b");
+    ///
+    /// // Handles from the recovered builder combine with the stored one.
+    /// let f = &a & &b;
+    /// assert!(f.equivalent_to(&(builder.parse("a & b").unwrap())));
+    /// ```
+    #[must_use]
+    pub fn builder(&self) -> BddBuilder<B, C> {
+        BddBuilder::from_cell(&self.cell)
+    }
+
     /// Assert that two handles share one manager. A type-correct pair of handles came from the same
     /// builder unless two builders happen to share a brand type (a clash); this catches that at runtime so
     /// a mismatched pair never silently computes against the wrong manager.
@@ -103,7 +144,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn and(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::ite(&self.cell, self.root, other.root, FALSE_NODE);
+        let root = super::encoding::and(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -111,7 +152,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn or(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::ite(&self.cell, self.root, TRUE_NODE, other.root);
+        let root = super::encoding::or(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -119,14 +160,14 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = BddManager::xor(&self.cell, self.root, other.root);
+        let root = super::encoding::xor(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
     #[must_use]
     pub fn complement(self) -> Self {
-        let root = BddManager::ite(&self.cell, self.root, FALSE_NODE, TRUE_NODE);
+        let root = super::encoding::not(&self.cell, self.root);
         Self::from_root(&self.cell, root)
     }
 

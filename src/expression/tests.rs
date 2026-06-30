@@ -6,6 +6,7 @@
 //! `BddBuilder` (whose `equivalent_to` is O(1) canonical).
 
 use super::BoolExpr;
+use crate::expr;
 use std::collections::HashSet;
 
 /// Whether two expressions denote the same Boolean function. `BoolExpr` equality is *syntactic*, so
@@ -119,7 +120,7 @@ fn fold_walks_the_token_structure_including_xor() {
     use super::ExprNode;
 
     // f = (a ^ b) | !c — counts each operator node; the fold must visit a real Xor node.
-    let expr = (BoolExpr::var("a") ^ BoolExpr::var("b")) | !BoolExpr::var("c");
+    let expr = expr!("a" ^ "b" | !"c");
 
     let (ops, xors) = expr.fold(|node: ExprNode<(usize, usize)>| match node {
         ExprNode::Variable(_) | ExprNode::Constant(_) => (0, 0),
@@ -176,6 +177,50 @@ fn from_str_works() {
     ));
 }
 
+/// Conformance: the `expr!` proc-macro and the `BoolExpr::parse` grammar are independent parsers (Rust
+/// tokens vs runtime text), but must agree. Each case asserts they build the **structurally identical**
+/// `BoolExpr` (equality is syntactic), pinning precedence, associativity, and every operator spelling so a
+/// future change to either parser that diverges is caught in CI.
+#[test]
+fn macro_and_parser_agree() {
+    macro_rules! same {
+        ($built:expr, $text:literal) => {{
+            let parsed = BoolExpr::parse($text).expect("parses");
+            assert_eq!($built, parsed, "expr! and parse disagree on `{}`", $text);
+        }};
+    }
+
+    // Precedence: AND binds tighter than XOR binds tighter than OR.
+    same!(expr!("a" | "b" & "c"), "a | b & c");
+    same!(expr!("a" ^ "b" & "c"), "a ^ b & c");
+    same!(expr!("a" | "b" ^ "c"), "a | b ^ c");
+    same!(expr!("a" | "b" & "c" ^ "d"), "a | b & c ^ d");
+
+    // Left-associativity of each binary operator.
+    same!(expr!("a" & "b" & "c"), "a & b & c");
+    same!(expr!("a" | "b" | "c"), "a | b | c");
+    same!(expr!("a" ^ "b" ^ "c"), "a ^ b ^ c");
+
+    // Parentheses override precedence.
+    same!(expr!(("a" | "b") & "c"), "(a | b) & c");
+    same!(expr!("a" & ("b" | "c")), "a & (b | c)");
+
+    // NOT binds tightest; double negation nests.
+    same!(expr!(!"a"), "!a");
+    same!(expr!(!!"a"), "!!a");
+    same!(expr!(!("a" & "b")), "!(a & b)");
+
+    // Constants.
+    same!(expr!("a" & 1), "a & 1");
+    same!(expr!("a" | 0), "a | 0");
+
+    // Every spelling: the macro's `*`/`+`/`~` build the same tree as the parser's `&`/`|`/`!`.
+    same!(expr!("a" * "b"), "a & b");
+    same!(expr!("a" + "b"), "a | b");
+    same!(expr!(~"a"), "!a");
+    same!(expr!(~"a" * "b" + "c"), "!a & b | c");
+}
+
 // ---- Display --------------------------------------------------------------------------------------
 
 #[test]
@@ -184,11 +229,11 @@ fn display_uses_canonical_spellings_minimal_parens() {
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
 
-    assert_eq!((&a & &b | &c).to_string(), "a & b | c");
-    assert_eq!(((&a | &b) & &c).to_string(), "(a | b) & c");
-    assert_eq!((!(&a & &b)).to_string(), "!(a & b)");
-    assert_eq!((!&a & &b).to_string(), "!a & b");
-    assert_eq!((&a ^ &b).to_string(), "a ^ b");
+    assert_eq!(expr!(a & b | c).to_string(), "a & b | c");
+    assert_eq!(expr!((a | b) & c).to_string(), "(a | b) & c");
+    assert_eq!(expr!(!(a & b)).to_string(), "!(a & b)");
+    assert_eq!(expr!(!a & b).to_string(), "!a & b");
+    assert_eq!(expr!(a ^ b).to_string(), "a ^ b");
     assert_eq!(BoolExpr::constant(true).to_string(), "1");
     assert_eq!(BoolExpr::constant(false).to_string(), "0");
 }
@@ -197,10 +242,10 @@ fn display_uses_canonical_spellings_minimal_parens() {
 fn display_reparses_to_equivalent() {
     // Display is syntactic, but parsing its output must recover an equivalent function.
     let exprs = [
-        BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("c"),
-        (BoolExpr::var("a") | BoolExpr::var("b")) & BoolExpr::var("c"),
-        BoolExpr::var("a") ^ BoolExpr::var("b") ^ BoolExpr::var("c"),
-        !(BoolExpr::var("a") & (BoolExpr::var("b") | BoolExpr::var("c"))),
+        expr!("a" & "b" | !"c"),
+        expr!(("a" | "b") & "c"),
+        expr!("a" ^ "b" ^ "c"),
+        expr!(!("a" & ("b" | "c"))),
     ];
     for expr in &exprs {
         let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
@@ -217,11 +262,11 @@ fn display_round_trips_right_nested_associative() {
     // re-parsing rebuilds the *same syntactic tree* — not merely an equivalent function. (`BoolExpr`
     // equality is structural.)
     let exprs = [
-        BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c")),
-        BoolExpr::var("a") | (BoolExpr::var("b") | BoolExpr::var("c")),
-        BoolExpr::var("a") ^ (BoolExpr::var("b") ^ BoolExpr::var("c")),
-        BoolExpr::var("a") & (BoolExpr::var("b") | BoolExpr::var("c")),
-        BoolExpr::var("a") | (BoolExpr::var("b") ^ BoolExpr::var("c")),
+        expr!("a" & ("b" & "c")),
+        expr!("a" | ("b" | "c")),
+        expr!("a" ^ ("b" ^ "c")),
+        expr!("a" & ("b" | "c")),
+        expr!("a" | ("b" ^ "c")),
     ];
     for expr in &exprs {
         let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
@@ -232,24 +277,60 @@ fn display_round_trips_right_nested_associative() {
     }
 
     // Minimal parentheses: the right-nested form keeps them, the left-nested form drops them.
-    assert_eq!(
-        (BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c"))).to_string(),
-        "a & (b & c)"
-    );
-    assert_eq!(
-        ((BoolExpr::var("a") & BoolExpr::var("b")) & BoolExpr::var("c")).to_string(),
-        "a & b & c"
-    );
+    assert_eq!(expr!("a" & ("b" & "c")).to_string(), "a & (b & c)");
+    assert_eq!(expr!(("a" & "b") & "c").to_string(), "a & b & c");
 }
 
 // ---- Syntactic variables --------------------------------------------------------------------------
 
 #[test]
 fn variables_are_syntactic() {
-    let f = BoolExpr::var("b") & (BoolExpr::var("a") | !BoolExpr::var("a"));
+    let f = expr!("b" & ("a" | !"a"));
     let vars: Vec<String> = f.variables().iter().map(|s| s.to_string()).collect();
     // Syntactic scan reports every occurring variable (a appears even though a | !a is a tautology).
     assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
+}
+
+// ---- Graft operands (the expr! splice form) -------------------------------------------------------
+
+#[test]
+fn graft_accepts_postfix_expressions() {
+    // A bare local, the original splice form.
+    let a = BoolExpr::var("a");
+    assert_eq!(expr!(a & "b"), a.clone() & BoolExpr::var("b"));
+
+    // A field access and a method call on it.
+    struct Gates {
+        set: BoolExpr,
+        reset: BoolExpr,
+    }
+    impl Gates {
+        fn enable(&self) -> BoolExpr {
+            self.set.clone() & self.reset.clone()
+        }
+    }
+    let g = Gates {
+        set: BoolExpr::var("s"),
+        reset: BoolExpr::var("r"),
+    };
+    assert_eq!(expr!(g.set | g.reset), g.set.clone() | g.reset.clone());
+    assert_eq!(expr!(g.enable() ^ "t"), g.enable() ^ BoolExpr::var("t"));
+
+    // A `::` path to a function call.
+    mod helpers {
+        use super::BoolExpr;
+        pub fn z() -> BoolExpr {
+            BoolExpr::var("z")
+        }
+    }
+    assert_eq!(expr!(helpers::z() | "w"), helpers::z() | BoolExpr::var("w"));
+
+    // Indexing into a slice of expressions.
+    let gates = [BoolExpr::var("x"), BoolExpr::var("y")];
+    assert_eq!(
+        expr!(gates[0] & gates[1]),
+        gates[0].clone() & gates[1].clone()
+    );
 }
 
 // ---- Bridge to the BDD layer ----------------------------------------------------------------------
@@ -257,7 +338,7 @@ fn variables_are_syntactic() {
 #[test]
 fn bdd_build_matches_parse() {
     let builder = crate::bdd_builder!();
-    let f = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
+    let f = expr!("a" & "b" | "c");
     let built = builder.build(&f);
     let parsed = builder.parse("a & b | c").unwrap();
     assert!(built.equivalent_to(&parsed));
@@ -267,15 +348,15 @@ fn bdd_build_matches_parse() {
 fn bdd_build_canonicalises_commutativity() {
     let builder = crate::bdd_builder!();
     // a & b and b & a are different BoolExpr values but the same Bdd.
-    let ab = builder.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
-    let ba = builder.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
+    let ab = builder.build(&expr!("a" & "b"));
+    let ba = builder.build(&expr!("b" & "a"));
     assert!(ab.equivalent_to(&ba));
 }
 
 #[test]
 fn to_expr_round_trips_semantically() {
     let builder = crate::bdd_builder!();
-    let f = (BoolExpr::var("a") & BoolExpr::var("b")) | (BoolExpr::var("a") & BoolExpr::var("c"));
+    let f = expr!(("a" & "b") | ("a" & "c"));
     let bdd = builder.build(&f);
     let recovered = bdd.to_expr();
     // to_expr is factored/syntactic, so compare semantically through the BDD layer.
@@ -285,7 +366,7 @@ fn to_expr_round_trips_semantically() {
 #[test]
 fn sync_context_build_works() {
     let builder = crate::sync_bdd_builder!();
-    let f = BoolExpr::var("a") ^ BoolExpr::var("b");
+    let f = expr!("a" ^ "b");
     assert!(builder
         .build(&f)
         .equivalent_to(&builder.parse("a ^ b").unwrap()));

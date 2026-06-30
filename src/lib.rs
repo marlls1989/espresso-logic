@@ -68,19 +68,34 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! [`BoolExpr`] is an owned, syntactic value, composed with the bitwise operators `&` (AND), `|` (OR),
-//! `^` (XOR), `!` (NOT), by value or by reference:
+//! [`BoolExpr`] is an owned, syntactic value. Compose it with the [`expr!`](crate::expr) macro,
+//! which reads as infix Boolean syntax — string literals are fresh variables, `!`/`~` is NOT,
+//! `*`/`&` AND, `^` XOR, `+`/`|` OR:
+//!
+//! ```
+//! use espresso_logic::expr;
+//!
+//! // XOR.
+//! let xor = expr!("a" & !"b" | !"a" & "b");
+//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! ```
+//!
+//! `expr!` is sugar for [`BoolExpr::build`], the closure builder it lowers to. Reach for `build`
+//! directly when construction is data-driven — looping or folding a runtime set of variables,
+//! which fixed macro syntax cannot express:
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! let a = BoolExpr::var("a");
-//! let b = BoolExpr::var("b");
-//!
-//! // XOR, built from the operators.
-//! let xor = (&a & !&b) | (!&a & &b);
-//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! let names = ["a", "b", "c"];
+//! let conj = BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
+//! println!("{conj}");  // a & b & c
 //! ```
+//!
+//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) and the equivalent
+//! [`and`](BoolExpr::and)/[`or`](BoolExpr::or)/[`xor`](BoolExpr::xor)/[`not`](BoolExpr::not)
+//! methods also compose `BoolExpr`s, but each operator reallocates the token stream, so
+//! `expr!`/`build` are preferred beyond a couple of terms.
 //!
 //! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
 //!
@@ -100,18 +115,22 @@
 //! [`bdd_builder!`](crate::bdd_builder):
 //!
 //! ```
-//! use espresso_logic::{bdd_builder, BoolExpr};
+//! use espresso_logic::bdd_builder;
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
 //! let builder = bdd_builder!();
 //! let a = builder.var("a");
 //! let b = builder.var("b");
 //!
-//! // Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
-//! assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
-//! assert!((a.clone() | !a.clone()).is_tautology());
+//! // Compose without `.clone()` in a `scope`: `ScopedBdd` handles are `Copy`. The BDD layer
+//! // canonicalises, so logical laws hold — `a & b` and `b & a` are the same function, and `a | !a`
+//! // (the handle reused, no clone) is a tautology.
+//! let ab = builder.scope(|s| s.var("a") & s.var("b"));
+//! let ba = builder.scope(|s| s.var("b") & s.var("a"));
+//! assert!(ab.equivalent_to(&ba));
+//! assert!(builder.scope(|s| { let a = s.var("a"); a | !a }).is_tautology());
 //!
-//! // Build a parsed expression into the same builder and compare functions.
+//! // A single by-value combination of owned handles needs no builder; compare against a parse.
 //! let parsed = builder.parse("a & b")?;
 //! assert!((a & b).equivalent_to(&parsed));
 //! # Ok(())
@@ -124,12 +143,10 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+//! use espresso_logic::{expr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let a = BoolExpr::var("a");
-//! let b = BoolExpr::var("b");
-//! let expr = a.and(&b).or(&a.and(&b.not()));
+//! let expr = expr!("a" & "b" | "a" & !"b");
 //!
 //! // Create cover and add expression
 //! let mut cover = Cover::new(CoverType::F);
@@ -341,6 +358,10 @@
 //! - [`doc::pla_format`] - PLA file format specification
 //! - [`doc::cli`] - Command-line tool documentation
 
+// Lets the `expr!` proc macro refer to this crate by its public name (`::espresso_logic::…`) from code
+// expanded inside the crate itself, not only from downstream crates.
+extern crate self as espresso_logic;
+
 // Public modules
 pub mod bdd;
 pub mod cover;
@@ -357,15 +378,63 @@ pub mod symbol;
 pub mod sys;
 
 // Re-export high-level public API
-pub use bdd::{Bdd, BddBuilder, BddNode, Brand, LocalCell, ManagerCell, SyncCell};
+pub use bdd::{
+    Bdd, BddBuilder, BddNode, Brand, LocalCell, ManagerCell, Scope, ScopedBdd, SyncCell,
+};
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-pub use expression::{BoolExpr, ExprNode};
+pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode};
 pub use symbol::Symbol;
+
+/// Build a [`BoolExpr`] from infix Boolean syntax.
+///
+/// `expr!(…)` produces an owned, syntactic [`BoolExpr`], composing through [`BoolExpr::build`] so a large
+/// expression is assembled cheaply. Obtain a [`Bdd`] from the result with `builder.build(&expr!(…))`.
+///
+/// # Operands
+///
+/// - an expression in scope — spliced in as an existing `BoolExpr`. This is a *postfix* expression: a bare
+///   identifier, but also a path (`mod::EXPR`), field access (`self.gate`), method/function call
+///   (`make_expr()`, `self.gate()`), or index (`gates[0]`). A non-`BoolExpr` operand is a type error at the
+///   splice. An operand needing a top-level binary operator must be bound to a local first;
+/// - `"x"` — a fresh variable named `x`;
+/// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
+///
+/// # Operators (highest to lowest precedence)
+///
+/// `( )` > `!` / `~` (NOT) > `*` / `&` (AND) > `^` (XOR) > `+` / `|` (OR).
+///
+/// ```
+/// use espresso_logic::{expr, BoolExpr};
+///
+/// let a = BoolExpr::var("a");
+/// let b = BoolExpr::var("b");
+/// assert_eq!(expr!(a & !b), a.clone() & !b.clone());          // splice existing expressions
+/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y")); // fresh variables
+///
+/// // Graft operands may be paths, field accesses, or calls — any postfix expression.
+/// struct Gates { reset: BoolExpr }
+/// let g = Gates { reset: BoolExpr::var("r") };
+/// fn make() -> BoolExpr { BoolExpr::var("m") }
+/// assert_eq!(expr!(g.reset | make()), g.reset.clone() | make());
+/// ```
+///
+/// Only `0` and `1` are valid integer constants; any other integer is rejected at compile time:
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(2);
+/// ```
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(256 & "x");
+/// ```
+pub use espresso_logic_macros::expr;
 
 /// Implement the four owned/borrowed combinations of a binary [`std::ops`] operator in terms of an
 /// inherent method with the signature `fn(&self, &Self) -> Self`.
@@ -418,12 +487,12 @@ pub(crate) use impl_binary_operator;
 ///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
-/// use espresso_logic::{bdd_builder, BoolExpr};
+/// use espresso_logic::bdd_builder;
 ///
 /// let builder = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a & b).equivalent_to(&builder.build(&BoolExpr::parse("a & b").unwrap())));
+/// assert!((a & b).equivalent_to(&builder.parse("a & b").unwrap()));
 /// ```
 #[macro_export]
 macro_rules! bdd_builder {
@@ -447,12 +516,12 @@ macro_rules! bdd_builder {
 /// two builders never mix (a compile error).
 ///
 /// ```
-/// use espresso_logic::{sync_bdd_builder, BoolExpr};
+/// use espresso_logic::sync_bdd_builder;
 ///
 /// let builder = sync_bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a | b).equivalent_to(&builder.build(&BoolExpr::parse("a | b").unwrap())));
+/// assert!((a | b).equivalent_to(&builder.parse("a | b").unwrap()));
 /// ```
 #[macro_export]
 macro_rules! sync_bdd_builder {

@@ -1,0 +1,17 @@
+[package]
+name = "espresso-logic-macros"
+version = "5.0.0"
+edition = "2021"
+authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
+description = "Procedural macros for espresso-logic"
+license = "MIT"
+repository = "https://github.com/marlls1989/espresso-logic"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "parsing", "proc-macro"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+proc-macro-crate = "3.0"

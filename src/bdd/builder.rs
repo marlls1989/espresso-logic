@@ -21,11 +21,11 @@ use std::marker::PhantomData;
 
 use super::brand::Brand;
 use super::handle::Bdd;
+use super::scope::{Scope, ScopedBdd};
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
 use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
-use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 use crate::Symbol;
 
@@ -60,6 +60,23 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
         }
     }
 
+    /// Build a builder onto an existing manager cell (a refcount bump). The recovered builder shares
+    /// the originating manager, so its handles interoperate with handles already minted from that
+    /// manager. Mirrors [`Bdd::from_root`](super::handle::Bdd) and backs
+    /// [`Bdd::builder`](crate::bdd::Bdd::builder).
+    pub(super) fn from_cell(cell: &C) -> Self {
+        BddBuilder {
+            cell: cell.clone(),
+            _brand: PhantomData,
+        }
+    }
+
+    /// This builder's storage cell. Crate-internal: the scoped builder ([`scope`](Self::scope)) reads it
+    /// to mint by-reference [`ScopedBdd`] handles.
+    pub(super) fn cell(&self) -> &C {
+        &self.cell
+    }
+
     /// A handle for the single variable `name`, creating it in this builder's variable ordering on first
     /// use.
     #[must_use]
@@ -92,29 +109,33 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     #[must_use]
     pub fn build_cover<I: StringLabel, O>(&self, cover: &Cover<I, O>) -> Bdd<B, C> {
         use crate::cover::CubeType;
-        let mut acc = self.constant(false);
-        for cube in cover.cubes() {
-            if cube.cube_type() != CubeType::F {
-                continue;
-            }
-            // Product term: AND of this cube's fixed literals (don't-cares skipped). A fully
-            // don't-care cube is the constant `true`.
-            let mut term = self.constant(true);
-            let labels = cube.inputs().vars();
-            for (label, value) in labels.iter().zip(cube.inputs().iter()) {
-                match value {
-                    Some(true) => {
-                        term = term & self.var(label.as_ref());
-                    }
-                    Some(false) => {
-                        term = term & !self.var(label.as_ref());
-                    }
-                    None => {}
+        // Composed inside a `scope`: the OR-of-products fold runs on `Copy`, by-reference handles, so the
+        // doubly-nested loop pays no per-operation refcount bump — only the returned root is materialised.
+        self.scope(|s| {
+            let mut acc = s.constant(false);
+            for cube in cover.cubes() {
+                if cube.cube_type() != CubeType::F {
+                    continue;
                 }
+                // Product term: AND of this cube's fixed literals (don't-cares skipped). A fully
+                // don't-care cube is the constant `true`.
+                let mut term = s.constant(true);
+                let labels = cube.inputs().vars();
+                for (label, value) in labels.iter().zip(cube.inputs().iter()) {
+                    match value {
+                        Some(true) => {
+                            term = term & s.var(label.as_ref());
+                        }
+                        Some(false) => {
+                            term = term & !s.var(label.as_ref());
+                        }
+                        None => {}
+                    }
+                }
+                acc = acc | term;
             }
-            acc = acc | term;
-        }
-        acc
+            acc
+        })
     }
 
     /// Build a [`Bdd`] handle from an owned, syntactic [`BoolExpr`].
@@ -125,17 +146,43 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// iteratively with an explicit value stack (no recursion), so an arbitrarily deep expression cannot
     /// overflow the call stack. The result is canonical, so two expressions denoting the same function
     /// build to the *same* handle.
+    ///
+    /// Composed inside a [`scope`](Self::scope) so the fold runs on `Copy`, by-reference handles (one
+    /// refcount bump for the returned root, not one per node); [`Scope::build`] does the postfix fold.
     #[must_use]
     pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
-        rpn::fold_postfix(
-            expr.tokens(),
-            |name| self.var(name.as_str()),
-            |value| self.constant(value),
-            |a| a.complement(),
-            |l, r| l.and(&r),
-            |l, r| l.or(&r),
-            |l, r| l.xor(&r),
-        )
+        self.scope(|s| s.build(expr))
+    }
+
+    /// Compose a [`Bdd`] through a [`Scope`] of `Copy`, by-reference handles, returning the owned root.
+    ///
+    /// The closure receives a [`Scope`] over this builder and returns the [`ScopedBdd`] for the result.
+    /// A [`ScopedBdd`] is a [`Copy`] handle — a node id plus a borrow of this builder's manager — so the
+    /// operators (`&`, `|`, `^`, `!`) compose handles in place with no `.clone()` at the call site, and an
+    /// operand can be named more than once without cloning. The handle is confined to the closure by an
+    /// invariant lifetime brand (it cannot escape or be mixed with another scope); only the owned
+    /// [`Bdd`] for the returned root leaves, carrying this builder's brand and manager so it interoperates
+    /// with every other handle the builder mints.
+    ///
+    /// This complements [`build`](Self::build): both produce a canonical handle in this builder, but
+    /// `scope` trades the owned `Bdd`'s refcount-bumped composition for cheaper, allocation-free
+    /// composition inside the closure. An existing owned [`Bdd`] is spliced in with [`Scope::lift`].
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// // (a ^ b) & !c, composed from Copy handles — no `.clone()`.
+    /// let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+    /// assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
+    /// ```
+    #[must_use]
+    pub fn scope<F>(&self, f: F) -> Bdd<B, C>
+    where
+        F: for<'s> FnOnce(Scope<'s, B, C>) -> ScopedBdd<'s, B, C>,
+    {
+        let root = f(Scope::new(self)).root();
+        Bdd::from_root(&self.cell, root)
     }
 
     /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this builder.
