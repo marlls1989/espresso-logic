@@ -110,7 +110,9 @@ impl BddManager {
     /// `VarId` without creating it (a name absent from the ordering yields `None`, which the cofactor /
     /// quantification primitives treat as a no-op).
     pub(crate) fn var_id(&self, name: &str) -> Option<VarId> {
-        self.var_to_id.get(&Symbol::from(name)).copied()
+        // `Symbol: Borrow<str>`, so the lookup borrows `name` directly rather than minting a throwaway
+        // `Symbol` (and locking the global intern pool for a long name) on every call.
+        self.var_to_id.get(name).copied()
     }
 
     /// Append `name` as a new variable (or return its id if already present). Caller holds the write lock.
@@ -326,11 +328,13 @@ impl BddManager {
     /// to `value` (a.k.a. *restrict*). Restricting a node that never tests `var` is a no-op and returns
     /// `node` unchanged.
     ///
-    /// Recursive substitute-and-reduce: at each decision node testing `var`, the matching child replaces
+    /// Iterative substitute-and-reduce: at each decision node testing `var`, the matching child replaces
     /// the node; at a node testing another variable, both children are restricted and re-interned with
-    /// [`make_node`](Self::make_node) (which preserves canonicity and applies the reduction rule). Each
-    /// recursion level reads the node's `(var, low, high)` under a **single short-lived shared borrow**,
-    /// drops it, recurses, and only then interns the rebuilt node via `make_node` — so no shared borrow
+    /// [`make_node`](Self::make_node) (which preserves canonicity and applies the reduction rule).
+    /// Evaluated with an explicit work-stack rather than recursion — in the same style as the iterative
+    /// [`ite`](Self::ite) and the BDD-layer fold — so a tall BDD (deep variable ordering) cannot overflow
+    /// the call stack. Each node's `(var, low, high)` is read under a **single short-lived shared
+    /// borrow** that is dropped before the rebuilt node is interned via `make_node` — so no shared borrow
     /// is ever live when the exclusive borrow `make_node` may take is taken (the borrow discipline the
     /// [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires and the
     /// [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires). A per-call memo collapses the
@@ -341,55 +345,103 @@ impl BddManager {
         var: VarId,
         value: bool,
     ) -> NodeId {
-        let mut memo: HashMap<NodeId, NodeId> = HashMap::new();
-        Self::restrict_rec(cell, node, var, value, &mut memo)
-    }
-
-    /// Recursive core of [`restrict`](Self::restrict), threading a per-call memo.
-    fn restrict_rec<C: ManagerCell>(
-        cell: &C,
-        node: NodeId,
-        var: VarId,
-        value: bool,
-        memo: &mut HashMap<NodeId, NodeId>,
-    ) -> NodeId {
-        if let Some(&cached) = memo.get(&node) {
-            return cached;
+        /// One unit of work. `Visit` reads a node's shape and schedules its restriction; `Forward`
+        /// copies the matching cofactor's result onto a node that tests `var`; `Build` re-interns a
+        /// node that tests another variable once both restricted children are resolved.
+        enum Work {
+            Visit(NodeId),
+            Forward {
+                node: NodeId,
+                child: NodeId,
+            },
+            Build {
+                node: NodeId,
+                var: VarId,
+                low: NodeId,
+                high: NodeId,
+            },
         }
 
-        // Read this node's shape under one short-lived shared borrow, then drop it before recursing or
-        // interning (the borrow discipline: never hold a read across a potential write).
-        let shape = {
-            let manager = cell.read();
-            match manager.expect_node(node) {
-                // Terminals carry no variable: restricting cannot change a constant.
-                BddNode::Terminal(_) => None,
-                BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
-            }
-        };
-
-        let result = match shape {
-            None => node,
-            Some((v, low, high)) => {
-                if v == var {
-                    // This node tests `var`: collapse to the matching cofactor and continue restricting
-                    // it (a deeper node could test `var` again only on a non-reduced order, but recursing
-                    // is always correct and the memo keeps it cheap).
-                    let chosen = if value { high } else { low };
-                    Self::restrict_rec(cell, chosen, var, value, memo)
-                } else {
-                    // `var` is not tested here: restrict both children and re-intern. If neither child
-                    // changed, `make_node` returns the canonical id for the same triple, so an
-                    // unaffected subgraph rebuilds to itself (the no-op guarantee).
-                    let new_low = Self::restrict_rec(cell, low, var, value, memo);
-                    let new_high = Self::restrict_rec(cell, high, var, value, memo);
-                    Self::make_node(cell, v, new_low, new_high)
+        let mut memo: HashMap<NodeId, NodeId> = HashMap::new();
+        let mut stack = vec![Work::Visit(node)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Visit(n) => {
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    // Read this node's shape under one short-lived shared borrow, dropped before any
+                    // make_node may take the exclusive borrow.
+                    let shape = {
+                        let manager = cell.read();
+                        match manager.expect_node(n) {
+                            // Terminals carry no variable: restricting cannot change a constant.
+                            BddNode::Terminal(_) => None,
+                            BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
+                        }
+                    };
+                    match shape {
+                        None => {
+                            memo.insert(n, n);
+                        }
+                        Some((v, low, high)) if v == var => {
+                            // This node tests `var`: collapse to the matching cofactor and continue
+                            // restricting it (a deeper node could test `var` again only on a non-reduced
+                            // order; visiting the child handles that and the memo keeps it cheap).
+                            let chosen = if value { high } else { low };
+                            stack.push(Work::Forward {
+                                node: n,
+                                child: chosen,
+                            });
+                            stack.push(Work::Visit(chosen));
+                        }
+                        Some((v, low, high)) => {
+                            // `var` is not tested here: restrict both children, then re-intern.
+                            stack.push(Work::Build {
+                                node: n,
+                                var: v,
+                                low,
+                                high,
+                            });
+                            stack.push(Work::Visit(high));
+                            stack.push(Work::Visit(low));
+                        }
+                    }
+                }
+                Work::Forward { node: n, child } => {
+                    // A shared node can be scheduled more than once; the first result wins.
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    let result = *memo
+                        .get(&child)
+                        .expect("forwarded cofactor restricted before combine");
+                    memo.insert(n, result);
+                }
+                Work::Build {
+                    node: n,
+                    var: v,
+                    low,
+                    high,
+                } => {
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    // If neither child changed, `make_node` returns the canonical id for the same
+                    // triple, so an unaffected subgraph rebuilds to itself (the no-op guarantee).
+                    let new_low = *memo.get(&low).expect("low child restricted before combine");
+                    let new_high = *memo
+                        .get(&high)
+                        .expect("high child restricted before combine");
+                    let result = Self::make_node(cell, v, new_low, new_high);
+                    memo.insert(n, result);
                 }
             }
-        };
+        }
 
-        memo.insert(node, result);
-        result
+        *memo
+            .get(&node)
+            .expect("root node restricted after the iterative walk")
     }
 
     /// Resolve an ITE triple **without** Shannon expansion.
@@ -539,6 +591,34 @@ mod tests {
         // Restricting a variable absent from the function is a no-op.
         let c = BddManager::make_var(&cell, "c");
         assert_eq!(BddManager::restrict(&cell, and, c, true), and);
+    }
+
+    /// `restrict` must be iterative: restricting the *bottom* variable of a very deep AND chain walks
+    /// through every node above it, which a recursive implementation would overflow on. The chain is
+    /// built directly with `make_node` bottom-up (O(n)) so it is deep without the O(n^2) cost of folding
+    /// it with `ite`.
+    #[test]
+    fn restrict_deep_chain_no_overflow() {
+        let cell = LocalCell::new_empty();
+        let n = 50_000;
+        let ids: Vec<VarId> = (0..n)
+            .map(|i| BddManager::make_var(&cell, &format!("v{i}")))
+            .collect();
+        // f = v0 & v1 & ... & v(n-1), built bottom-up: each node's low = FALSE, high = the child.
+        let mut node = TRUE_NODE;
+        for &id in ids.iter().rev() {
+            node = BddManager::make_node(&cell, id, FALSE_NODE, node);
+        }
+        // Restricting the bottom variable to false collapses the whole conjunction to false; the walk
+        // descends through all n-1 nodes above it without overflowing the stack.
+        assert_eq!(
+            BddManager::restrict(&cell, node, ids[n - 1], false),
+            FALSE_NODE
+        );
+        // Restricting it to true drops just that variable, leaving a still-non-constant conjunction.
+        let dropped = BddManager::restrict(&cell, node, ids[n - 1], true);
+        assert_ne!(dropped, FALSE_NODE);
+        assert_ne!(dropped, TRUE_NODE);
     }
 
     /// A deeply nested chain must not overflow the stack on either cell (the engine is iterative) and

@@ -470,9 +470,9 @@ mod tests {
         let factored = factorise_cubes(cubes.clone());
 
         // Build unfactored version for comparison
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
         let unfactored = a.and(&b).or(&a.and(&c));
 
         // Should be logically equivalent
@@ -504,9 +504,9 @@ mod tests {
         let factored = factorise_cubes(cubes);
 
         // Build original SOP
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
         let original = a.and(&b).or(&a.and(&c));
 
         // Factorisation must preserve the Boolean function.
@@ -523,7 +523,7 @@ mod tests {
         let cubes = vec![(term1, true)];
         let factored = factorise_cubes(cubes);
 
-        let a = BoolExpr::variable("a");
+        let a = BoolExpr::var("a");
         assert!(equiv(&a, &factored));
 
         // Empty cubes (constant false)
@@ -553,10 +553,10 @@ mod tests {
         let factored = factorise_cubes(cubes);
 
         // Build original SOP
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
-        let d = BoolExpr::variable("d");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
+        let d = BoolExpr::var("d");
         let original = a.and(&b).and(&c).or(&a.and(&b).and(&d));
 
         // Should be logically equivalent

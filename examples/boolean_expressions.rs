@@ -11,9 +11,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 1: Programmatic construction with the bitwise operators
     println!("1. Programmatic Construction (using the bitwise operators):");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let _c = BoolExpr::variable("c");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let _c = BoolExpr::var("c");
 
     // XOR function: a & !b | !a & b
     let xor = (&a & !&b) | (!&a & &b);
@@ -53,9 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4. Minimisation Example:");
     println!("   Original: a & b | a & b & c (redundant term)");
 
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let c = BoolExpr::var("c");
     let redundant = (&a & &b) | (&a & &b & &c);
 
     println!("   Before minimisation:");
@@ -72,8 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 5: XNOR function
     println!("5. XNOR Function (equivalence):");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let xnor = (&a & &b) | (!&a & !&b);
 
     println!("   XNOR = a & b | !a & !b");
@@ -89,9 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 6: Three-variable function
     println!("6. Three-Variable Majority Function:");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let c = BoolExpr::var("c");
 
     // Majority function: true if at least 2 of 3 inputs are true.
     // The method-based API reads clearly for longer compositions.
@@ -109,8 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 7: Converting to PLA format
     println!("7. PLA Format Export:");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let simple = a.and(&b);
     let mut simple_cover = Cover::new(CoverType::F);
     simple_cover.add_expr(&simple, "out")?;
@@ -132,8 +132,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 9: De Morgan's laws in action
     println!("9. De Morgan's Laws:");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
 
     let demorgan1 = !(&a & &b);
     let mut cover1 = Cover::new(CoverType::F);

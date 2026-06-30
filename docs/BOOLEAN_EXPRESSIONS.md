@@ -28,8 +28,8 @@ about the *function* rather than the *syntax*.
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");        // primary constructor
-let b = BoolExpr::variable("b");   // alias of `var`, for readability
+let a = BoolExpr::var("a");        // variable constructor
+let b = BoolExpr::var("b");
 let t = BoolExpr::constant(true);
 let f = BoolExpr::constant(false);
 ```
@@ -146,28 +146,29 @@ assert_eq!(format!("{}", !(&a & &b)), "!(a & b)");
 ### Evaluation
 
 Evaluation is a semantic operation, so it lives on [`Bdd`], not on the syntactic `BoolExpr`: build the
-expression into a builder and evaluate the resulting handle. [`Bdd::evaluate`] follows a single
-root-to-terminal path, so its cost is bounded by the variables the function depends on rather than the
-size of the original expression. The map key may be any `Borrow<str>` (`&str`, `String`, `Symbol`,
-`Arc<str>`, …); a variable absent from the map is treated as `false`:
+expression into a builder and evaluate the resulting handle. The assignment is a [`Minterm`] carrying
+the fixed variables; [`Bdd::evaluate`] restricts the function by each fixed variable and returns
+`Ok(true)`/`Ok(false)` once the result is determined. A variable absent from the assignment is left
+*free*, not defaulted to `false`: a partial assignment that does not determine the function returns
+`Err(residual)`, the function over the still-free variables. A complete assignment over the support
+therefore always yields `Ok`:
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr};
-use std::collections::HashMap;
+use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
 let builder = bdd_builder!();
 let f = builder.build(&expr);
 
-let mut assignment: HashMap<&str, bool> = HashMap::new();
-assignment.insert("a", true);
-assignment.insert("b", false);
-// (a & b) | !a  with a=true, b=false  =  false | false  =  false
-assert_eq!(f.evaluate(&assignment), false);
+let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
 
-assignment.insert("a", false);
+let assignment = Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]);
+// (a & b) | !a  with a=true, b=false  =  false | false  =  false
+assert_eq!(f.evaluate(&assignment), Ok(false));
+
+let assignment = Minterm::from_symbols(vars, [Some(false), Some(false)]);
 // (a & b) | !a  with a=false  =  false | true  =  true
-assert_eq!(f.evaluate(&assignment), true);
+assert_eq!(f.evaluate(&assignment), Ok(true));
 ```
 
 ### Syntactic variables
@@ -610,6 +611,7 @@ match cover.minimize() {
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
 [`BddBuilder`]: crate::bdd::BddBuilder
 [`Cover`]: crate::Cover
+[`Minterm`]: crate::Minterm
 [`Cover::add_bdd`]: crate::Cover::add_bdd
 [`Cover::add_expr`]: crate::Cover::add_expr
 [`Cover::to_expr_by_index`]: crate::Cover::to_expr_by_index

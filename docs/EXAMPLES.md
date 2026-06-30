@@ -57,18 +57,17 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 builder and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr};
-use std::collections::HashMap;
+use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
 let builder = bdd_builder!();
 let f = builder.build(&expr);
 
-let mut assignment: HashMap<&str, bool> = HashMap::new();
-assignment.insert("a", true);
-assignment.insert("b", false);
+// The assignment is a Minterm fixing each variable; a complete one over the support yields `Ok`.
+let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+let assignment = Minterm::from_symbols(vars, [Some(true), Some(false)]);
 // (a & b) | !a  with a=true, b=false  =  false
-assert_eq!(f.evaluate(&assignment), false);
+assert_eq!(f.evaluate(&assignment), Ok(false));
 ```
 
 ### Variables

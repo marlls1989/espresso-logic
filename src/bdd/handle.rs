@@ -15,20 +15,20 @@
 //! The handle is [`Clone`] (a refcount bump) but **not** `Copy`: operators consume their operands by
 //! value, with reference variants for reuse, while derivation and query methods borrow `&self`.
 
-use std::borrow::Borrow;
 use std::collections::{BTreeSet, HashMap};
-use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::brand::Brand;
-use crate::cover::{Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, Symbols};
-use crate::impl_binary_operator;
+use crate::cover::{
+    Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
+};
 use crate::expression::manager::{
     BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE,
 };
 use crate::expression::manager_cell::ManagerCell;
 use crate::expression::BoolExpr;
+use crate::impl_binary_operator;
 use crate::Symbol;
 
 /// An owned, refcounted handle to a canonical BDD root within one builder.
@@ -233,36 +233,42 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 
     // ---- Evaluation ---------------------------------------------------------------------------
 
-    /// Evaluate this function under a variable `assignment`.
+    /// Evaluate this function under a (possibly partial) variable `assignment`, given as a [`Minterm`].
     ///
-    /// This is the canonical evaluation: it follows a single root→terminal path, branching at each
-    /// decision node on the assigned value of that node's variable, so the cost is O(path length)
-    /// — at most the number of variables the function depends on — regardless of how large the
-    /// original syntactic expression was, and shared subfunctions are visited once. **A variable
-    /// absent from `assignment` reads as `false`** (partial assignments are allowed). The key type
-    /// may be any `Borrow<str>` (`&str`, `String`, [`Symbol`], `Arc<str>`, …).
+    /// Every variable the minterm **fixes** (a concrete `1`/`0` field) is substituted into the function
+    /// via the canonical [`restrict`](Self::restrict); a don't-care (`-`) field — or a variable the
+    /// minterm does not carry — leaves that variable **free**, and a name the function does not depend on
+    /// is ignored. There is no silent default: a variable absent from the assignment is treated as
+    /// *unassigned*, never as `false`.
+    ///
+    /// The result reflects whether the fixed variables already determine the function:
+    ///
+    /// - `Ok(true)` / `Ok(false)` when the restricted function is constant — a complete assignment over
+    ///   the support therefore always yields `Ok`.
+    /// - `Err(residual)` when variables the function still depends on remain free; the residual [`Bdd`]
+    ///   is the function over those free variables, owned and usable for further evaluation.
+    ///
+    /// The label type may be any [`StringLabel`](crate::StringLabel) (`String`,
+    /// [`Symbol`](crate::Symbol), `Arc<str>`, …).
     ///
     /// Evaluation is a semantic operation, so it lives here rather than on the syntactic
     /// [`BoolExpr`](crate::BoolExpr): build the expression into a builder with
     /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
-    #[must_use]
-    pub fn evaluate<K>(&self, assignment: &HashMap<K, bool>) -> bool
-    where
-        K: Borrow<str> + Eq + Hash,
-    {
-        let mgr = self.cell.read();
-        let mut node = self.root;
-        loop {
-            match mgr.expect_node(node) {
-                ManagerNode::Terminal(value) => return *value,
-                ManagerNode::Decision { var, low, high } => {
-                    let name = mgr
-                        .var_name(*var)
-                        .expect("decision node variable must have a name");
-                    let set = assignment.get(name.as_str()).copied().unwrap_or(false);
-                    node = if set { *high } else { *low };
-                }
+    pub fn evaluate<L: StringLabel>(&self, assignment: &Minterm<L>) -> Result<bool, Bdd<B, C>> {
+        // Restrict by every variable the minterm fixes; don't-care/empty fields leave the variable
+        // free. Restricting a name absent from the function is a no-op.
+        let mut current = self.clone();
+        for (label, value) in assignment.vars().iter().zip(assignment.iter()) {
+            if let Some(v) = value {
+                current = current.restrict(label.as_ref(), v);
             }
+        }
+        if current.is_tautology() {
+            Ok(true)
+        } else if current.is_contradiction() {
+            Ok(false)
+        } else {
+            Err(current)
         }
     }
 
@@ -397,7 +403,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         }
         drop(mgr);
 
-        Cover::from_cubes(CoverType::F, cubes)
+        // Build the cover from the explicit header rather than re-deriving it from the cubes: a
+        // contradiction yields zero cubes, and re-deriving from those would give a zero-output header,
+        // breaking the later `to_expr_by_index(0)`. `from_parts` keeps the arity-1 `Anonymous` output
+        // header, so a contradiction lowers to a one-output, zero-cube cover that renders as "0".
+        Cover::from_parts(symbols, output_symbols, cubes, CoverType::F)
     }
 
     /// Fully-expanded canonical minterms over the explicit, widenable variable set `vars`
@@ -548,6 +558,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// paths. The walk is iterative (explicit work-stack), so a tall diagram cannot overflow the call
     /// stack. `T: Clone` because a shared child's folded result is reused by each parent.
     ///
+    /// The diagram's structure is snapshotted under a single read guard which is released **before** any
+    /// call to `f`, so `f` may re-enter the builder (any operation that locks the same cell) without
+    /// double-borrowing the `RefCell` or deadlocking the `RwLock`.
+    ///
     /// For a fold over a syntactic expression's And/Or/Xor/Not structure, see
     /// [`BoolExpr::fold`](crate::BoolExpr::fold).
     pub fn fold<T, F>(&self, f: F) -> T
@@ -555,11 +569,14 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         F: Fn(BddNode<'_, T>) -> T + Copy,
         T: Clone,
     {
+        // Snapshot the reachable structure under one read guard, then run the user fold entirely
+        // guard-free over the snapshot.
+        let snapshot = self.snapshot_reachable();
+
         enum Work {
             Visit(NodeId),
             Combine(NodeId),
         }
-        let mgr = self.cell.read();
         let mut memo: HashMap<NodeId, T> = HashMap::new();
         let mut stack = vec![Work::Visit(self.root)];
         while let Some(work) = stack.pop() {
@@ -568,13 +585,13 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     if memo.contains_key(&node) {
                         continue;
                     }
-                    match mgr.expect_node(node) {
-                        ManagerNode::Terminal(value) => {
+                    match &snapshot[&node] {
+                        SnapNode::Terminal(value) => {
                             memo.insert(node, f(BddNode::Terminal(*value)));
                         }
                         // Schedule the combine after both children have been folded (LIFO: push
                         // Combine first so it pops last).
-                        ManagerNode::Decision { low, high, .. } => {
+                        SnapNode::Decision { low, high, .. } => {
                             stack.push(Work::Combine(node));
                             stack.push(Work::Visit(*high));
                             stack.push(Work::Visit(*low));
@@ -586,23 +603,24 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     if memo.contains_key(&node) {
                         continue;
                     }
-                    let (var, low, high) = match mgr.get_node(node) {
-                        Some(ManagerNode::Decision { var, low, high }) => (*var, *low, *high),
-                        _ => unreachable!("combine is scheduled only for decision nodes"),
+                    let SnapNode::Decision {
+                        variable,
+                        low,
+                        high,
+                    } = &snapshot[&node]
+                    else {
+                        unreachable!("combine is scheduled only for decision nodes")
                     };
-                    let name = mgr
-                        .var_name(var)
-                        .expect("decision node variable must have a name");
                     let low_t = memo
-                        .get(&low)
+                        .get(low)
                         .cloned()
                         .expect("low child folded before combine");
                     let high_t = memo
-                        .get(&high)
+                        .get(high)
                         .cloned()
                         .expect("high child folded before combine");
                     let result = f(BddNode::Decision {
-                        variable: name.as_str(),
+                        variable: variable.as_str(),
                         low: low_t,
                         high: high_t,
                     });
@@ -628,6 +646,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// [`fold`](Self::fold) when no top-down context is needed). The walk is iterative, so depth alone
     /// cannot overflow the call stack.
     ///
+    /// The diagram's structure is snapshotted under a single read guard which is released **before** any
+    /// call to `descend`/`combine`, so those closures may re-enter the builder without double-borrowing
+    /// the `RefCell` or deadlocking the `RwLock`.
+    ///
     /// [`BddNode<()>`]: BddNode
     /// [`BddNode<T>`]: BddNode
     pub fn fold_with_context<Ctx, T, D, G>(&self, root_context: Ctx, descend: D, combine: G) -> T
@@ -635,26 +657,30 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         D: Fn(BddNode<'_, ()>, &Ctx) -> (Ctx, Ctx),
         G: Fn(BddNode<'_, T>, Ctx) -> T,
     {
+        // Snapshot the reachable structure under one read guard, then run the user closures entirely
+        // guard-free over the snapshot.
+        let snapshot = self.snapshot_reachable();
+
         enum Work<Ctx> {
             Enter(NodeId, Ctx),
             Combine(NodeId, Ctx),
         }
-        let mgr = self.cell.read();
         let mut work = vec![Work::Enter(self.root, root_context)];
         let mut results: Vec<T> = Vec::new();
         while let Some(frame) = work.pop() {
             match frame {
-                Work::Enter(node, ctx) => match mgr.expect_node(node) {
-                    ManagerNode::Terminal(value) => {
+                Work::Enter(node, ctx) => match &snapshot[&node] {
+                    SnapNode::Terminal(value) => {
                         results.push(combine(BddNode::Terminal(*value), ctx));
                     }
-                    ManagerNode::Decision { var, low, high } => {
-                        let name = mgr
-                            .var_name(*var)
-                            .expect("decision node variable must have a name");
+                    SnapNode::Decision {
+                        variable,
+                        low,
+                        high,
+                    } => {
                         let (low_ctx, high_ctx) = descend(
                             BddNode::Decision {
-                                variable: name.as_str(),
+                                variable: variable.as_str(),
                                 low: (),
                                 high: (),
                             },
@@ -666,18 +692,14 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     }
                 },
                 Work::Combine(node, ctx) => {
-                    let var = match mgr.get_node(node) {
-                        Some(ManagerNode::Decision { var, .. }) => *var,
-                        _ => unreachable!("combine is scheduled only for decision nodes"),
+                    let SnapNode::Decision { variable, .. } = &snapshot[&node] else {
+                        unreachable!("combine is scheduled only for decision nodes")
                     };
-                    let name = mgr
-                        .var_name(var)
-                        .expect("decision node variable must have a name");
                     let high = results.pop().expect("high child result");
                     let low = results.pop().expect("low child result");
                     results.push(combine(
                         BddNode::Decision {
-                            variable: name.as_str(),
+                            variable: variable.as_str(),
                             low,
                             high,
                         },
@@ -688,4 +710,54 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         }
         results.pop().expect("fold_with_context produced a result")
     }
+
+    /// Snapshot every node reachable from the root under a **single** read guard, returning an owned
+    /// per-node shape map (terminal value, or tested variable name plus `low`/`high` child ids). The
+    /// guard is released when this returns, so the [`fold`](Self::fold) /
+    /// [`fold_with_context`](Self::fold_with_context) walks run their user closures guard-free and may
+    /// re-enter the builder. Node ids are stable, so the snapshotted ids stay valid after the guard
+    /// drops.
+    fn snapshot_reachable(&self) -> HashMap<NodeId, SnapNode> {
+        let mgr = self.cell.read();
+        let mut snapshot: HashMap<NodeId, SnapNode> = HashMap::new();
+        let mut stack = vec![self.root];
+        while let Some(node) = stack.pop() {
+            if snapshot.contains_key(&node) {
+                continue;
+            }
+            let snap = match mgr.expect_node(node) {
+                ManagerNode::Terminal(value) => SnapNode::Terminal(*value),
+                ManagerNode::Decision { var, low, high } => {
+                    let variable = mgr
+                        .var_name(*var)
+                        .expect("decision node variable must have a name")
+                        .clone();
+                    stack.push(*low);
+                    stack.push(*high);
+                    SnapNode::Decision {
+                        variable,
+                        low: *low,
+                        high: *high,
+                    }
+                }
+            };
+            snapshot.insert(node, snap);
+        }
+        snapshot
+    }
+}
+
+/// An owned snapshot of one BDD node, captured under a read guard so [`Bdd::fold`] /
+/// [`Bdd::fold_with_context`] can run their user closures after the guard is released. Mirrors the
+/// manager's node shape but owns the tested variable's name (so the borrow handed to the fold closures
+/// outlives the read guard).
+enum SnapNode {
+    /// A terminal leaf — the constant `false` or `true`.
+    Terminal(bool),
+    /// A decision node testing `variable`, with its `low`/`high` child ids.
+    Decision {
+        variable: Symbol,
+        low: NodeId,
+        high: NodeId,
+    },
 }

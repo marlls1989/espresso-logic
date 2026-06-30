@@ -1,14 +1,19 @@
 //! Comprehensive tests for boolean expression functionality
 
-use espresso_logic::{bdd_builder, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
-use std::sync::Arc;
+use espresso_logic::{
+    bdd_builder, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol, Symbols,
+};
+
+/// Build a complete `Minterm<Symbol>` fixing each `(name, value)` pair, for `Bdd::evaluate`.
+fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
+    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect());
+    Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
+}
 
 #[test]
 fn test_cover_trait_basics() {
-    use std::collections::HashMap;
-
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let expr = &a & &b;
 
     // Should be able to use Cover with expressions
@@ -25,97 +30,87 @@ fn test_cover_trait_basics() {
     let retrieved = cover.to_expr("out").unwrap();
     let builder = bdd_builder!();
     let retrieved_bdd = builder.build(&retrieved);
-    let mut assignment = HashMap::new();
 
     // Test: a=1,b=1 → 1
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), true);
-    assert!(retrieved_bdd.evaluate(&assignment));
+    assert_eq!(
+        retrieved_bdd.evaluate(&assign(&[("a", true), ("b", true)])),
+        Ok(true)
+    );
 
     // Test: a=1,b=0 → 0
-    assignment.insert(Arc::from("b"), false);
-    assert!(!retrieved_bdd.evaluate(&assignment));
+    assert_eq!(
+        retrieved_bdd.evaluate(&assign(&[("a", true), ("b", false)])),
+        Ok(false)
+    );
 }
 
 #[test]
 fn test_xor_expression() {
-    use std::collections::HashMap;
-
     // Exercise the built-in `^` end-to-end: the operator and the parser must agree on the same
     // syntactic structure.
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let xor = &a ^ &b;
     assert_eq!(xor, BoolExpr::parse("a ^ b").unwrap());
 
     let builder = bdd_builder!();
     let xor_bdd = builder.build(&xor);
 
-    // Verify XOR truth table
-    let mut assignment = HashMap::new();
-
-    // 0 XOR 0 = 0
-    assignment.insert(Arc::from("a"), false);
-    assignment.insert(Arc::from("b"), false);
-    assert!(!xor_bdd.evaluate(&assignment));
-
-    // 0 XOR 1 = 1
-    assignment.insert(Arc::from("b"), true);
-    assert!(xor_bdd.evaluate(&assignment));
-
-    // 1 XOR 0 = 1
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), false);
-    assert!(xor_bdd.evaluate(&assignment));
-
-    // 1 XOR 1 = 0
-    assignment.insert(Arc::from("b"), true);
-    assert!(!xor_bdd.evaluate(&assignment));
+    // Verify XOR truth table.
+    assert_eq!(
+        xor_bdd.evaluate(&assign(&[("a", false), ("b", false)])),
+        Ok(false)
+    ); // 0 XOR 0 = 0
+    assert_eq!(
+        xor_bdd.evaluate(&assign(&[("a", false), ("b", true)])),
+        Ok(true)
+    ); // 0 XOR 1 = 1
+    assert_eq!(
+        xor_bdd.evaluate(&assign(&[("a", true), ("b", false)])),
+        Ok(true)
+    ); // 1 XOR 0 = 1
+    assert_eq!(
+        xor_bdd.evaluate(&assign(&[("a", true), ("b", true)])),
+        Ok(false)
+    ); // 1 XOR 1 = 0
 }
 
 #[test]
 fn test_xnor_expression() {
-    use std::collections::HashMap;
-
     // XNOR: a*b + ~a*~b
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let xnor = (&a & &b) | (!&a & !&b);
 
     let builder = bdd_builder!();
     let xnor_bdd = builder.build(&xnor);
 
-    // Verify XNOR truth table
-    let mut assignment = HashMap::new();
-
-    // 0 XNOR 0 = 1
-    assignment.insert(Arc::from("a"), false);
-    assignment.insert(Arc::from("b"), false);
-    assert!(xnor_bdd.evaluate(&assignment));
-
-    // 0 XNOR 1 = 0
-    assignment.insert(Arc::from("b"), true);
-    assert!(!xnor_bdd.evaluate(&assignment));
-
-    // 1 XNOR 0 = 0
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), false);
-    assert!(!xnor_bdd.evaluate(&assignment));
-
-    // 1 XNOR 1 = 1
-    assignment.insert(Arc::from("b"), true);
-    assert!(xnor_bdd.evaluate(&assignment));
+    // Verify XNOR truth table.
+    assert_eq!(
+        xnor_bdd.evaluate(&assign(&[("a", false), ("b", false)])),
+        Ok(true)
+    ); // 0 XNOR 0 = 1
+    assert_eq!(
+        xnor_bdd.evaluate(&assign(&[("a", false), ("b", true)])),
+        Ok(false)
+    ); // 0 XNOR 1 = 0
+    assert_eq!(
+        xnor_bdd.evaluate(&assign(&[("a", true), ("b", false)])),
+        Ok(false)
+    ); // 1 XNOR 0 = 0
+    assert_eq!(
+        xnor_bdd.evaluate(&assign(&[("a", true), ("b", true)])),
+        Ok(true)
+    ); // 1 XNOR 1 = 1
 }
 
 #[test]
 fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::HashMap;
-
     // Create a redundant expression: a*b + a*b*c
     // Should minimise to just a*b
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let c = BoolExpr::var("c");
 
     let expr = (&a & &b) | (&a & &b & &c);
 
@@ -137,33 +132,35 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     let builder = bdd_builder!();
     let minimized_bdd = builder.build(&minimized);
 
-    // Verify the minimised expression behaves like a*b
-    let mut assignment = HashMap::new();
+    // Verify the minimised expression behaves like a*b.
 
-    // a=1,b=1,c=X → should be 1 (X is don't care)
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), true);
-    assignment.insert(Arc::from("c"), false);
-    assert!(minimized_bdd.evaluate(&assignment));
-    assignment.insert(Arc::from("c"), true);
-    assert!(minimized_bdd.evaluate(&assignment));
+    // a=1,b=1,c=X → should be 1 (c is a don't care here).
+    assert_eq!(
+        minimized_bdd.evaluate(&assign(&[("a", true), ("b", true), ("c", false)])),
+        Ok(true)
+    );
+    assert_eq!(
+        minimized_bdd.evaluate(&assign(&[("a", true), ("b", true), ("c", true)])),
+        Ok(true)
+    );
 
-    // a=1,b=0,c=X → should be 0
-    assignment.insert(Arc::from("b"), false);
-    assignment.insert(Arc::from("c"), false);
-    assert!(!minimized_bdd.evaluate(&assignment));
-    assignment.insert(Arc::from("c"), true);
-    assert!(!minimized_bdd.evaluate(&assignment));
+    // a=1,b=0,c=X → should be 0.
+    assert_eq!(
+        minimized_bdd.evaluate(&assign(&[("a", true), ("b", false), ("c", false)])),
+        Ok(false)
+    );
+    assert_eq!(
+        minimized_bdd.evaluate(&assign(&[("a", true), ("b", false), ("c", true)])),
+        Ok(false)
+    );
 
     Ok(())
 }
 
 #[test]
 fn test_de_morgan_laws() {
-    use std::collections::HashMap;
-
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
 
     let builder = bdd_builder!();
 
@@ -171,45 +168,43 @@ fn test_de_morgan_laws() {
     let expr1 = !(&a & &b);
     let expr1_bdd = builder.build(&expr1);
 
-    let mut assignment = HashMap::new();
-
-    // Test ~(a*b): a=1,b=1 → ~(1*1) = ~1 = 0
-    assignment.insert(Arc::from("a"), true);
-    assignment.insert(Arc::from("b"), true);
-    assert!(!expr1_bdd.evaluate(&assignment));
-
-    // a=1,b=0 → ~(1*0) = ~0 = 1
-    assignment.insert(Arc::from("b"), false);
-    assert!(expr1_bdd.evaluate(&assignment));
-
-    // a=0,b=1 → ~(0*1) = ~0 = 1
-    assignment.insert(Arc::from("a"), false);
-    assignment.insert(Arc::from("b"), true);
-    assert!(expr1_bdd.evaluate(&assignment));
+    // Test ~(a*b).
+    assert_eq!(
+        expr1_bdd.evaluate(&assign(&[("a", true), ("b", true)])),
+        Ok(false)
+    ); // ~(1*1) = 0
+    assert_eq!(
+        expr1_bdd.evaluate(&assign(&[("a", true), ("b", false)])),
+        Ok(true)
+    ); // ~(1*0) = 1
+    assert_eq!(
+        expr1_bdd.evaluate(&assign(&[("a", false), ("b", true)])),
+        Ok(true)
+    ); // ~(0*1) = 1
 
     // ~(a + b) = ~a * ~b (De Morgan's law)
     let expr2 = !(&a | &b);
     let expr2_bdd = builder.build(&expr2);
 
-    // Test ~(a+b): a=0,b=0 → ~(0+0) = ~0 = 1
-    assignment.insert(Arc::from("a"), false);
-    assignment.insert(Arc::from("b"), false);
-    assert!(expr2_bdd.evaluate(&assignment));
-
-    // a=1,b=0 → ~(1+0) = ~1 = 0
-    assignment.insert(Arc::from("a"), true);
-    assert!(!expr2_bdd.evaluate(&assignment));
-
-    // a=0,b=1 → ~(0+1) = ~1 = 0
-    assignment.insert(Arc::from("a"), false);
-    assignment.insert(Arc::from("b"), true);
-    assert!(!expr2_bdd.evaluate(&assignment));
+    // Test ~(a+b).
+    assert_eq!(
+        expr2_bdd.evaluate(&assign(&[("a", false), ("b", false)])),
+        Ok(true)
+    ); // ~(0+0) = 1
+    assert_eq!(
+        expr2_bdd.evaluate(&assign(&[("a", true), ("b", false)])),
+        Ok(false)
+    ); // ~(1+0) = 0
+    assert_eq!(
+        expr2_bdd.evaluate(&assign(&[("a", false), ("b", true)])),
+        Ok(false)
+    ); // ~(0+1) = 0
 }
 
 #[test]
 fn test_cube_iteration() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let expr = &a & &b;
 
     // Should be able to iterate cubes via Cover
@@ -236,8 +231,8 @@ fn test_cube_iteration() {
 
 #[test]
 fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
     let expr = &a & &b;
 
     // Should be able to convert to PLA string via Cover
@@ -329,9 +324,9 @@ fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_complex_parentheses() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let c = BoolExpr::var("c");
 
     // Test with operator syntax
     let expr1 = (&a | &b) & &c;
@@ -354,10 +349,10 @@ fn test_complex_parentheses() {
 
 #[test]
 fn test_nested_parentheses_operators() {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    let d = BoolExpr::variable("d");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
+    let c = BoolExpr::var("c");
+    let d = BoolExpr::var("d");
 
     // Operator syntax with nested grouping
     let expr1 = &a & (&b | &c);
@@ -621,7 +616,7 @@ fn test_parser_error_missing_operand() {
 #[test]
 fn test_cover_error_nonexistent_output() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::variable("a");
+    let a = BoolExpr::var("a");
     cover.add_expr(&a, "out1").unwrap();
 
     // Try to get non-existent output
@@ -633,8 +628,8 @@ fn test_cover_error_nonexistent_output() {
 #[test]
 fn test_cover_error_duplicate_output() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+    let a = BoolExpr::var("a");
+    let b = BoolExpr::var("b");
 
     cover.add_expr(&a, "out").unwrap();
 
@@ -647,7 +642,7 @@ fn test_cover_error_duplicate_output() {
 #[test]
 fn test_cover_error_output_index_out_of_bounds() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::variable("a");
+    let a = BoolExpr::var("a");
     cover.add_expr(&a, "out").unwrap();
 
     // Try to access out of bounds index

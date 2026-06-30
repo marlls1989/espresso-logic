@@ -87,9 +87,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nExample 3: Cover with named variables from expressions");
     println!("-------------------------------------------------------");
 
-    let x = BoolExpr::variable("x");
-    let y = BoolExpr::variable("y");
-    let z = BoolExpr::variable("z");
+    let x = BoolExpr::var("x");
+    let y = BoolExpr::var("y");
+    let z = BoolExpr::var("z");
 
     // Create expression: (x AND y) OR (y AND z)
     let expr = x.and(&y).or(&y.and(&z));

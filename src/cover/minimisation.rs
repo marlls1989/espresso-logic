@@ -382,4 +382,3 @@ impl<I, O> Minimizable for Cover<I, O> {
         minimize_cover_with(self, &esp, |esp, f, d, r| esp.minimize_exact(f, d, r))
     }
 }
-

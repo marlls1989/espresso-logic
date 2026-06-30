@@ -247,8 +247,8 @@ fn concurrent_symbol_covers() {
     let handles: Vec<_> = (0..8)
         .map(|t| {
             thread::spawn(move || {
-                let a = BoolExpr::variable(format!("t{t}_a"));
-                let b = BoolExpr::variable(format!("t{t}_b"));
+                let a = BoolExpr::var(format!("t{t}_a"));
+                let b = BoolExpr::var(format!("t{t}_b"));
                 let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
                 // a*b + a*~b  ==  a  (so b drops out under minimisation)
                 cover

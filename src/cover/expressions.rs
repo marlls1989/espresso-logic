@@ -115,6 +115,10 @@ impl Cover<Symbol, Symbol> {
     /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
     /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`).
     ///
+    /// Each call builds and drops a throwaway BDD manager. Building many expressions into one cover goes
+    /// through a single [`bdd_builder!`](crate::bdd_builder) plus [`add_bdd`](Self::add_bdd), which share
+    /// one manager across all of them.
+    ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
     ///
     /// # Examples
@@ -123,8 +127,8 @@ impl Cover<Symbol, Symbol> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// let expr = a.and(&b);
     ///
     /// // Add expression to cover
@@ -164,7 +168,7 @@ impl<I: AsRef<str>, O> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
+    /// let a = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "out").unwrap();
     /// let expr = cover.to_expr_by_index(0).unwrap();
@@ -200,8 +204,8 @@ impl<I: AsRef<str>, O> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     ///
     /// cover.add_expr(&a, "out1").unwrap();
     /// cover.add_expr(&b, "out2").unwrap();
@@ -230,7 +234,7 @@ impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::variable("a");
+    /// let a = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "result").unwrap();
     /// let expr = cover.to_expr("result").unwrap();

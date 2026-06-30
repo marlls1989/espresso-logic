@@ -89,6 +89,13 @@ fn context_send_asymmetry() {
     assert!(!is_send!(BddBuilder<BrandB, LocalCell>));
 }
 
+/// Build a `Minterm<Symbol>` fixing each `(name, value)` pair (every field concrete). Variables not
+/// listed are simply absent from the minterm, i.e. left free for [`Bdd::evaluate`].
+fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
+    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect());
+    Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
+}
+
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
 #[test]
@@ -120,7 +127,6 @@ fn restrict_acceptance_table() {
 #[test]
 fn evaluate_matches_truth_table() {
     use crate::BoolExpr;
-    use std::collections::HashMap;
 
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     // f = a & b | !c.
@@ -128,13 +134,15 @@ fn evaluate_matches_truth_table() {
     let f = builder.build(&expr);
 
     for mask in 0..8u32 {
-        let assignment: HashMap<Symbol, bool> = [("a", 0), ("b", 1), ("c", 2)]
-            .into_iter()
-            .map(|(name, bit)| (Symbol::from(name), (mask >> bit) & 1 == 1))
-            .collect();
-        let expected = (assignment[&Symbol::from("a")] && assignment[&Symbol::from("b")])
-            || !assignment[&Symbol::from("c")];
-        assert_eq!(f.evaluate(&assignment), expected);
+        let a = mask & 1 == 1;
+        let b = (mask >> 1) & 1 == 1;
+        let c = (mask >> 2) & 1 == 1;
+        let expected = (a && b) || !c;
+        // A complete assignment over the support is determined, so evaluation yields `Ok`.
+        assert_eq!(
+            f.evaluate(&assign(&[("a", a), ("b", b), ("c", c)])),
+            Ok(expected)
+        );
     }
 }
 
@@ -180,9 +188,12 @@ fn fold_with_context_evaluates_via_path_descent() {
     // Re-implement evaluation with the top-down builder carrying the assignment: descend selects the
     // branch for each variable, combine reads it back. Must agree with Bdd::evaluate.
     for mask in 0..8u32 {
-        let assignment: HashMap<Symbol, bool> = [("a", 0), ("b", 1), ("c", 2)]
+        let a = mask & 1 == 1;
+        let b = (mask >> 1) & 1 == 1;
+        let c = (mask >> 2) & 1 == 1;
+        let assignment: HashMap<Symbol, bool> = [("a", a), ("b", b), ("c", c)]
             .into_iter()
-            .map(|(name, bit)| (Symbol::from(name), (mask >> bit) & 1 == 1))
+            .map(|(name, value)| (Symbol::from(name), value))
             .collect();
 
         let via_fold = f.fold_with_context(
@@ -207,26 +218,96 @@ fn fold_with_context_evaluates_via_path_descent() {
                 }
             },
         );
-        assert_eq!(via_fold, f.evaluate(&assignment));
+        // A complete assignment is determined, so unwrap the `Ok`.
+        assert_eq!(
+            via_fold,
+            f.evaluate(&assign(&[("a", a), ("b", b), ("c", c)]))
+                .unwrap()
+        );
     }
 }
 
 #[test]
-fn evaluate_absent_variable_reads_false() {
-    use std::collections::HashMap;
+fn fold_closure_may_reenter_builder() {
+    use super::BddNode;
 
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let f = builder.var("a") & builder.var("b");
 
-    // Only `a` assigned ⇒ `b` reads false ⇒ a & b is false.
-    let only_a: HashMap<&str, bool> = HashMap::from([("a", true)]);
-    assert!(!f.evaluate(&only_a));
-    // Empty assignment ⇒ both false.
-    let empty: HashMap<&str, bool> = HashMap::new();
-    assert!(!f.evaluate(&empty));
-    // A constant ignores the (empty) assignment.
-    assert!(builder.constant(true).evaluate(&empty));
-    assert!(!builder.constant(false).evaluate(&empty));
+    // The read guard is released before the fold closure runs, so the closure may re-enter the builder
+    // (which locks the same cell) without double-borrowing the LocalCell's RefCell.
+    let count = f.fold(|node: BddNode<usize>| match node {
+        BddNode::Terminal(_) => {
+            let _ = builder.var("reentrant");
+            1
+        }
+        BddNode::Decision { low, high, .. } => {
+            let _ = builder.constant(true);
+            low + high + 1
+        }
+    });
+    assert!(count >= 1);
+}
+
+#[test]
+fn fold_with_context_closures_may_reenter_builder() {
+    use super::BddNode;
+
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let f = builder.var("a") | builder.var("b");
+
+    // Both the descend and combine closures re-enter the builder; this must not deadlock or
+    // double-borrow now that the guard is released before either runs.
+    let leaves = f.fold_with_context(
+        (),
+        |_node, ()| {
+            let _ = builder.var("reentrant_descend");
+            ((), ())
+        },
+        |node, ()| match node {
+            BddNode::Terminal(_) => {
+                let _ = builder.constant(false);
+                1usize
+            }
+            BddNode::Decision { low, high, .. } => low + high,
+        },
+    );
+    assert!(leaves >= 1);
+}
+
+#[test]
+fn evaluate_partial_returns_residual() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a & b.clone();
+
+    // Only `a` fixed (true): the function still depends on the free `b`, so evaluation is *partial* —
+    // no silent default. The residual is the manual cofactor f|a=1 == b.
+    let residual = f.evaluate(&assign(&[("a", true)])).unwrap_err();
+    assert!(residual.equivalent_to(&f.restrict("a", true)));
+    assert!(residual.equivalent_to(&b));
+
+    // Fixing `a` to false determines the conjunction outright → Ok(false).
+    assert_eq!(f.evaluate(&assign(&[("a", false)])), Ok(false));
+
+    // A constant ignores the (empty) assignment and is determined.
+    let empty = assign(&[]);
+    assert_eq!(builder.constant(true).evaluate(&empty), Ok(true));
+    assert_eq!(builder.constant(false).evaluate(&empty), Ok(false));
+}
+
+#[test]
+fn evaluate_complete_minterm_matches_truth_table() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let f = builder.var("a") & builder.var("b");
+
+    // A complete minterm over the support is always determined → Ok matching the truth table.
+    for &av in &[false, true] {
+        for &bv in &[false, true] {
+            assert_eq!(f.evaluate(&assign(&[("a", av), ("b", bv)])), Ok(av && bv));
+        }
+    }
 }
 
 #[test]
@@ -298,6 +379,26 @@ fn forall_exists_multiple_vars() {
     assert!((a.clone() & b.clone())
         .exists(empty)
         .equivalent_to(&(a & b)));
+}
+
+#[test]
+fn forall_over_deep_chain_no_overflow() {
+    // `forall`/`cofactor`/`exists` funnel through the now-iterative `restrict`; quantifying over the
+    // *bottom* variable of a deep AND chain makes restrict walk the whole chain without overflowing
+    // the call stack.
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let n = 2000usize;
+    let names: Vec<String> = (0..n).map(|i| format!("v{i}")).collect();
+    let mut f = builder.var(&names[0]);
+    for name in &names[1..] {
+        f = f & builder.var(name);
+    }
+    // The conjunction cannot hold for both polarities of any variable, so ∀(bottom var) is false.
+    assert!(f
+        .forall(std::slice::from_ref(&names[n - 1]))
+        .is_contradiction());
+    // Restricting the bottom variable to true drops just it, leaving a non-constant conjunction.
+    assert!(!f.restrict(&names[n - 1], true).is_contradiction());
 }
 
 // ---- Requirement 2: minterm enumeration -----------------------------------------------------------
@@ -544,6 +645,31 @@ fn build_cover_round_trip() {
     // Rebuilding from to_cubes() reproduces the same canonical handle.
     let rebuilt = builder.build_cover(&f.to_cubes());
     assert!(rebuilt.equivalent_to(&f));
+}
+
+#[test]
+fn contradiction_lowers_without_panicking() {
+    use crate::BoolExpr;
+
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let f = a.clone() & !a; // a & !a — the constant false
+    assert!(f.is_contradiction());
+
+    // to_cubes keeps the arity-1 anonymous output header, so the cover is one output with zero cubes
+    // (rather than a re-derived zero-output header that would break to_expr_by_index(0)).
+    let cover = f.to_cubes();
+    assert_eq!(cover.num_outputs(), 1);
+    assert_eq!(cover.num_cubes(), 0);
+
+    // to_expr therefore lowers a contradiction to the constant false ("0") with no panic.
+    assert_eq!(f.to_expr(), BoolExpr::constant(false));
+    assert_eq!(f.to_expr().to_string(), "0");
+
+    // The From<Bdd>/From<BoolExpr>/minimize paths that funnel through to_cubes also stay sound.
+    let from_bdd: Cover<Symbol, crate::Anonymous> = (&f).into();
+    assert_eq!(from_bdd.num_outputs(), 1);
+    assert!(f.minimize().is_ok());
 }
 
 #[test]

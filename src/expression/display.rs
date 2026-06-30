@@ -11,9 +11,13 @@ use std::fmt;
 
 // Binding-tightness levels, highest binds tightest. NOT > AND > XOR > OR mirrors the parser's
 // precedence (parentheses () > NOT > AND > XOR > OR). An atom (variable/constant) binds tighter than
-// any operator. A subexpression is wrapped in parentheses only when its own top-level operator binds
-// *more loosely* than the position it sits in requires; since AND/OR/XOR are associative, equal-level
-// children never need wrapping, which is what keeps the parenthesisation minimal.
+// any operator. `& | ^` are *left*-associative in the grammar, so the rendering must round-trip:
+// `a & (b & c)` is a different tree from `(a & b) & c` and may not lose its parentheses. The left
+// operand of a binary node is therefore wrapped only when it binds *strictly* looser than the node
+// (an equal-precedence left child re-parses correctly unwrapped, since parsing is left-associative),
+// while the right operand is wrapped when it binds *at most as tightly* (an equal-precedence right
+// child must keep its parentheses, else it would re-parse as left-nested). This keeps the
+// parenthesisation minimal while preserving the syntactic tree.
 const PREC_ATOM: u8 = 4;
 const PREC_NOT: u8 = 3;
 const PREC_AND: u8 = 2;
@@ -23,13 +27,27 @@ const PREC_OR: u8 = 0;
 /// Render a token stream to a string with minimal parentheses.
 ///
 /// An iterative postfix fold: each operand on the stack carries `(text, precedence)`, where
-/// `precedence` is the binding-tightness of its top-level operator. Combining wraps a child whenever
-/// its precedence is below what the surrounding operator needs. No recursion, so a deeply nested
-/// expression can't overflow the call stack.
+/// `precedence` is the binding-tightness of its top-level operator. The left operand of a binary node
+/// is wrapped when its precedence is strictly below what the node needs; the right operand is wrapped
+/// when its precedence is at most what the node needs, so a right-nested associative child keeps the
+/// parentheses that make the rendering round-trip. No recursion, so a deeply nested expression can't
+/// overflow the call stack.
 fn render(tokens: &[Token]) -> String {
-    // Wrap `s` in parentheses if its top operator (`have`) binds more loosely than `need`.
+    // Wrap `s` if its top operator (`have`) binds strictly more loosely than `need`. Used for the
+    // left operand of a left-associative binary node (and for NOT's operand).
     fn wrap(s: String, have: u8, need: u8) -> String {
         if have < need {
+            format!("({s})")
+        } else {
+            s
+        }
+    }
+
+    // Wrap `s` if its top operator binds at most as tightly as `need`. Used for the *right* operand of
+    // a left-associative binary node: an equal-precedence right child must stay parenthesised, else it
+    // would re-parse as left-nested — a different tree.
+    fn wrap_right(s: String, have: u8, need: u8) -> String {
+        if have <= need {
             format!("({s})")
         } else {
             s
@@ -52,19 +70,31 @@ fn render(tokens: &[Token]) -> String {
         |(s, p)| (format!("!{}", wrap(s, p, PREC_NOT)), PREC_NOT),
         |(ls, lp), (rs, rp)| {
             (
-                format!("{} & {}", wrap(ls, lp, PREC_AND), wrap(rs, rp, PREC_AND)),
+                format!(
+                    "{} & {}",
+                    wrap(ls, lp, PREC_AND),
+                    wrap_right(rs, rp, PREC_AND)
+                ),
                 PREC_AND,
             )
         },
         |(ls, lp), (rs, rp)| {
             (
-                format!("{} | {}", wrap(ls, lp, PREC_OR), wrap(rs, rp, PREC_OR)),
+                format!(
+                    "{} | {}",
+                    wrap(ls, lp, PREC_OR),
+                    wrap_right(rs, rp, PREC_OR)
+                ),
                 PREC_OR,
             )
         },
         |(ls, lp), (rs, rp)| {
             (
-                format!("{} ^ {}", wrap(ls, lp, PREC_XOR), wrap(rs, rp, PREC_XOR)),
+                format!(
+                    "{} ^ {}",
+                    wrap(ls, lp, PREC_XOR),
+                    wrap_right(rs, rp, PREC_XOR)
+                ),
                 PREC_XOR,
             )
         },

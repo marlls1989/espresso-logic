@@ -94,14 +94,6 @@ impl BoolExpr {
         }
     }
 
-    /// Create a variable expression with the given name.
-    ///
-    /// An alias of [`var`](Self::var), kept for readability at call sites that prefer the longer name.
-    #[must_use]
-    pub fn variable<S: AsRef<str>>(name: S) -> Self {
-        Self::var(name)
-    }
-
     /// Create a constant expression (`true` or `false`).
     #[must_use]
     pub fn constant(value: bool) -> Self {

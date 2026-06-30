@@ -88,6 +88,10 @@ impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
 /// above — the same temporary-builder mediation as [`Cover::add_expr`]. The output is anonymous; an
 /// expression has no output name.
 ///
+/// Each conversion builds and drops a throwaway BDD manager. Building many expressions into one cover
+/// goes through a single [`bdd_builder!`](crate::bdd_builder) plus
+/// [`Cover::add_bdd`](crate::Cover::add_bdd), which share one manager across all of them.
+///
 /// ```
 /// use espresso_logic::{Anonymous, BoolExpr, Cover, Symbol};
 ///

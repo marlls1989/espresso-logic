@@ -127,8 +127,8 @@
 //! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let a = BoolExpr::variable("a");
-//! let b = BoolExpr::variable("b");
+//! let a = BoolExpr::var("a");
+//! let b = BoolExpr::var("b");
 //! let expr = a.and(&b).or(&a.and(&b.not()));
 //!
 //! // Create cover and add expression

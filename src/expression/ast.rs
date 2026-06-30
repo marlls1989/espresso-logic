@@ -136,8 +136,8 @@ impl BoolExpr {
     /// ```
     /// use espresso_logic::{BoolExpr, ExprNode};
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// let expr = a.and(&b);
     ///
     /// let op_count = expr.fold(|node| match node {
@@ -189,8 +189,8 @@ impl BoolExpr {
     /// ```
     /// use espresso_logic::{BoolExpr, ExprNode};
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// let expr = a.and(&b).not();
     ///
     /// let max_depth = expr.fold_with_context(
@@ -258,8 +258,8 @@ impl BoolExpr {
     ///     )
     /// }
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// // ~(a*b) is satisfiable, so its DNF has at least one cube. (The exact cube list depends on
     /// // the canonical form the fold walks, so we only check it is non-empty here.)
     /// let dnf = to_dnf_naive(&a.and(&b).not());

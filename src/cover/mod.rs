@@ -420,6 +420,28 @@ impl<I, O> Cover<I, O> {
         }
     }
 
+    /// Build a cover from an **explicit** header plus cubes, taking the input/output symbol tables
+    /// verbatim rather than re-deriving them from the cubes (the way [`from_cubes`](Self::from_cubes)
+    /// does). The caller guarantees every cube is homed on these exact tables.
+    ///
+    /// This preserves the declared output arity even when there are zero cubes — the case
+    /// [`from_cubes`](Self::from_cubes) cannot serve, since with no cubes it would derive a zero-width
+    /// header. The BDD lowering ([`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes)) uses it so a contradiction
+    /// lowers to a one-output, zero-cube cover rather than a header-less one.
+    pub(crate) fn from_parts(
+        input_symbols: Arc<Symbols<I>>,
+        output_symbols: Arc<Symbols<O>>,
+        cubes: Vec<Cube<I, O>>,
+        cover_type: CoverType,
+    ) -> Cover<I, O> {
+        Cover {
+            input_symbols,
+            output_symbols,
+            cubes,
+            cover_type,
+        }
+    }
+
     /// Create a new empty **anonymous** cover (no variable labels) of the given type.
     ///
     /// Equivalent to `Cover::<Anonymous, Anonymous>::new(..)`; kept for readability at call sites that

@@ -21,7 +21,7 @@ fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
 #[test]
 fn var_and_constant_construct() {
     let a = BoolExpr::var("a");
-    assert_eq!(a, BoolExpr::variable("a")); // `variable` is an alias of `var`
+    assert_eq!(a, BoolExpr::var("a"));
     assert_ne!(BoolExpr::var("a"), BoolExpr::var("b"));
     assert_ne!(BoolExpr::constant(true), BoolExpr::constant(false));
     assert_ne!(BoolExpr::var("a"), BoolExpr::constant(true));
@@ -209,6 +209,37 @@ fn display_reparses_to_equivalent() {
             "display `{expr}` did not reparse equivalently"
         );
     }
+}
+
+#[test]
+fn display_round_trips_right_nested_associative() {
+    // `& | ^` are left-associative, so a right-nested tree must keep enough parentheses that
+    // re-parsing rebuilds the *same syntactic tree* — not merely an equivalent function. (`BoolExpr`
+    // equality is structural.)
+    let exprs = [
+        BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c")),
+        BoolExpr::var("a") | (BoolExpr::var("b") | BoolExpr::var("c")),
+        BoolExpr::var("a") ^ (BoolExpr::var("b") ^ BoolExpr::var("c")),
+        BoolExpr::var("a") & (BoolExpr::var("b") | BoolExpr::var("c")),
+        BoolExpr::var("a") | (BoolExpr::var("b") ^ BoolExpr::var("c")),
+    ];
+    for expr in &exprs {
+        let reparsed = BoolExpr::parse(expr.to_string()).unwrap();
+        assert_eq!(
+            *expr, reparsed,
+            "display `{expr}` did not round-trip syntactically"
+        );
+    }
+
+    // Minimal parentheses: the right-nested form keeps them, the left-nested form drops them.
+    assert_eq!(
+        (BoolExpr::var("a") & (BoolExpr::var("b") & BoolExpr::var("c"))).to_string(),
+        "a & (b & c)"
+    );
+    assert_eq!(
+        ((BoolExpr::var("a") & BoolExpr::var("b")) & BoolExpr::var("c")).to_string(),
+        "a & b & c"
+    );
 }
 
 // ---- Syntactic variables --------------------------------------------------------------------------

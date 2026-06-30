@@ -634,9 +634,7 @@ impl<L: Label> Minterm<L> {
         if self.symbols == other.symbols {
             let labels = self.symbols.labels();
             (0..self.num_vars())
-                .filter(|&i| {
-                    fields_disagree(field_at(&self.values, i), field_at(&other.values, i))
-                })
+                .filter(|&i| fields_disagree(field_at(&self.values, i), field_at(&other.values, i)))
                 .map(|i| labels[i].clone())
                 .collect()
         } else {
@@ -652,7 +650,8 @@ impl<L: Label> Minterm<L> {
                     Ordering::Less => i += 1,
                     Ordering::Greater => j += 1,
                     Ordering::Equal => {
-                        if fields_disagree(field_at(&self.values, ia), field_at(&other.values, ib)) {
+                        if fields_disagree(field_at(&self.values, ia), field_at(&other.values, ib))
+                        {
                             out.push(la[ia].clone());
                         }
                         i += 1;
@@ -714,8 +713,8 @@ impl<L: Label> Minterm<L> {
             usize::BITS
         );
         let count = 1u64 << k;
-        let capacity = usize::try_from(count)
-            .expect("2^k minterms fit in usize once k is below usize::BITS");
+        let capacity =
+            usize::try_from(count).expect("2^k minterms fit in usize once k is below usize::BITS");
         let mut out = Vec::with_capacity(capacity);
         for mask in 0u64..count {
             let mut words: Vec<u64> = base.values.to_vec();
@@ -1105,10 +1104,14 @@ mod tests {
         let b_shared =
             Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(true), Some(false)]);
         // The same two functions over independent, differently-permuted headers (slow path).
-        let a_perm =
-            Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(true), Some(true), Some(false)]);
-        let b_perm =
-            Minterm::from_symbols(syms(&["b", "c", "a"]), [Some(true), Some(false), Some(true)]);
+        let a_perm = Minterm::from_symbols(
+            syms(&["c", "a", "b"]),
+            [Some(true), Some(true), Some(false)],
+        );
+        let b_perm = Minterm::from_symbols(
+            syms(&["b", "c", "a"]),
+            [Some(true), Some(false), Some(true)],
+        );
 
         assert_eq!(a_shared, a_perm);
         assert_eq!(b_shared, b_perm);
