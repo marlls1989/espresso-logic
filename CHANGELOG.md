@@ -47,7 +47,10 @@ release is **not** backward compatible.
   `!Send`); `sync_bdd_builder!()` mints one over `SyncCell` (`Send + Sync`). Each call mints a fresh
   sealed `Brand`, which marks one namespace for uniqueness and selects no behaviour — the backend is the
   orthogonal `C` choice. The builder provides `var`, `constant`, `build(&BoolExpr)`, `parse`,
-  `build_cover`, and `minimize`.
+  `build_cover`, and `minimize`. `BddBuilder::scope(|s| …)` composes a single result through `Copy`,
+  by-reference `ScopedBdd` handles (a `Scope` of `&`/`|`/`^`/`!`, `var`/`constant`/`build`/`parse`, and
+  `lift` to splice in an existing `Bdd`), returning the owned `Bdd` for the root — allocation-free
+  composition with no `.clone()` at the call site.
 - **`ManagerCell`** — the public, sealed storage-backend trait, the second `Bdd`/`BddBuilder` type
   parameter, orthogonal to the brand. Implemented by `LocalCell` (`Rc<RefCell<…>>`, single-threaded) and
   `SyncCell` (`Arc<RwLock<…>>`, thread-safe).

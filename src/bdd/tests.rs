@@ -791,6 +791,66 @@ fn builder_recovers_the_same_manager_sync() {
     assert!(builder.var("a").equivalent_to(&a));
 }
 
+// ---- scoped, by-reference builder -----------------------------------------------------------------
+
+/// `BddBuilder::scope` composes `Copy`, by-reference handles and returns the owned root, which equals the
+/// same function built with the owned operators.
+#[test]
+fn scope_composes_without_clone() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // (a ^ b) & !c, composed from Copy handles — no `.clone()`, an operand named twice for free.
+    let f = builder.scope(|s| {
+        let a = s.var("a");
+        (a ^ s.var("b")) & !s.var("c")
+    });
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    assert!(f.equivalent_to(&((a ^ b) & !c)));
+}
+
+/// The owned `Bdd` returned by `scope` shares the builder's brand and manager, so it combines with
+/// further handles the builder mints.
+#[test]
+fn scope_returns_interoperable_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let f = builder.scope(|s| s.var("a") & s.var("b"));
+    let g = builder.var("c");
+    // Combining the scope's result with a fresh owned handle type-checks and computes.
+    let h = &f | &g;
+    assert!(h.equivalent_to(&builder.parse("(a & b) | c").unwrap()));
+}
+
+/// `Scope::lift` splices an existing owned `Bdd` into the scope; the result equals composing that handle
+/// directly.
+#[test]
+fn scope_lift_round_trips() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let lifted = builder.scope(|s| s.lift(&a) & s.var("b"));
+    assert!(lifted.equivalent_to(&(a & builder.var("b"))));
+}
+
+/// `Scope::build` / `Scope::parse` agree with the owned `BddBuilder::build` / `BddBuilder::parse`.
+#[test]
+fn scope_build_and_parse_agree_with_owned() {
+    use crate::BoolExpr;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let expr = BoolExpr::parse("(a | b) & !c").unwrap();
+    let built = builder.scope(|s| s.build(&expr));
+    let parsed = builder.scope(|s| s.parse("(a | b) & !c").unwrap());
+    assert!(built.equivalent_to(&builder.build(&expr)));
+    assert!(parsed.equivalent_to(&built));
+}
+
+/// The same round trip over the `SyncCell` backend.
+#[test]
+fn scope_composes_on_sync_cell() {
+    let builder: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+    assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
+}
+
 // ---- minimize -------------------------------------------------------------------------------------
 
 #[test]

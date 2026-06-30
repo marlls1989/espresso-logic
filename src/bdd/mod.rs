@@ -42,17 +42,21 @@
 //! per call — paired with [`LocalCell`] or [`SyncCell`] respectively — so handles of two different builders
 //! can never be combined. A [`BoolExpr`] is built into a handle with [`BddBuilder::build`] /
 //! [`BddBuilder::parse`], and a handle is lowered back to a factored [`BoolExpr`] with [`Bdd::to_expr`].
+//! For allocation-free composition without `.clone()`, [`BddBuilder::scope`] hands a closure a [`Scope`]
+//! of `Copy`, by-reference [`ScopedBdd`] handles and returns the owned [`Bdd`] for the root.
 //!
 //! [`BoolExpr`]: crate::BoolExpr
 
 mod brand;
 mod builder;
 mod handle;
+mod scope;
 
 pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
 pub use brand::Brand;
 pub use builder::BddBuilder;
 pub use handle::{Bdd, BddNode};
+pub use scope::{Scope, ScopedBdd};
 
 /// Items the `bdd_builder!` / `sync_bdd_builder!` macros need to name at their (possibly downstream)
 /// call sites. Not part of the documented public API; named only by those macros.

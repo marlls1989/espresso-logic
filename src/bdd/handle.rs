@@ -88,6 +88,18 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         }
     }
 
+    /// The canonical root node this handle denotes. Crate-internal: only sibling BDD modules (e.g. the
+    /// scoped builder's [`lift`](super::scope::Scope::lift)) read it.
+    pub(super) fn root(&self) -> NodeId {
+        self.root
+    }
+
+    /// This handle's storage cell. Crate-internal: only sibling BDD modules read it (e.g. the scoped
+    /// builder's [`lift`](super::scope::Scope::lift), to assert same-manager identity).
+    pub(super) fn cell(&self) -> &C {
+        &self.cell
+    }
+
     /// Recover a [`BddBuilder`] onto this handle's manager.
     ///
     /// The returned builder shares this handle's manager (a refcounted clone of the same cell) and its

@@ -21,6 +21,7 @@ use std::marker::PhantomData;
 
 use super::brand::Brand;
 use super::handle::Bdd;
+use super::scope::{Scope, ScopedBdd};
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
 use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
@@ -69,6 +70,12 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
             cell: cell.clone(),
             _brand: PhantomData,
         }
+    }
+
+    /// This builder's storage cell. Crate-internal: the scoped builder ([`scope`](Self::scope)) reads it
+    /// to mint by-reference [`ScopedBdd`] handles.
+    pub(super) fn cell(&self) -> &C {
+        &self.cell
     }
 
     /// A handle for the single variable `name`, creating it in this builder's variable ordering on first
@@ -147,6 +154,37 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
             |l, r| l.or(&r),
             |l, r| l.xor(&r),
         )
+    }
+
+    /// Compose a [`Bdd`] through a [`Scope`] of `Copy`, by-reference handles, returning the owned root.
+    ///
+    /// The closure receives a [`Scope`] over this builder and returns the [`ScopedBdd`] for the result.
+    /// A [`ScopedBdd`] is a [`Copy`] handle — a node id plus a borrow of this builder's manager — so the
+    /// operators (`&`, `|`, `^`, `!`) compose handles in place with no `.clone()` at the call site, and an
+    /// operand can be named more than once without cloning. The handle is confined to the closure by an
+    /// invariant lifetime brand (it cannot escape or be mixed with another scope); only the owned
+    /// [`Bdd`] for the returned root leaves, carrying this builder's brand and manager so it interoperates
+    /// with every other handle the builder mints.
+    ///
+    /// This complements [`build`](Self::build): both produce a canonical handle in this builder, but
+    /// `scope` trades the owned `Bdd`'s refcount-bumped composition for cheaper, allocation-free
+    /// composition inside the closure. An existing owned [`Bdd`] is spliced in with [`Scope::lift`].
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// // (a ^ b) & !c, composed from Copy handles — no `.clone()`.
+    /// let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+    /// assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
+    /// ```
+    #[must_use]
+    pub fn scope<F>(&self, f: F) -> Bdd<B, C>
+    where
+        F: for<'s> FnOnce(Scope<'s, B, C>) -> ScopedBdd<'s, B, C>,
+    {
+        let root = f(Scope::new(self)).root();
+        Bdd::from_root(&self.cell, root)
     }
 
     /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this builder.
