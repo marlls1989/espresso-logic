@@ -19,7 +19,7 @@ cargo run --example xor_function # run an example (see Cargo.toml [[example]] li
 cargo bench                      # criterion benchmarks (benches/pla_benchmarks.rs)
 
 ./tests/quick_regression.sh      # 4 cases, ~1s: Rust CLI vs C CLI
-./tests/regression_test.sh       # ~276 cases, ~45s; builds C binary via espresso-src/Makefile
+./tests/regression_test.sh       # ~363 cases, ~45s; builds C binary via espresso-src/Makefile
 ./scripts/check_leaks_macos.sh   # leak checks
 ```
 
