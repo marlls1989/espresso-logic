@@ -8,43 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.0.0] - 2026-06-30
 
 Major redesign splitting the **syntactic expression** from the **canonical BDD**. `BoolExpr` is now an
-owned, context-free value; all canonical and semantic operations move to a new borrowed `Bdd` handle
-obtained from a branded context. The process-global BDD manager and the `expr!` proc-macro are removed.
+owned, syntactic value; all canonical and semantic operations move to a new borrowed `Bdd` handle
+obtained from a branded builder. The process-global BDD manager and the `expr!` proc-macro are removed.
 This release is **not** backward compatible.
 
 ### Changed
 
-- **`BoolExpr` is now an owned, syntactic value** — a reverse-Polish token stream with no manager,
-  context or brand. It is brand-free: the `BoolExpr<B>` type parameter is gone. Build it
-  (`BoolExpr::var`, `constant`), compose it, `parse` it, `Display` it, and `fold` over its structure,
-  all without a context. It does **not** canonicalise.
+- **`BoolExpr` is now an owned, syntactic value** — a reverse-Polish token stream. It is brand-free:
+  the `BoolExpr<B>` type parameter is gone. Build it (`BoolExpr::var`, `constant`), compose it, `parse`
+  it, `Display` it, and `fold` over its structure. It does **not** canonicalise.
 - **Equality is syntactic.** `PartialEq`/`Eq`/`Hash` compare the token structure, not the Boolean
   function: `a & b != b & a`. For logical equality build a `Bdd` and use `Bdd::equivalent_to`.
 - **Operators are bitwise**: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT), on both `BoolExpr` and `Bdd`.
   The arithmetic spellings `*` (AND) and `+` (OR) are removed as Rust operators (the text parser still
   accepts `*`/`+`/`~` as input).
-- **`BoolExpr::fold` / `fold_with_context` fold over the token tree** (`ExprNode`, which gains an `Xor`
-  variant). The BDD has its own `Bdd::fold` / `fold_with_context` over the decision-diagram structure
-  (`BddNode`), memoised per node.
+- **`ExprNode` gains an `Xor` variant.** `BoolExpr::fold`/`fold_with_context` now walk the syntactic
+  token structure, so exhaustive `match`es on `ExprNode` must handle `Xor`.
 - **`Minimizable` is implemented only for `Cover`.** `Cover::to_expr` lowers a minimised cover to a
   factored `BoolExpr` by direct algebraic factorisation (never round-tripping through a BDD).
 
 ### Added
 
-- **`Bdd<'ctx, B>`** — a lightweight, `Copy`, borrowed handle into a context, where the canonical and
-  semantic operations live: bitwise operators, `ite`, `restrict`/`cofactor`/`forall`/`exists`,
+- **`Bdd<'builder, B>`** — a lightweight, `Copy`, borrowed handle into a builder, where the canonical
+  and semantic operations live: bitwise operators, `ite`, `restrict`/`cofactor`/`forall`/`exists`,
   `is_tautology`/`is_contradiction`, `equivalent_to` (O(1)), `evaluate`, `to_cubes`, `to_minterms`,
   `minimize`, `to_expr`, `fold`/`fold_with_context`, and `collect_variables`/`node_count`/`var_count`.
-  The brand and lifetime stop a handle outliving its context or mixing with another context's handles —
+  The brand and lifetime stop a handle outliving its builder or mixing with another builder's handles —
   both compile errors.
-- **Two context types, no global manager.** `BddContext<B>` (single-threaded, `!Send`) via
-  `bdd_context!()` and `SyncBddContext<B>` (`Send + Sync`) via `sync_bdd_context!()`. Each call mints a
+- **Two builder types, no global manager.** `BddBuilder<B>` (single-threaded, `!Send`) via
+  `bdd_builder!()` and `SyncBddBuilder<B>` (`Send + Sync`) via `sync_bdd_builder!()`. Each call mints a
   fresh sealed `Brand` whose associated cell selects the single-threaded or thread-safe manager. The
-  contexts provide `var`, `constant`, `build(&BoolExpr)`, `parse`, `build_cover`, and `minimize`.
-- **`Cover` ⇄ expression/BDD conversions.** `From<Bdd>`/`From<&Bdd>` and
-  `From<BoolExpr>`/`From<&BoolExpr>` for `Cover<Symbol, Anonymous>` (the expression forms mediate through
-  a temporary BDD context); `Cover::add_bdd` (the named-output primitive) and `Cover::add_expr` (its
-  convenience wrapper).
+  builders provide `var`, `constant`, `build(&BoolExpr)`, `parse`, `build_cover`, and `minimize`.
+- **`Cover` from a `Bdd`.** `From<Bdd>`/`From<&Bdd>` for `Cover<Symbol, Anonymous>`, and `Cover::add_bdd`
+  (the named-output primitive that `Cover::add_expr` now routes through via a temporary builder).
 - **General Boolean-logic primitives on covers/minterms.** `Minterm::hamming_distance`/`disagreement`,
   `Minterm::expand_over`, `Cube::expand_to`, and `Cover::maximize` (fully-expanded minterm enumeration
   over an explicit, widenable variable set).
@@ -56,7 +52,9 @@ This release is **not** backward compatible.
 - **`BoolExpr::evaluate`, `BoolExpr::equivalent_to`, and the BDD-query methods** on `BoolExpr`
   (`node_count`, `var_count`, the semantic `collect_variables`, `to_cubes`): evaluation and all semantic
   queries are performed on `Bdd`. `BoolExpr::variables` remains as a syntactic scan.
-- `impl Minimizable for BoolExpr` and the old BDD-handle `BoolExpr<B>` / `BddBuilder` / `BddContext` API.
+- `impl Minimizable for BoolExpr` and the old 4.x BDD-handle API: the branded `BoolExpr<B>`, the
+  closure-based `BddBuilder`/`BoolExpr::build`, and the `BddContext` scoped manager. (The 5.0
+  `BddBuilder`/`SyncBddBuilder` are new, unrelated types — the renamed scoped builders.)
 
 ## [4.2.0] - 2026-06-29
 
