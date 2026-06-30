@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major redesign splitting the **syntactic expression** from the **canonical BDD**. `BoolExpr` is now an
 owned, syntactic value; all canonical and semantic operations move to a new owned `Bdd` handle obtained
-from a branded builder. The process-global BDD manager and the `expr!` proc-macro are removed. This
-release is **not** backward compatible.
+from a branded builder. The process-global BDD manager is removed; the `expr!` macro is retained, now
+lowering to the new `BoolExpr::build` arena builder. This release is **not** backward compatible.
 
 ### Changed
 
