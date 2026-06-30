@@ -247,8 +247,8 @@ fn concurrent_symbol_covers() {
     let handles: Vec<_> = (0..8)
         .map(|t| {
             thread::spawn(move || {
-                let a = BoolExpr::variable(format!("t{t}_a"));
-                let b = BoolExpr::variable(format!("t{t}_b"));
+                let a = BoolExpr::var(format!("t{t}_a"));
+                let b = BoolExpr::var(format!("t{t}_b"));
                 let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
                 // a*b + a*~b  ==  a  (so b drops out under minimisation)
                 cover
@@ -270,61 +270,71 @@ fn concurrent_symbol_covers() {
     }
 }
 
-/// Many threads build the **same** overlapping expressions against the shared global BDD manager,
-/// hammering the read-mostly double-checked locking (concurrent node interning) and the ITE
-/// cache-commit transaction. Canonicity must hold under contention: identical expressions reduce to one
-/// shared root, so every thread's results must equal the reference, with no deadlock, panic, or
-/// duplicate nodes (a duplicated node would give a different root and fail the equality check).
+/// Many threads build the **same** overlapping expressions against one shared, thread-safe
+/// [`SyncCell`]-backed [`BddBuilder`], hammering its read-mostly double-checked locking (concurrent node
+/// interning) and the ITE cache-commit transaction. Canonicity must hold under contention: identical
+/// expressions reduce to one shared root, so every thread's handles must be `equivalent_to` the reference,
+/// with no deadlock, panic, or duplicate nodes (a duplicated node would give a different root and fail the
+/// equivalence check).
 #[test]
 fn concurrent_shared_manager_building_stays_canonical() {
-    use espresso_logic::BoolExpr;
+    use espresso_logic::{sync_bdd_builder, Bdd, BddBuilder, BoolExpr, Brand, ManagerCell};
 
     // A suite of varied shapes over shared variable names, exercising var/and/or/not/xor/ite, the
-    // `build` closure, and the parser — all against the one global manager.
-    fn build_suite() -> Vec<BoolExpr> {
-        let a = BoolExpr::variable("share_a");
-        let b = BoolExpr::variable("share_b");
-        let c = BoolExpr::variable("share_c");
+    // expression `build`, and the parser — all against the one shared builder.
+    fn build_suite<B: Brand, C: ManagerCell>(builder: &BddBuilder<B, C>) -> Vec<Bdd<B, C>> {
+        let a = builder.var("share_a");
+        let b = builder.var("share_b");
+        let c = builder.var("share_c");
         vec![
-            &(&a ^ &b) ^ &c,                         // XOR chain
-            a.and(&b).or(&b.and(&c)).or(&a.and(&c)), // majority
-            BoolExpr::parse("share_a * share_b + ~share_c").unwrap(),
-            BoolExpr::build(|bld| {
-                let x = bld.var("share_a");
-                let y = bld.var("share_b");
-                let z = bld.var("share_c");
-                bld.or(bld.and(x, y), bld.not(z))
-            }),
-            a.ite(&b, &c),
+            (a.clone() ^ b.clone()) ^ c.clone(), // XOR chain
+            (a.clone() & b.clone()) | (b.clone() & c.clone()) | (a.clone() & c.clone()), // majority
+            builder.parse("share_a * share_b + ~share_c").unwrap(),
+            // Same function as the parsed entry above, but constructed via owned `BoolExpr` operators
+            // and fed through `builder.build`; canonicity means it must reduce to the same root.
+            builder.build(
+                &((BoolExpr::var("share_a") & BoolExpr::var("share_b"))
+                    | !BoolExpr::var("share_c")),
+            ),
+            a.ite(b, c),
         ]
     }
 
     const THREADS: usize = 16;
     const ITERS: usize = 200;
 
-    // Reference built on the main thread; keeps the manager generation alive for the whole test.
-    let reference = build_suite();
+    // One thread-safe builder, shared by reference across every worker (a SyncCell-backed builder is
+    // Send + Sync).
+    let builder = sync_bdd_builder!();
 
-    let handles: Vec<_> = (0..THREADS)
-        .map(|_| {
-            thread::spawn(|| {
-                // Re-build the suite many times under contention; return the last for cross-thread check.
-                let mut last = build_suite();
-                for _ in 1..ITERS {
-                    last = build_suite();
-                }
-                last
+    // Reference built on the main thread.
+    let reference = build_suite(&builder);
+
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    // Re-build the suite many times under contention; return the last for the check.
+                    let mut last = build_suite(&builder);
+                    for _ in 1..ITERS {
+                        last = build_suite(&builder);
+                    }
+                    last
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    for handle in handles {
-        let suite = handle
-            .join()
-            .expect("builder thread must not panic or deadlock");
-        assert_eq!(
-            suite, reference,
-            "concurrent builds against the shared manager must yield identical canonical expressions"
-        );
-    }
+        for handle in handles {
+            let suite = handle
+                .join()
+                .expect("builder thread must not panic or deadlock");
+            assert_eq!(suite.len(), reference.len());
+            for (got, want) in suite.iter().zip(reference.iter()) {
+                assert!(
+                    got.equivalent_to(want),
+                    "concurrent builds against the shared builder must yield identical canonical BDDs"
+                );
+            }
+        }
+    });
 }

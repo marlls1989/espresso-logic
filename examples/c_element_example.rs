@@ -1,10 +1,10 @@
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_builder, BoolExpr, Cover, CoverType, Minimizable};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Compute XOR of two boolean expressions
+/// Compute the XOR of two boolean expressions using the bitwise operators.
 fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
-    expr!(a * !b + !a * b)
+    (a & !b) | (!a & b)
 }
 
 // ============================================================================
@@ -176,8 +176,8 @@ fn main() -> std::io::Result<()> {
     // ========================================================================
 
     // Define the C-element characteristic functions
-    let activation = expr!("a" * "b");
-    let deactivation = expr!(!"a" * !"b");
+    let activation = BoolExpr::var("a") & BoolExpr::var("b");
+    let deactivation = !BoolExpr::var("a") & !BoolExpr::var("b");
 
     // Hold region: XOR of activation and negation of deactivation
     // This is the unique hold region where neither activation nor deactivation occurs
@@ -185,10 +185,10 @@ fn main() -> std::io::Result<()> {
 
     // Two equivalent formulations of next_q:
     // Version 1: Using deactivation directly
-    let next_q_v1 = expr!((activation + "q") * !deactivation);
+    let next_q_v1 = (&activation | BoolExpr::var("q")) & !&deactivation;
 
     // Version 2: Using hold (where hold = activation XOR !deactivation)
-    let next_q_v2 = expr!(activation + "q" * hold);
+    let next_q_v2 = &activation | (BoolExpr::var("q") & &hold);
 
     println!("Original Functions:");
     println!("  activation   = {}", activation);
@@ -197,10 +197,10 @@ fn main() -> std::io::Result<()> {
     println!();
 
     println!("Two Formulations of next_q (before minimization):");
-    println!("  next_q_v1 = (activation + q) * !deactivation");
+    println!("  next_q_v1 = (activation | q) & !deactivation");
     println!("            = {}", next_q_v1);
     println!();
-    println!("  next_q_v2 = activation + q * hold");
+    println!("  next_q_v2 = activation | q & hold");
     println!("            = {}", next_q_v2);
     println!();
 
@@ -342,10 +342,16 @@ fn main() -> std::io::Result<()> {
     println!("next_q_v2 (minimized) = {}", min_next_q_v2);
     println!();
 
-    if min_next_q_v1.equivalent_to(&min_next_q_v2) {
+    // Logical equality is now a canonical BDD comparison: build both expressions
+    // in a shared builder and compare the resulting handles.
+    let builder = bdd_builder!();
+    if builder
+        .build(&min_next_q_v1)
+        .equivalent_to(&builder.build(&min_next_q_v2))
+    {
         println!("✓ Both formulations are logically equivalent!");
-        println!("  - Version 1: (activation + q) * !deactivation");
-        println!("  - Version 2: activation + q * hold");
+        println!("  - Version 1: (activation | q) & !deactivation");
+        println!("  - Version 2: activation | q & hold");
         println!("  where hold = activation XOR !deactivation");
     } else {
         println!("✗ Formulations differ (unexpected!)");

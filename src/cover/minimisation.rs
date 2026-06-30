@@ -10,9 +10,7 @@ use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
-use crate::expression::BoolExpr;
 use crate::EspressoConfig;
-use crate::Symbol;
 use std::sync::Arc;
 
 /// Public trait for types that can be minimised using Espresso
@@ -23,48 +21,39 @@ use std::sync::Arc;
 ///
 /// **Note (v3.1+):** You must explicitly import this trait to use its methods:
 /// ```
-/// use espresso_logic::{BoolExpr, Minimizable};
+/// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 ///
-/// let expr = BoolExpr::parse("a * b + a * b * c")?;
-/// let minimized = expr.minimize()?;  // Requires `use Minimizable`
+/// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+/// cover.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));
+/// let minimized = cover.minimize()?;  // Requires `use Minimizable`
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
 /// # Transparent Minimisation
 ///
-/// The beauty of this trait is that minimisation works the same way regardless of input type.
-/// Just call `.minimize()` on any supported type and get back a minimised version of the same type:
+/// Call `.minimize()` on a supported type and get back a minimised value of the same type:
 ///
 /// ```
-/// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+/// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let c = BoolExpr::variable("c");
-/// let redundant = a.and(&b).or(&a.and(&b).and(&c));
+/// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+/// cover.push(Cube::anonymous(&[Some(false), Some(true)], &[true], CubeType::F)); // 01 -> 1
+/// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F)); // 10 -> 1
 ///
-/// // Works on BoolExpr - returns BoolExpr
-/// let min_expr = redundant.minimize()?;
-/// println!("Minimized expression: {}", min_expr);
-///
-/// // Works on Cover - returns Cover
-/// let mut cover = Cover::new(CoverType::F);
-/// cover.add_expr(&redundant, "out")?;
 /// let min_cover = cover.minimize()?;
 /// println!("Minimized cover has {} cubes", min_cover.num_cubes());
-///
-/// // Both produce equivalent minimized results!
 /// # Ok(())
 /// # }
 /// ```
 ///
 /// # Implementations
 ///
-/// - **[`Cover`]**: Direct implementation - minimises cubes directly with Espresso
-/// - **[`BoolExpr`]**: Extracts the expression's product terms (from its internal BDD) into a
-///   single-output [`Cover`], minimises it with Espresso, then rebuilds an expression from the
-///   minimised product terms. Workflow: Expression → Cover → Espresso → minimised Cover → Expression
+/// - **[`Cover`]**: Direct implementation — minimises cubes directly with Espresso.
+///
+/// To minimise a [`BoolExpr`](crate::BoolExpr), build it into a [`Bdd`](crate::bdd::Bdd) in a builder
+/// and call [`Bdd::minimize`](crate::bdd::Bdd::minimize) (or
+/// [`BddBuilder::minimize`](crate::bdd::BddBuilder::minimize)), which returns a [`Cover`].
 ///
 /// This trait is **not sealed**: it is intentionally open so downstream crates may implement it for
 /// their own types (for example, to forward minimisation through a wrapper). An implementation only
@@ -85,7 +74,6 @@ use std::sync::Arc;
 ///
 /// A cube with an *empty* input field (the PLA `?` literal) covers no minterm, so it is dropped.
 ///
-/// [`BoolExpr`]: crate::expression::BoolExpr
 /// [`Cover`]: crate::Cover
 ///
 /// # Immutable Design
@@ -93,22 +81,18 @@ use std::sync::Arc;
 /// All minimisation methods preserve the original and return a new minimised instance:
 ///
 /// ```
-/// use espresso_logic::{BoolExpr, Minimizable};
+/// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Minimizable};
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let a = BoolExpr::variable("a");
-/// let b = BoolExpr::variable("b");
-/// let c = BoolExpr::variable("c");
+/// let mut original = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+/// original.push(Cube::anonymous(&[Some(true), Some(true)], &[true], CubeType::F));
+/// original.push(Cube::anonymous(&[Some(true), Some(true), Some(true)], &[true], CubeType::F));
 ///
-/// let original = a.and(&b).or(&a.and(&b).and(&c));
 /// let minimized = original.minimize()?;
 ///
-/// // Original is unchanged
-/// println!("Original: {}", original);
-/// println!("Minimized: {}", minimized);
-///
-/// // Can continue using original (already a BDD internally)
-/// println!("Original has {} BDD nodes", original.node_count());
+/// // Original is unchanged.
+/// println!("Original has {} cubes", original.num_cubes());
+/// println!("Minimized has {} cubes", minimized.num_cubes());
 /// # Ok(())
 /// # }
 /// ```
@@ -396,58 +380,5 @@ impl<I, O> Minimizable for Cover<I, O> {
             Some(config),
         )?;
         minimize_cover_with(self, &esp, |esp, f, d, r| esp.minimize_exact(f, d, r))
-    }
-}
-
-/// Minimize a `BoolExpr` by round-tripping through a single-output [`Cover`].
-///
-/// Workflow: `BoolExpr` → single-output `Cover` (product terms extracted from the internal
-/// BDD) → Espresso minimisation → rebuild a `BoolExpr` from the minimised product terms. The
-/// minimised cubes are cached on the result so subsequent cube extraction reflects them.
-fn minimize_expr_with<F, B: crate::Brand>(
-    expr: &BoolExpr<B>,
-    config: &EspressoConfig,
-    minimize_fn: F,
-) -> Result<BoolExpr<B>, MinimizationError>
-where
-    F: FnOnce(
-        &Cover<Symbol, Anonymous>,
-        &EspressoConfig,
-    ) -> Result<Cover<Symbol, Anonymous>, MinimizationError>,
-{
-    // Build a single-output, anonymous-output cover from the expression (canonical via the BDD).
-    let cover: Cover<Symbol, Anonymous> = expr.into();
-
-    // Minimise it with the provided (heuristic or exact) algorithm.
-    let minimized = minimize_fn(&cover, config)?;
-
-    // Rebuild a BoolExpr from the minimised product terms of the single output, in the same manager
-    // as the input (so a scoped expression's minimised form stays branded to its context).
-    let terms = minimized.output_product_terms(0);
-    Ok(BoolExpr::from_cubes_in(expr.store_cloned(), terms))
-}
-
-/// Implement the public [`Minimizable`] trait for [`BoolExpr`].
-///
-/// Boolean expressions minimise by extracting their product terms (from the internal BDD) into a
-/// single-output [`Cover`], running Espresso, and reconstructing an expression from the result. Works
-/// for any brand: a scoped expression minimises to an expression in the same context.
-impl<B: crate::Brand> Minimizable for BoolExpr<B> {
-    fn try_minimize_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, MinimizationError> {
-        minimize_expr_with(self, config, |cover, cfg| {
-            cover.try_minimize_with_config(cfg)
-        })
-    }
-
-    fn try_minimize_exact_with_config(
-        &self,
-        config: &crate::EspressoConfig,
-    ) -> Result<Self, MinimizationError> {
-        minimize_expr_with(self, config, |cover, cfg| {
-            cover.try_minimize_exact_with_config(cfg)
-        })
     }
 }

@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-06-30
+
+Major redesign splitting the **syntactic expression** from the **canonical BDD**. `BoolExpr` is now an
+owned, syntactic value; all canonical and semantic operations move to a new owned `Bdd` handle obtained
+from a branded builder. The process-global BDD manager and the `expr!` proc-macro are removed. This
+release is **not** backward compatible.
+
+### Changed
+
+- **`BoolExpr` is now an owned, syntactic value** — a reverse-Polish token stream. It is brand-free:
+  the `BoolExpr<B>` type parameter is gone. Build it (`BoolExpr::var`, `constant`), compose it, `parse`
+  it, `Display` it, and `fold` over its structure. It does **not** canonicalise.
+- **Equality is syntactic.** `PartialEq`/`Eq`/`Hash` compare the token structure, not the Boolean
+  function: `a & b != b & a`. For logical equality build a `Bdd` and use `Bdd::equivalent_to`.
+- **Operators are bitwise**: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT), on both `BoolExpr` and `Bdd`.
+  The arithmetic spellings `*` (AND) and `+` (OR) are removed as Rust operators (the text parser still
+  accepts `*`/`+`/`~` as input).
+- **`ExprNode` gains an `Xor` variant.** `BoolExpr::fold`/`fold_with_context` now walk the syntactic
+  token structure, so exhaustive `match`es on `ExprNode` must handle `Xor`.
+- **`Minimizable` is implemented only for `Cover`.** `Cover::to_expr` lowers a minimised cover to a
+  factored `BoolExpr` by direct algebraic factorisation (never round-tripping through a BDD).
+
+### Added
+
+- **`Bdd<B, C>`** — an owned handle into a builder, parameterised by a uniqueness `Brand` `B` and a
+  storage backend `C` (`ManagerCell`). It holds a refcounted clone of the builder's manager, so it can
+  be stored, returned, and outlive the builder; it is `Clone` (a refcount bump), not `Copy`. The
+  canonical and semantic operations live here: bitwise operators (by value, with `&` reference
+  variants), `ite`, `restrict`/`cofactor`/`forall`/`exists`, `is_tautology`/`is_contradiction`,
+  `equivalent_to` (O(1)), `evaluate`, `to_cubes`, `to_minterms`, `minimize`, `to_expr`,
+  `fold`/`fold_with_context`, and `collect_variables`/`node_count`/`var_count`. The brand stops handles
+  from two builders unifying (a compile error); an always-on pointer-identity assert is the runtime
+  backstop, panicking if handles from different managers are ever combined. `evaluate` is a partial
+  evaluator: it takes a `Minterm` and returns `Result<bool, Bdd<B, C>>` — `Ok` when the assignment fixes
+  the function to a constant, `Err` carrying the residual function over the still-free variables.
+- **One generic builder, no global manager.** `BddBuilder<B, C>` is parameterised by a uniqueness
+  `Brand` and a storage backend `C`. `bdd_builder!()` mints a builder over `LocalCell` (single-threaded,
+  `!Send`); `sync_bdd_builder!()` mints one over `SyncCell` (`Send + Sync`). Each call mints a fresh
+  sealed `Brand`, which marks one namespace for uniqueness and selects no behaviour — the backend is the
+  orthogonal `C` choice. The builder provides `var`, `constant`, `build(&BoolExpr)`, `parse`,
+  `build_cover`, and `minimize`.
+- **`ManagerCell`** — the public, sealed storage-backend trait, the second `Bdd`/`BddBuilder` type
+  parameter, orthogonal to the brand. Implemented by `LocalCell` (`Rc<RefCell<…>>`, single-threaded) and
+  `SyncCell` (`Arc<RwLock<…>>`, thread-safe).
+- **`Cover` from a `Bdd`.** `From<Bdd>`/`From<&Bdd>` for `Cover<Symbol, Anonymous>`, and `Cover::add_bdd`
+  (the named-output primitive that `Cover::add_expr` now routes through via a temporary builder).
+- **General Boolean-logic primitives on covers/minterms.** `Minterm::hamming_distance`/`disagreement`,
+  `Minterm::expand_over`, `Cube::expand_to`, and `Cover::maximize` (fully-expanded minterm enumeration
+  over an explicit, widenable variable set).
+
+### Removed
+
+- The **process-global BDD manager** and the global-brand API.
+- The **`expr!` macro and the `espresso-logic-macros` crate**; the project is now a single crate.
+- **`BoolExpr::evaluate`, `BoolExpr::equivalent_to`, and the BDD-query methods** on `BoolExpr`
+  (`node_count`, `var_count`, the semantic `collect_variables`, `to_cubes`): evaluation and all semantic
+  queries are performed on `Bdd`. `BoolExpr::variables` remains as a syntactic scan.
+- **`BoolExpr::variable`** — the duplicate of `BoolExpr::var`; use `var`.
+- `impl Minimizable for BoolExpr` and the old 4.x BDD-handle API: the branded `BoolExpr<B>`, the
+  closure-based `BddBuilder`/`BoolExpr::build`, and the `BddContext` scoped manager. (The 5.0
+  `BddBuilder`/`SyncBddBuilder` are new, unrelated types — the renamed scoped builders.)
+
 ## [4.2.0] - 2026-06-29
 
 Additive, fully backward-compatible: a scoped, branded alternative to the process-global BDD manager.

@@ -2,6 +2,7 @@
 //!
 //! This module contains the AST types and fold operations for boolean expressions.
 
+use super::rpn;
 use super::BoolExpr;
 use crate::Symbol;
 use std::sync::Arc;
@@ -32,6 +33,8 @@ pub enum ExprNode<'a, T> {
     And(T, T),
     /// Logical OR with results from left and right subtrees
     Or(T, T),
+    /// Logical exclusive-or with results from left and right subtrees
+    Xor(T, T),
     /// Logical NOT with result from inner subtree
     Not(T),
     /// A constant boolean value
@@ -50,6 +53,8 @@ pub(crate) enum BoolExprAst {
     And(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical OR of two expressions
     Or(Arc<BoolExprAst>, Arc<BoolExprAst>),
+    /// Logical exclusive-or of two expressions
+    Xor(Arc<BoolExprAst>, Arc<BoolExprAst>),
     /// Logical NOT of an expression
     Not(Arc<BoolExprAst>),
     /// A constant value (true or false)
@@ -75,7 +80,7 @@ impl Drop for BoolExprAst {
         fn take_children(node: &mut BoolExprAst, stack: &mut Vec<Arc<BoolExprAst>>) {
             match node {
                 BoolExprAst::Not(a) => stack.push(std::mem::replace(a, placeholder())),
-                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) => {
+                BoolExprAst::And(a, b) | BoolExprAst::Or(a, b) | BoolExprAst::Xor(a, b) => {
                     stack.push(std::mem::replace(a, placeholder()));
                     stack.push(std::mem::replace(b, placeholder()));
                 }
@@ -95,51 +100,31 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl<B: super::context::Brand> BoolExpr<B> {
-    /// Get or create the AST representation from the BDD
+impl BoolExpr {
+    /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
-    /// This is called internally when AST is needed (for display, fold, etc.)
-    ///
-    /// Uses factorisation-based reconstruction for beautiful, compact expressions.
-    pub(super) fn get_or_create_ast(&self) -> Arc<BoolExprAst> {
-        // The single place that reads and populates `ast_cache`.
-        if let Some(ast) = self.ast_cache.get() {
-            return Arc::clone(ast);
-        }
-
-        // Need to reconstruct from BDD using factorisation.
-        let ast = self.to_ast_uncached();
-
-        // Try to store it (may fail if another thread beat us to it, that's fine).
-        let _ = self.ast_cache.set(Arc::clone(&ast));
-
-        ast
+    /// A plain postfix-to-tree fold over the tokens (via the shared [`rpn::fold_postfix`] value-stack
+    /// walk, so a deep expression can't overflow the call stack). Every token maps to its own AST node,
+    /// `^` included, so the reconstructed tree is faithful to the token stream. The walk is
+    /// **syntactic**: it mirrors how the expression was built, not a canonical form.
+    fn to_ast(&self) -> Arc<BoolExprAst> {
+        rpn::fold_postfix(
+            self.tokens(),
+            |name| Arc::new(BoolExprAst::Variable(name.clone())),
+            |value| Arc::new(BoolExprAst::Constant(value)),
+            |a| Arc::new(BoolExprAst::Not(a)),
+            |l, r| Arc::new(BoolExprAst::And(l, r)),
+            |l, r| Arc::new(BoolExprAst::Or(l, r)),
+            |l, r| Arc::new(BoolExprAst::Xor(l, r)),
+        )
     }
 
-    /// Reconstruct an optimised AST from the BDD (pure compute, no caching).
+    /// Fold the expression tree depth-first from leaves to root.
     ///
-    /// Extracts cubes from the BDD and applies algebraic factorisation to produce a compact, readable
-    /// expression. Caching is owned solely by [`get_or_create_ast`](Self::get_or_create_ast), its only
-    /// caller.
-    fn to_ast_uncached(&self) -> Arc<BoolExprAst> {
-        // Get cubes and factorise.
-        let cubes = self.get_or_create_cubes();
-
-        // Convert cubes to the (literals, include) format expected by factorisation
-        let cube_terms: Vec<(std::collections::BTreeMap<Symbol, bool>, bool)> = cubes
-            .iter()
-            .map(|cube| (super::minterm_literals(cube), true))
-            .collect();
-
-        // Use factorisation to build a nice AST (caching is the caller's responsibility).
-        crate::expression::factorization::factorise_cubes_to_ast(cube_terms)
-    }
-
-    /// Fold the expression tree depth-first from leaves to root
-    ///
-    /// This method traverses the expression tree recursively, calling the provided
-    /// function `f` on each node. The function receives an [`ExprNode`] containing
-    /// the node type and accumulated results from child nodes.
+    /// Walks the expression's reverse-Polish token stream directly through the shared
+    /// [`rpn::fold_postfix`] value-stack pass, calling the provided function `f` on each node. The
+    /// function receives an [`ExprNode`] carrying the node type and the accumulated results from child
+    /// nodes. The traversal is iterative, so a deeply nested expression cannot overflow the call stack.
     ///
     /// This is useful for implementing custom expression transformations and analyses
     /// without needing access to private expression internals.
@@ -151,13 +136,13 @@ impl<B: super::context::Brand> BoolExpr<B> {
     /// ```
     /// use espresso_logic::{BoolExpr, ExprNode};
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// let expr = a.and(&b);
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
-    ///     ExprNode::And(l, r) | ExprNode::Or(l, r) => l + r + 1,
+    ///     ExprNode::And(l, r) | ExprNode::Or(l, r) | ExprNode::Xor(l, r) => l + r + 1,
     ///     ExprNode::Not(inner) => inner + 1,
     /// });
     ///
@@ -167,28 +152,15 @@ impl<B: super::context::Brand> BoolExpr<B> {
     where
         F: Fn(ExprNode<T>) -> T + Copy,
     {
-        self.fold_impl(&f)
-    }
-
-    fn fold_impl<T, F>(&self, f: &F) -> T
-    where
-        F: Fn(ExprNode<T>) -> T,
-    {
-        let ast = self.get_or_create_ast();
-        Self::fold_ast(&ast, f)
-    }
-
-    /// Fold over an AST bottom-up (helper for `fold_impl`).
-    ///
-    /// The no-top-down-context special case of [`fold_with_context_ast`](Self::fold_with_context_ast):
-    /// a unit context flows down (a trivial `descend`) and `f` is the bottom-up `combine`. Routing
-    /// through the one iterative work-stack keeps the de-recursion logic in a single place. `pub(super)`
-    /// so sibling modules (e.g. factorisation's `ast_to_expr`) can reuse it.
-    pub(super) fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
-    where
-        F: Fn(ExprNode<T>) -> T,
-    {
-        Self::fold_with_context_ast(ast, (), &|_node, _ctx| ((), ()), &|node, ()| f(node))
+        rpn::fold_postfix(
+            self.tokens(),
+            |name| f(ExprNode::Variable(name.as_str())),
+            |value| f(ExprNode::Constant(value)),
+            |inner| f(ExprNode::Not(inner)),
+            |l, r| f(ExprNode::And(l, r)),
+            |l, r| f(ExprNode::Or(l, r)),
+            |l, r| f(ExprNode::Xor(l, r)),
+        )
     }
 
     /// Fold with a context that flows **top-down** through the tree.
@@ -217,8 +189,8 @@ impl<B: super::context::Brand> BoolExpr<B> {
     /// ```
     /// use espresso_logic::{BoolExpr, ExprNode};
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// let expr = a.and(&b).not();
     ///
     /// let max_depth = expr.fold_with_context(
@@ -229,11 +201,11 @@ impl<B: super::context::Brand> BoolExpr<B> {
     ///     |node, depth| match node {
     ///         ExprNode::Variable(_) | ExprNode::Constant(_) => depth,
     ///         ExprNode::Not(inner) => inner,
-    ///         ExprNode::And(l, r) | ExprNode::Or(l, r) => l.max(r),
+    ///         ExprNode::And(l, r) | ExprNode::Or(l, r) | ExprNode::Xor(l, r) => l.max(r),
     ///     },
     /// );
-    /// // The fold runs over the canonical (BDD-reconstructed) tree, so the exact depth depends on
-    /// // that form; for a two-variable expression it is at least one level deep.
+    /// // The fold runs over the expression's own syntactic tree; for this two-variable expression
+    /// // it is at least one level deep.
     /// assert!(max_depth >= 1);
     /// ```
     ///
@@ -262,6 +234,8 @@ impl<B: super::context::Brand> BoolExpr<B> {
     ///                 vec![cube]
     ///             }
     ///             ExprNode::Constant(_) => vec![],
+    ///             // This naive lowering does not expand XOR; the sample expression contains none.
+    ///             ExprNode::Xor(_, _) => unreachable!("sample expression has no XOR"),
     ///             ExprNode::Not(inner) => inner, // flag was already flipped on the way down
     ///             // OR (or AND under negation): union the cube lists.
     ///             ExprNode::Or(mut l, r) | ExprNode::And(mut l, r) if negate => {
@@ -284,8 +258,8 @@ impl<B: super::context::Brand> BoolExpr<B> {
     ///     )
     /// }
     ///
-    /// let a = BoolExpr::variable("a");
-    /// let b = BoolExpr::variable("b");
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     /// // ~(a*b) is satisfiable, so its DNF has at least one cube. (The exact cube list depends on
     /// // the canonical form the fold walks, so we only check it is non-empty here.)
     /// let dnf = to_dnf_naive(&a.and(&b).not());
@@ -300,7 +274,7 @@ impl<B: super::context::Brand> BoolExpr<B> {
         D: Fn(ExprNode<()>, &C) -> (C, C),
         G: Fn(ExprNode<T>, C) -> T,
     {
-        let ast = self.get_or_create_ast();
+        let ast = self.to_ast();
         Self::fold_with_context_ast(&ast, root_context, &descend, &combine)
     }
 
@@ -327,6 +301,7 @@ impl<B: super::context::Brand> BoolExpr<B> {
             Enter(&'a BoolExprAst, C),
             ExitAnd(C),
             ExitOr(C),
+            ExitXor(C),
             ExitNot(C),
         }
         let mut work = vec![Work::Enter(ast, root_context)];
@@ -359,6 +334,12 @@ impl<B: super::context::Brand> BoolExpr<B> {
                         work.push(Work::Enter(right, right_ctx));
                         work.push(Work::Enter(left, left_ctx));
                     }
+                    BoolExprAst::Xor(left, right) => {
+                        let (left_ctx, right_ctx) = descend(ExprNode::Xor((), ()), &ctx);
+                        work.push(Work::ExitXor(ctx));
+                        work.push(Work::Enter(right, right_ctx));
+                        work.push(Work::Enter(left, left_ctx));
+                    }
                 },
                 Work::ExitAnd(ctx) => {
                     let right = results.pop().expect("And right result");
@@ -369,6 +350,11 @@ impl<B: super::context::Brand> BoolExpr<B> {
                     let right = results.pop().expect("Or right result");
                     let left = results.pop().expect("Or left result");
                     results.push(combine(ExprNode::Or(left, right), ctx));
+                }
+                Work::ExitXor(ctx) => {
+                    let right = results.pop().expect("Xor right result");
+                    let left = results.pop().expect("Xor left result");
+                    results.push(combine(ExprNode::Xor(left, right), ctx));
                 }
                 Work::ExitNot(ctx) => {
                     let inner = results.pop().expect("Not inner result");

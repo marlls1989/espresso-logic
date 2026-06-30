@@ -124,7 +124,7 @@ pub use minterm::{Minterm, MintermIter};
 pub use output_set::OutputSet;
 pub use symbols::Symbols;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Represents the type of cover (F, FD, FR, or FDR)
@@ -369,6 +369,40 @@ where
     }
 }
 
+impl<I: Label, O: Clone> Cover<I, O> {
+    /// Expand every cube into its fully-assigned minterms over the explicit header `vars`.
+    ///
+    /// The inverse of minimisation ("maximise"): each cube's input pattern is re-expressed over `vars`
+    /// and every don't-care (and every variable of `vars` absent from the cube) is split into both
+    /// polarities, so each surviving cube assigns **every** variable in `vars`. `vars` MAY be a superset
+    /// of the cover's inputs (absent variables widen into both polarities); input variables not in `vars`
+    /// are dropped. Output columns and per-cube set tags are preserved; duplicate cubes are removed
+    /// (first-seen order kept). The result shares one canonical input header, so its minterms stay on the
+    /// fast-comparison path. Maximising an already-maximal cover over the same `vars` is a no-op.
+    ///
+    /// See [`Cube::expand_to`] / [`Minterm::expand_over`] for the per-cube primitive.
+    #[must_use]
+    pub fn maximize(&self, vars: &[I]) -> Cover<I, O> {
+        let target = Symbols::new(vars.iter().cloned().collect());
+        let mut seen: HashSet<Cube<I, O>> = HashSet::new();
+        let mut cubes = Vec::new();
+        for cube in &self.cubes {
+            for inputs in cube.inputs.expand_over(&target) {
+                let new = Cube::new(inputs, cube.outputs.clone(), cube.set);
+                if seen.insert(new.clone()) {
+                    cubes.push(new);
+                }
+            }
+        }
+        Cover {
+            input_symbols: target,
+            output_symbols: Arc::clone(&self.output_symbols),
+            cubes,
+            cover_type: self.cover_type,
+        }
+    }
+}
+
 impl<I, O> Cover<I, O> {
     /// Create a new empty cover of the given type, for **any** label types.
     ///
@@ -382,6 +416,28 @@ impl<I, O> Cover<I, O> {
             input_symbols: Symbols::empty(),
             output_symbols: Symbols::empty(),
             cubes: Vec::new(),
+            cover_type,
+        }
+    }
+
+    /// Build a cover from an **explicit** header plus cubes, taking the input/output symbol tables
+    /// verbatim rather than re-deriving them from the cubes (the way [`from_cubes`](Self::from_cubes)
+    /// does). The caller guarantees every cube is homed on these exact tables.
+    ///
+    /// This preserves the declared output arity even when there are zero cubes — the case
+    /// [`from_cubes`](Self::from_cubes) cannot serve, since with no cubes it would derive a zero-width
+    /// header. The BDD lowering ([`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes)) uses it so a contradiction
+    /// lowers to a one-output, zero-cube cover rather than a header-less one.
+    pub(crate) fn from_parts(
+        input_symbols: Arc<Symbols<I>>,
+        output_symbols: Arc<Symbols<O>>,
+        cubes: Vec<Cube<I, O>>,
+        cover_type: CoverType,
+    ) -> Cover<I, O> {
+        Cover {
+            input_symbols,
+            output_symbols,
+            cubes,
             cover_type,
         }
     }
@@ -607,17 +663,6 @@ impl<'a, I, O> IntoIterator for &'a Cover<I, O> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.cubes()
-    }
-}
-
-impl<I: Clone, O> Cover<I, O> {
-    /// Input minterms of the F cubes that assert `output_idx` (the product terms of that output).
-    pub(crate) fn output_product_terms(&self, output_idx: usize) -> Arc<[Minterm<I>]> {
-        self.cubes
-            .iter()
-            .filter(|cube| cube.cube_type() == CubeType::F && cube.asserts(output_idx))
-            .map(|cube| cube.inputs().clone())
-            .collect()
     }
 }
 

@@ -11,7 +11,8 @@
 //!
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
-use super::{BoolExpr, BoolExprAst, ExprNode};
+use super::rpn::Token;
+use super::{BoolExpr, BoolExprAst};
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -279,9 +280,9 @@ fn count_operators(expr: &BoolExpr) -> usize {
         match node {
             ExprNode::Constant(_) | ExprNode::Variable(_) => 0,
             ExprNode::Not(inner_count) => inner_count + 1,
-            ExprNode::And(left_count, right_count) | ExprNode::Or(left_count, right_count) => {
-                left_count + right_count + 1
-            }
+            ExprNode::And(left_count, right_count)
+            | ExprNode::Or(left_count, right_count)
+            | ExprNode::Xor(left_count, right_count) => left_count + right_count + 1,
         }
     })
 }
@@ -305,47 +306,110 @@ pub(crate) fn factorise_cubes_to_ast(
     factorise_once(terms)
 }
 
-/// Convert cubes (from Cover) directly to factored expression
+/// Convert cubes (from a Cover) directly to a factored [`BoolExpr`].
 ///
-/// Takes a list of product terms and applies algebraic factorisation to
-/// produce a more compact multi-level representation.
+/// Takes a list of product terms and applies algebraic factorisation to produce a more compact
+/// multi-level representation.
 ///
-/// This is the main entry point for the factorization module, designed to work
-/// with cubes extracted from Espresso output.
-///
-/// Works entirely with AST to preserve the factored structure, then converts
-/// to BoolExpr at the very end.
+/// This is the main entry point for the factorisation module, designed to work with cubes extracted
+/// from Espresso output. The factored algebra is built as a [`BoolExprAst`], then **lowered directly
+/// to the owned reverse-Polish [`BoolExpr`]** — it never round-trips through a BDD, so Espresso's
+/// minimised cube structure is preserved exactly (re-canonicalising would discard it).
 pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Symbol, bool>, bool)>) -> BoolExpr {
-    // Get factored AST
     let factored_ast = factorise_cubes_to_ast(cubes);
-
-    // Convert AST to BoolExpr
-    let expr = ast_to_expr(&factored_ast);
-
-    // Cache the factored AST so it's used for display instead of regenerating
-    let _ = expr.ast_cache.set(factored_ast);
-    expr
+    ast_to_expr(&factored_ast)
 }
 
-/// Convert AST to BoolExpr for semantic operations.
+/// Number of nodes in an AST, which equals the number of reverse-Polish tokens it lowers to (one token
+/// per node). Used to pre-size the lowering buffer. Iterative so a deep tree can't overflow the stack.
+fn count_nodes(ast: &BoolExprAst) -> usize {
+    let mut stack = vec![ast];
+    let mut count = 0;
+    while let Some(node) = stack.pop() {
+        count += 1;
+        match node {
+            BoolExprAst::Not(inner) => stack.push(inner),
+            BoolExprAst::And(left, right)
+            | BoolExprAst::Or(left, right)
+            | BoolExprAst::Xor(left, right) => {
+                stack.push(left);
+                stack.push(right);
+            }
+            BoolExprAst::Variable(_) | BoolExprAst::Constant(_) => {}
+        }
+    }
+    count
+}
+
+/// Lower a factored [`BoolExprAst`] directly to an owned [`BoolExpr`] (a reverse-Polish token stream).
 ///
-/// Reuses [`BoolExpr::fold_ast`] (the shared iterative postorder walk) so a deep factorised AST can't
-/// overflow the call stack: each node's matching `BoolExpr` operation runs bottom-up as the fold
-/// combines children's results.
+/// Emits the AST's postorder token serialisation in a single pass into one pre-sized buffer. The
+/// earlier form folded bottom-up through the binary `and`/`or` composition helpers, each of which
+/// concatenates its *whole* left operand; folding the left-deep chain of k product terms (and the
+/// OR-of-products over k cubes) therefore copied an ever-larger accumulator at every combine, O(k²)
+/// total. Appending each node's single token once is O(k). The postfix order is unchanged — `binary`
+/// already produced `left ++ right ++ [op]`, exactly postorder — so the token stream, its rendering,
+/// and the canonical result are byte-for-byte identical; only the cost changes.
+///
+/// The traversal is iterative (an explicit work-stack) so a deep factorised AST can't overflow the
+/// call stack. No BDD is built at any point — this is the load-bearing "direct factorisation" path for
+/// `Cover::to_expr`.
 fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
-    BoolExpr::<super::context::Global>::fold_ast(ast, &|node: ExprNode<BoolExpr>| match node {
-        ExprNode::Constant(val) => BoolExpr::constant(val),
-        ExprNode::Variable(name) => BoolExpr::variable(name),
-        ExprNode::And(left, right) => left.and(&right),
-        ExprNode::Or(left, right) => left.or(&right),
-        ExprNode::Not(inner) => inner.not(),
-    })
+    enum Step<'a> {
+        /// Walk this node, emitting its children before its own operator.
+        Visit(&'a BoolExprAst),
+        /// Emit an operator token once both operands have been emitted.
+        Emit(Token),
+    }
+
+    let mut tokens: Vec<Token> = Vec::with_capacity(count_nodes(ast));
+    let mut work = vec![Step::Visit(ast)];
+
+    while let Some(step) = work.pop() {
+        match step {
+            // For an operator node, schedule its `Emit` first (popped last) and push operands in
+            // reverse so the left operand is walked before the right — yielding `left right op`.
+            Step::Visit(node) => match node {
+                BoolExprAst::Variable(name) => tokens.push(Token::Var(name.clone())),
+                BoolExprAst::Constant(value) => tokens.push(Token::Const(*value)),
+                BoolExprAst::Not(inner) => {
+                    work.push(Step::Emit(Token::Not));
+                    work.push(Step::Visit(inner));
+                }
+                BoolExprAst::And(left, right) => {
+                    work.push(Step::Emit(Token::And));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+                BoolExprAst::Or(left, right) => {
+                    work.push(Step::Emit(Token::Or));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+                BoolExprAst::Xor(left, right) => {
+                    work.push(Step::Emit(Token::Xor));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+            },
+            Step::Emit(token) => tokens.push(token),
+        }
+    }
+
+    BoolExpr::from_tokens(tokens.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
+    /// Whether two expressions denote the same Boolean function. `BoolExpr` is syntactic, so
+    /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
+    /// comparison once both are built into one builder).
+    fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
+        let builder = crate::bdd_builder!();
+        builder.build(a).equivalent_to(&builder.build(b))
+    }
 
     #[test]
     fn test_common_divisor_extraction() {
@@ -406,13 +470,13 @@ mod tests {
         let factored = factorise_cubes(cubes.clone());
 
         // Build unfactored version for comparison
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
         let unfactored = a.and(&b).or(&a.and(&c));
 
         // Should be logically equivalent
-        assert!(unfactored.equivalent_to(&factored));
+        assert!(equiv(&unfactored, &factored));
 
         // Factored version should have fewer operators
         let unfactored_ops = count_operators(&unfactored);
@@ -440,31 +504,13 @@ mod tests {
         let factored = factorise_cubes(cubes);
 
         // Build original SOP
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
         let original = a.and(&b).or(&a.and(&c));
 
-        // Verify equivalence by testing all input combinations
-        for a_val in [false, true] {
-            for b_val in [false, true] {
-                for c_val in [false, true] {
-                    let mut assignment = HashMap::new();
-                    assignment.insert(Symbol::from("a"), a_val);
-                    assignment.insert(Symbol::from("b"), b_val);
-                    assignment.insert(Symbol::from("c"), c_val);
-
-                    let original_result = original.evaluate(&assignment);
-                    let factored_result = factored.evaluate(&assignment);
-
-                    assert_eq!(
-                        original_result, factored_result,
-                        "Factorisation changed logic for a={}, b={}, c={}",
-                        a_val, b_val, c_val
-                    );
-                }
-            }
-        }
+        // Factorisation must preserve the Boolean function.
+        assert!(equiv(&original, &factored));
     }
 
     #[test]
@@ -477,17 +523,17 @@ mod tests {
         let cubes = vec![(term1, true)];
         let factored = factorise_cubes(cubes);
 
-        let a = BoolExpr::variable("a");
-        assert!(a.equivalent_to(&factored));
+        let a = BoolExpr::var("a");
+        assert!(equiv(&a, &factored));
 
         // Empty cubes (constant false)
         let factored_false = factorise_cubes(vec![]);
-        assert!(factored_false.equivalent_to(&BoolExpr::constant(false)));
+        assert!(equiv(&factored_false, &BoolExpr::constant(false)));
 
         // Tautology (empty product term = constant true)
         let cubes_true = vec![(BTreeMap::new(), true)];
         let factored_true = factorise_cubes(cubes_true);
-        assert!(factored_true.equivalent_to(&BoolExpr::constant(true)));
+        assert!(equiv(&factored_true, &BoolExpr::constant(true)));
     }
 
     #[test]
@@ -507,14 +553,14 @@ mod tests {
         let factored = factorise_cubes(cubes);
 
         // Build original SOP
-        let a = BoolExpr::variable("a");
-        let b = BoolExpr::variable("b");
-        let c = BoolExpr::variable("c");
-        let d = BoolExpr::variable("d");
+        let a = BoolExpr::var("a");
+        let b = BoolExpr::var("b");
+        let c = BoolExpr::var("c");
+        let d = BoolExpr::var("d");
         let original = a.and(&b).and(&c).or(&a.and(&b).and(&d));
 
         // Should be logically equivalent
-        assert!(original.equivalent_to(&factored));
+        assert!(equiv(&original, &factored));
 
         // Should have fewer operators
         let original_ops = count_operators(&original);

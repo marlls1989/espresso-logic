@@ -3,6 +3,7 @@
 use super::pla::{PLAWriter, PlaCover};
 use super::*;
 use crate::Symbol;
+use std::sync::Arc;
 
 #[test]
 fn test_cover_creation() {
@@ -538,8 +539,8 @@ fn test_dynamic_growth_preserves_existing_cubes() {
 fn test_add_expr_basic() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
     let expr = a.and(&b);
 
     cover.add_expr(&expr, "output").unwrap();
@@ -556,9 +557,9 @@ fn test_add_expr_basic() {
 fn test_add_expr_variable_matching() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-    let c = crate::BoolExpr::variable("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     // Add first expression with variables a and b
     cover.add_expr(&a.and(&b), "out1").unwrap();
@@ -580,8 +581,8 @@ fn test_add_expr_variable_matching() {
 fn test_add_expr_duplicate_output_error() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     // Add first expression
     cover.add_expr(&a, "result").unwrap();
@@ -594,8 +595,8 @@ fn test_add_expr_duplicate_output_error() {
 
 #[test]
 fn test_add_expr_to_different_cover_types() {
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     // F type
     let mut f_cover = Cover::new(CoverType::F);
@@ -622,9 +623,9 @@ fn test_add_expr_to_different_cover_types() {
 fn test_add_expr_multiple_outputs() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-    let c = crate::BoolExpr::variable("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     // Add three different expressions
     cover.add_expr(&a.and(&b), "and_result").unwrap();
@@ -647,9 +648,9 @@ fn test_add_expr_multiple_outputs() {
 fn test_add_expr_variable_ordering_preserved() {
     let mut cover = Cover::new(CoverType::F);
 
-    let z = crate::BoolExpr::variable("z");
-    let a = crate::BoolExpr::variable("a");
-    let m = crate::BoolExpr::variable("m");
+    let z = crate::BoolExpr::var("z");
+    let a = crate::BoolExpr::var("a");
+    let m = crate::BoolExpr::var("m");
 
     // Add expression with variables in non-alphabetical order
     // Variables in BoolExpr are sorted alphabetically internally
@@ -668,15 +669,15 @@ fn test_add_expr_variable_ordering_preserved() {
 fn test_to_expr_basic() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&a.and(&b), "result").unwrap();
 
     let retrieved = cover.to_expr("result").unwrap();
 
     // Should be able to collect variables
-    let vars = retrieved.collect_variables();
+    let vars = retrieved.variables();
     assert_eq!(vars.len(), 2);
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
@@ -687,12 +688,13 @@ fn to_expr_and_from_pla_string_accept_owned_string() {
     // `Cover::to_expr` and `PlaCover::from_pla_string` take any `AsRef<str>`, not only `&str` — an
     // owned `String` behaves identically to the `&str` form (no string type is privileged).
     let mut cover = Cover::new(CoverType::F);
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
     cover.add_expr(&a.and(&b), "result").unwrap();
     let from_string = cover.to_expr(String::from("result")).unwrap();
     let from_str = cover.to_expr("result").unwrap();
-    assert!(from_string.equivalent_to(&from_str));
+    // `to_expr` is deterministic, so the two forms produce structurally identical expressions.
+    assert_eq!(from_string, from_str);
 
     let pla = ".i 2\n.o 1\n.p 1\n01 1\n.e\n";
     let from_string = PlaCover::<Symbol>::from_pla_string(String::from(pla)).unwrap();
@@ -706,7 +708,7 @@ fn to_expr_and_from_pla_string_accept_owned_string() {
 fn test_to_expr_by_index() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
+    let a = crate::BoolExpr::var("a");
 
     cover.add_expr(&a, "out0").unwrap();
     cover.add_expr(&a.not(), "out1").unwrap();
@@ -714,15 +716,15 @@ fn test_to_expr_by_index() {
     let expr0 = cover.to_expr_by_index(0).unwrap();
     let expr1 = cover.to_expr_by_index(1).unwrap();
 
-    assert_eq!(expr0.collect_variables().len(), 1);
-    assert_eq!(expr1.collect_variables().len(), 1);
+    assert_eq!(expr0.variables().len(), 1);
+    assert_eq!(expr1.variables().len(), 1);
 }
 
 #[test]
 fn test_to_expr_nonexistent() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
+    let a = crate::BoolExpr::var("a");
     cover.add_expr(&a, "exists").unwrap();
 
     // Try to get non-existent output
@@ -735,7 +737,7 @@ fn test_to_expr_nonexistent() {
 fn test_to_expr_index_out_of_bounds() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
+    let a = crate::BoolExpr::var("a");
     cover.add_expr(&a, "out").unwrap();
 
     // Try to get out of bounds index
@@ -748,9 +750,9 @@ fn test_to_expr_index_out_of_bounds() {
 fn test_to_exprs_iterator() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-    let c = crate::BoolExpr::variable("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     cover.add_expr(&a, "out1").unwrap();
     cover.add_expr(&b, "out2").unwrap();
@@ -764,9 +766,9 @@ fn test_to_exprs_iterator() {
     assert_eq!(exprs[2].0.as_ref(), "out3");
 
     // Each expression should have one variable
-    assert_eq!(exprs[0].1.collect_variables().len(), 1);
-    assert_eq!(exprs[1].1.collect_variables().len(), 1);
-    assert_eq!(exprs[2].1.collect_variables().len(), 1);
+    assert_eq!(exprs[0].1.variables().len(), 1);
+    assert_eq!(exprs[1].1.variables().len(), 1);
+    assert_eq!(exprs[2].1.variables().len(), 1);
 }
 
 #[test]
@@ -775,8 +777,8 @@ fn to_exprs_works_for_any_string_input_label() {
 
     // Build a named cover, then relabel both sides to a *different* string type (Arc<str>).
     let mut cover = Cover::new(CoverType::F);
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
     cover.add_expr(&a.and(&b), "out").unwrap();
 
     let in_syms = Symbols::new(
@@ -791,30 +793,20 @@ fn to_exprs_works_for_any_string_input_label() {
     let arc_cover: Cover<Arc<str>, Arc<str>> = cover.relabel(in_syms, out_syms).unwrap();
 
     // to_expr_by_index / to_exprs / to_expr all work on an `Arc<str>`-labelled cover.
-    assert_eq!(
-        arc_cover
-            .to_expr_by_index(0)
-            .unwrap()
-            .collect_variables()
-            .len(),
-        2
-    );
+    assert_eq!(arc_cover.to_expr_by_index(0).unwrap().variables().len(), 2);
     let pairs: Vec<_> = arc_cover.to_exprs().collect();
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].0.as_ref(), "out"); // (&O, BoolExpr) — output label borrowed
-    assert_eq!(
-        arc_cover.to_expr("out").unwrap().collect_variables().len(),
-        2
-    );
+    assert_eq!(arc_cover.to_expr("out").unwrap().variables().len(), 2);
 }
 
 #[test]
 fn test_to_exprs_after_minimization() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-    let c = crate::BoolExpr::variable("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     // Add redundant expression: a*b + a*b*c
     let redundant = a.and(&b).or(&a.and(&b).and(&c));
@@ -829,7 +821,7 @@ fn test_to_exprs_after_minimization() {
 
     // Should still be able to convert to expression
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.collect_variables();
+    let vars = minimized.variables();
     assert!(vars.len() >= 2); // At least a and b
 }
 
@@ -947,9 +939,9 @@ fn test_fdr_type_cover() {
 fn test_complex_expression_with_minimization() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
-    let c = crate::BoolExpr::variable("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     // Consensus theorem: a*b + ~a*c + b*c (b*c is redundant)
     let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
@@ -966,7 +958,7 @@ fn test_complex_expression_with_minimization() {
 
     // Should still be able to convert back
     let minimized = cover.to_expr("consensus").unwrap();
-    assert_eq!(minimized.collect_variables().len(), 3);
+    assert_eq!(minimized.variables().len(), 3);
 }
 
 #[test]
@@ -982,7 +974,7 @@ fn test_empty_cover_to_expr() {
 fn test_expression_with_constants() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
+    let a = crate::BoolExpr::var("a");
     let t = crate::BoolExpr::constant(true);
 
     // Expression with constant: a * true = a
@@ -998,8 +990,8 @@ fn test_expression_with_constants() {
 fn test_pla_roundtrip_with_expressions() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&a.and(&b), "output").unwrap();
 
@@ -1799,8 +1791,8 @@ fn cover_hash_and_blanket_default() {
 fn test_minimize_preserves_structure() {
     let mut cover = Cover::new(CoverType::F);
 
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&a.and(&b), "out1").unwrap();
     cover.add_expr(&a.or(&b), "out2").unwrap();
@@ -1818,8 +1810,8 @@ fn test_minimize_preserves_structure() {
     let expr1 = cover.to_expr("out1").unwrap();
     let expr2 = cover.to_expr("out2").unwrap();
 
-    assert!(expr1.collect_variables().len() <= 2);
-    assert!(expr2.collect_variables().len() <= 2);
+    assert!(expr1.variables().len() <= 2);
+    assert!(expr2.variables().len() <= 2);
 }
 
 // ===== Generic label type / anonymous covers (M3) =====
@@ -1993,13 +1985,9 @@ fn extend_equals_merge_for_distinct_named_outputs() {
     // When the two covers' output names DON'T collide, extend (append) and merge (overlay) coincide:
     // both keep the two distinct columns. They diverge only on a collision (tests below).
     let mut by_extend = Cover::new(CoverType::F);
-    by_extend
-        .add_expr(&crate::BoolExpr::variable("x"), "f")
-        .unwrap();
+    by_extend.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut other = Cover::new(CoverType::F);
-    other
-        .add_expr(&crate::BoolExpr::variable("y"), "g")
-        .unwrap();
+    other.add_expr(&crate::BoolExpr::var("y"), "g").unwrap();
 
     let mut by_merge = by_extend.clone();
     by_extend.extend(&other);
@@ -2019,9 +2007,9 @@ fn extend_equals_merge_for_distinct_named_outputs() {
 fn extend_renames_colliding_named_outputs() {
     // Both covers output "f"; extend always appends, reconciling the clash to "f0".
     let mut a = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
 
     a.extend(&b);
     assert_eq!(a.num_outputs(), 2); // distinct columns, not overlaid
@@ -2035,11 +2023,11 @@ fn extend_reconciles_repeated_output_collisions() {
     // Three covers all output "f"; each extend reconciles against the names already present, so the
     // suffixes advance f -> f0 -> f1 rather than colliding again.
     let mut a = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
     let mut c = Cover::new(CoverType::F);
-    c.add_expr(&crate::BoolExpr::variable("z"), "f").unwrap();
+    c.add_expr(&crate::BoolExpr::var("z"), "f").unwrap();
 
     a.extend(&b);
     a.extend(&c);
@@ -2055,9 +2043,9 @@ fn extend_reconciles_repeated_output_collisions() {
 fn merge_overlays_colliding_named_outputs() {
     // Both covers output "f"; merge overlays them onto one column (pins the divergence from extend).
     let mut a = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::variable("x"), "f").unwrap();
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::variable("y"), "f").unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
 
     a.merge(&b);
     assert_eq!(a.num_outputs(), 1); // single overlaid column
@@ -2066,30 +2054,57 @@ fn merge_overlays_colliding_named_outputs() {
     assert!(output_rows(&a).iter().all(|row| row == &vec![true]));
 }
 
-// ===== BoolExpr -> Cover<Symbol, Anonymous> and per-side relabel =====
+// ===== BoolExpr -> Bdd -> Cover<Symbol, Anonymous> and per-side relabel =====
 
 #[test]
-fn expr_into_anonymous_output_cover_roundtrips() {
-    let a = crate::BoolExpr::variable("a");
-    let b = crate::BoolExpr::variable("b");
+fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
 
-    // From<&BoolExpr> yields a labelled-input, anonymous-output cover (via the BDD).
-    let cover: Cover<Symbol, Anonymous> = (&expr).into();
+    // A free `BoolExpr` has no cubes; go through a BDD builder to materialise the ON-set cover.
+    let builder = crate::bdd_builder!();
+    let cover: Cover<Symbol, Anonymous> = builder.build(&expr).to_cubes();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
     // Reconstruction is index-addressed (no output name needed) and recovers the function.
     let back = cover.to_expr_by_index(0).unwrap();
-    assert!(back.equivalent_to(&expr));
+    // `to_expr` is factored/syntactic, so compare semantically through the BDD layer.
+    assert!(builder.build(&expr).equivalent_to(&builder.build(&back)));
+}
+
+#[test]
+fn from_expr_and_from_bdd_agree() {
+    use std::collections::BTreeSet;
+
+    let minterms = |c: &Cover<Symbol, Anonymous>| -> BTreeSet<Minterm<Symbol>> {
+        c.cubes().map(|cube| cube.inputs().clone()).collect()
+    };
+
+    let expr = crate::BoolExpr::var("a") & crate::BoolExpr::var("b");
+    let builder = crate::bdd_builder!();
+    let bdd = builder.build(&expr); // a refcounted clone keeps the manager alive past the by-value `From`
+
+    // The `Bdd → Cover` primitive and the `BoolExpr` wrapper agree for the same function.
+    let from_bdd: Cover<Symbol, Anonymous> = Cover::from(bdd.clone());
+    let from_expr: Cover<Symbol, Anonymous> = Cover::from(&expr);
+    assert_eq!(from_bdd.num_outputs(), 1);
+    assert_eq!(minterms(&from_bdd), minterms(&from_expr));
+
+    // a & b has exactly one ON-set cube fixing a=1, b=1.
+    let expected: BTreeSet<Minterm<Symbol>> = bdd.to_minterms(&["a", "b"]).into_iter().collect();
+    assert_eq!(minterms(&from_bdd), expected);
+
+    // The owned and borrowed `From<BoolExpr>` forms agree too.
+    let from_owned: Cover<Symbol, Anonymous> = Cover::from(expr.clone());
+    assert_eq!(minterms(&from_owned), minterms(&from_expr));
 }
 
 #[test]
 fn relabel_outputs_keeps_inputs() {
     let mut named = Cover::new(CoverType::F);
-    named
-        .add_expr(&crate::BoolExpr::variable("x"), "f")
-        .unwrap();
+    named.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
 
     // Drop only the output label, keeping the named inputs.
     let anon_out: Cover<Symbol, Anonymous> = named
@@ -2107,4 +2122,116 @@ fn relabel_outputs_keeps_inputs() {
         .unwrap();
     assert_eq!(anon_in.output_labels(), named.output_labels());
     assert_eq!(anon_in.num_inputs(), named.num_inputs());
+}
+
+// --- Requirement 2: cube / cover expansion over an explicit variable set -----------------------
+
+/// Collect a cover's input minterms as a `BTreeSet` (they share one canonical header after
+/// `maximize`, so they compare on the fast path).
+fn input_minterm_set(cover: &Cover<Symbol, Symbol>) -> std::collections::BTreeSet<Minterm<Symbol>> {
+    cover.cubes().map(|c| c.inputs().clone()).collect()
+}
+
+/// A cube `a=1` expanded over [a, b] yields exactly {a:1,b:0}, {a:1,b:1}.
+#[test]
+fn cube_expand_to_splits_unconstrained_var() {
+    let cube =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F)
+            .unwrap();
+    let got: std::collections::BTreeSet<_> = cube
+        .expand_to(&[Symbol::from("a"), Symbol::from("b")])
+        .into_iter()
+        .collect();
+    let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(got, want);
+}
+
+/// A cube `a=1` expanded over [a, b, c] (c absent from the cube) splits c into both polarities,
+/// yielding 4 minterms.
+#[test]
+fn cube_expand_to_widens_with_absent_var() {
+    let cube =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F)
+            .unwrap();
+    let got: std::collections::BTreeSet<_> = cube
+        .expand_to(&[Symbol::from("a"), Symbol::from("b"), Symbol::from("c")])
+        .into_iter()
+        .collect();
+    let header = Symbols::new(
+        [Symbol::from("a"), Symbol::from("b"), Symbol::from("c")]
+            .into_iter()
+            .collect(),
+    );
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false), Some(true)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(got, want);
+    assert_eq!(got.len(), 4);
+}
+
+/// `Cover::maximize` of an already-maximal cover over the same variables is a no-op: the input
+/// minterm set is unchanged and every cube assigns every variable.
+#[test]
+fn cover_maximize_is_idempotent_when_already_maximal() {
+    let vars = [Symbol::from("a"), Symbol::from("b")];
+    // An already-maximal cover: both cubes assign every variable, no don't-cares.
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(false))],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(true))],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+        ],
+    );
+
+    let maximised = cover.maximize(&vars);
+    // Same input minterm set as the input (idempotent).
+    assert_eq!(input_minterm_set(&maximised), input_minterm_set(&cover));
+    // Re-maximising changes nothing further.
+    let twice = maximised.maximize(&vars);
+    assert_eq!(input_minterm_set(&twice), input_minterm_set(&maximised));
+    // Every minterm is fully assigned (no don't-cares left).
+    for cube in maximised.cubes() {
+        assert!(cube.inputs().iter().all(|v| v.is_some()));
+    }
+}
+
+/// `Cover::maximize` expands a cube with a don't-care into both polarities over the explicit header.
+#[test]
+fn cover_maximize_expands_dont_care() {
+    let vars = [Symbol::from("a"), Symbol::from("b")];
+    // a=1, b unconstrained → should expand to {a:1,b:0}, {a:1,b:1}.
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap()],
+    );
+    let maximised = cover.maximize(&vars);
+    let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
+    let want: std::collections::BTreeSet<_> = [
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false)]),
+        Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(input_minterm_set(&maximised), want);
 }

@@ -112,6 +112,15 @@ fn field_at(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
+/// Whether two value-set fields disagree: both must be non-empty and their value-sets must not
+/// intersect (one fixes the variable `true`, the other `false`). A don't-care intersects either
+/// polarity, and the empty literal (`00`) is never a disagreement — in particular a field never
+/// disagrees with itself, so the disagreement relation stays reflexive even for `?`.
+#[inline]
+fn fields_disagree(a: u8, b: u8) -> bool {
+    a != FIELD_EMPTY && b != FIELD_EMPTY && a & b == 0
+}
+
 fn pack<I>(values: I, num_vars: usize) -> Arc<[u64]>
 where
     I: IntoIterator<Item = Option<bool>>,
@@ -555,6 +564,176 @@ impl<L: Label> Minterm<L> {
     }
 }
 
+impl<L: Label> Minterm<L> {
+    /// The number of variables on which `self` and `other` disagree, aligned by variable identity.
+    ///
+    /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
+    /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
+    /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
+    /// minterms (e.g. the output of [`expand_over`](Self::expand_over)), where this is exactly the
+    /// Hamming distance. `hamming_distance == disagreement().len()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
+    /// let b = Minterm::anonymous(&[Some(true), Some(true),  Some(false)]);
+    /// assert_eq!(a.hamming_distance(&b), 2);
+    /// assert_eq!(a.hamming_distance(&a), 0);
+    /// ```
+    #[must_use]
+    pub fn hamming_distance(&self, other: &Self) -> usize {
+        if self.symbols == other.symbols {
+            // Word-wise popcount: a variable's field-intersection is empty exactly where they disagree.
+            let n = self.num_vars();
+            let mut count = 0usize;
+            for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
+                // Even bit set per variable whose field (on each side, and on the intersection) is
+                // non-empty.
+                let x_ne = (x & ALLOWS0_MASK) | ((x >> 1) & ALLOWS0_MASK);
+                let y_ne = (y & ALLOWS0_MASK) | ((y >> 1) & ALLOWS0_MASK);
+                let inter = x & y;
+                let inter_ne = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
+                let valid = valid_even_mask(k, n);
+                // A variable disagrees only when both sides are non-empty yet their value-sets do
+                // not intersect; an empty field (`?`) on either side is never a disagreement.
+                count += (x_ne & y_ne & !inter_ne & valid).count_ones() as usize;
+            }
+            count
+        } else {
+            self.merged_fields(other)
+                .filter(|&(sf, of)| fields_disagree(sf, of))
+                .count()
+        }
+    }
+
+    /// The variables on which `self` and `other` disagree (see [`hamming_distance`](Self::hamming_distance)
+    /// for the disagreement rule). The labels are returned cloned; ordering is unspecified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::from_symbols(
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     [Some(true), Some(false), Some(true)],
+    /// );
+    /// let b = Minterm::from_symbols(
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     [Some(true), Some(true), Some(false)],
+    /// );
+    /// let mut d = a.disagreement(&b);
+    /// d.sort();
+    /// assert_eq!(d, vec!["b".to_string(), "c".to_string()]);
+    /// ```
+    #[must_use]
+    pub fn disagreement(&self, other: &Self) -> Vec<L> {
+        if self.symbols == other.symbols {
+            let labels = self.symbols.labels();
+            (0..self.num_vars())
+                .filter(|&i| fields_disagree(field_at(&self.values, i), field_at(&other.values, i)))
+                .map(|i| labels[i].clone())
+                .collect()
+        } else {
+            // Merge-join over the two sorted-identity label sequences; only variables present on both
+            // sides with disjoint fields can disagree (a single-sided variable reads as don't-care).
+            let (la, lb) = (self.symbols.labels(), other.symbols.labels());
+            let (sa, sb) = (self.symbols.sorted_order(), other.symbols.sorted_order());
+            let (mut i, mut j) = (0usize, 0usize);
+            let mut out = Vec::new();
+            while i < sa.len() && j < sb.len() {
+                let (ia, ib) = (sa[i] as usize, sb[j] as usize);
+                match la[ia].identity(ia).cmp(&lb[ib].identity(ib)) {
+                    Ordering::Less => i += 1,
+                    Ordering::Greater => j += 1,
+                    Ordering::Equal => {
+                        if fields_disagree(field_at(&self.values, ia), field_at(&other.values, ib))
+                        {
+                            out.push(la[ia].clone());
+                        }
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    /// Enumerate every fully-assigned minterm covered by `self`, expressed over the `target` header.
+    ///
+    /// This is the inverse of minimisation ("maximise"): `self` is first re-expressed over `target`
+    /// (variables of `target` absent from `self` become don't-care, variables of `self` absent from
+    /// `target` are dropped — see [`project_onto`](Self::project_onto)), then every remaining don't-care
+    /// is split into both polarities. The result is the `2^k` concrete minterms (where `k` is the number
+    /// of don't-cares after projection), each assigning **every** variable in `target`, all sharing
+    /// `target` as their canonical header (so they stay on the fast-comparison path and are usable as
+    /// `BTreeSet`/`HashSet` keys). Expanding an already-maximal minterm over its own header is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbols};
+    /// use std::collections::BTreeSet;
+    ///
+    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect());
+    /// // a fixed true, b don't-care → both polarities of b.
+    /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
+    /// let got: BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+    /// let want: BTreeSet<_> = [
+    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]),
+    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(true)]),
+    /// ]
+    /// .into_iter()
+    /// .collect();
+    /// assert_eq!(got, want);
+    /// ```
+    #[must_use]
+    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> Vec<Minterm<L>> {
+        // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm —
+        // short-circuit before the don't-care split rather than copying the malformed field through.
+        if self.has_empty_field() {
+            return Vec::new();
+        }
+        let base = self.project_onto(target);
+        let positions: Vec<usize> = (0..base.num_vars())
+            .filter(|&i| field_at(&base.values, i) == FIELD_DC)
+            .collect();
+        let k = positions.len();
+        // The expansion materialises 2^k minterms. Guard `k` so the count neither overflows the
+        // `1 << k` shift nor exceeds what a `Vec` can address on this platform (`usize`); beyond
+        // that the result is not sane to materialise, so fail loudly rather than truncate silently.
+        assert!(
+            k < usize::BITS as usize,
+            "expand_over: {k} don't-care positions would expand to 2^{k} minterms, \
+             exceeding the addressable Vec capacity on this {}-bit platform",
+            usize::BITS
+        );
+        let count = 1u64 << k;
+        let capacity =
+            usize::try_from(count).expect("2^k minterms fit in usize once k is below usize::BITS");
+        let mut out = Vec::with_capacity(capacity);
+        for mask in 0u64..count {
+            let mut words: Vec<u64> = base.values.to_vec();
+            for (b, &pos) in positions.iter().enumerate() {
+                let field = if (mask >> b) & 1 == 1 {
+                    FIELD_TRUE
+                } else {
+                    FIELD_FALSE
+                };
+                let shift = (pos % VARS_PER_WORD) * 2;
+                let wi = pos / VARS_PER_WORD;
+                words[wi] = (words[wi] & !(0b11u64 << shift)) | ((field as u64) << shift);
+            }
+            out.push(Minterm::from_packed_words(Arc::clone(target), words.into()));
+        }
+        out
+    }
+}
+
 /// Merge-join iterator backing [`Minterm::merged_fields`]; a variable absent from one side reads as
 /// don't-care (`FIELD_DC`).
 struct MergedFields<'a, L> {
@@ -859,5 +1038,196 @@ mod tests {
         assert!(dc < f);
         assert!(f < t);
         assert!(dc < t);
+    }
+
+    // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
+
+    /// {a:1,b:0,c:1} vs {a:1,b:1,c:0} disagree on exactly {b, c}: distance 2.
+    #[test]
+    fn hamming_distance_and_disagreement_set() {
+        let s = syms(&["a", "b", "c"]);
+        let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(true)]);
+        let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(true), Some(false)]);
+
+        assert_eq!(a.hamming_distance(&b), 2);
+
+        let mut got = a.disagreement(&b);
+        got.sort();
+        assert_eq!(got, vec![Symbol::from("b"), Symbol::from("c")]);
+        // The disagreement relation is symmetric.
+        let mut got_rev = b.disagreement(&a);
+        got_rev.sort();
+        assert_eq!(got_rev, vec![Symbol::from("b"), Symbol::from("c")]);
+    }
+
+    /// Equal minterms are at distance 0 with an empty disagreement set.
+    #[test]
+    fn hamming_distance_zero_for_equal_minterms() {
+        let s = syms(&["a", "b"]);
+        let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
+        let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
+        assert_eq!(a.hamming_distance(&b), 0);
+        assert!(a.disagreement(&b).is_empty());
+    }
+
+    /// `hamming_distance` always equals the cardinality of `disagreement`, exhaustively over a
+    /// shared header.
+    #[test]
+    fn hamming_distance_equals_disagreement_len() {
+        let s = syms(&["a", "b", "c"]);
+        let opts = [Some(false), Some(true), None];
+        for &x0 in &opts {
+            for &x1 in &opts {
+                for &x2 in &opts {
+                    for &y0 in &opts {
+                        for &y1 in &opts {
+                            for &y2 in &opts {
+                                let a = Minterm::from_symbols(Arc::clone(&s), [x0, x1, x2]);
+                                let b = Minterm::from_symbols(Arc::clone(&s), [y0, y1, y2]);
+                                assert_eq!(a.hamming_distance(&b), a.disagreement(&b).len());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The shared-header (popcount fast) path and the differently-permuted-header (merge-join slow)
+    /// path must give identical distance and disagreement sets. Mirrors `merge_path_matches_shared_path`.
+    #[test]
+    fn hamming_path_matches_shared_path() {
+        // a = {a:1, b:0, c:1}; b = {a:1, b:1, c:0}.
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(false), Some(true)]);
+        let b_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(true), Some(false)]);
+        // The same two functions over independent, differently-permuted headers (slow path).
+        let a_perm = Minterm::from_symbols(
+            syms(&["c", "a", "b"]),
+            [Some(true), Some(true), Some(false)],
+        );
+        let b_perm = Minterm::from_symbols(
+            syms(&["b", "c", "a"]),
+            [Some(true), Some(false), Some(true)],
+        );
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+
+        assert_eq!(
+            a_shared.hamming_distance(&b_shared),
+            a_perm.hamming_distance(&b_perm)
+        );
+
+        let mut d_shared = a_shared.disagreement(&b_shared);
+        d_shared.sort();
+        let mut d_perm = a_perm.disagreement(&b_perm);
+        d_perm.sort();
+        assert_eq!(d_shared, d_perm);
+        assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
+    }
+
+    /// A minterm carrying an empty literal (`?`) is at distance 0 from itself with an empty
+    /// disagreement set: an empty field is never counted as a disagreement, so reflexivity holds.
+    #[test]
+    fn hamming_and_disagreement_reflexive_on_empty_literal() {
+        let s = syms(&["a", "b", "c"]);
+        let x = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert!(x.has_empty_field());
+        assert_eq!(x.hamming_distance(&x), 0);
+        assert!(x.disagreement(&x).is_empty());
+    }
+
+    // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
+
+    /// `a` fixed, expanded over [a, b], splits b into both polarities: {a:1,b:0}, {a:1,b:1}.
+    #[test]
+    fn expand_over_splits_absent_dont_care() {
+        let vars = syms(&["a", "b"]);
+        // b is don't-care in the source.
+        let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), None]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+    }
+
+    /// Widening over an absent variable c (present in `vars`, absent from the source header) splits c
+    /// into both polarities, yielding 4 minterms.
+    #[test]
+    fn expand_over_widens_with_absent_variable() {
+        let src = syms(&["a", "b"]);
+        let target = syms(&["a", "b", "c"]);
+        // a fixed true, b fixed false; c is absent from the source so it widens.
+        let m = Minterm::from_symbols(src, [Some(true), Some(false)]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&target).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 2);
+    }
+
+    /// A fully-don't-care minterm over a 2-variable header yields the full 4-minterm cube.
+    #[test]
+    fn expand_over_dont_care_yields_full_cube() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols(Arc::clone(&vars), [None, None]);
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let want: std::collections::BTreeSet<_> = [
+            Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(true)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]),
+            Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(true)]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 4);
+    }
+
+    /// Expanding an already-fully-assigned minterm over its own header is a no-op (one minterm, equal
+    /// to itself).
+    #[test]
+    fn expand_over_is_idempotent_when_already_maximal() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]);
+        let got = m.expand_over(&vars);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], m);
+    }
+
+    /// A cube carrying an empty literal (`?`) denotes the empty set, so it expands to no minterms.
+    #[test]
+    fn expand_over_empty_literal_yields_no_minterms() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols_input_fields(
+            Arc::clone(&vars),
+            [InputField::Empty, InputField::DontCare],
+        );
+        assert!(m.has_empty_field());
+        assert!(m.expand_over(&vars).is_empty());
+    }
+
+    /// Expanding past the don't-care guard fails loudly rather than overflowing the shift or
+    /// truncating: 64 don't-care positions cannot be materialised within `usize`.
+    #[test]
+    #[should_panic(expected = "exceeding the addressable Vec capacity")]
+    fn expand_over_panics_past_capacity_guard() {
+        let values = vec![None; 64];
+        let m = Minterm::anonymous(&values);
+        let _ = m.expand_over(m.symbols());
     }
 }

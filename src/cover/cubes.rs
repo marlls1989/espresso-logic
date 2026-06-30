@@ -130,6 +130,36 @@ impl<I, O> Cube<I, O> {
     }
 }
 
+impl<I: Label, O> Cube<I, O> {
+    /// Expand this cube's input pattern into every fully-assigned minterm over `vars`.
+    ///
+    /// `vars` is the explicit target header and MAY be a superset of the cube's own inputs: variables
+    /// of `vars` absent from the cube are split into both polarities, the cube's own don't-cares are
+    /// expanded, and any input variable not in `vars` is dropped. Every returned minterm assigns every
+    /// variable in `vars`, all sharing one canonical header. See [`Minterm::expand_over`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType, Symbol};
+    /// use std::collections::BTreeSet;
+    ///
+    /// // input a=1 (b unconstrained), expanded over [a, b].
+    /// let cube = Cube::<Symbol, Symbol>::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F)
+    ///     .unwrap();
+    /// let got: BTreeSet<_> = cube
+    ///     .expand_to(&[Symbol::new("a"), Symbol::new("b")])
+    ///     .into_iter()
+    ///     .collect();
+    /// assert_eq!(got.len(), 2); // {a:1,b:0}, {a:1,b:1}
+    /// ```
+    #[must_use]
+    pub fn expand_to(&self, vars: &[I]) -> Vec<Minterm<I>> {
+        let target = Symbols::new(vars.iter().cloned().collect());
+        self.inputs.expand_over(&target)
+    }
+}
+
 impl Cube<Anonymous, Anonymous> {
     /// Build an **anonymous** (positional) cube from an input pattern and an output-membership mask.
     ///

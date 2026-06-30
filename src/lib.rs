@@ -22,8 +22,10 @@
 //!
 //! The high-level API provides easy-to-use abstractions with automatic resource management:
 //!
-//! - **[`BoolExpr`]** - Boolean expressions with parsing, operators, the `expr!` macro, and a low-level
-//!   [`BoolExpr::build`] closure builder
+//! - **[`BoolExpr`]** - Owned, syntactic Boolean expressions with parsing, the bitwise operators
+//!   (`&`, `|`, `^`, `!`) and evaluation
+//! - **[`Bdd`]** - Canonical BDD handles from a [`BddBuilder`] (single-threaded or thread-safe) for
+//!   logical equivalence, cofactors and quantification
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
 //! - **[`Cube`]** / **[`Minterm`]** / **[`OutputSet`]** - A `Cover`'s product terms: a [`Cube`] pairs an
 //!   input [`Minterm`] (a label-carrying row of tri-state values, `1`/`0`/`-`) with an [`OutputSet`]
@@ -66,65 +68,54 @@
 //!
 //! ### 1. Boolean Expressions (Recommended for most use cases)
 //!
-//! The `expr!` macro provides three styles:
-//!
-//! ```
-//! use espresso_logic::{BoolExpr, expr, Minimizable};
-//!
-//! # fn main() -> std::io::Result<()> {
-//! // Style 1: String literals (most concise - no declarations)
-//! let xor = expr!("a" * !"b" + !"a" * "b");
-//! println!("{}", xor);  // Output: a * ~b + ~a * b (minimal parentheses)
-//!
-//! // Style 2: Existing BoolExpr variables
-//! let a = BoolExpr::variable("a");
-//! let b = BoolExpr::variable("b");
-//! let c = BoolExpr::variable("c");
-//! let redundant = expr!(a * b + a * b * c);
-//!
-//! // Minimise it (returns a new minimised expression)
-//! let minimized = redundant.minimize()?;
-//! println!("Minimised: {}", minimized);  // Output: a * b
-//!
-//! // Check logical equivalence (create new instance for comparison)
-//! let redundant2 = expr!(a * b + a * b * c);
-//! assert!(redundant2.equivalent_to(&minimized));
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Parse expressions from strings:
-//!
-//! ```
-//! use espresso_logic::{BoolExpr, Minimizable};
-//!
-//! # fn main() -> std::io::Result<()> {
-//! // Parse using standard operators: +, ^, *, ~, ! (or & and |)
-//! let expr = BoolExpr::parse("a * b + ~a * ~b")?;
-//!
-//! // Minimise using Espresso algorithm
-//! let minimised = expr.minimize()?;
-//! println!("Minimised: {}", minimised);
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Build dynamically with the low-level closure builder ([`BoolExpr::build`]) — one BDD manager lock for
-//! the whole expression, no intermediate allocations, and a natural fit for runtime-shaped construction:
+//! [`BoolExpr`] is an owned, syntactic value, composed with the bitwise operators `&` (AND), `|` (OR),
+//! `^` (XOR), `!` (NOT), by value or by reference:
 //!
 //! ```
 //! use espresso_logic::BoolExpr;
 //!
-//! // AND-reduce a runtime slice of variables.
-//! let names = ["a", "b", "c"];
-//! let all = BoolExpr::build(|f| {
-//!     names
-//!         .iter()
-//!         .map(|n| f.var(n))
-//!         .reduce(|acc, v| f.and(acc, v))
-//!         .unwrap_or_else(|| f.constant(true))
-//! });
-//! assert_eq!(all, BoolExpr::parse("a * b * c").unwrap());
+//! let a = BoolExpr::var("a");
+//! let b = BoolExpr::var("b");
+//!
+//! // XOR, built from the operators.
+//! let xor = (&a & !&b) | (!&a & &b);
+//! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
+//! ```
+//!
+//! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
+//!
+//! ```
+//! use espresso_logic::BoolExpr;
+//!
+//! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+//! let expr = BoolExpr::parse("a & b | !a & !b")?;
+//! println!("{expr}");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! `BoolExpr` is purely syntactic: `a & b` and `b & a` are different values, and equality compares the
+//! token structure, not the Boolean function. For canonical, semantic work — logical equivalence,
+//! cofactors, quantification — build a [`Bdd`] handle in a [`BddBuilder`] minted by
+//! [`bdd_builder!`](crate::bdd_builder):
+//!
+//! ```
+//! use espresso_logic::{bdd_builder, BoolExpr};
+//!
+//! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+//! let builder = bdd_builder!();
+//! let a = builder.var("a");
+//! let b = builder.var("b");
+//!
+//! // Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
+//! assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
+//! assert!((a.clone() | !a.clone()).is_tautology());
+//!
+//! // Build a parsed expression into the same builder and compare functions.
+//! let parsed = builder.parse("a & b")?;
+//! assert!((a & b).equivalent_to(&parsed));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! #### Using Cover with Expressions
@@ -136,8 +127,8 @@
 //! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let a = BoolExpr::variable("a");
-//! let b = BoolExpr::variable("b");
+//! let a = BoolExpr::var("a");
+//! let b = BoolExpr::var("b");
 //! let expr = a.and(&b).or(&a.and(&b.not()));
 //!
 //! // Create cover and add expression
@@ -351,6 +342,7 @@
 //! - [`doc::cli`] - Command-line tool documentation
 
 // Public modules
+pub mod bdd;
 pub mod cover;
 pub mod error;
 pub mod espresso;
@@ -365,61 +357,114 @@ pub mod symbol;
 pub mod sys;
 
 // Re-export high-level public API
+pub use bdd::{Bdd, BddBuilder, BddNode, Brand, LocalCell, ManagerCell, SyncCell};
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-#[doc(hidden)]
-pub use expression::__brand_seal;
-pub use expression::{Bdd, BddBuilder, BddContext, BoolExpr, Brand, ExprNode, Global};
+pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
 
-// Re-export procedural macro
-pub use espresso_logic_macros::expr;
+/// Implement the four owned/borrowed combinations of a binary [`std::ops`] operator in terms of an
+/// inherent method with the signature `fn(&self, &Self) -> Self`.
+///
+/// `a op b`, `&a op b`, `a op &b`, and `&a op &b` all forward to the one `&self, &Self` method, so the
+/// operator's behaviour lives there once and the four trait impls are pure boilerplate. The optional
+/// leading `{ … }` group supplies the impl's generic parameters and bounds (omit it for a concrete
+/// type). Shared by [`BoolExpr`] and [`Bdd`], whose operators are otherwise identical boilerplate.
+macro_rules! impl_binary_operator {
+    ($({$($generics:tt)*})? $ty:ty, $trait:ident, $method:ident, $call:ident) => {
+        impl $(<$($generics)*>)? ::std::ops::$trait for $ty {
+            type Output = $ty;
+            fn $method(self, rhs: $ty) -> $ty {
+                <$ty>::$call(&self, &rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<&$ty> for $ty {
+            type Output = $ty;
+            fn $method(self, rhs: &$ty) -> $ty {
+                <$ty>::$call(&self, rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<$ty> for &$ty {
+            type Output = $ty;
+            fn $method(self, rhs: $ty) -> $ty {
+                <$ty>::$call(self, &rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<&$ty> for &$ty {
+            type Output = $ty;
+            fn $method(self, rhs: &$ty) -> $ty {
+                <$ty>::$call(self, rhs)
+            }
+        }
+    };
+}
+pub(crate) use impl_binary_operator;
 
-/// Create a fresh, branded [`BddContext`] with a private BDD manager.
+/// Create a fresh, single-threaded [`BddBuilder`] with a private BDD manager.
 ///
-/// Each call mints a unique brand so expressions from two different contexts cannot be combined — it
-/// is a compile error, not a runtime check. This is the scoped, isolated alternative to the
-/// [`Global`]-brand free constructors ([`BoolExpr::variable`] and friends), which share one
-/// process-global manager. A context gives a private node table (isolation and locality); like
-/// `Global`, it is `Arc<RwLock<…>>`-backed, so its expressions stay `Send`/`Sync`.
+/// Each call mints a unique brand, so handles ([`Bdd`]) from two different builders cannot be combined
+/// — it is a compile error, not a runtime check. The builder owns an independent node table; there is
+/// no process-global manager. The resulting `BddBuilder` is `!Send`/`!Sync`; use
+/// [`sync_bdd_builder!`](crate::sync_bdd_builder) for a thread-safe one.
 ///
-/// - `bdd_context!()` — an anonymous brand, unique to this call site/invocation.
-/// - `bdd_context!(Name)` — a named brand. The name is only a readable label: each call still mints a
-///   *distinct* brand (mixing two contexts is always a compile error, even two named the same), but a
+/// - `bdd_builder!()` — an anonymous brand, unique to this call site/invocation.
+/// - `bdd_builder!(Name)` — a named brand. The name is only a readable label: each call still mints a
+///   *distinct* brand (mixing two builders is always a compile error, even two named the same), but a
 ///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
-///   Give distinct contexts distinct names; prefer the anonymous form when you do not need the label.
+///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
-/// use espresso_logic::bdd_context;
+/// use espresso_logic::{bdd_builder, BoolExpr};
 ///
-/// let ctx = bdd_context!();
-/// let a = ctx.var("a");
-/// let b = ctx.var("b");
-/// assert_eq!(&a * &b, ctx.parse("a * b").unwrap());
-/// ```
-///
-/// Expressions from two distinct contexts cannot be combined:
-///
-/// ```compile_fail
-/// use espresso_logic::bdd_context;
-///
-/// let c1 = bdd_context!();
-/// let c2 = bdd_context!();
-/// let _ = &c1.var("a") * &c2.var("b"); // error: distinct brands cannot mix
+/// let builder = bdd_builder!();
+/// let a = builder.var("a");
+/// let b = builder.var("b");
+/// assert!((a & b).equivalent_to(&builder.build(&BoolExpr::parse("a & b").unwrap())));
 /// ```
 #[macro_export]
-macro_rules! bdd_context {
+macro_rules! bdd_builder {
     () => {
-        $crate::bdd_context!(__EspressoBddBrand)
+        $crate::bdd_builder!(__EspressoBddBrand)
     };
     ($name:ident) => {{
+        #[derive(Clone, Copy)]
         struct $name;
-        impl $crate::__brand_seal::Sealed for $name {}
-        $crate::BddContext::<$name>::new()
+        impl $crate::bdd::__macro_support::Sealed for $name {}
+        impl $crate::bdd::Brand for $name {}
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell>::new()
+    }};
+}
+
+/// Create a fresh, thread-safe [`BddBuilder`] over a [`SyncCell`] with a private BDD manager.
+///
+/// Like [`bdd_builder!`](crate::bdd_builder), but pairs the minted brand with a `RwLock`-backed
+/// [`SyncCell`], so the resulting [`BddBuilder`] is `Send + Sync` and can be moved to, or shared by
+/// reference across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from
+/// two builders never mix (a compile error).
+///
+/// ```
+/// use espresso_logic::{sync_bdd_builder, BoolExpr};
+///
+/// let builder = sync_bdd_builder!();
+/// let a = builder.var("a");
+/// let b = builder.var("b");
+/// assert!((a | b).equivalent_to(&builder.build(&BoolExpr::parse("a | b").unwrap())));
+/// ```
+#[macro_export]
+macro_rules! sync_bdd_builder {
+    () => {
+        $crate::sync_bdd_builder!(__EspressoSyncBddBrand)
+    };
+    ($name:ident) => {{
+        #[derive(Clone, Copy)]
+        struct $name;
+        impl $crate::bdd::__macro_support::Sealed for $name {}
+        impl $crate::bdd::Brand for $name {}
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell>::new()
     }};
 }
 

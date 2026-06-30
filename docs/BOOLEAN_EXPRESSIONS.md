@@ -1,1426 +1,621 @@
 # Boolean Expression API
 
-This document provides comprehensive documentation for the boolean expression API in espresso-logic.
+This document describes the Boolean expression API in espresso-logic and the canonical BDD layer
+that sits beside it.
 
-## Overview
+## Two layers
 
-The boolean expression API provides a high-level, intuitive interface for working with boolean functions. Instead of manually constructing truth tables or working with low-level cubes, you can:
+The API is split into two layers with distinct responsibilities:
 
-- **Build expressions programmatically** using a fluent monadic interface
-- **Parse expressions from strings** using standard boolean notation
-- **Use operator overloading** with `*`, `+`, `^`, and `!`
-- **Use the `expr!` macro** for clean, readable syntax
-- **Compose expressions** - elegantly combine parsed or existing expressions
-- **Minimize directly** with `.minimize()` method
+- **[`BoolExpr`]** is an **owned, syntactic** Boolean expression. It carries no manager, builder or
+  brand: build it, compose it with the bitwise operators, parse it from text, display it, and fold over
+  its structure — all as a plain value. It does **not** canonicalise. `a & b` and `b & a` are different
+  expressions, and equality compares syntax, not the Boolean function. Semantic operations (evaluation,
+  equivalence) are done through the `Bdd` layer.
 
-## Quick Start
+- **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddBuilder`]
+  (single-threaded or thread-safe), which owns a private BDD manager. Within one builder every
+  Boolean function has exactly one root, so logical equivalence is an O(1) comparison and operations
+  such as cofactors, quantification and tautology checks are available.
 
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+Reach for `BoolExpr` to construct and carry expressions around; build into a `Bdd` when a question is
+about the *function* rather than the *syntax*.
 
-fn main() -> std::io::Result<()> {
-    // Create variables
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
+## The `BoolExpr` layer
 
-    // Build expression with clean syntax
-    let xor = expr!(a * !b + !a * b);
-
-    // Minimize
-    let minimized = xor.minimize()?;
-    println!("{}", minimized);
-    
-    Ok(())
-}
-```
-
-## Creating Boolean Expressions
-
-### Method 1: Variable Creation
+### Creating variables and constants
 
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-```
-
-Variable names can be:
-- Any valid Rust identifier
-- Multi-character (e.g., `"input_a"`, `"clk_enable"`)
-- Case-sensitive (`"A"` and `"a"` are different)
-
-### Method 2: Constants
-
-```rust
-use espresso_logic::BoolExpr;
-
+let a = BoolExpr::var("a");        // variable constructor
+let b = BoolExpr::var("b");
 let t = BoolExpr::constant(true);
 let f = BoolExpr::constant(false);
 ```
 
-### Method 3: Parsing Strings
+Variable names can be any string: a Rust-style identifier, a multi-character name such as
+`"clk_enable"`, or any other `&str`. Names are case-sensitive, so `"A"` and `"a"` are distinct.
+
+### Composing with operators
+
+`BoolExpr` composes through the bitwise operators: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT). Each is
+available by value and by reference, so the operands need not be cloned:
 
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("(a + b) * (c + d)")?;
-    Ok(())
-}
+let a = BoolExpr::var("a");
+let b = BoolExpr::var("b");
+
+let and = &a & &b;     // AND
+let or  = &a | &b;     // OR
+let xor = &a ^ &b;     // XOR
+let not = !&a;         // NOT
+
+// XNOR is the negation of XOR.
+let xnor = !(&a ^ &b);
 ```
 
-## Building Expressions
-
-### When to Use Which API
-
-**Use `expr!` macro** - Recommended for compile-time expression construction and composition:
-- Clean, readable syntax matching mathematical notation
-- Perfect for simple and complex expressions alike
-- No reference syntax needed (`&`)
-- Works with string literals and any `BoolExpr` values (parsed, created, minimized, etc.)
-- **Ideal for composing expressions** - combine user-defined functions elegantly
-
-**Use `BoolExpr::parse()`** - For runtime user input:
-- Parse expressions from strings at runtime
-- User input, config files, CLI arguments, etc.
-- Standard boolean algebra notation
-
-**Use operator overloading or monadic interface** - For special cases:
-- Building expressions in loops or conditional logic
-- When structure depends on runtime conditions
-- Advanced programmatic construction
-
-### `expr!` Macro (Recommended)
-
-The `expr!` macro is a procedural macro. At compile time it lowers onto the `BoolExpr::build` closure builder (composing `Bdd` handles directly, with no intermediate `BoolExpr` allocations), so there is zero runtime overhead. See **Macro lowering** under the Monadic Interface section below.
-
-#### Using String Literals
-
-No variable declarations needed - variables are created automatically:
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-// Simple expressions
-let and_expr = expr!("a" * "b");
-let or_expr = expr!("a" + "b");
-let not_expr = expr!(!"a");
-
-// XOR - no variable declarations! (`^` is a built-in operator)
-let xor = expr!("a" ^ "b");
-
-// Complex nested
-let complex = expr!(("a" + "b") * ("c" + "d"));
-
-// Majority function
-let majority = expr!("a" * "b" + "b" * "c" + "a" * "c");
-```
-
-#### Combining Expressions (v3.0+)
-
-You can create expressions using any method (`BoolExpr::variable()`, `BoolExpr::parse()`, etc.) and combine them with `expr!`. 
-This powerful feature allows you to seamlessly compose any `BoolExpr` values (parsed, minimized, or constructed):
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    // Create expressions using different methods
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let func_a = BoolExpr::parse("input1 * input2")?;
-    let func_b = BoolExpr::parse("input3 + input4")?;
-    
-    // Combine them all with expr! - clean and readable
-    let xor = expr!(a ^ b);
-    let combined = expr!(func_a + func_b);
-    
-    // Mix created and parsed expressions
-    let selector = BoolExpr::variable("mode");
-    let output = expr!(selector * func_a + !selector * func_b);
-    
-    println!("XOR: {}", xor);
-    println!("Combined: {}", combined);
-    println!("Output: {}", output);
-    
-    Ok(())
-}
-```
-
-#### Complete Example: Mixing Expressions with String Literals
-
-Combine expressions (from parsing, minimisation, etc.) with string literals seamlessly:
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    // Parse complex expressions from user input or config files
-    let f1 = BoolExpr::parse("(a + b) * (c + d)")?;
-    let f2 = BoolExpr::parse("x * y + z")?;
-    
-    // Mix parsed expressions with string literals using expr!
-    let out = expr!(!"rst" * ("en" * f1 + !"en" * f2) + "rst" * "def");
-    
-    println!("Output: {}", out);
-    
-    // Another example: compose minimized sub-expressions (efficient!)
-    let expr = BoolExpr::parse("p * q + p * r")?;
-    let min = expr.minimize()?;  // Already in minimal DNF form
-    let final_expr = expr!(min * "s" + !"t");
-    
-    println!("Final: {}", final_expr);
-    
-    Ok(())
-}
-```
-
-**Key insight:** Everything is just a `BoolExpr` - whether created via parsing, string literals in `expr!()`, `BoolExpr::variable()`, or any other method. All `BoolExpr` values can be freely mixed and composed.
-
-**Key use cases for composition:**
-- Combining user-defined functions from configuration files
-- Building complex logic from simpler parsed components
-- Creating conditional expressions based on runtime parameters
-- Composing minimized sub-expressions into larger systems (efficient - already in minimal DNF form)
-
-**Advantages of the `expr!` macro:**
-- No explicit `&` references needed
-- Clean, readable syntax matching mathematical notation
-- Flexible - works with string literals and any `BoolExpr` values
-- Automatic operator precedence
-- Perfect for expressing common patterns
-- Ideal for expression composition
-
-### Parser (For Runtime User Input)
-
-Use `BoolExpr::parse()` to parse expressions from strings at runtime. The parser supports standard boolean algebra notation:
-
-#### Operators
-
-| Operator | Meaning | Precedence | Example |
-|----------|---------|------------|---------|
-| `( )` | Parentheses | Highest (0) | `(a + b)` |
-| `~` or `!` | NOT | High (1) | `~a`, `!b` |
-| `*` or `&` | AND | Medium (2) | `a * b`, `a & b` |
-| `^` | XOR | Low (3) | `a ^ b` |
-| `+` or `\|` | OR | Lowest (4) | `a + b`, `a \| b` |
-
-**Note (v3.1+):** The parser now accepts both mathematical notation (`*`, `+`) and logical notation (`&`, `|`) for AND and OR operations. 
-You can even mix notations within the same expression (e.g., `a * b | c`).
-
-#### Precedence Rules
-
-Operators follow standard boolean algebra precedence:
-
-1. **Parentheses** (highest) - force evaluation order
-2. **NOT** - evaluated first (after parentheses)
-3. **AND** - evaluated next
-4. **XOR** - evaluated after AND, before OR
-5. **OR** (lowest) - evaluated last
-
-XOR (`^`) sits between AND and OR (mirroring Rust's `| < ^ < &`) and is left-associative, so
-`a + b ^ c` parses as `a + (b ^ c)` and `a ^ b * c` as `a ^ (b * c)`.
+The equivalent named methods are also available:
 
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    // These are equivalent:
-    let expr1 = BoolExpr::parse("~a * b + c")?;
-    let expr2 = BoolExpr::parse("((~a) * b) + c")?;
+let a = BoolExpr::var("a");
+let b = BoolExpr::var("b");
 
-    // NOT binds tighter than AND
-    let expr3 = BoolExpr::parse("a * ~b")?;  // a AND (NOT b)
-
-    // AND binds tighter than OR
-    let expr4 = BoolExpr::parse("a * b + c")?;  // (a AND b) OR c
-    
-    // Alternative notation (v3.1+) - all equivalent
-    let math = BoolExpr::parse("a * b + c")?;    // Mathematical
-    let logical = BoolExpr::parse("a & b | c")?; // Logical
-    let mixed = BoolExpr::parse("a * b | c")?;   // Mixed
-    
-    Ok(())
-}
+let and = a.and(&b);
+let or  = a.or(&b);
+let xor = a.xor(&b);
+let not = a.not();
 ```
 
-#### Parentheses
+Composition concatenates token streams; the result is always a new syntactic expression, never a
+canonical form.
 
-Use parentheses to override precedence:
+### Parsing from text
+
+[`BoolExpr::parse`] reads an expression from a string, as does [`str::parse`]:
 
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("(a + b) * c")?;  // (a OR b) AND c
-    let expr2 = BoolExpr::parse("~(a * b)")?;    // NOT (a AND b)
-    Ok(())
-}
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let f = BoolExpr::parse("a & b | !c")?;
+let g: BoolExpr = "a & b | !c".parse()?;
+assert_eq!(f, g);
+# Ok(())
+# }
 ```
 
-#### Constants
+The grammar accepts two spellings for AND/OR/NOT, which may be mixed in one expression:
 
-The parser recognises boolean constants:
+| Meaning | Spellings | Precedence (loose → tight) |
+|---------|-----------|----------------------------|
+| OR  | `+` or `\|` | lowest |
+| XOR | `^`         |        |
+| AND | `*` or `&`  |        |
+| NOT | `~` or `!`  | highest (after parentheses) |
+
+Parentheses override precedence. The `0`/`1` and `false`/`true` constants are recognised.
 
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    let expr1 = BoolExpr::parse("a * 1")?;      // a AND true = a
-    let expr2 = BoolExpr::parse("b + 0")?;      // b OR false = b
-    let expr3 = BoolExpr::parse("true * a")?;   // true AND a = a
-    let expr4 = BoolExpr::parse("false + b")?;  // false OR b = b
-    Ok(())
-}
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+// The `*`/`+`/`~` and `&`/`|`/`!` spellings parse to the same operators.
+let maths   = BoolExpr::parse("a * b + ~c")?;
+let bitwise = BoolExpr::parse("a & b | !c")?;
+assert_eq!(maths, bitwise);
+
+// Mixed spellings in one expression.
+let mixed = BoolExpr::parse("a * b | c")?;
+
+// Parentheses and constants.
+let grouped  = BoolExpr::parse("(a + b) * c")?;
+let with_one = BoolExpr::parse("a * 1")?;
+# Ok(())
+# }
 ```
 
-#### Variable Names
+All binary operators are left-associative. XOR sits between AND and OR (mirroring Rust's `| < ^ < &`),
+so `a + b ^ c` parses as `a + (b ^ c)` and `a ^ b * c` as `a ^ (b * c)`.
 
-Variable names must:
-- Start with a letter or underscore
-- Contain only alphanumeric characters and underscores
-- Be case-sensitive
+### Display
+
+`Display` and `Debug` render an expression's own structure with minimal parentheses, using the
+canonical spellings `&`, `|`, `^`, `!` and `1`/`0`. This is the syntactic structure of the value, not
+a canonical or factored form:
 
 ```rust
 use espresso_logic::BoolExpr;
 
-fn main() -> std::io::Result<()> {
-    // Valid variable names:
-    let expr1 = BoolExpr::parse("x * y")?;
-    let expr2 = BoolExpr::parse("input_a * input_b")?;
-    let expr3 = BoolExpr::parse("clk_enable + reset_n")?;
-    let expr4 = BoolExpr::parse("A * B")?;  // Different from a * b
+let a = BoolExpr::var("a");
+let b = BoolExpr::var("b");
+let c = BoolExpr::var("c");
 
-    // Whitespace is ignored
-    let expr5 = BoolExpr::parse("a*b+c")?;
-    let expr6 = BoolExpr::parse("a * b + c")?;  // Same as above
-    
-    Ok(())
-}
+assert_eq!(format!("{}", &a & &b), "a & b");
+assert_eq!(format!("{}", &a & &b | &c), "a & b | c");
+
+// Parentheses appear only where precedence requires them.
+assert_eq!(format!("{}", (&a | &b) & &c), "(a | b) & c");
+assert_eq!(format!("{}", !(&a & &b)), "!(a & b)");
 ```
-
-### Operator Overloading
-
-Boolean expressions support Rust's standard operators as an alternative to the `expr!` macro:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-let and_expr = &a * &b;        // AND
-let or_expr = &a + &b;         // OR
-let xor_expr = &a ^ &b;        // XOR
-let not_expr = !&a;            // NOT
-
-// Complex: XNOR is the negation of XOR
-let xnor = !&(&a ^ &b);
-```
-
-**Note:** Requires `&` references due to Rust's ownership rules. The `expr!` macro is preferred as it avoids this requirement.
-
-### Monadic Interface
-
-The monadic interface provides explicit method calls for building expressions:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-
-// AND
-let and_expr = a.and(&b);
-
-// OR
-let or_expr = a.or(&b);
-
-// XOR
-let xor_expr = a.xor(&b);
-
-// NOT
-let not_expr = a.not();
-
-// Complex expression: (a * b) + (~a * c)
-let complex = a.and(&b).or(&a.not().and(&c));
-```
-
-**Macro lowering:** `expr!` does *not* chain these monadic methods. It lowers onto the `BoolExpr::build` closure builder — emitting a single `BoolExpr::build(|b| …)` that composes `Bdd` handles, and the result is canonical. In-scope `BoolExpr` identifiers are spliced in with `graft`; string literals become variables via `var`. Conceptually:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-// expr!(a * b)  lowers to (the builder param `bld` shown for clarity; the real binding is hygienic):
-let _expr1 = BoolExpr::build(|bld| bld.and(bld.graft(&a), bld.graft(&b)));
-
-// expr!("x" * "y" + !"z")  lowers to:
-let _expr2 = BoolExpr::build(|bld| {
-    bld.or(bld.and(bld.var("x"), bld.var("y")), bld.not(bld.var("z")))
-});
-```
-
-**When to use:**
-- Building expressions in loops or conditional logic
-- When structure depends on runtime conditions
-- Advanced programmatic construction
-
-**Example - Dynamic construction:**
-
-```rust
-use espresso_logic::BoolExpr;
-
-let mut expr = BoolExpr::variable("a");
-
-// Build expression dynamically
-for var_name in ["b", "c", "d"] {
-    expr = expr.and(&BoolExpr::variable(var_name));
-}
-
-// Results in: a * b * c * d
-println!("{}", expr);
-```
-
-### Low-level builder: `BoolExpr::build`
-
-For programmatic construction — folding over a slice, structure that depends on runtime values —
-`BoolExpr::build` hands a builder to a closure and returns the `BoolExpr` for the handle the closure
-returns. The builder's methods build `Bdd` node handles in the manager. The result is canonical, identical
-to the operator API.
-
-```rust
-use espresso_logic::BoolExpr;
-
-// AND-reduce a runtime list of variable names.
-let names = ["a", "b", "c", "d"];
-let conjunction = BoolExpr::build(|b| {
-    let mut acc = b.constant(true);
-    for name in names {
-        acc = b.and(acc, b.var(name));
-    }
-    acc
-});
-
-let manual = BoolExpr::variable("a")
-    .and(&BoolExpr::variable("b"))
-    .and(&BoolExpr::variable("c"))
-    .and(&BoolExpr::variable("d"));
-assert_eq!(conjunction, manual);
-```
-
-`graft` folds an existing `BoolExpr` into the build as a handle:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let sub = BoolExpr::parse("a * b").unwrap();
-let _expr = BoolExpr::build(|b| b.or(b.graft(&sub), b.var("c")));
-```
-
-### If-then-else: `BoolExpr::ite`
-
-`BoolExpr::ite` is a convenience over `build` for the ternary `if self then g else h`
-(equivalently `self*g + !self*h`), built directly from the BDD primitive:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let s = BoolExpr::variable("s");
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-let mux = s.ite(&a, &b); // s ? a : b
-let manual = s.and(&a).or(&s.not().and(&b));
-assert_eq!(mux, manual);
-```
-
-## Minimisation
-
-### Direct Minimisation (Heuristic)
-
-The simplest way to minimise an expression using the fast heuristic algorithm:
-
-```rust
-use espresso_logic::{BoolExpr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-
-    // Redundant expression: a*b + a*b*c
-    let expr = a.and(&b).or(&a.and(&b).and(&c));
-
-    // Minimize directly using heuristic algorithm (fast)
-    let minimized = expr.minimize()?;
-
-    println!("{}", minimized);  // Output: (a * b)
-    
-    Ok(())
-}
-```
-
-### Exact Minimisation (Guaranteed Minimal)
-
-For provably minimal results, use `minimize_exact()`:
-
-```rust
-use espresso_logic::{BoolExpr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-
-    // Redundant expression
-    let expr = a.and(&b).or(&a.and(&b).and(&c));
-
-    // Exact minimisation - guaranteed minimal result
-    let minimized = expr.minimize_exact()?;
-
-    println!("{}", minimized);  // Guaranteed to be minimal: (a * b)
-    
-    Ok(())
-}
-```
-
-**When to use each:**
-
-- **`minimize()`**: Fast heuristic, near-optimal results (~99% optimal in practice)
-  - Best for: Large expressions, production use, when speed matters
-  - Time complexity: Near-linear in practice
-
-- **`minimize_exact()`**: Slower but guaranteed minimal results
-  - Best for: Equivalency checking, small expressions, when optimality is critical
-  - Time complexity: Exponential worst case, but polynomial for many practical cases
-
-### Using Cover for More Control
-
-For more control over the minimisation process:
-
-```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("a * b + a * b * c")?;
-    
-    // Create cover and add expression
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr, "output")?;
-    
-    // Inspect before minimisation
-    println!("Input variables: {:?}", cover.input_labels());
-    println!("Inputs: {}", cover.num_inputs());
-    println!("Outputs: {}", cover.num_outputs());
-    println!("Cubes before: {}", cover.num_cubes());
-    
-    // Minimize
-    cover = cover.minimize()?;
-    
-    println!("Cubes after: {}", cover.num_cubes());
-    
-    // Convert back to expression
-    let minimized = cover.to_expr("output")?;
-    println!("Result: {}", minimized);
-    
-    Ok(())
-}
-```
-
-## Common Patterns
-
-### XOR (Exclusive OR)
-
-XOR is a first-class operator — the `.xor()` method, the `^` operator, the parser, and the `expr!` macro
-all build it directly (no need to spell out `a*!b + !a*b`):
-
-```rust
-use espresso_logic::{BoolExpr, expr};
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let xor_method = a.xor(&b);              // method
-    let xor_op     = &a ^ &b;                // `^` operator
-    let xor_parse  = BoolExpr::parse("a ^ b")?; // parser
-    let xor_macro  = expr!(a ^ b);           // macro
-
-    // All four agree with the hand-written sum-of-products a*!b + !a*b:
-    let xor_sop = a.and(&b.not()).or(&a.not().and(&b));
-    assert!(xor_method.equivalent_to(&xor_sop));
-    assert!(xor_op.equivalent_to(&xor_sop));
-    assert!(xor_parse.equivalent_to(&xor_sop));
-    assert!(xor_macro.equivalent_to(&xor_sop));
-
-    Ok(())
-}
-```
-
-### XNOR (Equivalence)
-
-XNOR is the negation of XOR:
-
-```rust
-use espresso_logic::{BoolExpr, expr};
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let xnor_op    = !&(&a ^ &b);            // negation of `^`
-    let xnor_macro = expr!(!(a ^ b));
-    let xnor_parse = BoolExpr::parse("~(a ^ b)")?;
-
-    let xnor_sop = a.and(&b).or(&a.not().and(&b.not()));
-    assert!(xnor_op.equivalent_to(&xnor_sop));
-    assert!(xnor_macro.equivalent_to(&xnor_sop));
-    assert!(xnor_parse.equivalent_to(&xnor_sop));
-
-    Ok(())
-}
-```
-
-### Majority Function (3 inputs)
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    // expr! macro (clearest - using strings)
-    let majority1 = expr!("a" * "b" + "b" * "c" + "a" * "c");
-
-    // Parser
-    let majority2 = BoolExpr::parse("a * b + b * c + a * c")?;
-
-    // Method API
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    let majority3 = a.and(&b)
-        .or(&b.and(&c))
-        .or(&a.and(&c));
-    
-    Ok(())
-}
-```
-
-### De Morgan's Laws
-
-```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
-
-// ~(a * b) = ~a + ~b (using string notation)
-let expr1 = expr!(!("a" * "b"));
-let expr2 = expr!(!"a" + !"b");
-
-// ~(a + b) = ~a * ~b
-let expr3 = expr!(!("a" + "b"));
-let expr4 = expr!(!"a" * !"b");
-```
-
-## Working with BDDs
-
-Binary Decision Diagrams (BDDs) provide a canonical representation of boolean functions with
-efficient operations. Every `BoolExpr` **is** a BDD internally — there is no separate BDD type and no
-conversion step — providing:
-
-- **Canonical representation**: Equivalent expressions have identical internal structure
-- **Efficient operations**: Polynomial-time AND/OR/NOT via hash consing and memoisation  
-- **Memory efficiency**: Structural sharing across all operations
-- **Automatic simplification**: Redundancy elimination during construction
-- **Fast equality checks**: O(1) pointer comparison for equivalent expressions
-
-### BDD Role in Minimisation
-
-When you minimise a `BoolExpr`, the library:
-1. Uses the expression's internal BDD representation (already canonical)
-2. Extracts cubes from the BDD to create a `Cover`
-3. Minimises the cover using Espresso's algorithm (heuristic or exact)
-4. Returns a new `BoolExpr` from the minimised cubes
-
-**Unified Architecture (v3.1.1+):** Since `BoolExpr` IS a BDD:
-- No conversion needed—expressions are already in canonical BDD form
-- Automatic redundancy elimination during construction
-- Operations (AND/OR/NOT) use efficient BDD algorithms
-- Hash consing ensures structural sharing across all expressions
-- Global manager caches ITE results for efficiency
-
-**Caching Architecture (v3.1.1+):**
-- **BDD Representation**: Every expression has a canonical BDD (core representation)
-- **Cube Cache**: Lazily cached product-term cubes (minterms) for cube extraction
-- **AST Cache**: Lazily cached factored AST for beautiful display
-- All caches are local per-expression with cheap Arc cloning
-
-### Direct BDD Usage
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-
-// Build expression (already a BDD internally)
-let expr = a.and(&b).or(&b.and(&c));
-
-// Inspect BDD properties (no conversion needed)
-println!("BDD nodes: {}", expr.node_count());
-println!("Variables: {}", expr.var_count());
-
-// All operations use efficient BDD algorithms
-let d = BoolExpr::variable("d");
-let combined = expr.and(&d);
-
-// Display uses algebraic factorisation
-println!("Result: {}", combined);
-```
-
-### BDD Advantages
-
-All expressions automatically benefit from BDD optimisations during construction:
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-
-// Consensus theorem: a*b + ~a*c + b*c
-// The b*c term is redundant
-let expr = a.and(&b).or(&a.not().and(&c)).or(&b.and(&c));
-
-// BDD automatically recognises redundancy during construction
-// Expression IS a BDD - no conversion needed
-println!("BDD nodes: {}", expr.node_count());
-
-// Equivalent expressions have identical internal structure
-let expr2 = a.and(&b).or(&a.not().and(&c));
-println!("Same function: {}", expr == expr2);  // May be true due to canonical form
-```
-
-### Benefits of the BDD Architecture
-
-All `BoolExpr` instances automatically get BDD benefits:
-
-- **Canonical representation**: Equivalent expressions have identical structure
-- **Efficient operations**: All AND/OR/NOT use polynomial-time BDD algorithms
-- **Size inspection**: Check representation size with `node_count()`
-- **Fast equality**: O(1) comparison for equivalent expressions
-
-```rust
-use espresso_logic::BoolExpr;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-// Build two equivalent expressions
-let expr1 = a.and(&b);
-let expr2 = b.and(&a);  // Commutative
-
-// Both ARE BDDs - canonical representation
-// Equivalent expressions have identical internal structure
-assert_eq!(expr1.node_count(), expr2.node_count());
-
-// All operations are efficient BDD operations
-let result = expr1.or(&expr2);
-println!("Result nodes: {}", result.node_count());
-```
-
-## Working with Cubes
-
-### Iterating Over Cubes
-
-```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("a * b + ~a * c")?;
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr, "out")?;
-    
-    for (i, cube) in cover.cubes().enumerate() {
-        println!("Cube {}: inputs={:?}, outputs={:?}", i, cube.inputs(), cube.outputs());
-    }
-    
-    Ok(())
-}
-```
-
-### Converting to PLA Format
-
-```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, PLAWriter};
-
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("a * b + c")?;
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr, "output")?;
-    
-    // Export to PLA string
-    let pla_string = cover.to_pla_string(CoverType::F)?;
-    println!("{}", pla_string);
-    
-    // Or write to file
-    cover.to_pla_file("output.pla", CoverType::F)?;
-    
-    Ok(())
-}
-```
-
-## Variable Ordering
-
-Variables are automatically sorted alphabetically:
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    let c = BoolExpr::variable("c");
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-
-    let expr = expr!(c * a * b);
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr, "out")?;
-
-    println!("{:?}", cover.input_labels());  // ["a", "b", "c"] (sorted)
-    
-    Ok(())
-}
-```
-
-This ensures consistent ordering in truth tables and PLA files.
-
-## Error Handling
-
-### Parsing Errors
-
-```rust
-use espresso_logic::BoolExpr;
-
-match BoolExpr::parse("a * * b") {
-    Ok(expr) => println!("Parsed: {}", expr),
-    Err(e) => println!("Parse error: {}", e),
-}
-```
-
-Common parse errors:
-- Syntax errors: `"a * * b"`, `"a +"`, `"(a * b"`
-- Invalid tokens: `"a @ b"` (`@` is not an operator; `^` is XOR, `&`/`|` are accepted as AND/OR)
-- Empty input: `""`
-
-### Minimisation Errors
-
-```rust
-use espresso_logic::{BoolExpr, Minimizable};
-
-fn main() -> std::io::Result<()> {
-    let expr = BoolExpr::parse("a * b")?;
-    
-    match expr.minimize() {
-        Ok(minimized) => println!("Success: {}", minimized),
-        Err(e) => eprintln!("Minimization failed: {}", e),
-    }
-    
-    Ok(())
-}
-```
-
-## Performance Considerations
-
-### Expression Construction
-
-- Variable creation: O(1)
-- Expression building: O(1) per operation (uses Arc for sharing)
-- Parsing: O(n) where n is the input length
-
-### BDD-Based Cover Generation (introduced in v3.1)
-
-**Binary Decision Diagrams (BDDs) for Cover Generation:**
-- Version 3.1 introduced BDDs; expressions are now converted to BDDs before cube extraction
-- BDDs provide canonical representation with automatic optimisation
-- Hash consing ensures identical subexpressions are shared
-- Operations (AND, OR, NOT) are memoized for efficiency
-- **Note:** The minimisation itself is still performed by Espresso, not the BDD
-
-**Performance characteristics:**
-- BDD construction: Polynomial for most practical expressions (vs exponential DNF)
-- Canonical representation: Equivalent expressions produce identical BDDs
-- Automatic simplification: Redundant terms eliminated during BDD construction
-- Memory efficient: Structural sharing via hash consing
-- Global singleton manager: All BDDs share one manager (thread-safe via `RwLock`)
-
-**Minimisation workflow:**
-1. Expression → BDD (fast, polynomial time, cached)
-2. BDD → DNF cubes (extraction, linear in BDD size) **← Avoids exponential De Morgan expansion**
-3. DNF → Cover (cube mapping)
-4. Cover → Minimized cover (Espresso algorithm, dominant cost)
-5. Minimized cover → DNF (cube extraction)
-6. DNF → BoolExpr (new expression, empty BDD cache)
-
-**Performance improvements (v3.0 → v3.1):**
-- Faster equivalence checking via BDD canonical representation
-- More efficient cover generation from complex expressions
-- Reduced redundancy in generated covers (better Espresso input)
-
-**BDD Pre-Minimisation (Automatic during BDD construction):**
-- **BDD construction provides automatic redundancy elimination** - equivalent subexpressions are shared via hash consing
-- **Reduces cube count before Espresso** - BDD-to-DNF extraction produces fewer, more canonical cubes than direct conversion
-- **BDD caching eliminates redundant conversions** (introduced in v3.1) - same subexpression converted once, cached for reuse
-- **Pre-minimisation is automatic** - Happens during BDD construction, NOT from user calling `.minimize()` early
-- **User-level minimisation only matters at final output** - Intermediate minimisations don't reduce the final BDD cube count
-- **Composing expressions via BDD:**
-  - OR operations: efficient in BDD representation (polynomial time)
-  - AND operations: efficient in BDD representation (polynomial time)
-  - NOT operations: efficient in BDD representation (just flip terminal nodes)
-- **Implementation:** Cubes are extracted from the expression's internal BDD: `BoolExpr (BDD) -> cubes` (avoids exponential complexity)
-
-**Why Both BDD and Espresso?**
-- **BDD minimisation is ordering-dependent** - Uses alphabetical variable ordering (deterministic but not always optimal)
-- **Optimal BDD variable ordering is NP-complete** - Cannot guarantee minimal BDD size
-- **Espresso is ordering-independent** - Provides true logic minimisation regardless of variable order
-- **Complementary strengths:** BDD provides canonical form and redundancy elimination; Espresso provides optimal logic minimisation
-- **Two-step process is necessary** - BDD reduces problem size, Espresso achieves minimal result
-
-**Measured Impact (threshold_gate_example.rs):**
-
-We measured the actual cube counts at three stages using a threshold gate example with XOR and negations:
-
-1. **Naive De Morgan Expansion** (no BDD):
-   - Simple expressions: 6 cubes each (already in DNF)
-   - `hold` (XOR with negation): **375,840 cubes** (exponential blowup!)
-   - `next_q_v1` (negation of OR): **20,220 cubes** (cross-product explosion)
-   - `next_q_v2` (alternative formulation): **375,846 cubes** (even more expansion!)
-   - **Total: 771,918 cubes** across all outputs
-
-2. **BDD-Based DNF** (canonical form):
-   - Simple expressions: 5 cubes each (BDD eliminated redundancy)
-   - `hold`: **14 cubes** (26,845x reduction from naive!)
-   - `next_q_v1`: **19 cubes** (1,064x reduction from naive!)
-   - `next_q_v2`: **19 cubes** (19,781x reduction from naive!)
-   - **Total: 62 unique cubes** in cover (12,450x overall reduction!)
-
-3. **Espresso Minimisation** (final optimal form):
-   - Simple expressions: 5 cubes each (already optimal)
-   - `hold`: **10 cubes** (29% further reduction from BDD)
-   - `next_q_v1`: **15 cubes** (21% further reduction from BDD)
-   - `next_q_v2`: **15 cubes** (21% further reduction from BDD)
-   - **Total: 30 unique cubes** (52% further reduction from BDD)
-
-**Key Findings:**
-- **BDD is ESSENTIAL**: Without BDD, Espresso would receive 771,918 cubes (intractable). With BDD: 62 cubes (99.99% reduction!)
-- **Espresso is STILL NEEDED**: BDD provides canonical form but not minimal form. Espresso achieves additional 52% reduction.
-- **The pipeline is complementary**: BDD prevents exponential blowup from negations; Espresso achieves optimal minimisation through heuristic search.
-
-### Memory
-
-- Expressions use Arc for structural sharing
-- Very memory efficient for large expressions
-- Variables are deduplicated automatically
-
-## BoolExpr API Methods
-
-### Display and Formatting
-
-Boolean expressions are displayed with minimal parentheses based on operator precedence:
-
-```rust
-use espresso_logic::*;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let c = BoolExpr::variable("c");
-
-// Simple operations - no unnecessary parentheses
-println!("{}", expr!(a * b));        // Output: a * b
-println!("{}", expr!(a + b));        // Output: a + b
-println!("{}", expr!(a * b + c));    // Output: a * b + c
-
-// Parentheses only when needed for precedence
-println!("{}", expr!((a + b) * c));  // Output: (a + b) * c
-println!("{}", expr!(!(a * b)));     // Output: ~(a * b)
-
-// Clean formatting for complex expressions
-let xor = expr!(a * b + !a * !b);
-println!("{}", xor);  // Output: a * b + ~a * ~b (not ((a * b) + (~a * ~b)))
-```
-
-**Formatting rules:**
-- Variables and constants: no parentheses
-- NOT chains: no parentheses (e.g., `~~a`)
-- AND chains: no parentheses (e.g., `a * b * c`)
-- OR chains: no parentheses (e.g., `a + b + c`)
-- OR inside AND: parentheses required (e.g., `(a + b) * c`)
-- Compound expressions in NOT: parentheses required (e.g., `~(a * b)`)
-
-### Semantic Equality
-
-Check if two expressions are logically equivalent (produce same outputs):
-
-```rust
-use espresso_logic::*;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-// Commutative operations now have canonical equality (BDD-based)
-let expr1 = expr!(a * b);
-let expr2 = expr!(b * a);  // Commutative
-
-// Canonical equality (BDD provides canonical form)
-assert_eq!(expr1, expr2);  // BDD canonicalisation makes them equal!
-
-// Also logically equivalent
-assert!(expr1.equivalent_to(&expr2));
-
-// Test double negation
-let expr3 = a.clone();
-let expr4 = expr!(!!a);
-assert!(expr3.equivalent_to(&expr4));
-
-// Non-equivalent expressions
-let and_expr = expr!(a * b);
-let or_expr = expr!(a + b);
-assert!(!and_expr.equivalent_to(&or_expr));
-```
-
-**Performance Note:**
-
-`equivalent_to()` is an exact, constant-time check — identical to the `==` operator. Every `BoolExpr`
-is a root into one shared, canonical reduced-ordered BDD (all expressions live in the same global
-manager), so two expressions denote the same function **iff their BDD roots are equal**. There is no
-truth-table evaluation and no minimisation fallback: equivalence is a single pointer/identifier
-comparison, independent of the number of variables.
 
 ### Evaluation
 
-Evaluate expressions with specific variable assignments:
+Evaluation is a semantic operation, so it lives on [`Bdd`], not on the syntactic `BoolExpr`: build the
+expression into a builder and evaluate the resulting handle. The assignment is a [`Minterm`] carrying
+the fixed variables; [`Bdd::evaluate`] restricts the function by each fixed variable and returns
+`Ok(true)`/`Ok(false)` once the result is determined. A variable absent from the assignment is left
+*free*, not defaulted to `false`: a partial assignment that does not determine the function returns
+`Err(residual)`, the function over the still-free variables. A complete assignment over the support
+therefore always yields `Ok`:
 
 ```rust
-use espresso_logic::*;
-use std::collections::HashMap;
-use std::sync::Arc;
+use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
 
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-let expr = expr!(a * b + !a);
+let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
+let builder = bdd_builder!();
+let f = builder.build(&expr);
 
-// Create variable assignments
-let mut assignment = HashMap::new();
-assignment.insert(Arc::from("a"), true);
-assignment.insert(Arc::from("b"), false);
+let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
 
-// Evaluate: a * b + !a = true * false + !true = false + false = false
-let result = expr.evaluate(&assignment);
-println!("Result: {}", result);  // false
+let assignment = Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]);
+// (a & b) | !a  with a=true, b=false  =  false | false  =  false
+assert_eq!(f.evaluate(&assignment), Ok(false));
 
-// Try different assignments: a * b + !a = false * true + !false = false + true = true
-assignment.insert(Arc::from("a"), false);
-assignment.insert(Arc::from("b"), true);
-let result2 = expr.evaluate(&assignment);
-println!("Result: {}", result2);  // true
+let assignment = Minterm::from_symbols(vars, [Some(false), Some(false)]);
+// (a & b) | !a  with a=false  =  false | true  =  true
+assert_eq!(f.evaluate(&assignment), Ok(true));
 ```
 
-### Variable Collection
+### Syntactic variables
 
-Get all variables used in an expression:
+[`BoolExpr::variables`] returns the variables that occur in the expression's text, as a
+`BTreeSet<Symbol>` in sorted order. This is a syntactic scan: `a & !a` still reports `a`, even though
+the function does not depend on it. For the semantic support of a function, build a `Bdd` and use
+[`Bdd::collect_variables`].
 
 ```rust
-use espresso_logic::{BoolExpr, expr, Minimizable};
+use espresso_logic::{BoolExpr, Symbol};
+use std::collections::BTreeSet;
 
-let expr = expr!("x" * "y" + "z");
+let expr = BoolExpr::parse("x & y | z").unwrap();
+let vars: BTreeSet<Symbol> = expr.variables();
+let names: Vec<String> = vars.iter().map(|s| s.to_string()).collect();
+assert_eq!(names, ["x", "y", "z"]);
+```
 
-let vars = expr.collect_variables();
-// Returns BTreeSet<Symbol> in alphabetical order
-for var in vars {
-    println!("Variable: {}", var);
+### Equality is syntactic, not logical
+
+`PartialEq`/`Eq`/`Hash` compare the token structure. Two expressions are equal exactly when they are
+the same syntactic tree:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let a = BoolExpr::var("a");
+let b = BoolExpr::var("b");
+
+assert_eq!(a.clone() & b.clone(), a.clone() & b.clone()); // identical structure
+assert_ne!(a.clone() & b.clone(), b.clone() & a.clone()); // a & b is not b & a syntactically
+assert_ne!(a.clone() & b.clone(), a.clone() | b.clone()); // different operator
+```
+
+`a & b` and `b & a` denote the same Boolean function but are different `BoolExpr` values. For logical
+equality, build both into the BDD layer and use [`Bdd::equivalent_to`].
+
+## The `Bdd` layer
+
+### Contexts
+
+A BDD builder owns a private manager and hands out [`Bdd`] handles branded to it. Mint one with the
+[`bdd_builder!`] macro (single-threaded, `!Send`) or [`sync_bdd_builder!`] (`Send + Sync`). Each call
+mints a distinct brand, so handles from two different builders cannot be combined — a compile error,
+not a runtime check. A `Bdd` is `Clone` (a refcount bump), not `Copy`.
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let f = a & b;            // handles are Clone (a refcount bump), not Copy
+assert!(f.equivalent_to(&(builder.var("a") & builder.var("b"))));
+```
+
+An optional readable brand name appears in mismatch diagnostics; each call still mints a distinct
+brand even when two are named the same:
+
+```rust
+use espresso_logic::bdd_builder;
+
+let routing = bdd_builder!(Routing);
+let _ = routing.var("a");
+```
+
+### Building handles
+
+A builder builds handles directly, from a [`BoolExpr`], or from a [`Cover`]:
+
+```rust
+use espresso_logic::{bdd_builder, BoolExpr};
+
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let builder = bdd_builder!();
+
+let a = builder.var("a");
+let one = builder.constant(true);
+
+let expr = BoolExpr::parse("a & b")?;
+let from_expr = builder.build(&expr);     // build a syntactic expression
+let parsed = builder.parse("a & b")?;     // parse and build in one step
+
+assert!(from_expr.equivalent_to(&parsed));
+# Ok(())
+# }
+```
+
+### Operations
+
+`Bdd` handles support the same operators as `BoolExpr` (`&`, `|`, `^`, `!`), plus the BDD primitives:
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let s = builder.var("s");
+let a = builder.var("a");
+let b = builder.var("b");
+
+// if-then-else: s ? a : b
+let mux = s.clone().ite(a.clone(), b.clone());
+assert!(mux.equivalent_to(&((s.clone() & a) | (!s & b))));
+```
+
+### Logical equivalence
+
+[`Bdd::equivalent_to`] compares two handles for logical equality in O(1), because equivalent functions
+share a canonical root:
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+
+// Commutativity and the consensus theorem hold at the function level.
+assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
+
+let consensus = (a.clone() & b.clone()) | (!a.clone() & builder.var("c")) | (b.clone() & builder.var("c"));
+let reduced   = (a.clone() & b.clone()) | (!a & builder.var("c"));
+assert!(consensus.equivalent_to(&reduced)); // the b & c term is redundant
+```
+
+### Cofactors and quantification
+
+[`Bdd::restrict`] (alias [`Bdd::cofactor`]) substitutes a variable with a constant; [`Bdd::forall`]
+and [`Bdd::exists`] quantify over a set of variables. A name absent from the function is a no-op.
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let f = a & b.clone();
+
+// f|a=true == b
+assert!(f.restrict("a", true).equivalent_to(&b.clone()));
+
+// ∀a. (a & b) == false; ∃a. (a & b) == b
+assert!(f.forall(&["a"]).is_contradiction());
+assert!(f.exists(&["a"]).equivalent_to(&b));
+```
+
+### Constant queries
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+
+assert!((a.clone() | !a.clone()).is_tautology());
+assert!((a.clone() & !a).is_contradiction());
+```
+
+### Introspection
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let f = (a.clone() & b.clone()) | (!a & b);
+
+// f depends only on b after canonicalisation.
+assert_eq!(f.var_count(), 1);
+assert_eq!(
+    f.collect_variables().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    ["b"]
+);
+let _ = f.node_count();
+```
+
+### Materialisation
+
+[`Bdd::to_cubes`] enumerates the paths to TRUE as a single-output sum-of-products [`Cover`];
+[`Bdd::to_minterms`] expands the function over an explicit variable set:
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let f = a & b;
+
+let cover = f.to_cubes();
+assert_eq!(cover.num_outputs(), 1);
+
+// One fully-assigned minterm over [a, b]: a=1, b=1.
+let minterms = f.to_minterms(&["a", "b"]);
+assert_eq!(minterms.len(), 1);
+```
+
+### Minimisation and lowering
+
+[`Bdd::minimize`] minimises the function's ON-set with Espresso and returns a [`Cover`];
+[`Bdd::to_expr`] lowers the function to a factored [`BoolExpr`]:
+
+```rust
+use espresso_logic::bdd_builder;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
+
+// (a & b) | (a & b & c) is just a & b.
+let f = (a.clone() & b.clone()) | (a.clone() & b.clone() & c);
+
+let minimized = f.minimize()?;
+assert_eq!(minimized.num_cubes(), 1);
+
+let factored = f.to_expr();
+assert!(builder.build(&factored).equivalent_to(&(a & b)));
+# Ok(())
+# }
+```
+
+## Covers and minimisation
+
+A [`Cover`] is the sum-of-products / truth-table representation that Espresso minimises. Boolean
+functions cross into it through several entry points.
+
+### Converting a function to a cover
+
+`Cover::from` accepts a `Bdd` handle or a `BoolExpr` (the expression forms build through a private
+temporary builder):
+
+```rust
+use espresso_logic::{bdd_builder, Anonymous, BoolExpr, Cover, Symbol};
+
+let builder = bdd_builder!();
+let from_bdd: Cover<Symbol, Anonymous> = Cover::from(builder.var("a") & builder.var("b"));
+let from_expr: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b").unwrap());
+
+assert_eq!(from_bdd.num_outputs(), 1);
+assert_eq!(from_expr.num_outputs(), 1);
+```
+
+These covers have a single anonymous output. To recover a factored expression from one, use
+[`Cover::to_expr_by_index`]:
+
+```rust
+use espresso_logic::{Cover, BoolExpr, Minimizable};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let cover = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
+let minimized = cover.minimize()?;
+let expr = minimized.to_expr_by_index(0)?;
+println!("{expr}");
+# Ok(())
+# }
+```
+
+### Named outputs
+
+[`Cover::add_bdd`] and [`Cover::add_expr`] add a function as a named output. Adding several outputs
+and minimising once optimises them together:
+
+```rust
+use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
+
+let mut cover = Cover::new(CoverType::F);
+cover.add_bdd(&(a.clone() & b.clone()), "p")?;
+cover.add_bdd(&((a & b.clone()) | (b & c)), "q")?;
+
+let minimized = cover.minimize()?;
+
+// Recover each named output as a factored expression.
+let p = minimized.to_expr("p")?;
+let q = minimized.to_expr("q")?;
+println!("p = {p}");
+println!("q = {q}");
+# Ok(())
+# }
+```
+
+[`Cover::add_expr`] is the syntactic counterpart, building each expression through a temporary builder:
+
+```rust
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(&BoolExpr::parse("a & b")?, "and_out")?;
+cover.add_expr(&BoolExpr::parse("a | c")?, "or_out")?;
+
+let minimized = cover.minimize()?;
+for (name, expr) in minimized.to_exprs() {
+    println!("{name}: {expr}");
 }
-// Output:
-// Variable: x
-// Variable: y
-// Variable: z
+# Ok(())
+# }
 ```
 
-## Best Practices
+### Heuristic and exact minimisation
 
-### 1. Choose the Right API
+[`Minimizable`] is implemented for [`Cover`]. `minimize` runs the fast heuristic algorithm;
+`minimize_exact` is slower but guaranteed minimal:
 
 ```rust
-use espresso_logic::*;
+use espresso_logic::{BoolExpr, Cover, Minimizable};
 
-fn main() -> std::io::Result<()> {
-    // For runtime expressions from user input: use parser
-    let user_input = "a * b + c";  // From user, config file, etc.
-    let expr1 = BoolExpr::parse(user_input)?;
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let cover = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
 
-    // For compile-time expressions: use expr! macro (preferred)
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    let expr2 = expr!(a * b + c);
+let heuristic = cover.minimize()?;
+let exact = cover.minimize_exact()?;
+assert_eq!(heuristic.num_cubes(), exact.num_cubes());
+# Ok(())
+# }
+```
 
-    // For complex nested logic: still use expr! macro
-    let complex_subexpr = expr!("x" * "y");
-    let expr3 = expr!(a * b + complex_subexpr);
+To minimise an expression all the way to a factored expression, compose the cover, minimise, and
+lower:
 
-    // For composing parsed expressions: use expr! macro
-    let func1 = BoolExpr::parse("x * y")?;
-    let func2 = BoolExpr::parse("z + w")?;
-    let composed = expr!(func1 + !func2);  // Clean and idiomatic!
+```rust
+use espresso_logic::{BoolExpr, Cover, Minimizable};
 
-    // Monadic interface is available for special cases (dynamic construction, loops, etc.)
-    let mut dynamic_expr = a.clone();
-    for var in ["b", "c", "d"] {
-        dynamic_expr = dynamic_expr.and(&BoolExpr::variable(var));
-    }
-    
-    Ok(())
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let expr = BoolExpr::parse("a & b | a & b & c")?;
+let factored = Cover::from(expr).minimize()?.to_expr_by_index(0)?;
+println!("{factored}");
+# Ok(())
+# }
+```
+
+## Common patterns
+
+### XOR and XNOR
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+
+let xor = a.clone() ^ b.clone();
+assert!(xor.equivalent_to(&((a.clone() & !b.clone()) | (!a.clone() & b.clone()))));
+
+let xnor = !(a.clone() ^ b.clone());
+assert!(xnor.equivalent_to(&((a.clone() & b.clone()) | (!a & !b))));
+```
+
+### Majority function
+
+```rust
+use espresso_logic::{bdd_builder, BoolExpr};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
+
+let majority = (a.clone() & b.clone()) | (b & c.clone()) | (a & c);
+let parsed = builder.build(&BoolExpr::parse("a & b | b & c | a & c")?);
+assert!(majority.equivalent_to(&parsed));
+# Ok(())
+# }
+```
+
+### De Morgan's laws
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+
+assert!((!(a.clone() & b.clone())).equivalent_to(&(!a.clone() | !b.clone())));
+assert!((!(a.clone() | b.clone())).equivalent_to(&(!a & !b)));
+```
+
+## Error handling
+
+### Parse errors
+
+[`BoolExpr::parse`] returns a [`ParseBoolExprError`] on malformed input:
+
+```rust
+use espresso_logic::BoolExpr;
+
+assert!(BoolExpr::parse("a & & b").is_err()); // double operator
+assert!(BoolExpr::parse("a @ b").is_err());   // @ is not an operator
+assert!(BoolExpr::parse("").is_err());        // empty input
+```
+
+### Minimisation errors
+
+`minimize` returns a `Result`:
+
+```rust
+use espresso_logic::{BoolExpr, Cover, Minimizable};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let cover = Cover::from(BoolExpr::parse("a & b")?);
+match cover.minimize() {
+    Ok(minimized) => println!("{} cubes", minimized.num_cubes()),
+    Err(e) => eprintln!("minimisation failed: {e}"),
 }
-```
-
-### 2. Reuse Variables
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    // Good: reuse variable objects
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    let c = BoolExpr::variable("c");
-    let expr1 = expr!(a * b);
-    let expr2 = expr!(a + c);
-
-    // Works but less efficient: create variables multiple times
-    let expr3 = BoolExpr::parse("a * b")?;
-    let expr4 = BoolExpr::parse("a + c")?;
-    
-    Ok(())
-}
-```
-
-### 3. Always Minimise Late (Not Early)
-
-**Correct approach: Compose first, minimise last**
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    let large_expr = expr!("a" * "b" + "c" * "d" + "e" * "f");
-    let other_term = expr!("x" * "y");
-    
-    // CORRECT: Compose then minimise
-    let final_expr = expr!(large_expr * other_term).minimize()?;
-    
-    // INCORRECT: Minimising early is actively harmful!
-    // 1. large_expr.minimize() creates NEW BoolExpr from minimised DNF cubes
-    // 2. 'intermediate' has empty BDD cache (not copied from large_expr)
-    // 3. Composing with 'intermediate' requires fresh BDD construction
-    let intermediate = large_expr.minimize()?;  // Harmful! Creates new expr, loses cache
-    let final_expr2 = expr!(intermediate * other_term).minimize()?;
-    // You lose the caching benefit AND pay for an unnecessary minimisation
-    
-    Ok(())
-}
-```
-
-**Why minimising early doesn't help (and may harm):**
-- **Minimisation creates a NEW `BoolExpr`** - Result is constructed from minimised DNF cubes, not from the original expression
-- **Expression-level BDD cache is not preserved** - The new expression has an empty cache (created with fresh `OnceLock::new()`)
-- **Requires BDD recomputation** - When composing with a minimized expression, its BDD must be computed from the DNF
-- **Note:** Global BDD manager caches (ITE cache, unique table) persist, but expression-level cache is lost
-- **BDD may introduce new terms in minimised expressions** - Not guaranteed to be smaller; depends on variable ordering
-- **BDD constructs the full composed expression anyway** - The final BDD represents the entire function in canonical form
-- **Minimisation structure is not preserved in BDD** - BDD represents the logical function, not the minimised form
-- **No cube reduction benefit** - Final cube count to Espresso depends on the composed BDD, not intermediate minimisations
-- **Unnecessary overhead** - You pay for minimisation without benefit for the final composition
-
-**When you need multiple minimized expressions: Use multiple outputs**
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    // If you need multiple minimized functions, create a Cover with multiple outputs
-    let mut cover = Cover::new(CoverType::F);
-    
-    let expr1 = expr!("a" * "b" + "c" * "d");
-    let expr2 = expr!("x" * "y" + "z");
-    let expr3 = expr!(expr1 * expr2);  // Composed function
-    
-    // Add all as separate outputs
-    cover.add_expr(&expr1, "intermediate1")?;
-    cover.add_expr(&expr2, "intermediate2")?;
-    cover.add_expr(&expr3, "final")?;
-    
-    // Single minimize call minimizes ALL outputs together
-    let minimized = cover.minimize()?;
-    
-    // Extract individual minimized functions
-    for (name, min_expr) in minimized.to_exprs() {
-        println!("{}: {}", name, min_expr);
-    }
-    
-    Ok(())
-}
-```
-
-**Key insight:** BDD construction creates a canonical representation of the entire composed expression. Minimisation only matters at the final output stage. For multiple minimized outputs, use `Cover` with multiple named outputs and minimize once.
-
-#### Real-World Example: 5-Input Threshold Gate
-
-A threshold gate with complex activation/deactivation regions shows the real power of expression composition and minimisation:
-
-```rust
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
-
-/// Compute XOR of two boolean expressions using expr! macro
-fn xor(a: &BoolExpr, b: &BoolExpr) -> BoolExpr {
-    expr!(a * !b + !a * b)
-}
-
-fn main() -> std::io::Result<()> {
-    // 5-input threshold gate with feedback q
-    // Activation: at least 4 inputs high (4 or 5)
-    // Deactivation: at most 1 input high (0 or 1)
-    // Hold: 2 or 3 inputs high
-    
-    // Define all combinations for activation (at least 4 high)
-    let activation = expr!(
-        // All 5 high
-        "a" * "b" * "c" * "d" * "e" +
-        // Any 4 high (5 choose 4 = 5 combinations)
-        "a" * "b" * "c" * "d" * !"e" +
-        "a" * "b" * "c" * !"d" * "e" +
-        "a" * "b" * !"c" * "d" * "e" +
-        "a" * !"b" * "c" * "d" * "e" +
-        !"a" * "b" * "c" * "d" * "e"
-    );
-    
-    // Define all combinations for deactivation (at most 1 high)
-    let deactivation = expr!(
-        // All 5 low
-        !"a" * !"b" * !"c" * !"d" * !"e" +
-        // Any 1 high (5 combinations)
-        "a" * !"b" * !"c" * !"d" * !"e" +
-        !"a" * "b" * !"c" * !"d" * !"e" +
-        !"a" * !"b" * "c" * !"d" * !"e" +
-        !"a" * !"b" * !"c" * "d" * !"e" +
-        !"a" * !"b" * !"c" * !"d" * "e"
-    );
-    
-    // Hold region is XOR of activation and negation of deactivation
-    let hold = xor(&activation, &deactivation.not());
-    
-    // Next-state function, two equivalent formulations (set on activation, hold when not
-    // deactivating). v1 gates the OR by !deactivation; v2 holds via the `hold` region.
-    let next_q_v1 = expr!((activation + "q") * !deactivation);
-    let next_q_v2 = expr!(activation + "q" * hold);
-    
-    // Create a single cover with all functions as separate outputs
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&activation, "activation")?;
-    cover.add_expr(&deactivation, "deactivation")?;
-    cover.add_expr(&hold, "hold")?;
-    cover.add_expr(&next_q_v1, "next_q_v1")?;
-    cover.add_expr(&next_q_v2, "next_q_v2")?;
-    
-    // Single minimise call optimises ALL outputs together
-    let minimized = cover.minimize()?;
-    
-    // Display results
-    println!("5-Input Threshold Gate Minimized Functions:");
-    for (name, expr) in minimized.to_exprs() {
-        println!("{:15} = {}", name, expr);
-    }
-    
-    // Actual output demonstrates BDD's superiority over naive De Morgan expansion:
-    //
-    // Stage 1 - Original formulation (as written):
-    //   activation:   6 AND clauses OR'd together (in DNF)
-    //   deactivation: 6 AND clauses OR'd together (in DNF)
-    //   hold:         xor(activation, !deactivation) - NOT in DNF
-    //   next_q_v1:    (activation + q) * !deactivation - NOT in DNF
-    //   next_q_v2:    activation + q * hold            - NOT in DNF
-    //
-    // Stage 1b - Naive DNF expansion (if using De Morgan's laws directly):
-    //   activation:   6 cubes
-    //   deactivation: 6 cubes
-    //   hold:         375,840 cubes! (exponential expansion from XOR + negation)
-    //   next_q_v1:    20,220 cubes  (negation expansion)
-    //   next_q_v2:    375,846 cubes  (even more expansion)
-    //
-    // Stage 2 - After BDD construction (canonical DNF - THIS IS WHY WE USE BDD!):
-    //   activation:   5 cubes ← BDD eliminated 1 redundant clause
-    //   deactivation: 5 cubes ← BDD eliminated 1 redundant clause  
-    //   hold:         14 cubes ← BDD is 26,845x better than naive (375,840→14)!
-    //   next_q_v1:    19 cubes ← BDD is 1,064x better than naive (20,220→19)!
-    //   next_q_v2:    19 cubes ← BDD is 19,781x better than naive (375,846→19)!
-    //
-    // Stage 3 - After Espresso minimization (final optimal DNF):
-    //   activation:   5 cubes (no change - already minimal)
-    //   deactivation: 5 cubes (no change - already minimal)
-    //   hold:         10 cubes ← Espresso further reduced by 29% (14→10)
-    //   next_q_v1:    15 cubes ← Espresso further reduced by 21% (19→15)
-    //   next_q_v2:    15 cubes ← Espresso further reduced by 21% (19→15)
-    //
-    // Final minimized expressions:
-    // activation      = a*b*c*e + a*b*d*e + a*c*d*e + b*c*d*e + a*b*c*d
-    // deactivation    = ~b*~c*~d*~e + ~a*~c*~d*~e + ~a*~b*~d*~e + 
-    //                   ~a*~b*~c*~e + ~a*~b*~c*~d
-    // hold            = ~a*~b*c*e + ~a*~c*d*e + ~a*c*d*~e + ~a*b*~d*e +
-    //                   a*~b*~c*d + a*~b*c*~e + a*~b*~d*e + b*~c*d*~e +
-    //                   a*b*~c*~d + b*c*~d*~e
-    // next_q_v1       = a*d*q + a*e*q + a*c*q + a*b*q + b*d*q + b*e*q +
-    //                   b*c*q + c*d*q + c*e*q + d*e*q + a*b*c*e + a*b*d*e +
-    //                   a*c*d*e + b*c*d*e + a*b*c*d
-    // next_q_v2       = Same as next_q_v1 (both formulations are equivalent)
-    
-    Ok(())
-}
-```
-
-**Why this example is powerful:**
-- **Demonstrates BDD vs naive De Morgan expansion**: Direct comparison of efficiency with actual measurements
-- **BDD is dramatically superior**: `hold` would be **375,840 cubes** with naive expansion, BDD produces only 14 (26,845x improvement!)
-- **Avoids exponential blowup**: `next_q_v1` would be **20,220 cubes** naively, BDD produces 19 (1,064x improvement)
-- **Three-stage process visible**: Complex expressions → BDD canonical form → Espresso optimisation
-- **Complex composition**: XOR function with negations demonstrates BDD's strengths
-- **No early minimisation**: All expressions composed first, minimized once at the end
-- **Multiple outputs**: Four different functions optimised simultaneously
-- **Helper function**: Shows using `xor()` helper that returns `BoolExpr` for clean composition
-
-**Key insights (with measured data)**: 
-- **BDD avoids exponential expansion**: Naive De Morgan's law application produces **375,840 cubes** for `hold`; BDD produces only 14 (99.996% reduction!)
-- **BDD provides canonical representation**: Eliminates redundancy during construction (activation 6→5, deactivation 6→5)
-- **This is why we use BDD instead of De Morgan's laws**: Polynomial time vs exponential blowup (12,450x overall reduction: 771,918→62 cubes)
-- **Espresso still necessary**: BDD gave us 14 cubes for `hold`, Espresso reduced to 10 (optimal, 29% further reduction)
-- **Both steps are essential**: BDD efficiently converts to canonical DNF (99.99% reduction); Espresso achieves optimal minimisation (additional 52%)
-- **This is why "minimize early" doesn't help**: BDD reconstructs the full composed expression in canonical DNF regardless of intermediate minimisations
-- **Run the example yourself**: `cargo run --example threshold_gate_example` to see the actual cube counts at each stage
-
-This pattern scales to any number of intermediate and final expressions.
-
-### 4. Use Type System
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    let a = BoolExpr::variable("a");
-    let b = BoolExpr::variable("b");
-    
-    // The type system prevents mistakes
-    let expr: BoolExpr = expr!(a * b);  // Type-safe
-    let mut cover = Cover::new(CoverType::F);  // type inferred from add_expr below
-    cover.add_expr(&expr, "output")?;  // Explicit conversion
-    
-    Ok(())
-}
-```
-
-## Examples
-
-See `examples/boolean_expressions.rs` for comprehensive examples including:
-
-1. Programmatic construction with expr! macro
-2. Parsing from strings
-3. Complex expressions with negation
-4. Minimisation examples
-5. XNOR function
-6. Three-variable majority function
-7. PLA format export
-8. Expressions with constants
-9. De Morgan's laws
-10. Equivalent expressions
-11. Cube iteration
-
-## Troubleshooting
-
-### Multiple operator notations supported
-
-✅ Both algebraic and bitwise-style operators are supported:
-```rust
-use espresso_logic::*;
-
-// Both notations work for AND
-let _expr1 = BoolExpr::parse("a * b").unwrap();  // Algebraic notation
-let _expr2 = BoolExpr::parse("a & b").unwrap();  // Bitwise-style notation
-
-// Both notations work for OR
-let _expr3 = BoolExpr::parse("a + b").unwrap();  // Algebraic notation
-let _expr4 = BoolExpr::parse("a | b").unwrap();  // Bitwise-style notation
-
-// You can even mix them
-let _expr5 = BoolExpr::parse("a & b | c * d").unwrap();
-```
-
-### Moving variables multiple times
-
-❌ Wrong: Reusing moved variables
-```rust,compile_fail
-use espresso_logic::*;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-// XOR: trying to reuse 'a' and 'b' after moving them
-let xor = a * b + !a * !b;  // Error: a and b moved in first term
-```
-
-✅ Correct: Use references or expr! macro
-```rust
-use espresso_logic::*;
-
-let a = BoolExpr::variable("a");
-let b = BoolExpr::variable("b");
-
-// Option 1: With references - can reuse variables
-let xor1 = &a * &b + &(!&a) * &(!&b);
-
-// Option 2: Use expr! macro (cleanest, no references needed)
-let xor2 = expr!(a * b + !a * !b);
-
-// Option 3: Clone variables if you need to move them
-let a2 = BoolExpr::variable("a");
-let b2 = BoolExpr::variable("b");
-let xor3 = a2.clone() * b2.clone() + !a2 * !b2;
-```
-
-### Expression doesn't minimise as expected
-
-```rust
-use espresso_logic::*;
-
-fn main() -> std::io::Result<()> {
-    // Check the DNF conversion
-    let expr = BoolExpr::parse("(a + b) * (c + d)")?;
-    let mut cover = Cover::new(CoverType::F);
-    cover.add_expr(&expr, "out")?;
-
-    println!("Cubes before: {}", cover.num_cubes());  // Check size
-    cover = cover.minimize()?;
-    println!("Cubes after: {}", cover.num_cubes());
-
-    // View the result
-    let result = cover.to_expr("out")?;
-    println!("Result: {}", result);
-    
-    Ok(())
-}
+# Ok(())
+# }
 ```
 
 ## See Also
 
-- [Thread-Local Implementation](THREAD_LOCAL_IMPLEMENTATION.md) - Thread safety details
-- [PLA Format](PLA_FORMAT.md) - PLA file format specification
-- [Examples](../examples/) - Working code examples
+- [PLA Format](PLA_FORMAT.md) — PLA file format specification
+- [Examples](../examples/) — working code examples
 
+[`BoolExpr`]: crate::BoolExpr
+[`BoolExpr::parse`]: crate::BoolExpr::parse
+[`BoolExpr::variables`]: crate::BoolExpr::variables
+[`Bdd`]: crate::bdd::Bdd
+[`Bdd::evaluate`]: crate::bdd::Bdd::evaluate
+[`Bdd::equivalent_to`]: crate::bdd::Bdd::equivalent_to
+[`Bdd::restrict`]: crate::bdd::Bdd::restrict
+[`Bdd::cofactor`]: crate::bdd::Bdd::cofactor
+[`Bdd::forall`]: crate::bdd::Bdd::forall
+[`Bdd::exists`]: crate::bdd::Bdd::exists
+[`Bdd::collect_variables`]: crate::bdd::Bdd::collect_variables
+[`Bdd::to_cubes`]: crate::bdd::Bdd::to_cubes
+[`Bdd::to_minterms`]: crate::bdd::Bdd::to_minterms
+[`Bdd::minimize`]: crate::bdd::Bdd::minimize
+[`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
+[`BddBuilder`]: crate::bdd::BddBuilder
+[`Cover`]: crate::Cover
+[`Minterm`]: crate::Minterm
+[`Cover::add_bdd`]: crate::Cover::add_bdd
+[`Cover::add_expr`]: crate::Cover::add_expr
+[`Cover::to_expr_by_index`]: crate::Cover::to_expr_by_index
+[`Minimizable`]: crate::Minimizable
+[`bdd_builder!`]: crate::bdd_builder
+[`sync_bdd_builder!`]: crate::sync_bdd_builder
+[`ParseBoolExprError`]: crate::expression::ParseBoolExprError
