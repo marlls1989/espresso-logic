@@ -144,7 +144,7 @@ impl Cover<Symbol, Symbol> {
         // Mediate the syntactic → cube transformation through a throwaway BDD context (canonicalises
         // the expression). The context is local; the handle borrows it and is consumed by `add_bdd`
         // before this function returns, so the lifetimes work out.
-        let ctx = crate::bdd_context!();
+        let ctx = crate::bdd_builder!();
         let bdd = ctx.build(expr);
         self.add_bdd(&bdd, output_name)
     }

@@ -271,18 +271,18 @@ fn concurrent_symbol_covers() {
 }
 
 /// Many threads build the **same** overlapping expressions against one shared, thread-safe
-/// [`SyncBddContext`], hammering its read-mostly double-checked locking (concurrent node interning) and
+/// [`SyncBddBuilder`], hammering its read-mostly double-checked locking (concurrent node interning) and
 /// the ITE cache-commit transaction. Canonicity must hold under contention: identical expressions
 /// reduce to one shared root, so every thread's handles must be `equivalent_to` the reference, with no
 /// deadlock, panic, or duplicate nodes (a duplicated node would give a different root and fail the
 /// equivalence check).
 #[test]
 fn concurrent_shared_manager_building_stays_canonical() {
-    use espresso_logic::{sync_bdd_context, Bdd, BoolExpr, Brand, SyncBddContext};
+    use espresso_logic::{sync_bdd_builder, Bdd, BoolExpr, Brand, SyncBddBuilder};
 
     // A suite of varied shapes over shared variable names, exercising var/and/or/not/xor/ite, the
     // expression `build`, and the parser — all against the one shared context.
-    fn build_suite<B: Brand>(ctx: &SyncBddContext<B>) -> Vec<Bdd<'_, B>> {
+    fn build_suite<B: Brand>(ctx: &SyncBddBuilder<B>) -> Vec<Bdd<'_, B>> {
         let a = ctx.var("share_a");
         let b = ctx.var("share_b");
         let c = ctx.var("share_c");
@@ -302,8 +302,8 @@ fn concurrent_shared_manager_building_stays_canonical() {
     const THREADS: usize = 16;
     const ITERS: usize = 200;
 
-    // One thread-safe context, shared by reference across every worker (`SyncBddContext` is Send + Sync).
-    let ctx = sync_bdd_context!();
+    // One thread-safe context, shared by reference across every worker (`SyncBddBuilder` is Send + Sync).
+    let ctx = sync_bdd_builder!();
 
     // Reference built on the main thread.
     let reference = build_suite(&ctx);

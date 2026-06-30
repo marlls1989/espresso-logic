@@ -5,7 +5,7 @@
 //!
 //! - a [`Brand`] — a sealed, zero-sized marker type that names one BDD namespace and selects, at the
 //!   type level, whether its context is single-threaded or thread-safe;
-//! - a context — [`BddContext`] (single-threaded) or [`SyncBddContext`] (`Send + Sync`) — that owns an
+//! - a context — [`BddBuilder`] (single-threaded) or [`SyncBddBuilder`] (`Send + Sync`) — that owns an
 //!   independent BDD manager and hands out handles branded to it;
 //! - a [`Bdd`] handle — a lightweight, `Copy` borrow into a context denoting one canonical function.
 //!
@@ -34,23 +34,23 @@
 //!
 //! # Construction
 //!
-//! A context is minted by the [`bdd_context!`](crate::bdd_context) (single-threaded) or
-//! [`sync_bdd_context!`](crate::sync_bdd_context) (thread-safe) macro, each of which mints a fresh
+//! A context is minted by the [`bdd_builder!`](crate::bdd_builder) (single-threaded) or
+//! [`sync_bdd_builder!`](crate::sync_bdd_builder) (thread-safe) macro, each of which mints a fresh
 //! brand per call so handles of two different contexts can never be combined. A [`BoolExpr`] is built
-//! into a handle with [`BddContext::build`] / [`BddContext::parse`], and a handle is lowered back to a
+//! into a handle with [`BddBuilder::build`] / [`BddBuilder::parse`], and a handle is lowered back to a
 //! factored [`BoolExpr`] with [`Bdd::to_expr`].
 //!
 //! [`BoolExpr`]: crate::BoolExpr
 
 mod brand;
-mod context;
+mod builder;
 mod handle;
 
 pub use brand::Brand;
-pub use context::{BddContext, SyncBddContext};
+pub use builder::{BddBuilder, SyncBddBuilder};
 pub use handle::{Bdd, BddNode};
 
-/// Items the `bdd_context!` / `sync_bdd_context!` macros need to name at their (possibly downstream)
+/// Items the `bdd_builder!` / `sync_bdd_builder!` macros need to name at their (possibly downstream)
 /// call sites. Not part of the documented public API; named only by those macros.
 #[doc(hidden)]
 pub mod __macro_support {

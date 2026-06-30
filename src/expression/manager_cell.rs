@@ -28,7 +28,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-// These items are exposed (doc-hidden) so the `bdd_context!` / `sync_bdd_context!` macros — which
+// These items are exposed (doc-hidden) so the `bdd_builder!` / `sync_bdd_builder!` macros — which
 // expand at the caller's site — can name the cell a freshly-minted brand selects. They are not part of
 // the documented public API: [`ManagerCell`]'s methods reference the crate-private [`BddManager`], so
 // no downstream type can actually implement it; the trait is sealed in practice by that privacy.
@@ -55,8 +55,8 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
     /// A fresh cell wrapping a manager seeded with the two terminal nodes
     /// ([`new_empty`](BddManager::new_empty)).
     ///
-    /// The canonical BDD layer's [`BddContext`](crate::bdd::BddContext) /
-    /// [`SyncBddContext`](crate::bdd::SyncBddContext) mint their cells through this.
+    /// The canonical BDD layer's [`BddBuilder`](crate::bdd::BddBuilder) /
+    /// [`SyncBddBuilder`](crate::bdd::SyncBddBuilder) mint their cells through this.
     fn new_empty() -> Self;
 
     /// Take a shared borrow of the manager. Must not overlap a [`write`](Self::write) on the same cell
@@ -73,8 +73,8 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
 
 /// Single-threaded cell: `Rc<RefCell<BddManager>>`. `!Send`/`!Sync`.
 ///
-/// The single-threaded canonical [`BddContext`](crate::bdd::BddContext) owns one of these (selected by
-/// its brand's [`Cell`](crate::bdd::Brand::Cell)); the [`bdd_context!`](crate::bdd_context) macro mints
+/// The single-threaded canonical [`BddBuilder`](crate::bdd::BddBuilder) owns one of these (selected by
+/// its brand's [`Cell`](crate::bdd::Brand::Cell)); the [`bdd_builder!`](crate::bdd_builder) macro mints
 /// `LocalCell`-branded contexts.
 #[doc(hidden)]
 #[derive(Clone)]
@@ -108,7 +108,7 @@ impl ManagerCell for LocalCell {
 /// Lock poisoning **propagates**: [`read`](ManagerCell::read)/[`write`](ManagerCell::write) `unwrap()`
 /// the guard, so a panic while the manager is borrowed poisons the lock for every subsequent access.
 ///
-/// The [`sync_bdd_context!`](crate::sync_bdd_context) macro mints `SyncCell`-branded contexts.
+/// The [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints `SyncCell`-branded contexts.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct SyncCell(Arc<RwLock<BddManager>>);

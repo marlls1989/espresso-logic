@@ -49,7 +49,7 @@ pub(crate) enum BddNode {
 /// - A NodeId is valid for the lifetime of the manager
 /// - Multiple threads can safely traverse using NodeIds after releasing read locks
 /// - Recursive traversal can release locks between calls without invalidating NodeIds
-// Doc-hidden public so the cell types (which the `bdd_context!` / `sync_bdd_context!` macros name) can
+// Doc-hidden public so the cell types (which the `bdd_builder!` / `sync_bdd_builder!` macros name) can
 // expose it through the public `ManagerCell` interface. Its fields and constructors stay crate-private,
 // so it is opaque outside the crate.
 #[doc(hidden)]
@@ -71,7 +71,7 @@ pub struct BddManager {
 impl BddManager {
     /// A fresh, empty manager seeded with the two terminal nodes (`FALSE_NODE = 0`, `TRUE_NODE = 1`).
     ///
-    /// Every [`BddContext`](crate::bdd::BddContext) / [`SyncBddContext`](crate::bdd::SyncBddContext)
+    /// Every [`BddBuilder`](crate::bdd::BddBuilder) / [`SyncBddBuilder`](crate::bdd::SyncBddBuilder)
     /// owns one of these (minted through its cell's
     /// [`new_empty`](super::manager_cell::ManagerCell::new_empty)).
     pub(crate) fn new_empty() -> Self {

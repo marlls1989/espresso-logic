@@ -53,7 +53,7 @@ use std::sync::Arc;
 ///
 /// To minimise a [`BoolExpr`](crate::BoolExpr), build it into a [`Bdd`](crate::bdd::Bdd) in a context
 /// and call [`Bdd::minimize`](crate::bdd::Bdd::minimize) (or
-/// [`BddContext::minimize`](crate::bdd::BddContext::minimize)), which returns a [`Cover`].
+/// [`BddBuilder::minimize`](crate::bdd::BddBuilder::minimize)), which returns a [`Cover`].
 ///
 /// This trait is **not sealed**: it is intentionally open so downstream crates may implement it for
 /// their own types (for example, to forward minimisation through a wrapper). An implementation only

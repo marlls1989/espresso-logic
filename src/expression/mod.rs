@@ -8,7 +8,7 @@
 //! expressions, and equality ([`Eq`]) compares the token structure, not the Boolean function. For
 //! canonical, semantic operations — logical equivalence, Shannon cofactors, quantification, tautology
 //! checks — build the expression into a [`Bdd`](crate::bdd::Bdd) through a
-//! [`BddContext`](crate::bdd::BddContext) and use that layer.
+//! [`BddBuilder`](crate::bdd::BddBuilder) and use that layer.
 //!
 //! # Construction
 //!
@@ -73,7 +73,7 @@ use std::sync::Arc;
 ///
 /// This is **not** logical/semantic equality. `a & b` and `b & a` denote the same Boolean function but
 /// are different `BoolExpr` values. To compare functions, build both into [`Bdd`](crate::bdd::Bdd)
-/// handles in a shared [`BddContext`](crate::bdd::BddContext) and use
+/// handles in a shared [`BddBuilder`](crate::bdd::BddBuilder) and use
 /// [`Bdd::equivalent_to`](crate::bdd::Bdd::equivalent_to), which is an O(1) canonical comparison.
 ///
 /// # Internal representation

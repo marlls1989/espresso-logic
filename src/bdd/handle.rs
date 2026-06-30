@@ -1,7 +1,7 @@
 //! The borrowed, `Copy` BDD handle.
 //!
-//! A [`Bdd`] is a lightweight handle into a [`BddContext`](super::BddContext) /
-//! [`SyncBddContext`](super::SyncBddContext): a shared reference to the context's cell plus the
+//! A [`Bdd`] is a lightweight handle into a [`BddBuilder`](super::BddBuilder) /
+//! [`SyncBddBuilder`](super::SyncBddBuilder): a shared reference to the context's cell plus the
 //! canonical root node it denotes. Because it borrows the cell (`&'ctx B::Cell`) rather than owning it,
 //! it is `Copy` — `a & b`, `&a & b`, etc. all work without clones or deref gymnastics.
 //!
@@ -40,11 +40,11 @@ use crate::Symbol;
 /// A handle borrows its context, so it cannot escape:
 ///
 /// ```compile_fail
-/// use espresso_logic::bdd::{Bdd, BddContext, Brand};
+/// use espresso_logic::bdd::{Bdd, BddBuilder, Brand};
 /// fn escape<B: Brand>() {
 ///     let f;
 ///     {
-///         let ctx: BddContext<B> = BddContext::new();
+///         let ctx: BddBuilder<B> = BddBuilder::new();
 ///         f = ctx.var("a"); // borrows ctx
 ///     } // ctx dropped here
 ///     let _ = f.node_count(); // error: `ctx` does not live long enough
@@ -57,8 +57,8 @@ use crate::Symbol;
 /// fails to type-check:
 ///
 /// ```compile_fail
-/// use espresso_logic::bdd::{BddContext, Brand};
-/// fn mix<B1: Brand, B2: Brand>(c1: &BddContext<B1>, c2: &BddContext<B2>) {
+/// use espresso_logic::bdd::{BddBuilder, Brand};
+/// fn mix<B1: Brand, B2: Brand>(c1: &BddBuilder<B1>, c2: &BddBuilder<B2>) {
 ///     let a = c1.var("a");
 ///     let b = c2.var("b");
 ///     let _ = a & b; // error: distinct brands `B1` and `B2` do not unify
@@ -235,7 +235,7 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
     ///
     /// Evaluation is a semantic operation, so it lives here rather than on the syntactic
     /// [`BoolExpr`](crate::BoolExpr): build the expression into a context with
-    /// [`BddContext::build`](crate::bdd::BddContext::build) first.
+    /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
     #[must_use]
     pub fn evaluate<K>(self, assignment: &HashMap<K, bool>) -> bool
     where

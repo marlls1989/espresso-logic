@@ -344,7 +344,7 @@ mod tests {
     /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
     /// comparison once both are built into one context).
     fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
-        let ctx = crate::bdd_context!();
+        let ctx = crate::bdd_builder!();
         ctx.build(a).equivalent_to(ctx.build(b))
     }
 

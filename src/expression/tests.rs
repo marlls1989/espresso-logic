@@ -3,7 +3,7 @@
 //! These cover construction, structural equality/hashing, the bitwise operators, evaluation, parsing,
 //! display round-tripping, and the bridge to the canonical BDD layer. Semantic equivalence is checked
 //! either by evaluating over a full truth table (because `BoolExpr` equality is *syntactic*) or via a
-//! `BddContext` (whose `equivalent_to` is O(1) canonical).
+//! `BddBuilder` (whose `equivalent_to` is O(1) canonical).
 
 use super::BoolExpr;
 use std::collections::HashSet;
@@ -12,7 +12,7 @@ use std::collections::HashSet;
 /// semantic equivalence is checked through the canonical BDD layer: both are built into one context and
 /// compared by `equivalent_to` (an O(1) canonical-root comparison).
 fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
-    let ctx = crate::bdd_context!();
+    let ctx = crate::bdd_builder!();
     ctx.build(a).equivalent_to(ctx.build(b))
 }
 
@@ -99,7 +99,7 @@ fn operators_build_the_expected_functions() {
     // building into a context (evaluation/equivalence are BDD-layer concerns — see `bdd::tests`).
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let ctx = crate::bdd_context!();
+    let ctx = crate::bdd_builder!();
     let (ba, bb) = (ctx.var("a"), ctx.var("b"));
 
     assert!(ctx.build(&(&a & &b)).equivalent_to(ba & bb));
@@ -218,7 +218,7 @@ fn variables_are_syntactic() {
 
 #[test]
 fn bdd_build_matches_parse() {
-    let ctx = crate::bdd_context!();
+    let ctx = crate::bdd_builder!();
     let f = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
     let built = ctx.build(&f);
     let parsed = ctx.parse("a & b | c").unwrap();
@@ -227,7 +227,7 @@ fn bdd_build_matches_parse() {
 
 #[test]
 fn bdd_build_canonicalises_commutativity() {
-    let ctx = crate::bdd_context!();
+    let ctx = crate::bdd_builder!();
     // a & b and b & a are different BoolExpr values but the same Bdd.
     let ab = ctx.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
     let ba = ctx.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
@@ -236,7 +236,7 @@ fn bdd_build_canonicalises_commutativity() {
 
 #[test]
 fn to_expr_round_trips_semantically() {
-    let ctx = crate::bdd_context!();
+    let ctx = crate::bdd_builder!();
     let f = (BoolExpr::var("a") & BoolExpr::var("b")) | (BoolExpr::var("a") & BoolExpr::var("c"));
     let bdd = ctx.build(&f);
     let recovered = bdd.to_expr();
@@ -246,7 +246,7 @@ fn to_expr_round_trips_semantically() {
 
 #[test]
 fn sync_context_build_works() {
-    let ctx = crate::sync_bdd_context!();
+    let ctx = crate::sync_bdd_builder!();
     let f = BoolExpr::var("a") ^ BoolExpr::var("b");
     assert!(ctx.build(&f).equivalent_to(ctx.parse("a ^ b").unwrap()));
 }

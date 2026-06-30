@@ -60,9 +60,9 @@ pub(crate) fn anonymous_cover_from_raw(
 /// [`relabel_outputs`](Cover::relabel_outputs) if needed.
 ///
 /// ```
-/// use espresso_logic::{bdd_context, Anonymous, Cover, Symbol};
+/// use espresso_logic::{bdd_builder, Anonymous, Cover, Symbol};
 ///
-/// let ctx = bdd_context!();
+/// let ctx = bdd_builder!();
 /// let f = ctx.var("a") & ctx.var("b");
 /// let cover: Cover<Symbol, Anonymous> = f.into();
 /// assert_eq!(cover.num_outputs(), 1);
@@ -115,7 +115,7 @@ impl From<&BoolExpr> for Cover<Symbol, Anonymous> {
     fn from(expr: &BoolExpr) -> Self {
         // The temporary context lives for this call; the handle borrows it and is consumed by the
         // `Bdd → Cover` primitive before this function returns.
-        let ctx = crate::bdd_context!();
+        let ctx = crate::bdd_builder!();
         Cover::from(ctx.build(expr))
     }
 }

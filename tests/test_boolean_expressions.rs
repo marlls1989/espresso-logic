@@ -1,6 +1,6 @@
 //! Comprehensive tests for boolean expression functionality
 
-use espresso_logic::{bdd_context, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
+use espresso_logic::{bdd_builder, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
 use std::sync::Arc;
 
 #[test]
@@ -23,16 +23,18 @@ fn test_cover_trait_basics() {
 
     // Verify the cover can be converted back and evaluated correctly
     let retrieved = cover.to_expr("out").unwrap();
+    let ctx = bdd_builder!();
+    let retrieved_bdd = ctx.build(&retrieved);
     let mut assignment = HashMap::new();
 
     // Test: a=1,b=1 → 1
     assignment.insert(Arc::from("a"), true);
     assignment.insert(Arc::from("b"), true);
-    assert!(retrieved.evaluate(&assignment));
+    assert!(retrieved_bdd.evaluate(&assignment));
 
     // Test: a=1,b=0 → 0
     assignment.insert(Arc::from("b"), false);
-    assert!(!retrieved.evaluate(&assignment));
+    assert!(!retrieved_bdd.evaluate(&assignment));
 }
 
 #[test]
@@ -46,26 +48,29 @@ fn test_xor_expression() {
     let xor = &a ^ &b;
     assert_eq!(xor, BoolExpr::parse("a ^ b").unwrap());
 
+    let ctx = bdd_builder!();
+    let xor_bdd = ctx.build(&xor);
+
     // Verify XOR truth table
     let mut assignment = HashMap::new();
 
     // 0 XOR 0 = 0
     assignment.insert(Arc::from("a"), false);
     assignment.insert(Arc::from("b"), false);
-    assert!(!xor.evaluate(&assignment));
+    assert!(!xor_bdd.evaluate(&assignment));
 
     // 0 XOR 1 = 1
     assignment.insert(Arc::from("b"), true);
-    assert!(xor.evaluate(&assignment));
+    assert!(xor_bdd.evaluate(&assignment));
 
     // 1 XOR 0 = 1
     assignment.insert(Arc::from("a"), true);
     assignment.insert(Arc::from("b"), false);
-    assert!(xor.evaluate(&assignment));
+    assert!(xor_bdd.evaluate(&assignment));
 
     // 1 XOR 1 = 0
     assignment.insert(Arc::from("b"), true);
-    assert!(!xor.evaluate(&assignment));
+    assert!(!xor_bdd.evaluate(&assignment));
 }
 
 #[test]
@@ -77,26 +82,29 @@ fn test_xnor_expression() {
     let b = BoolExpr::variable("b");
     let xnor = (&a & &b) | (!&a & !&b);
 
+    let ctx = bdd_builder!();
+    let xnor_bdd = ctx.build(&xnor);
+
     // Verify XNOR truth table
     let mut assignment = HashMap::new();
 
     // 0 XNOR 0 = 1
     assignment.insert(Arc::from("a"), false);
     assignment.insert(Arc::from("b"), false);
-    assert!(xnor.evaluate(&assignment));
+    assert!(xnor_bdd.evaluate(&assignment));
 
     // 0 XNOR 1 = 0
     assignment.insert(Arc::from("b"), true);
-    assert!(!xnor.evaluate(&assignment));
+    assert!(!xnor_bdd.evaluate(&assignment));
 
     // 1 XNOR 0 = 0
     assignment.insert(Arc::from("a"), true);
     assignment.insert(Arc::from("b"), false);
-    assert!(!xnor.evaluate(&assignment));
+    assert!(!xnor_bdd.evaluate(&assignment));
 
     // 1 XNOR 1 = 1
     assignment.insert(Arc::from("b"), true);
-    assert!(xnor.evaluate(&assignment));
+    assert!(xnor_bdd.evaluate(&assignment));
 }
 
 #[test]
@@ -126,6 +134,9 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
 
+    let ctx = bdd_builder!();
+    let minimized_bdd = ctx.build(&minimized);
+
     // Verify the minimised expression behaves like a*b
     let mut assignment = HashMap::new();
 
@@ -133,16 +144,16 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     assignment.insert(Arc::from("a"), true);
     assignment.insert(Arc::from("b"), true);
     assignment.insert(Arc::from("c"), false);
-    assert!(minimized.evaluate(&assignment));
+    assert!(minimized_bdd.evaluate(&assignment));
     assignment.insert(Arc::from("c"), true);
-    assert!(minimized.evaluate(&assignment));
+    assert!(minimized_bdd.evaluate(&assignment));
 
     // a=1,b=0,c=X → should be 0
     assignment.insert(Arc::from("b"), false);
     assignment.insert(Arc::from("c"), false);
-    assert!(!minimized.evaluate(&assignment));
+    assert!(!minimized_bdd.evaluate(&assignment));
     assignment.insert(Arc::from("c"), true);
-    assert!(!minimized.evaluate(&assignment));
+    assert!(!minimized_bdd.evaluate(&assignment));
 
     Ok(())
 }
@@ -154,41 +165,45 @@ fn test_de_morgan_laws() {
     let a = BoolExpr::variable("a");
     let b = BoolExpr::variable("b");
 
+    let ctx = bdd_builder!();
+
     // ~(a * b) = ~a + ~b (De Morgan's law)
     let expr1 = !(&a & &b);
+    let expr1_bdd = ctx.build(&expr1);
 
     let mut assignment = HashMap::new();
 
     // Test ~(a*b): a=1,b=1 → ~(1*1) = ~1 = 0
     assignment.insert(Arc::from("a"), true);
     assignment.insert(Arc::from("b"), true);
-    assert!(!expr1.evaluate(&assignment));
+    assert!(!expr1_bdd.evaluate(&assignment));
 
     // a=1,b=0 → ~(1*0) = ~0 = 1
     assignment.insert(Arc::from("b"), false);
-    assert!(expr1.evaluate(&assignment));
+    assert!(expr1_bdd.evaluate(&assignment));
 
     // a=0,b=1 → ~(0*1) = ~0 = 1
     assignment.insert(Arc::from("a"), false);
     assignment.insert(Arc::from("b"), true);
-    assert!(expr1.evaluate(&assignment));
+    assert!(expr1_bdd.evaluate(&assignment));
 
     // ~(a + b) = ~a * ~b (De Morgan's law)
     let expr2 = !(&a | &b);
+    let expr2_bdd = ctx.build(&expr2);
 
     // Test ~(a+b): a=0,b=0 → ~(0+0) = ~0 = 1
     assignment.insert(Arc::from("a"), false);
     assignment.insert(Arc::from("b"), false);
-    assert!(expr2.evaluate(&assignment));
+    assert!(expr2_bdd.evaluate(&assignment));
 
     // a=1,b=0 → ~(1+0) = ~1 = 0
     assignment.insert(Arc::from("a"), true);
-    assert!(!expr2.evaluate(&assignment));
+    assert!(!expr2_bdd.evaluate(&assignment));
 
     // a=0,b=1 → ~(0+1) = ~1 = 0
     assignment.insert(Arc::from("a"), false);
     assignment.insert(Arc::from("b"), true);
-    assert!(!expr2.evaluate(&assignment));
+    assert!(!expr2_bdd.evaluate(&assignment));
 }
 
 #[test]
@@ -533,7 +548,7 @@ fn test_composition_nested_sub_expressions() {
 
     // Logical equality is now decided canonically by the BDD layer: build both sides into one context
     // and compare roots.
-    let ctx = bdd_context!();
+    let ctx = bdd_builder!();
     assert!(ctx.build(&level3).equivalent_to(ctx.build(&expected)));
 }
 
@@ -557,7 +572,7 @@ fn test_composition_with_cover_integration() {
     let expected = BoolExpr::parse("(a * b) * (c + d)").unwrap();
 
     // Canonical equivalence via the BDD layer.
-    let ctx = bdd_context!();
+    let ctx = bdd_builder!();
     assert!(ctx.build(&retrieved).equivalent_to(ctx.build(&expected)));
 }
 

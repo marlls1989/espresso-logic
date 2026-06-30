@@ -1,4 +1,4 @@
-use espresso_logic::{bdd_context, BoolExpr, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_builder, BoolExpr, Cover, CoverType, Minimizable};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -344,7 +344,7 @@ fn main() -> std::io::Result<()> {
 
     // Logical equality is now a canonical BDD comparison: build both expressions
     // in a shared context and compare the resulting handles.
-    let ctx = bdd_context!();
+    let ctx = bdd_builder!();
     if ctx
         .build(&min_next_q_v1)
         .equivalent_to(ctx.build(&min_next_q_v2))

@@ -5,9 +5,9 @@
 //! type:
 //!
 //! - a brand whose `Cell` is [`LocalCell`](crate::expression::manager_cell::LocalCell) backs a
-//!   single-threaded [`BddContext`](super::BddContext) (`!Send`/`!Sync`);
+//!   single-threaded [`BddBuilder`](super::BddBuilder) (`!Send`/`!Sync`);
 //! - a brand whose `Cell` is [`SyncCell`](crate::expression::manager_cell::SyncCell) backs a
-//!   thread-safe [`SyncBddContext`](super::SyncBddContext) (`Send + Sync`).
+//!   thread-safe [`SyncBddBuilder`](super::SyncBddBuilder) (`Send + Sync`).
 //!
 //! The brand flows through every [`Bdd`](super::Bdd) handle as an invariant type parameter, so two
 //! distinct brands never unify: handles minted by two different contexts cannot be combined, and the
@@ -16,7 +16,7 @@
 //! The trait is **sealed**: it cannot be implemented outside this crate. There is deliberately **no
 //! global / default brand** — the canonical layer has no process-global manager; every context owns an
 //! independent one. In-crate tests mint their own brand types (the seal permits in-crate impls); the
-//! ergonomic public `bdd_context!` / `sync_bdd_context!` macros that mint brands for callers arrive with
+//! ergonomic public `bdd_builder!` / `sync_bdd_builder!` macros that mint brands for callers arrive with
 //! the 5.0 breaking cut.
 
 use crate::expression::manager_cell::ManagerCell;

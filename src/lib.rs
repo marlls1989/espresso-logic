@@ -24,7 +24,7 @@
 //!
 //! - **[`BoolExpr`]** - Owned, syntactic Boolean expressions with parsing, the bitwise operators
 //!   (`&`, `|`, `^`, `!`) and evaluation
-//! - **[`Bdd`]** - Canonical BDD handles from a [`BddContext`] (or thread-safe [`SyncBddContext`]) for
+//! - **[`Bdd`]** - Canonical BDD handles from a [`BddBuilder`] (or thread-safe [`SyncBddBuilder`]) for
 //!   logical equivalence, cofactors and quantification
 //! - **[`Cover`]** - Dynamic covers with automatic dimension management
 //! - **[`Cube`]** / **[`Minterm`]** / **[`OutputSet`]** - A `Cover`'s product terms: a [`Cube`] pairs an
@@ -96,14 +96,14 @@
 //!
 //! `BoolExpr` is purely syntactic: `a & b` and `b & a` are different values, and equality compares the
 //! token structure, not the Boolean function. For canonical, semantic work — logical equivalence,
-//! cofactors, quantification — build a [`Bdd`] handle in a [`BddContext`] minted by
-//! [`bdd_context!`](crate::bdd_context):
+//! cofactors, quantification — build a [`Bdd`] handle in a [`BddBuilder`] minted by
+//! [`bdd_builder!`](crate::bdd_builder):
 //!
 //! ```
-//! use espresso_logic::{bdd_context, BoolExpr};
+//! use espresso_logic::{bdd_builder, BoolExpr};
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let ctx = bdd_context!();
+//! let ctx = bdd_builder!();
 //! let a = ctx.var("a");
 //! let b = ctx.var("b");
 //!
@@ -362,36 +362,36 @@ pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
     ReconcilableLabel, StringLabel, Symbols,
 };
-pub use bdd::{Bdd, BddContext, BddNode, Brand, SyncBddContext};
+pub use bdd::{Bdd, BddBuilder, BddNode, Brand, SyncBddBuilder};
 pub use espresso::EspressoConfig;
 pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
 
-/// Create a fresh, single-threaded [`BddContext`] with a private BDD manager.
+/// Create a fresh, single-threaded [`BddBuilder`] with a private BDD manager.
 ///
 /// Each call mints a unique brand, so handles ([`Bdd`]) from two different contexts cannot be combined
 /// — it is a compile error, not a runtime check. The context owns an independent node table; there is
-/// no process-global manager. The resulting `BddContext` is `!Send`/`!Sync`; use
-/// [`sync_bdd_context!`](crate::sync_bdd_context) for a thread-safe one.
+/// no process-global manager. The resulting `BddBuilder` is `!Send`/`!Sync`; use
+/// [`sync_bdd_builder!`](crate::sync_bdd_builder) for a thread-safe one.
 ///
-/// - `bdd_context!()` — an anonymous brand, unique to this call site/invocation.
-/// - `bdd_context!(Name)` — a named brand. The name is only a readable label: each call still mints a
+/// - `bdd_builder!()` — an anonymous brand, unique to this call site/invocation.
+/// - `bdd_builder!(Name)` — a named brand. The name is only a readable label: each call still mints a
 ///   *distinct* brand (mixing two contexts is always a compile error, even two named the same), but a
 ///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
 ///   Give distinct contexts distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
-/// use espresso_logic::{bdd_context, BoolExpr};
+/// use espresso_logic::{bdd_builder, BoolExpr};
 ///
-/// let ctx = bdd_context!();
+/// let ctx = bdd_builder!();
 /// let a = ctx.var("a");
 /// let b = ctx.var("b");
 /// assert!((a & b).equivalent_to(ctx.build(&BoolExpr::parse("a & b").unwrap())));
 /// ```
 #[macro_export]
-macro_rules! bdd_context {
+macro_rules! bdd_builder {
     () => {
-        $crate::bdd_context!(__EspressoBddBrand)
+        $crate::bdd_builder!(__EspressoBddBrand)
     };
     ($name:ident) => {{
         #[derive(Clone, Copy)]
@@ -400,29 +400,29 @@ macro_rules! bdd_context {
         impl $crate::bdd::Brand for $name {
             type Cell = $crate::bdd::__macro_support::LocalCell;
         }
-        $crate::bdd::BddContext::<$name>::new()
+        $crate::bdd::BddBuilder::<$name>::new()
     }};
 }
 
-/// Create a fresh, thread-safe [`SyncBddContext`] with a private BDD manager.
+/// Create a fresh, thread-safe [`SyncBddBuilder`] with a private BDD manager.
 ///
-/// Like [`bdd_context!`](crate::bdd_context), but the minted brand selects a `RwLock`-backed cell, so
-/// the resulting [`SyncBddContext`] is `Send + Sync` and can be moved to, or shared by reference
+/// Like [`bdd_builder!`](crate::bdd_builder), but the minted brand selects a `RwLock`-backed cell, so
+/// the resulting [`SyncBddBuilder`] is `Send + Sync` and can be moved to, or shared by reference
 /// across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from two
 /// contexts never mix (a compile error).
 ///
 /// ```
-/// use espresso_logic::{sync_bdd_context, BoolExpr};
+/// use espresso_logic::{sync_bdd_builder, BoolExpr};
 ///
-/// let ctx = sync_bdd_context!();
+/// let ctx = sync_bdd_builder!();
 /// let a = ctx.var("a");
 /// let b = ctx.var("b");
 /// assert!((a | b).equivalent_to(ctx.build(&BoolExpr::parse("a | b").unwrap())));
 /// ```
 #[macro_export]
-macro_rules! sync_bdd_context {
+macro_rules! sync_bdd_builder {
     () => {
-        $crate::sync_bdd_context!(__EspressoSyncBddBrand)
+        $crate::sync_bdd_builder!(__EspressoSyncBddBrand)
     };
     ($name:ident) => {{
         #[derive(Clone, Copy)]
@@ -431,7 +431,7 @@ macro_rules! sync_bdd_context {
         impl $crate::bdd::Brand for $name {
             type Cell = $crate::bdd::__macro_support::SyncCell;
         }
-        $crate::bdd::SyncBddContext::<$name>::new()
+        $crate::bdd::SyncBddBuilder::<$name>::new()
     }};
 }
 

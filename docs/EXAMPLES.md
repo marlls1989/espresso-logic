@@ -57,11 +57,11 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 context and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_context, BoolExpr};
+use espresso_logic::{bdd_builder, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let f = ctx.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
@@ -84,16 +84,16 @@ assert_eq!(names, ["a", "b", "c", "d"]);
 ## Binary Decision Diagrams
 
 `BoolExpr` is purely syntactic. For canonical, semantic work — logical equivalence, cofactors,
-quantification — build into a [`Bdd`] handle from a [`BddContext`]. Each context owns a private
-manager; mint one with [`bdd_context!`] (or [`sync_bdd_context!`] for a thread-safe context).
+quantification — build into a [`Bdd`] handle from a [`BddBuilder`]. Each context owns a private
+manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-safe context).
 
 ### Construction and operations
 
 ```rust
-use espresso_logic::{bdd_context, BoolExpr};
+use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 
 let a = ctx.var("a");
 let b = ctx.var("b");
@@ -115,9 +115,9 @@ assert!(f.equivalent_to(h));
 ### Equivalence checking
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 
@@ -133,9 +133,9 @@ assert!(consensus.equivalent_to(reduced));
 ### Cofactors, quantification and queries
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = a & b;
@@ -155,10 +155,10 @@ assert!((a & !a).is_contradiction());
 ### Materialisation and lowering
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let c = ctx.var("c");
@@ -223,10 +223,10 @@ A [`Cover`] is multi-output. Add each function as a named output and minimise on
 together.
 
 ```rust
-use espresso_logic::{bdd_context, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let c = ctx.var("c");
@@ -271,10 +271,10 @@ layer, and the outputs are minimised together. The BDD layer canonicalises each 
 negation in the next-state logic does not blow up into an exponential sum-of-products.
 
 ```rust
-use espresso_logic::{bdd_context, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 
 // Activation: at least 4 of 5 inputs high.
 let activation = ctx.parse(
@@ -445,13 +445,13 @@ for handle in handles {
 
 ### A thread-safe BDD context
 
-[`sync_bdd_context!`] mints a `Send + Sync` context that can be shared by reference across threads:
+[`sync_bdd_builder!`] mints a `Send + Sync` context that can be shared by reference across threads:
 
 ```rust
-use espresso_logic::sync_bdd_context;
+use espresso_logic::sync_bdd_builder;
 use std::thread;
 
-let ctx = sync_bdd_context!();
+let ctx = sync_bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = a & b;
@@ -499,8 +499,8 @@ cargo run --example espresso_direct_api
 
 [`BoolExpr`]: crate::BoolExpr
 [`Bdd`]: crate::bdd::Bdd
-[`BddContext`]: crate::bdd::BddContext
+[`BddBuilder`]: crate::bdd::BddBuilder
 [`Cover`]: crate::Cover
 [`Cover::add_expr`]: crate::Cover::add_expr
-[`bdd_context!`]: crate::bdd_context
-[`sync_bdd_context!`]: crate::sync_bdd_context
+[`bdd_builder!`]: crate::bdd_builder
+[`sync_bdd_builder!`]: crate::sync_bdd_builder

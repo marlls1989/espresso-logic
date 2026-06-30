@@ -3,11 +3,11 @@
 //! Two in-crate brand types are declared here: `Local` selects the single-threaded
 //! [`LocalCell`](crate::expression::manager_cell::LocalCell) and `Sync` the thread-safe
 //! [`SyncCell`](crate::expression::manager_cell::SyncCell). The sealed [`Brand`] trait permits these
-//! in-crate impls; downstream code cannot add brands. The public `bdd_context!` / `sync_bdd_context!`
+//! in-crate impls; downstream code cannot add brands. The public `bdd_builder!` / `sync_bdd_builder!`
 //! macros that would mint these for callers arrive with the 5.0 breaking cut.
 
 use super::brand::{brand_seal, Brand};
-use super::{BddContext, SyncBddContext};
+use super::{BddBuilder, SyncBddBuilder};
 use crate::cover::{Cover, CoverType, Cube, CubeType, Minterm, Symbols};
 use crate::expression::manager_cell::{LocalCell, SyncCell};
 use crate::Symbol;
@@ -32,15 +32,15 @@ impl Brand for Sync {
 
 // ---- Send/Sync asymmetry between the two context kinds ---------------------------------------------
 
-/// `SyncBddContext` (SyncCell brand) is `Send + Sync`; asserting these bounds compiles only if they
-/// hold. The `!Send`/`!Sync` of `BddContext` (LocalCell brand) is checked by `local_context_not_send`
+/// `SyncBddBuilder` (SyncCell brand) is `Send + Sync`; asserting these bounds compiles only if they
+/// hold. The `!Send`/`!Sync` of `BddBuilder` (LocalCell brand) is checked by `local_context_not_send`
 /// below, which fails to compile if a `LocalCell`-branded context were ever made `Send`.
 #[test]
 fn sync_context_is_send_and_sync() {
     fn assert_send<T: std::marker::Send>() {}
     fn assert_sync<T: std::marker::Sync>() {}
-    assert_send::<SyncBddContext<Sync>>();
-    assert_sync::<SyncBddContext<Sync>>();
+    assert_send::<SyncBddBuilder<Sync>>();
+    assert_sync::<SyncBddBuilder<Sync>>();
     // And a handle into it is Send + Sync too.
     assert_send::<super::Bdd<'static, Sync>>();
     assert_sync::<super::Bdd<'static, Sync>>();
@@ -84,17 +84,17 @@ fn context_send_asymmetry() {
         }};
     }
 
-    // SyncCell-branded SyncBddContext is Send; LocalCell-branded contexts are not.
-    assert!(is_send!(SyncBddContext<Sync>));
-    assert!(!is_send!(BddContext<Local>));
-    assert!(!is_send!(SyncBddContext<Local>));
+    // SyncCell-branded SyncBddBuilder is Send; LocalCell-branded contexts are not.
+    assert!(is_send!(SyncBddBuilder<Sync>));
+    assert!(!is_send!(BddBuilder<Local>));
+    assert!(!is_send!(SyncBddBuilder<Local>));
 }
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
 #[test]
 fn restrict_acceptance_table() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
 
@@ -117,7 +117,7 @@ fn evaluate_matches_truth_table() {
     use crate::BoolExpr;
     use std::collections::HashMap;
 
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     // f = a & b | !c.
     let expr = (BoolExpr::var("a") & BoolExpr::var("b")) | !BoolExpr::var("c");
     let f = ctx.build(&expr);
@@ -138,7 +138,7 @@ fn fold_collects_support_variables() {
     use super::BddNode;
     use std::collections::BTreeSet;
 
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let f = (ctx.var("a") & ctx.var("b")) | ctx.var("c");
 
     // Fold the decision diagram into the set of tested variables (union is sharing-safe). The result
@@ -169,7 +169,7 @@ fn fold_with_context_evaluates_via_path_descent() {
     use super::BddNode;
     use std::collections::HashMap;
 
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let f = (ctx.var("a") & ctx.var("b")) | !ctx.var("c");
 
     // Re-implement evaluation with the top-down context carrying the assignment: descend selects the
@@ -207,7 +207,7 @@ fn fold_with_context_evaluates_via_path_descent() {
 fn evaluate_absent_variable_reads_false() {
     use std::collections::HashMap;
 
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let f = ctx.var("a") & ctx.var("b");
 
     // Only `a` assigned ⇒ `b` reads false ⇒ a & b is false.
@@ -223,7 +223,7 @@ fn evaluate_absent_variable_reads_false() {
 
 #[test]
 fn restrict_absent_variable_is_noop() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let c = ctx.var("c");
@@ -238,7 +238,7 @@ fn restrict_absent_variable_is_noop() {
 
 #[test]
 fn restrict_to_constant() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = a & b;
@@ -251,7 +251,7 @@ fn restrict_to_constant() {
 
 #[test]
 fn cofactor_is_restrict() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = a & b;
@@ -261,7 +261,7 @@ fn cofactor_is_restrict() {
 
 #[test]
 fn forall_exists_multiple_vars() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let c = ctx.var("c");
@@ -295,7 +295,7 @@ fn minterm(header: &Arc<Symbols<Symbol>>, values: &[(&str, bool)]) -> Minterm<Sy
 
 #[test]
 fn to_minterms_xor_two_vars() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = a ^ b;
@@ -313,7 +313,7 @@ fn to_minterms_xor_two_vars() {
 
 #[test]
 fn to_minterms_widen_with_absent_variable() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = a ^ b;
@@ -334,7 +334,7 @@ fn to_minterms_widen_with_absent_variable() {
 
 #[test]
 fn to_minterms_true_is_full_cube() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let t = ctx.constant(true);
 
     let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
@@ -352,7 +352,7 @@ fn to_minterms_true_is_full_cube() {
 
 #[test]
 fn to_minterms_single_var_splits_other() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
 
     // a.to_minterms(&[a, b]) == { a:1,b:0 ; a:1,b:1 } — b split, a fixed.
@@ -369,7 +369,7 @@ fn to_minterms_single_var_splits_other() {
 
 #[test]
 fn to_minterms_is_idempotent_and_deterministic() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = (a & b) | (!a & !b); // a == b
@@ -393,7 +393,7 @@ fn to_minterms_is_idempotent_and_deterministic() {
 #[test]
 fn to_minterms_matches_cube_expand_to() {
     // Mirror to_minterms against the Cube::expand_to / Cover::maximize primitive directly.
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let f = a; // a=1, b unconstrained
 
@@ -414,7 +414,7 @@ fn to_minterms_matches_cube_expand_to() {
 
 #[test]
 fn tautology_and_contradiction() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let t = ctx.constant(true);
     let f = ctx.constant(false);
@@ -433,7 +433,7 @@ fn tautology_and_contradiction() {
 
 #[test]
 fn operators_commute_and_canonicalise() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
 
@@ -449,7 +449,7 @@ fn operators_commute_and_canonicalise() {
 
 #[test]
 fn operator_ref_combinations_compile_and_agree() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
 
@@ -465,7 +465,7 @@ fn operator_ref_combinations_compile_and_agree() {
 
 #[test]
 fn equivalent_to_is_root_identity() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     // Two syntactically different but logically equal builds share one canonical root.
@@ -499,7 +499,7 @@ fn xor_cover() -> Cover<Symbol, Symbol> {
 
 #[test]
 fn build_cover_round_trip() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let cover = xor_cover();
     let f = ctx.build_cover(&cover);
 
@@ -525,7 +525,7 @@ fn build_cover_round_trip() {
 
 #[test]
 fn to_cubes_is_anonymous_single_output_onset() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     let f = a & b;
@@ -540,7 +540,7 @@ fn to_cubes_is_anonymous_single_output_onset() {
 #[test]
 fn both_context_kinds_agree() {
     // Single-threaded.
-    let local: BddContext<Local> = BddContext::new();
+    let local: BddBuilder<Local> = BddBuilder::new();
     let la = local.var("a");
     let lb = local.var("b");
     let lc = local.var("c");
@@ -550,7 +550,7 @@ fn both_context_kinds_agree() {
     let local_taut = (la | !la).is_tautology();
 
     // Thread-safe.
-    let sync: SyncBddContext<Sync> = SyncBddContext::new();
+    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
     let sa = sync.var("a");
     let sb = sync.var("b");
     let sc = sync.var("c");
@@ -566,7 +566,7 @@ fn both_context_kinds_agree() {
 
 #[test]
 fn sync_context_is_send_across_threads() {
-    let sync: SyncBddContext<Sync> = SyncBddContext::new();
+    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
     // Build something, then move the context into another thread and use it there.
     {
         let a = sync.var("a");
@@ -585,7 +585,7 @@ fn sync_context_is_send_across_threads() {
 
 #[test]
 fn sync_context_shared_by_reference_across_threads() {
-    let sync: SyncBddContext<Sync> = SyncBddContext::new();
+    let sync: SyncBddBuilder<Sync> = SyncBddBuilder::new();
     let shared = std::sync::Arc::new(sync);
     let c1 = std::sync::Arc::clone(&shared);
     let c2 = std::sync::Arc::clone(&shared);
@@ -607,7 +607,7 @@ fn sync_context_shared_by_reference_across_threads() {
 
 #[test]
 fn minimize_reduces_redundancy() {
-    let ctx: BddContext<Local> = BddContext::new();
+    let ctx: BddBuilder<Local> = BddBuilder::new();
     let a = ctx.var("a");
     let b = ctx.var("b");
     // (a & b) | (a & !b) == a — minimisation should collapse to a single cube fixing only `a`.

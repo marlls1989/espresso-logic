@@ -13,8 +13,8 @@ The API is split into two layers with distinct responsibilities:
   expressions, and equality compares syntax, not the Boolean function. Semantic operations (evaluation,
   equivalence) are done through the `Bdd` layer.
 
-- **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddContext`] (or
-  the thread-safe [`SyncBddContext`]), which owns a private BDD manager. Within one context every
+- **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddBuilder`] (or
+  the thread-safe [`SyncBddBuilder`]), which owns a private BDD manager. Within one context every
   Boolean function has exactly one root, so logical equivalence is an O(1) comparison and operations
   such as cofactors, quantification and tautology checks are available.
 
@@ -152,11 +152,11 @@ size of the original expression. The map key may be any `Borrow<str>` (`&str`, `
 `Arc<str>`, …); a variable absent from the map is treated as `false`:
 
 ```rust
-use espresso_logic::{bdd_context, BoolExpr};
+use espresso_logic::{bdd_builder, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let f = ctx.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
@@ -211,14 +211,14 @@ equality, build both into the BDD layer and use [`Bdd::equivalent_to`].
 ### Contexts
 
 A BDD context owns a private manager and hands out [`Bdd`] handles branded to it. Mint one with the
-[`bdd_context!`] macro (single-threaded, `!Send`) or [`sync_bdd_context!`] (`Send + Sync`). Each call
+[`bdd_builder!`] macro (single-threaded, `!Send`) or [`sync_bdd_builder!`] (`Send + Sync`). Each call
 mints a distinct brand, so handles from two different contexts cannot be combined — a compile error,
 not a runtime check. A `Bdd` borrows its context and is `Copy`.
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = a & b;            // handles are Copy; no clones needed
@@ -229,9 +229,9 @@ An optional readable brand name appears in mismatch diagnostics; each call still
 brand even when two are named the same:
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let routing = bdd_context!(Routing);
+let routing = bdd_builder!(Routing);
 let _ = routing.var("a");
 ```
 
@@ -240,10 +240,10 @@ let _ = routing.var("a");
 A context builds handles directly, from a [`BoolExpr`], or from a [`Cover`]:
 
 ```rust
-use espresso_logic::{bdd_context, BoolExpr};
+use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 
 let a = ctx.var("a");
 let one = ctx.constant(true);
@@ -262,9 +262,9 @@ assert!(from_expr.equivalent_to(parsed));
 `Bdd` handles support the same operators as `BoolExpr` (`&`, `|`, `^`, `!`), plus the BDD primitives:
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let s = ctx.var("s");
 let a = ctx.var("a");
 let b = ctx.var("b");
@@ -280,9 +280,9 @@ assert!(mux.equivalent_to((s & a) | (!s & b)));
 share a canonical root:
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 
@@ -300,9 +300,9 @@ assert!(consensus.equivalent_to(reduced)); // the b & c term is redundant
 and [`Bdd::exists`] quantify over a set of variables. A name absent from the function is a no-op.
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = a & b;
@@ -318,9 +318,9 @@ assert!(f.exists(&["a"]).equivalent_to(b));
 ### Constant queries
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 
 assert!((a | !a).is_tautology());
@@ -330,9 +330,9 @@ assert!((a & !a).is_contradiction());
 ### Introspection
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = (a & b) | (!a & b);
@@ -352,9 +352,9 @@ let _ = f.node_count();
 [`Bdd::to_minterms`] expands the function over an explicit variable set:
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let f = a & b;
@@ -373,10 +373,10 @@ assert_eq!(minterms.len(), 1);
 [`Bdd::to_expr`] lowers the function to a factored [`BoolExpr`]:
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let c = ctx.var("c");
@@ -404,9 +404,9 @@ functions cross into it through several entry points.
 temporary context):
 
 ```rust
-use espresso_logic::{bdd_context, Anonymous, BoolExpr, Cover, Symbol};
+use espresso_logic::{bdd_builder, Anonymous, BoolExpr, Cover, Symbol};
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let from_bdd: Cover<Symbol, Anonymous> = Cover::from(ctx.var("a") & ctx.var("b"));
 let from_expr: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b").unwrap());
 
@@ -435,10 +435,10 @@ println!("{expr}");
 and minimising once optimises them together:
 
 ```rust
-use espresso_logic::{bdd_context, Cover, CoverType, Minimizable};
+use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let c = ctx.var("c");
@@ -513,9 +513,9 @@ println!("{factored}");
 ### XOR and XNOR
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 
@@ -529,10 +529,10 @@ assert!(xnor.equivalent_to((a & b) | (!a & !b)));
 ### Majority function
 
 ```rust
-use espresso_logic::{bdd_context, BoolExpr};
+use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 let c = ctx.var("c");
@@ -547,9 +547,9 @@ assert!(majority.equivalent_to(parsed));
 ### De Morgan's laws
 
 ```rust
-use espresso_logic::bdd_context;
+use espresso_logic::bdd_builder;
 
-let ctx = bdd_context!();
+let ctx = bdd_builder!();
 let a = ctx.var("a");
 let b = ctx.var("b");
 
@@ -608,13 +608,13 @@ match cover.minimize() {
 [`Bdd::to_minterms`]: crate::bdd::Bdd::to_minterms
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
-[`BddContext`]: crate::bdd::BddContext
-[`SyncBddContext`]: crate::bdd::SyncBddContext
+[`BddBuilder`]: crate::bdd::BddBuilder
+[`SyncBddBuilder`]: crate::bdd::SyncBddBuilder
 [`Cover`]: crate::Cover
 [`Cover::add_bdd`]: crate::Cover::add_bdd
 [`Cover::add_expr`]: crate::Cover::add_expr
 [`Cover::to_expr_by_index`]: crate::Cover::to_expr_by_index
 [`Minimizable`]: crate::Minimizable
-[`bdd_context!`]: crate::bdd_context
-[`sync_bdd_context!`]: crate::sync_bdd_context
+[`bdd_builder!`]: crate::bdd_builder
+[`sync_bdd_builder!`]: crate::sync_bdd_builder
 [`ParseBoolExprError`]: crate::expression::ParseBoolExprError

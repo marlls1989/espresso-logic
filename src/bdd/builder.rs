@@ -3,16 +3,16 @@
 //! A context owns one BDD manager (an independent node table, unique table and caches) and hands out
 //! [`Bdd`] handles branded to it. Two flavours, distinguished purely by the cell their brand selects:
 //!
-//! - [`BddContext`] owns a [`LocalCell`](crate::expression::manager_cell::LocalCell), so it is
+//! - [`BddBuilder`] owns a [`LocalCell`](crate::expression::manager_cell::LocalCell), so it is
 //!   single-threaded (`!Send`/`!Sync`) and pays no synchronisation cost.
-//! - [`SyncBddContext`] owns a [`SyncCell`](crate::expression::manager_cell::SyncCell), so it is
+//! - [`SyncBddBuilder`] owns a [`SyncCell`](crate::expression::manager_cell::SyncCell), so it is
 //!   `Send + Sync` and can be shared across threads.
 //!
 //! Both are generic over a [`Brand`]; the brand's [`Cell`](Brand::Cell) associated type selects the
 //! concrete cell, and the body of every method is shared. There is no process-global manager and no
 //! default brand: each context is independent.
 //!
-//! The ergonomic `bdd_context!` / `sync_bdd_context!` macros that mint a fresh brand per call arrive
+//! The ergonomic `bdd_builder!` / `sync_bdd_builder!` macros that mint a fresh brand per call arrive
 //! with the 5.0 breaking cut; until then, in-crate tests declare their own brand types (the brand seal
 //! permits in-crate impls) to construct contexts.
 
@@ -32,19 +32,19 @@ use crate::Symbol;
 ///
 /// Owns a fresh [`LocalCell`](crate::expression::manager_cell::LocalCell)-backed manager (when its
 /// brand selects that cell) and hands out [`Bdd`] handles branded to it. `!Send`/`!Sync`: use
-/// [`SyncBddContext`] to share a context across threads.
+/// [`SyncBddBuilder`] to share a context across threads.
 ///
 /// The context must outlive every handle it produces (handles borrow it); this is enforced at compile
 /// time by the borrow checker.
 ///
 /// # Not thread-safe
 ///
-/// A `BddContext` whose brand selects the single-threaded
+/// A `BddBuilder` whose brand selects the single-threaded
 /// [`LocalCell`](crate::expression::manager_cell::LocalCell) is not `Send`/`Sync`, so it cannot be moved
-/// into or shared across threads — use [`SyncBddContext`] for that. The asymmetry (a `LocalCell`-branded
-/// `BddContext` is `!Send` while a `SyncCell`-branded `SyncBddContext` is `Send + Sync`) is asserted at
+/// into or shared across threads — use [`SyncBddBuilder`] for that. The asymmetry (a `LocalCell`-branded
+/// `BddBuilder` is `!Send` while a `SyncCell`-branded `SyncBddBuilder` is `Send + Sync`) is asserted at
 /// compile time in this module's tests.
-pub struct BddContext<B: Brand> {
+pub struct BddBuilder<B: Brand> {
     cell: B::Cell,
     _brand: PhantomData<fn() -> B>,
 }
@@ -58,7 +58,7 @@ pub struct BddContext<B: Brand> {
 ///
 /// The context must outlive every handle it produces (handles borrow it); this is enforced at compile
 /// time by the borrow checker.
-pub struct SyncBddContext<B: Brand> {
+pub struct SyncBddBuilder<B: Brand> {
     cell: B::Cell,
     _brand: PhantomData<fn() -> B>,
 }
@@ -212,5 +212,5 @@ macro_rules! context_impl {
     };
 }
 
-context_impl!(BddContext);
-context_impl!(SyncBddContext);
+context_impl!(BddBuilder);
+context_impl!(SyncBddBuilder);
