@@ -189,6 +189,18 @@ impl BddManager {
         self.nodes.get(id)
     }
 
+    /// Look up a node by ID, panicking with one consistent message when the ID is invalid.
+    ///
+    /// Every ID a [`Bdd`](crate::bdd::Bdd) handle holds was minted by this manager, and node IDs are
+    /// stable (never removed or reordered), so an out-of-range ID is never user error — it signals a
+    /// bug in the BDD implementation. This is the single bounds-checked lookup the traversal and
+    /// derivation code routes through.
+    pub(crate) fn expect_node(&self, id: NodeId) -> &BddNode {
+        self.get_node(id).unwrap_or_else(|| {
+            panic!("invalid node id {id} - this indicates a bug in the BDD implementation")
+        })
+    }
+
     /// If-Then-Else (`if f then g else h`), managing the cell's borrow itself.
     ///
     /// The fundamental BDD operation all others derive from. Read-mostly, but — unlike a held-guard
@@ -349,9 +361,7 @@ impl BddManager {
         // interning (the borrow discipline: never hold a read across a potential write).
         let shape = {
             let manager = cell.read();
-            match manager.get_node(node).expect(
-                "Invalid node ID in restrict - this indicates a bug in the BDD implementation",
-            ) {
+            match manager.expect_node(node) {
                 // Terminals carry no variable: restricting cannot change a constant.
                 BddNode::Terminal(_) => None,
                 BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
@@ -415,15 +425,9 @@ impl BddManager {
         g: NodeId,
         h: NodeId,
     ) -> (VarId, (NodeId, NodeId, NodeId), (NodeId, NodeId, NodeId)) {
-        let f_node = self.get_node(f).expect(
-            "Invalid node ID in ITE operation - this indicates a bug in the BDD implementation",
-        );
-        let g_node = self.get_node(g).expect(
-            "Invalid node ID in ITE operation - this indicates a bug in the BDD implementation",
-        );
-        let h_node = self.get_node(h).expect(
-            "Invalid node ID in ITE operation - this indicates a bug in the BDD implementation",
-        );
+        let f_node = self.expect_node(f);
+        let g_node = self.expect_node(g);
+        let h_node = self.expect_node(h);
 
         let f_var = Self::node_var(f_node);
         let g_var = Self::node_var(g_node);

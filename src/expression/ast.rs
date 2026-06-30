@@ -2,7 +2,7 @@
 //!
 //! This module contains the AST types and fold operations for boolean expressions.
 
-use super::rpn::Token;
+use super::rpn;
 use super::BoolExpr;
 use crate::Symbol;
 use std::sync::Arc;
@@ -103,46 +103,28 @@ impl Drop for BoolExprAst {
 impl BoolExpr {
     /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
-    /// A plain postfix-to-tree fold over the tokens (iterative, an explicit `Arc<BoolExprAst>` stack,
-    /// so a deep expression can't overflow the call stack). Every token maps to its own AST node,
+    /// A plain postfix-to-tree fold over the tokens (via the shared [`rpn::fold_postfix`] value-stack
+    /// walk, so a deep expression can't overflow the call stack). Every token maps to its own AST node,
     /// `^` included, so the reconstructed tree is faithful to the token stream. The walk is
     /// **syntactic**: it mirrors how the expression was built, not a canonical form.
     fn to_ast(&self) -> Arc<BoolExprAst> {
-        let mut stack: Vec<Arc<BoolExprAst>> = Vec::with_capacity(self.tokens().len());
-        for token in self.tokens() {
-            let node = match token {
-                Token::Var(name) => Arc::new(BoolExprAst::Variable(name.clone())),
-                Token::Const(value) => Arc::new(BoolExprAst::Constant(*value)),
-                Token::Not => {
-                    let a = stack.pop().expect("postfix underflow on NOT");
-                    Arc::new(BoolExprAst::Not(a))
-                }
-                Token::And => {
-                    let r = stack.pop().expect("postfix underflow on AND");
-                    let l = stack.pop().expect("postfix underflow on AND");
-                    Arc::new(BoolExprAst::And(l, r))
-                }
-                Token::Or => {
-                    let r = stack.pop().expect("postfix underflow on OR");
-                    let l = stack.pop().expect("postfix underflow on OR");
-                    Arc::new(BoolExprAst::Or(l, r))
-                }
-                Token::Xor => {
-                    let r = stack.pop().expect("postfix underflow on XOR");
-                    let l = stack.pop().expect("postfix underflow on XOR");
-                    Arc::new(BoolExprAst::Xor(l, r))
-                }
-            };
-            stack.push(node);
-        }
-        stack.pop().expect("postfix program produced no result")
+        rpn::fold_postfix(
+            self.tokens(),
+            |name| Arc::new(BoolExprAst::Variable(name.clone())),
+            |value| Arc::new(BoolExprAst::Constant(value)),
+            |a| Arc::new(BoolExprAst::Not(a)),
+            |l, r| Arc::new(BoolExprAst::And(l, r)),
+            |l, r| Arc::new(BoolExprAst::Or(l, r)),
+            |l, r| Arc::new(BoolExprAst::Xor(l, r)),
+        )
     }
 
-    /// Fold the expression tree depth-first from leaves to root
+    /// Fold the expression tree depth-first from leaves to root.
     ///
-    /// This method traverses the expression tree recursively, calling the provided
-    /// function `f` on each node. The function receives an [`ExprNode`] containing
-    /// the node type and accumulated results from child nodes.
+    /// Walks the expression's reverse-Polish token stream directly through the shared
+    /// [`rpn::fold_postfix`] value-stack pass, calling the provided function `f` on each node. The
+    /// function receives an [`ExprNode`] carrying the node type and the accumulated results from child
+    /// nodes. The traversal is iterative, so a deeply nested expression cannot overflow the call stack.
     ///
     /// This is useful for implementing custom expression transformations and analyses
     /// without needing access to private expression internals.
@@ -170,18 +152,18 @@ impl BoolExpr {
     where
         F: Fn(ExprNode<T>) -> T + Copy,
     {
-        self.fold_impl(&f)
+        rpn::fold_postfix(
+            self.tokens(),
+            |name| f(ExprNode::Variable(name.as_str())),
+            |value| f(ExprNode::Constant(value)),
+            |inner| f(ExprNode::Not(inner)),
+            |l, r| f(ExprNode::And(l, r)),
+            |l, r| f(ExprNode::Or(l, r)),
+            |l, r| f(ExprNode::Xor(l, r)),
+        )
     }
 
-    fn fold_impl<T, F>(&self, f: &F) -> T
-    where
-        F: Fn(ExprNode<T>) -> T,
-    {
-        let ast = self.to_ast();
-        Self::fold_ast(&ast, f)
-    }
-
-    /// Fold over an AST bottom-up (helper for `fold_impl`).
+    /// Fold over an AST bottom-up.
     ///
     /// The no-top-down-context special case of [`fold_with_context_ast`](Self::fold_with_context_ast):
     /// a unit context flows down (a trivial `descend`) and `f` is the bottom-up `combine`. Routing

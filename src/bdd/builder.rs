@@ -25,7 +25,7 @@ use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
 use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
 use crate::expression::manager_cell::ManagerCell;
-use crate::expression::rpn::Token;
+use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 use crate::Symbol;
 
@@ -127,34 +127,15 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// build to the *same* handle.
     #[must_use]
     pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
-        let mut stack: Vec<Bdd<B, C>> = Vec::with_capacity(expr.tokens().len());
-        for token in expr.tokens() {
-            let node = match token {
-                Token::Var(name) => self.var(name.as_str()),
-                Token::Const(value) => self.constant(*value),
-                Token::Not => {
-                    let a = stack.pop().expect("build: postfix underflow on NOT");
-                    a.complement()
-                }
-                Token::And => {
-                    let r = stack.pop().expect("build: postfix underflow on AND");
-                    let l = stack.pop().expect("build: postfix underflow on AND");
-                    l.and(r)
-                }
-                Token::Or => {
-                    let r = stack.pop().expect("build: postfix underflow on OR");
-                    let l = stack.pop().expect("build: postfix underflow on OR");
-                    l.or(r)
-                }
-                Token::Xor => {
-                    let r = stack.pop().expect("build: postfix underflow on XOR");
-                    let l = stack.pop().expect("build: postfix underflow on XOR");
-                    l.xor(r)
-                }
-            };
-            stack.push(node);
-        }
-        stack.pop().expect("build: empty expression token stream")
+        rpn::fold_postfix(
+            expr.tokens(),
+            |name| self.var(name.as_str()),
+            |value| self.constant(value),
+            |a| a.complement(),
+            |l, r| l.and(&r),
+            |l, r| l.or(&r),
+            |l, r| l.xor(&r),
+        )
     }
 
     /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this builder.

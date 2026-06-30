@@ -367,6 +367,43 @@ pub use espresso::EspressoConfig;
 pub use expression::{BoolExpr, ExprNode};
 pub use symbol::Symbol;
 
+/// Implement the four owned/borrowed combinations of a binary [`std::ops`] operator in terms of an
+/// inherent method with the signature `fn(&self, &Self) -> Self`.
+///
+/// `a op b`, `&a op b`, `a op &b`, and `&a op &b` all forward to the one `&self, &Self` method, so the
+/// operator's behaviour lives there once and the four trait impls are pure boilerplate. The optional
+/// leading `{ … }` group supplies the impl's generic parameters and bounds (omit it for a concrete
+/// type). Shared by [`BoolExpr`] and [`Bdd`], whose operators are otherwise identical boilerplate.
+macro_rules! impl_binary_operator {
+    ($({$($generics:tt)*})? $ty:ty, $trait:ident, $method:ident, $call:ident) => {
+        impl $(<$($generics)*>)? ::std::ops::$trait for $ty {
+            type Output = $ty;
+            fn $method(self, rhs: $ty) -> $ty {
+                <$ty>::$call(&self, &rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<&$ty> for $ty {
+            type Output = $ty;
+            fn $method(self, rhs: &$ty) -> $ty {
+                <$ty>::$call(&self, rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<$ty> for &$ty {
+            type Output = $ty;
+            fn $method(self, rhs: $ty) -> $ty {
+                <$ty>::$call(self, &rhs)
+            }
+        }
+        impl $(<$($generics)*>)? ::std::ops::$trait<&$ty> for &$ty {
+            type Output = $ty;
+            fn $method(self, rhs: &$ty) -> $ty {
+                <$ty>::$call(self, rhs)
+            }
+        }
+    };
+}
+pub(crate) use impl_binary_operator;
+
 /// Create a fresh, single-threaded [`BddBuilder`] with a private BDD manager.
 ///
 /// Each call mints a unique brand, so handles ([`Bdd`]) from two different builders cannot be combined

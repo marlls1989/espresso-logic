@@ -8,7 +8,8 @@
 
 use super::rpn::{self, Token};
 use super::BoolExpr;
-use std::ops::{BitAnd, BitOr, BitXor, Not};
+use crate::impl_binary_operator;
+use std::ops::Not;
 
 // Boolean operation methods (the by-value/by-ref operator impls all delegate here).
 impl BoolExpr {
@@ -37,40 +38,12 @@ impl BoolExpr {
     }
 }
 
-/// Implement a binary bitwise operator for every owned/borrowed combination of operands, all
-/// delegating to the named [`BoolExpr`] method.
-macro_rules! bin_op {
-    ($trait:ident, $method:ident, $call:ident) => {
-        impl $trait for BoolExpr {
-            type Output = BoolExpr;
-            fn $method(self, rhs: BoolExpr) -> BoolExpr {
-                BoolExpr::$call(&self, &rhs)
-            }
-        }
-        impl $trait<&BoolExpr> for BoolExpr {
-            type Output = BoolExpr;
-            fn $method(self, rhs: &BoolExpr) -> BoolExpr {
-                BoolExpr::$call(&self, rhs)
-            }
-        }
-        impl $trait<BoolExpr> for &BoolExpr {
-            type Output = BoolExpr;
-            fn $method(self, rhs: BoolExpr) -> BoolExpr {
-                BoolExpr::$call(self, &rhs)
-            }
-        }
-        impl $trait<&BoolExpr> for &BoolExpr {
-            type Output = BoolExpr;
-            fn $method(self, rhs: &BoolExpr) -> BoolExpr {
-                BoolExpr::$call(self, rhs)
-            }
-        }
-    };
-}
-
-bin_op!(BitAnd, bitand, and);
-bin_op!(BitOr, bitor, or);
-bin_op!(BitXor, bitxor, xor);
+// Implement each binary bitwise operator for every owned/borrowed combination of operands, all
+// delegating to the named `&self, &Self` [`BoolExpr`] method, via the shared `impl_binary_operator!`
+// macro (no generics, so its leading parameter group is omitted).
+impl_binary_operator!(BoolExpr, BitAnd, bitand, and);
+impl_binary_operator!(BoolExpr, BitOr, bitor, or);
+impl_binary_operator!(BoolExpr, BitXor, bitxor, xor);
 
 impl Not for BoolExpr {
     type Output = BoolExpr;

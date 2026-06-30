@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use crate::cover::{Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, Symbols};
+use crate::impl_binary_operator;
 use crate::expression::manager::{
     BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE,
 };
@@ -100,24 +101,24 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 
     /// Logical AND of two handles: `self ∧ other`. Equivalent to the `&` operator.
     #[must_use]
-    pub fn and(self, other: Self) -> Self {
-        self.assert_same_manager(&other);
+    pub fn and(&self, other: &Self) -> Self {
+        self.assert_same_manager(other);
         let root = BddManager::ite(&self.cell, self.root, other.root, FALSE_NODE);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical OR of two handles: `self ∨ other`. Equivalent to the `|` operator.
     #[must_use]
-    pub fn or(self, other: Self) -> Self {
-        self.assert_same_manager(&other);
+    pub fn or(&self, other: &Self) -> Self {
+        self.assert_same_manager(other);
         let root = BddManager::ite(&self.cell, self.root, TRUE_NODE, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical XOR of two handles: `self ⊕ other`. Equivalent to the `^` operator.
     #[must_use]
-    pub fn xor(self, other: Self) -> Self {
-        self.assert_same_manager(&other);
+    pub fn xor(&self, other: &Self) -> Self {
+        self.assert_same_manager(other);
         let root = BddManager::xor(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
@@ -176,13 +177,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// returns `self`.
     #[must_use]
     pub fn forall<S: AsRef<str>>(&self, vars: &[S]) -> Self {
-        let mut acc = self.clone();
-        for v in vars {
-            let lo = acc.restrict(v.as_ref(), false);
-            let hi = acc.restrict(v.as_ref(), true);
-            acc = hi.and(lo);
-        }
-        acc
+        self.quantify(vars, Self::and)
     }
 
     /// Existential quantification over `vars`: `∃v∈vars. self`.
@@ -192,11 +187,17 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// returns `self`.
     #[must_use]
     pub fn exists<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+        self.quantify(vars, Self::or)
+    }
+
+    /// Quantify over `vars`, folding `combine` across each variable's two cofactors. Universal and
+    /// existential quantification differ only in `combine` (`and` vs `or`); this is the shared body.
+    fn quantify<S: AsRef<str>>(&self, vars: &[S], combine: fn(&Self, &Self) -> Self) -> Self {
         let mut acc = self.clone();
         for v in vars {
             let lo = acc.restrict(v.as_ref(), false);
             let hi = acc.restrict(v.as_ref(), true);
-            acc = hi.or(lo);
+            acc = combine(&hi, &lo);
         }
         acc
     }
@@ -252,18 +253,15 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         let mgr = self.cell.read();
         let mut node = self.root;
         loop {
-            match mgr.get_node(node) {
-                Some(ManagerNode::Terminal(value)) => return *value,
-                Some(ManagerNode::Decision { var, low, high }) => {
+            match mgr.expect_node(node) {
+                ManagerNode::Terminal(value) => return *value,
+                ManagerNode::Decision { var, low, high } => {
                     let name = mgr
                         .var_name(*var)
                         .expect("decision node variable must have a name");
                     let set = assignment.get(name.as_str()).copied().unwrap_or(false);
                     node = if set { *high } else { *low };
                 }
-                None => panic!(
-                    "Invalid node ID {node} encountered during evaluation - this indicates a bug in the BDD implementation"
-                ),
             }
         }
     }
@@ -287,26 +285,8 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Number of distinct, reachable nodes in this BDD (including reached terminals).
     #[must_use]
     pub fn node_count(&self) -> usize {
-        let mgr = self.cell.read();
-        let mut visited = std::collections::HashSet::new();
-        let mut stack = vec![self.root];
         let mut count = 0;
-        while let Some(node) = stack.pop() {
-            if !visited.insert(node) {
-                continue;
-            }
-            count += 1;
-            match mgr.get_node(node) {
-                Some(ManagerNode::Terminal(_)) => {}
-                Some(ManagerNode::Decision { low, high, .. }) => {
-                    stack.push(*low);
-                    stack.push(*high);
-                }
-                None => panic!(
-                    "Invalid node ID {node} encountered during node counting - this indicates a bug in the BDD implementation"
-                ),
-            }
-        }
+        self.for_each_reachable_node(|_| count += 1);
         count
     }
 
@@ -318,10 +298,21 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         ids.len()
     }
 
-    /// Collect every variable id reachable from the root (iterative DFS, deduplicated on nodes so a
-    /// variable labelling several nodes is never missed). One read guard for the whole walk (NodeIds are
-    /// stable).
+    /// Collect every variable id reachable from the root, deduplicated on nodes so a variable
+    /// labelling several nodes is never missed.
     fn collect_var_ids(&self, vars: &mut std::collections::HashSet<usize>) {
+        self.for_each_reachable_node(|node| {
+            if let ManagerNode::Decision { var, .. } = node {
+                vars.insert(*var);
+            }
+        });
+    }
+
+    /// Visit every distinct node reachable from the root exactly once (iterative DFS, deduplicated on
+    /// node id so a shared subgraph is walked once). The shared traversal owns the read guard for the
+    /// whole walk (NodeIds are stable), the visited set, the bounds-checked node lookup, and the
+    /// child scheduling; `visit` sees each reachable node and decides what to record.
+    fn for_each_reachable_node(&self, mut visit: impl FnMut(&ManagerNode)) {
         let mgr = self.cell.read();
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![self.root];
@@ -329,17 +320,12 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
             if !visited.insert(node) {
                 continue;
             }
-            match mgr.get_node(node) {
-                Some(ManagerNode::Terminal(_)) => {}
-                Some(ManagerNode::Decision { var, low, high }) => {
-                    vars.insert(*var);
-                    stack.push(*low);
-                    stack.push(*high);
-                }
-                None => panic!(
-                    "Invalid node ID {node} encountered during variable collection - this indicates a bug in the BDD implementation"
-                ),
+            let node = mgr.expect_node(node);
+            if let ManagerNode::Decision { low, high, .. } = node {
+                stack.push(*low);
+                stack.push(*high);
             }
+            visit(node);
         }
     }
 
@@ -382,8 +368,8 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         while let Some(work) = stack.pop() {
             match work {
                 Work::SetPath(i, value) => path[i] = value,
-                Work::Node(node) => match mgr.get_node(node) {
-                    Some(ManagerNode::Terminal(true)) => {
+                Work::Node(node) => match mgr.expect_node(node) {
+                    ManagerNode::Terminal(true) => {
                         let inputs =
                             Minterm::from_symbols(Arc::clone(&symbols), path.iter().copied());
                         let outputs = OutputSet::from_symbols(
@@ -392,8 +378,8 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         );
                         cubes.push(Cube::new(inputs, outputs, CubeType::F));
                     }
-                    Some(ManagerNode::Terminal(false)) => {}
-                    Some(ManagerNode::Decision { var, low, high }) => {
+                    ManagerNode::Terminal(false) => {}
+                    ManagerNode::Decision { var, low, high } => {
                         let var_name = mgr.var_name(*var).expect(
                             "Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation",
                         );
@@ -406,9 +392,6 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         stack.push(Work::Node(*low));
                         stack.push(Work::SetPath(i, Some(false)));
                     }
-                    None => panic!(
-                        "Invalid node ID {node} encountered during cube extraction - this indicates a bug in the BDD implementation"
-                    ),
                 },
             }
         }
@@ -478,8 +461,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 /// the manager-pointer assert is a runtime backstop against a brand clash.
 impl<B: Brand, C: ManagerCell> PartialEq for Bdd<B, C> {
     fn eq(&self, other: &Self) -> bool {
-        self.assert_same_manager(other);
-        self.root == other.root
+        self.equivalent_to(other)
     }
 }
 
@@ -500,43 +482,15 @@ impl<B: Brand, C: ManagerCell> std::fmt::Debug for Bdd<B, C> {
 // ---- Operator overloading -------------------------------------------------------------------------
 //
 // Each operator is implemented for every owned/borrowed combination so `a & b`, `&a & b`, `a & &b`, and
-// `&a & &b` all type-check. The handle is `Clone` but not `Copy`, so a borrowed operand is cloned (a
-// refcount bump) before the by-value primitive consumes it; these reference variants are load-bearing for
-// reuse. Mixing two different builders is a compile error: the operands must share the brand `B` and cell
-// `C`, and a mismatch fails to type-check (see the `Bdd` type docs for a `compile_fail` example).
+// `&a & &b` all type-check, every combination forwarding to the inherent `&self, &Self` method (so the
+// `assert_same_manager` clash check fires whichever combination is used). The shared
+// `impl_binary_operator!` macro generates the four impls; the leading group carries the handle's generic
+// parameters. Mixing two different builders is a compile error: the operands must share the brand `B` and
+// cell `C`, and a mismatch fails to type-check (see the `Bdd` type docs for a `compile_fail` example).
 
-macro_rules! bin_op {
-    ($trait:ident, $method:ident, $call:ident) => {
-        impl<B: Brand, C: ManagerCell> std::ops::$trait for Bdd<B, C> {
-            type Output = Bdd<B, C>;
-            fn $method(self, rhs: Bdd<B, C>) -> Bdd<B, C> {
-                Bdd::$call(self, rhs)
-            }
-        }
-        impl<B: Brand, C: ManagerCell> std::ops::$trait<&Bdd<B, C>> for Bdd<B, C> {
-            type Output = Bdd<B, C>;
-            fn $method(self, rhs: &Bdd<B, C>) -> Bdd<B, C> {
-                Bdd::$call(self, rhs.clone())
-            }
-        }
-        impl<B: Brand, C: ManagerCell> std::ops::$trait<Bdd<B, C>> for &Bdd<B, C> {
-            type Output = Bdd<B, C>;
-            fn $method(self, rhs: Bdd<B, C>) -> Bdd<B, C> {
-                Bdd::$call(self.clone(), rhs)
-            }
-        }
-        impl<B: Brand, C: ManagerCell> std::ops::$trait<&Bdd<B, C>> for &Bdd<B, C> {
-            type Output = Bdd<B, C>;
-            fn $method(self, rhs: &Bdd<B, C>) -> Bdd<B, C> {
-                Bdd::$call(self.clone(), rhs.clone())
-            }
-        }
-    };
-}
-
-bin_op!(BitAnd, bitand, and);
-bin_op!(BitOr, bitor, or);
-bin_op!(BitXor, bitxor, xor);
+impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitAnd, bitand, and);
+impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitOr, bitor, or);
+impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitXor, bitxor, xor);
 
 impl<B: Brand, C: ManagerCell> std::ops::Not for Bdd<B, C> {
     type Output = Bdd<B, C>;
@@ -614,20 +568,17 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     if memo.contains_key(&node) {
                         continue;
                     }
-                    match mgr.get_node(node) {
-                        Some(ManagerNode::Terminal(value)) => {
+                    match mgr.expect_node(node) {
+                        ManagerNode::Terminal(value) => {
                             memo.insert(node, f(BddNode::Terminal(*value)));
                         }
                         // Schedule the combine after both children have been folded (LIFO: push
                         // Combine first so it pops last).
-                        Some(ManagerNode::Decision { low, high, .. }) => {
+                        ManagerNode::Decision { low, high, .. } => {
                             stack.push(Work::Combine(node));
                             stack.push(Work::Visit(*high));
                             stack.push(Work::Visit(*low));
                         }
-                        None => panic!(
-                            "Invalid node ID {node} encountered during fold - this indicates a bug in the BDD implementation"
-                        ),
                     }
                 }
                 Work::Combine(node) => {
@@ -693,11 +644,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         let mut results: Vec<T> = Vec::new();
         while let Some(frame) = work.pop() {
             match frame {
-                Work::Enter(node, ctx) => match mgr.get_node(node) {
-                    Some(ManagerNode::Terminal(value)) => {
+                Work::Enter(node, ctx) => match mgr.expect_node(node) {
+                    ManagerNode::Terminal(value) => {
                         results.push(combine(BddNode::Terminal(*value), ctx));
                     }
-                    Some(ManagerNode::Decision { var, low, high }) => {
+                    ManagerNode::Decision { var, low, high } => {
                         let name = mgr
                             .var_name(*var)
                             .expect("decision node variable must have a name");
@@ -713,9 +664,6 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         work.push(Work::Enter(*high, high_ctx));
                         work.push(Work::Enter(*low, low_ctx));
                     }
-                    None => panic!(
-                        "Invalid node ID {node} encountered during fold - this indicates a bug in the BDD implementation"
-                    ),
                 },
                 Work::Combine(node, ctx) => {
                     let var = match mgr.get_node(node) {

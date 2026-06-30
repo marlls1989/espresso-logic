@@ -5,7 +5,7 @@
 //! `!` (NOT) and `1`/`0` for the constants. The output reflects the expression's **syntactic**
 //! structure, not a canonical sum-of-products.
 
-use super::rpn::Token;
+use super::rpn::{self, Token};
 use super::BoolExpr;
 use std::fmt;
 
@@ -36,45 +36,40 @@ fn render(tokens: &[Token]) -> String {
         }
     }
 
-    let mut stack: Vec<(String, u8)> = Vec::with_capacity(tokens.len());
-    for token in tokens {
-        match token {
-            Token::Var(name) => stack.push((name.to_string(), PREC_ATOM)),
-            Token::Const(value) => {
-                stack.push(((if *value { "1" } else { "0" }).to_string(), PREC_ATOM));
-            }
-            Token::Not => {
-                let (s, p) = stack.pop().expect("display: underflow on NOT");
-                // `!` binds tighter than every binary operator, so any binary operand is wrapped.
-                stack.push((format!("!{}", wrap(s, p, PREC_NOT)), PREC_NOT));
-            }
-            Token::And => {
-                let (rs, rp) = stack.pop().expect("display: underflow on AND");
-                let (ls, lp) = stack.pop().expect("display: underflow on AND");
-                stack.push((
-                    format!("{} & {}", wrap(ls, lp, PREC_AND), wrap(rs, rp, PREC_AND)),
-                    PREC_AND,
-                ));
-            }
-            Token::Xor => {
-                let (rs, rp) = stack.pop().expect("display: underflow on XOR");
-                let (ls, lp) = stack.pop().expect("display: underflow on XOR");
-                stack.push((
-                    format!("{} ^ {}", wrap(ls, lp, PREC_XOR), wrap(rs, rp, PREC_XOR)),
-                    PREC_XOR,
-                ));
-            }
-            Token::Or => {
-                let (rs, rp) = stack.pop().expect("display: underflow on OR");
-                let (ls, lp) = stack.pop().expect("display: underflow on OR");
-                stack.push((
-                    format!("{} | {}", wrap(ls, lp, PREC_OR), wrap(rs, rp, PREC_OR)),
-                    PREC_OR,
-                ));
-            }
-        }
+    // An empty token stream renders as the empty string. (Constructed expressions always carry at
+    // least one token, so this only guards the degenerate input the shared walk would reject.)
+    if tokens.is_empty() {
+        return String::new();
     }
-    stack.pop().map(|(s, _)| s).unwrap_or_default()
+
+    // Each operand on the value stack carries `(text, precedence)`; combining wraps a child whenever
+    // its precedence is below what the surrounding operator needs.
+    let (text, _) = rpn::fold_postfix(
+        tokens,
+        |name| (name.to_string(), PREC_ATOM),
+        |value| ((if value { "1" } else { "0" }).to_string(), PREC_ATOM),
+        // `!` binds tighter than every binary operator, so any binary operand is wrapped.
+        |(s, p)| (format!("!{}", wrap(s, p, PREC_NOT)), PREC_NOT),
+        |(ls, lp), (rs, rp)| {
+            (
+                format!("{} & {}", wrap(ls, lp, PREC_AND), wrap(rs, rp, PREC_AND)),
+                PREC_AND,
+            )
+        },
+        |(ls, lp), (rs, rp)| {
+            (
+                format!("{} | {}", wrap(ls, lp, PREC_OR), wrap(rs, rp, PREC_OR)),
+                PREC_OR,
+            )
+        },
+        |(ls, lp), (rs, rp)| {
+            (
+                format!("{} ^ {}", wrap(ls, lp, PREC_XOR), wrap(rs, rp, PREC_XOR)),
+                PREC_XOR,
+            )
+        },
+    );
+    text
 }
 
 /// Debug formatting for boolean expressions.
