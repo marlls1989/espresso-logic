@@ -8,18 +8,13 @@ use super::rpn::Token;
 use super::BoolExpr;
 use std::sync::Arc;
 
-// Lalrpop-generated parser module (generated in OUT_DIR at build time)
-#[allow(clippy::all)]
-mod parser_impl {
-    #![allow(clippy::all)]
-    #![allow(dead_code)]
-    #![allow(unused_variables)]
-    #![allow(unused_imports)]
-    #![allow(non_snake_case)]
-    #![allow(non_camel_case_types)]
-    #![allow(non_upper_case_globals)]
-    include!(concat!(env!("OUT_DIR"), "/expression/bool_expr.rs"));
-}
+// The lalrpop-generated parser, included from OUT_DIR via the library's own macro (the documented
+// idiom). `clippy::all` blankets the generated code's clippy lints; it triggers no rustc warnings.
+lalrpop_util::lalrpop_mod!(
+    #[allow(clippy::all)]
+    parser_impl,
+    "/expression/bool_expr.rs"
+);
 
 /// Parse a string into a reverse-Polish [`Token`] program.
 fn parse_program(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
