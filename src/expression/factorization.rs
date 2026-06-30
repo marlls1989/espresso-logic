@@ -11,7 +11,8 @@
 //!
 //! Complexity: O(n² × m) where n = number of product terms, m = literals per term
 
-use super::{BoolExpr, BoolExprAst, ExprNode};
+use super::rpn::Token;
+use super::{BoolExpr, BoolExprAst};
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -319,21 +320,83 @@ pub(crate) fn factorise_cubes(cubes: Vec<(BTreeMap<Symbol, bool>, bool)>) -> Boo
     ast_to_expr(&factored_ast)
 }
 
+/// Number of nodes in an AST, which equals the number of reverse-Polish tokens it lowers to (one token
+/// per node). Used to pre-size the lowering buffer. Iterative so a deep tree can't overflow the stack.
+fn count_nodes(ast: &BoolExprAst) -> usize {
+    let mut stack = vec![ast];
+    let mut count = 0;
+    while let Some(node) = stack.pop() {
+        count += 1;
+        match node {
+            BoolExprAst::Not(inner) => stack.push(inner),
+            BoolExprAst::And(left, right)
+            | BoolExprAst::Or(left, right)
+            | BoolExprAst::Xor(left, right) => {
+                stack.push(left);
+                stack.push(right);
+            }
+            BoolExprAst::Variable(_) | BoolExprAst::Constant(_) => {}
+        }
+    }
+    count
+}
+
 /// Lower a factored [`BoolExprAst`] directly to an owned [`BoolExpr`] (a reverse-Polish token stream).
 ///
-/// Reuses [`BoolExpr::fold_ast`] (the shared iterative postorder walk) so a deep factorised AST can't
-/// overflow the call stack: each node's matching token-stream composition (`and`/`or`/`not`, all pure
-/// concatenation) runs bottom-up as the fold combines its children's results. No BDD is built at any
-/// point — this is the load-bearing "direct factorisation" path for `Cover::to_expr`.
+/// Emits the AST's postorder token serialisation in a single pass into one pre-sized buffer. The
+/// earlier form folded bottom-up through the binary `and`/`or` composition helpers, each of which
+/// concatenates its *whole* left operand; folding the left-deep chain of k product terms (and the
+/// OR-of-products over k cubes) therefore copied an ever-larger accumulator at every combine, O(k²)
+/// total. Appending each node's single token once is O(k). The postfix order is unchanged — `binary`
+/// already produced `left ++ right ++ [op]`, exactly postorder — so the token stream, its rendering,
+/// and the canonical result are byte-for-byte identical; only the cost changes.
+///
+/// The traversal is iterative (an explicit work-stack) so a deep factorised AST can't overflow the
+/// call stack. No BDD is built at any point — this is the load-bearing "direct factorisation" path for
+/// `Cover::to_expr`.
 fn ast_to_expr(ast: &BoolExprAst) -> BoolExpr {
-    BoolExpr::fold_ast(ast, &|node: ExprNode<BoolExpr>| match node {
-        ExprNode::Constant(val) => BoolExpr::constant(val),
-        ExprNode::Variable(name) => BoolExpr::var(name),
-        ExprNode::And(left, right) => left.and(&right),
-        ExprNode::Or(left, right) => left.or(&right),
-        ExprNode::Xor(left, right) => left.xor(&right),
-        ExprNode::Not(inner) => inner.not(),
-    })
+    enum Step<'a> {
+        /// Walk this node, emitting its children before its own operator.
+        Visit(&'a BoolExprAst),
+        /// Emit an operator token once both operands have been emitted.
+        Emit(Token),
+    }
+
+    let mut tokens: Vec<Token> = Vec::with_capacity(count_nodes(ast));
+    let mut work = vec![Step::Visit(ast)];
+
+    while let Some(step) = work.pop() {
+        match step {
+            // For an operator node, schedule its `Emit` first (popped last) and push operands in
+            // reverse so the left operand is walked before the right — yielding `left right op`.
+            Step::Visit(node) => match node {
+                BoolExprAst::Variable(name) => tokens.push(Token::Var(name.clone())),
+                BoolExprAst::Constant(value) => tokens.push(Token::Const(*value)),
+                BoolExprAst::Not(inner) => {
+                    work.push(Step::Emit(Token::Not));
+                    work.push(Step::Visit(inner));
+                }
+                BoolExprAst::And(left, right) => {
+                    work.push(Step::Emit(Token::And));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+                BoolExprAst::Or(left, right) => {
+                    work.push(Step::Emit(Token::Or));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+                BoolExprAst::Xor(left, right) => {
+                    work.push(Step::Emit(Token::Xor));
+                    work.push(Step::Visit(right));
+                    work.push(Step::Visit(left));
+                }
+            },
+            Step::Emit(token) => tokens.push(token),
+        }
+    }
+
+    BoolExpr::from_tokens(tokens.into())
 }
 
 #[cfg(test)]
