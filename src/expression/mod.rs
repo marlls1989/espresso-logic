@@ -27,6 +27,7 @@
 
 // Submodules
 mod ast;
+mod builder;
 mod display;
 pub mod error;
 pub(crate) mod factorization;
@@ -41,6 +42,9 @@ pub use error::{ExpressionParseError, ParseBoolExprError};
 // Re-export AST types
 pub(crate) use ast::BoolExprAst;
 pub use ast::ExprNode;
+
+// The auxiliary builder behind `BoolExpr::build`.
+pub use builder::{Expr, ExprBuilder};
 
 use crate::Symbol;
 use rpn::Token;

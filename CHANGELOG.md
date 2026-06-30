@@ -54,18 +54,26 @@ release is **not** backward compatible.
 - **General Boolean-logic primitives on covers/minterms.** `Minterm::hamming_distance`/`disagreement`,
   `Minterm::expand_over`, `Cube::expand_to`, and `Cover::maximize` (fully-expanded minterm enumeration
   over an explicit, widenable variable set).
+- **`BoolExpr::build`** — a closure constructor with an auxiliary `ExprBuilder`. The closure composes
+  `Copy` `Expr<'b>` handles (the operators `& | ^ !`, plus `var`/`constant`/`graft`) into one arena that
+  serialises to a single token stream, so assembling a large expression is linear rather than the
+  quadratic token concatenation the operators on `BoolExpr` incur. The handle's lifetime confines it to
+  the closure.
+- **The `expr!` macro** (the re-introduced `espresso-logic-macros` crate). `expr!(…)` builds a `BoolExpr`
+  from infix syntax, lowering to `BoolExpr::build`: an identifier grafts an existing `BoolExpr`, a string
+  literal is a fresh variable, and `0`/`1` are constants; precedence is `+ < ^ < * < !`.
 
 ### Removed
 
 - The **process-global BDD manager** and the global-brand API.
-- The **`expr!` macro and the `espresso-logic-macros` crate**; the project is now a single crate.
 - **`BoolExpr::evaluate`, `BoolExpr::equivalent_to`, and the BDD-query methods** on `BoolExpr`
   (`node_count`, `var_count`, the semantic `collect_variables`, `to_cubes`): evaluation and all semantic
   queries are performed on `Bdd`. `BoolExpr::variables` remains as a syntactic scan.
 - **`BoolExpr::variable`** — the duplicate of `BoolExpr::var`; use `var`.
-- `impl Minimizable for BoolExpr` and the old 4.x BDD-handle API: the branded `BoolExpr<B>`, the
-  closure-based `BddBuilder`/`BoolExpr::build`, and the `BddContext` scoped manager. (The 5.0
-  `BddBuilder`/`SyncBddBuilder` are new, unrelated types — the renamed scoped builders.)
+- `impl Minimizable for BoolExpr` and the old 4.x BDD-handle API: the branded `BoolExpr<B>`, the old
+  closure-based `BddBuilder`, and the `BddContext` scoped manager. (The 5.0 `BddBuilder<B, C>` is a new,
+  unrelated type — the renamed scoped builder; the 5.0 `BoolExpr::build` is likewise new and unrelated,
+  an arena builder yielding a syntactic `BoolExpr` rather than the old BDD-backed one.)
 
 ## [4.2.0] - 2026-06-29
 

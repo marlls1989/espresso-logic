@@ -341,6 +341,10 @@
 //! - [`doc::pla_format`] - PLA file format specification
 //! - [`doc::cli`] - Command-line tool documentation
 
+// Lets the `expr!` proc macro refer to this crate by its public name (`::espresso_logic::…`) from code
+// expanded inside the crate itself, not only from downstream crates.
+extern crate self as espresso_logic;
+
 // Public modules
 pub mod bdd;
 pub mod cover;
@@ -364,8 +368,30 @@ pub use cover::{
     ReconcilableLabel, StringLabel, Symbols,
 };
 pub use espresso::EspressoConfig;
-pub use expression::{BoolExpr, ExprNode};
+pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode};
 pub use symbol::Symbol;
+
+/// Build a [`BoolExpr`] from infix Boolean syntax.
+///
+/// An identifier is an existing `BoolExpr` spliced in, a string literal is a fresh variable, and `0`/`1`
+/// are the constants. Operator precedence, highest to lowest: `( )` > `!`/`~` > `*`/`&` > `^` > `+`/`|`.
+///
+/// ```
+/// use espresso_logic::{expr, BoolExpr};
+///
+/// let a = BoolExpr::var("a");
+/// let b = BoolExpr::var("b");
+/// assert_eq!(expr!(a & !b), a.clone() & !b.clone());
+/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y"));
+/// ```
+///
+/// Only `0` and `1` are valid integer constants:
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(2);
+/// ```
+pub use espresso_logic_macros::expr;
 
 /// Implement the four owned/borrowed combinations of a binary [`std::ops`] operator in terms of an
 /// inherent method with the signature `fn(&self, &Self) -> Self`.
