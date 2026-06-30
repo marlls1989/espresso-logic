@@ -198,6 +198,19 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// a copy. (Contrast the [`ExprBuilder`](crate::expression::ExprBuilder)'s `graft`, which copies an
     /// expression's tokens.)
     ///
+    /// A [`Bdd`] from a *different* builder carries a different [`Brand`](crate::bdd::Brand), so it cannot
+    /// be lifted — a compile error, the same guarantee the operators give:
+    ///
+    /// ```compile_fail
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let one = bdd_builder!();
+    /// let two = bdd_builder!();
+    /// let foreign = two.var("a");
+    /// // error: `foreign`'s brand differs from `one`'s, so it is not a `Bdd` of this scope.
+    /// let _ = one.scope(|s| s.lift(&foreign));
+    /// ```
+    ///
     /// # Panics
     ///
     /// Panics if `bdd` belongs to a different manager (only possible under a brand clash — two builders

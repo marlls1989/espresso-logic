@@ -851,6 +851,38 @@ fn scope_composes_on_sync_cell() {
     assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
 }
 
+/// `ScopedBdd`'s `|` operator and `Scope::constant` compose directly inside a closure: `a | false == a`
+/// and `a | true` is a tautology.
+#[test]
+fn scope_or_and_constant_compose() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // `|` between two scoped handles.
+    let or = builder.scope(|s| s.var("a") | s.var("b"));
+    assert!(or.equivalent_to(&builder.parse("a | b").unwrap()));
+    // `s.constant(false)` is the OR identity; `s.constant(true)` saturates.
+    let with_false = builder.scope(|s| s.var("a") | s.constant(false));
+    assert!(with_false.equivalent_to(&builder.var("a")));
+    let with_true = builder.scope(|s| s.var("a") | s.constant(true));
+    assert!(with_true.is_tautology());
+}
+
+/// A `ScopedBdd` is `Copy`, so an operand can be named twice with no `.clone()`: `a | !a` is a tautology
+/// and `a & !a` a contradiction, both reusing the single handle `a`.
+#[test]
+fn scope_operand_reused_without_clone() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    assert!(builder.scope(|s| {
+        let a = s.var("a");
+        a | !a
+    })
+    .is_tautology());
+    assert!(builder.scope(|s| {
+        let a = s.var("a");
+        a & !a
+    })
+    .is_contradiction());
+}
+
 // ---- minimize -------------------------------------------------------------------------------------
 
 #[test]
