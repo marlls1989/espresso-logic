@@ -9,7 +9,7 @@ Add to your `Cargo.toml`:
 espresso-logic = "5.0"
 ```
 
-The library has **minimal dependencies**: `libc`, `weak-table`, and `lalrpop-util`, plus the workspace `espresso-logic-macros` crate (which provides the `expr!` macro). `clap` is pulled in only under the `cli` feature.
+The library has **minimal runtime dependencies**: `libc`, `weak-table`, and `lalrpop-util`, plus the workspace `espresso-logic-macros` crate (which provides the `expr!` macro). The macro crate itself uses the standard proc-macro toolchain at build time (`syn`, `quote`, `proc-macro2`, and `proc-macro-crate`); none of these are linked into your binary. `clap` is pulled in only under the `cli` feature.
 
 ## As a CLI Tool
 

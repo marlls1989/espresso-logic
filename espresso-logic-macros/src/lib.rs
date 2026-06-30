@@ -3,6 +3,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{Ident, Token};
@@ -65,45 +66,66 @@ impl Parse for BoolExprParser {
     }
 }
 
-/// Parse OR expressions (lowest precedence).
-fn parse_or(input: ParseStream) -> Result<Expr> {
-    let mut left = parse_xor(input)?;
-    while input.peek(Token![+]) || input.peek(Token![|]) {
-        if input.peek(Token![+]) {
-            input.parse::<Token![+]>()?;
-        } else {
-            input.parse::<Token![|]>()?;
-        }
-        let right = parse_xor(input)?;
-        left = Expr::Or(Box::new(left), Box::new(right));
+/// Parse one left-associative binary precedence tier.
+///
+/// `next` parses an operand at the next-higher tier; `op` peeks the input and, when this tier's operator is
+/// present, consumes it and returns the [`Expr`] variant constructor to combine the two operands (the
+/// `Expr::And`/`Xor`/`Or` variants are usable directly as `fn(Box<Expr>, Box<Expr>) -> Expr`). It returns
+/// `None` when no operator of this tier follows, ending the fold. The three binary tiers differ only in
+/// their `next` parser, operator tokens, and variant, so they all delegate here.
+fn parse_binary_level(
+    input: ParseStream,
+    next: fn(ParseStream) -> Result<Expr>,
+    op: impl Fn(ParseStream) -> Result<Option<fn(Box<Expr>, Box<Expr>) -> Expr>>,
+) -> Result<Expr> {
+    let mut left = next(input)?;
+    while let Some(ctor) = op(input)? {
+        let right = next(input)?;
+        left = ctor(Box::new(left), Box::new(right));
     }
     Ok(left)
+}
+
+/// Parse OR expressions (lowest precedence). `+` and `|` are both accepted.
+fn parse_or(input: ParseStream) -> Result<Expr> {
+    parse_binary_level(input, parse_xor, |input| {
+        if input.peek(Token![+]) {
+            input.parse::<Token![+]>()?;
+            Ok(Some(Expr::Or))
+        } else if input.peek(Token![|]) {
+            input.parse::<Token![|]>()?;
+            Ok(Some(Expr::Or))
+        } else {
+            Ok(None)
+        }
+    })
 }
 
 /// Parse XOR expressions (between OR and AND).
 fn parse_xor(input: ParseStream) -> Result<Expr> {
-    let mut left = parse_and(input)?;
-    while input.peek(Token![^]) {
-        input.parse::<Token![^]>()?;
-        let right = parse_and(input)?;
-        left = Expr::Xor(Box::new(left), Box::new(right));
-    }
-    Ok(left)
+    parse_binary_level(input, parse_and, |input| {
+        if input.peek(Token![^]) {
+            input.parse::<Token![^]>()?;
+            Ok(Some(Expr::Xor))
+        } else {
+            Ok(None)
+        }
+    })
 }
 
-/// Parse AND expressions (higher precedence).
+/// Parse AND expressions (higher precedence). `*` and `&` are both accepted.
 fn parse_and(input: ParseStream) -> Result<Expr> {
-    let mut left = parse_unary(input)?;
-    while input.peek(Token![*]) || input.peek(Token![&]) {
+    parse_binary_level(input, parse_unary, |input| {
         if input.peek(Token![*]) {
             input.parse::<Token![*]>()?;
-        } else {
+            Ok(Some(Expr::And))
+        } else if input.peek(Token![&]) {
             input.parse::<Token![&]>()?;
+            Ok(Some(Expr::And))
+        } else {
+            Ok(None)
         }
-        let right = parse_unary(input)?;
-        left = Expr::And(Box::new(left), Box::new(right));
-    }
-    Ok(left)
+    })
 }
 
 /// Parse unary NOT and atoms (highest precedence). `!` and `~` are both accepted.
@@ -130,7 +152,9 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
         Ok(Expr::StringLiteral(lit))
     } else if input.peek(syn::LitInt) {
         let lit: syn::LitInt = input.parse()?;
-        let value: u8 = lit.base10_parse()?;
+        // Parse wide so any out-of-range integer reaches the `0`/`1` check and reports the intended
+        // message, rather than failing first with a generic "number too large to fit in u8".
+        let value: u128 = lit.base10_parse()?;
         match value {
             0 => Ok(Expr::Constant(false)),
             1 => Ok(Expr::Constant(true)),
@@ -145,29 +169,32 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
     }
 }
 
+/// Resolve the path to the `espresso-logic` crate for use in the macro's output.
+///
+/// The expansion references the base crate, which a downstream crate may have renamed in its `Cargo.toml`.
+/// [`crate_name`] returns [`FoundCrate::Name`] with the name actually in scope for a downstream crate, so a
+/// renamed dependency is referenced as `::<renamed>`.
+///
+/// Every other case resolves to `::espresso_logic`. [`crate_name`] reports [`FoundCrate::Itself`] not only
+/// for the library's own code but also for the package's examples, integration tests, and benches (they
+/// share the package, yet each is a *separate* crate whose `crate` is its own root, so emitting `crate`
+/// would be wrong there). `::espresso_logic` works in all of them: library code resolves it through the
+/// `extern crate self as espresso_logic;` alias, and the other targets through the package dependency that
+/// Cargo makes available under that name. The `Err` fallback resolves the same way.
+fn espresso_logic_path() -> proc_macro2::TokenStream {
+    match crate_name("espresso-logic") {
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote!(::#ident)
+        }
+        Ok(FoundCrate::Itself) | Err(_) => quote!(::espresso_logic),
+    }
+}
+
 /// Build a [`BoolExpr`] from infix Boolean syntax.
 ///
-/// `expr!(…)` produces an owned, syntactic `BoolExpr`, composing through [`BoolExpr::build`] so a large
-/// expression is assembled cheaply. A `Bdd` is obtained from the result with `builder.build(&expr!(…))`.
-///
-/// # Operands
-///
-/// - identifier — an existing `BoolExpr` in scope, spliced in;
-/// - `"x"` — a fresh variable named `x`;
-/// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
-///
-/// # Operators (highest to lowest precedence)
-///
-/// `( )` > `!` / `~` (NOT) > `*` / `&` (AND) > `^` (XOR) > `+` / `|` (OR).
-///
-/// ```ignore
-/// use espresso_logic::{expr, BoolExpr};
-///
-/// let a = BoolExpr::var("a");
-/// let b = BoolExpr::var("b");
-/// let f = expr!(a & !b);              // splice existing expressions
-/// let g = expr!("a" & !"b" | "c");    // fresh variables from string literals
-/// ```
+/// See the [`expr!`](../espresso_logic/macro.expr.html) re-export in the `espresso-logic` crate for the full
+/// documentation (operands, operator precedence, and examples); that is the documented public entry point.
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let parser = match syn::parse::<BoolExprParser>(input) {
@@ -178,7 +205,8 @@ pub fn expr(input: TokenStream) -> TokenStream {
     // `expr!(b)` where the caller has a variable `b` is unaffected.
     let builder = Ident::new("__expr_builder", Span::mixed_site());
     let body = parser.expr.to_expr_tokens(&builder);
+    let krate = espresso_logic_path();
     TokenStream::from(quote! {
-        ::espresso_logic::BoolExpr::build(|#builder| #body)
+        #krate::BoolExpr::build(|#builder| #body)
     })
 }

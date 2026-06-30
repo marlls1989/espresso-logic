@@ -390,23 +390,39 @@ pub use symbol::Symbol;
 
 /// Build a [`BoolExpr`] from infix Boolean syntax.
 ///
-/// An identifier is an existing `BoolExpr` spliced in, a string literal is a fresh variable, and `0`/`1`
-/// are the constants. Operator precedence, highest to lowest: `( )` > `!`/`~` > `*`/`&` > `^` > `+`/`|`.
+/// `expr!(…)` produces an owned, syntactic [`BoolExpr`], composing through [`BoolExpr::build`] so a large
+/// expression is assembled cheaply. Obtain a [`Bdd`] from the result with `builder.build(&expr!(…))`.
+///
+/// # Operands
+///
+/// - an identifier in scope — spliced in as an existing `BoolExpr`; a non-`BoolExpr` operand is a type
+///   error at the splice;
+/// - `"x"` — a fresh variable named `x`;
+/// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
+///
+/// # Operators (highest to lowest precedence)
+///
+/// `( )` > `!` / `~` (NOT) > `*` / `&` (AND) > `^` (XOR) > `+` / `|` (OR).
 ///
 /// ```
 /// use espresso_logic::{expr, BoolExpr};
 ///
 /// let a = BoolExpr::var("a");
 /// let b = BoolExpr::var("b");
-/// assert_eq!(expr!(a & !b), a.clone() & !b.clone());
-/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y"));
+/// assert_eq!(expr!(a & !b), a.clone() & !b.clone());          // splice existing expressions
+/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y")); // fresh variables
 /// ```
 ///
-/// Only `0` and `1` are valid integer constants:
+/// Only `0` and `1` are valid integer constants; any other integer is rejected at compile time:
 ///
 /// ```compile_fail
 /// use espresso_logic::expr;
 /// let _ = expr!(2);
+/// ```
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(256 & "x");
 /// ```
 pub use espresso_logic_macros::expr;
 
