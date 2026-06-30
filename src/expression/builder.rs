@@ -199,7 +199,17 @@ fn serialise(nodes: &[BuildNode], root: u32) -> Arc<[Token]> {
         Emit(Token),
     }
 
-    let mut tokens: Vec<Token> = Vec::with_capacity(nodes.len());
+    // Size for the real token total: every non-graft node emits one token, while a `Graft` splices its
+    // whole sub-expression. (A handle reused in two places is re-emitted, so this can still
+    // under-estimate, but it restores the single allocation for the common graft-without-reuse path.)
+    let capacity: usize = nodes
+        .iter()
+        .map(|node| match node {
+            BuildNode::Graft(expr) => expr.tokens().len(),
+            _ => 1,
+        })
+        .sum();
+    let mut tokens: Vec<Token> = Vec::with_capacity(capacity);
     let mut work = vec![Step::Visit(root)];
 
     while let Some(step) = work.pop() {
