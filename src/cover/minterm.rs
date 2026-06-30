@@ -112,6 +112,15 @@ fn field_at(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
+/// Whether two value-set fields disagree: both must be non-empty and their value-sets must not
+/// intersect (one fixes the variable `true`, the other `false`). A don't-care intersects either
+/// polarity, and the empty literal (`00`) is never a disagreement — in particular a field never
+/// disagrees with itself, so the disagreement relation stays reflexive even for `?`.
+#[inline]
+fn fields_disagree(a: u8, b: u8) -> bool {
+    a != FIELD_EMPTY && b != FIELD_EMPTY && a & b == 0
+}
+
 fn pack<I>(values: I, num_vars: usize) -> Arc<[u64]>
 where
     I: IntoIterator<Item = Option<bool>>,
@@ -581,15 +590,22 @@ impl<L: Label> Minterm<L> {
             let n = self.num_vars();
             let mut count = 0usize;
             for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
+                // Even bit set per variable whose field (on each side, and on the intersection) is
+                // non-empty.
+                let x_ne = (x & ALLOWS0_MASK) | ((x >> 1) & ALLOWS0_MASK);
+                let y_ne = (y & ALLOWS0_MASK) | ((y >> 1) & ALLOWS0_MASK);
                 let inter = x & y;
-                let nonempty = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
+                let inter_ne = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
                 let valid = valid_even_mask(k, n);
-                // One even bit per variable whose field-intersection is empty.
-                count += (valid & !nonempty).count_ones() as usize;
+                // A variable disagrees only when both sides are non-empty yet their value-sets do
+                // not intersect; an empty field (`?`) on either side is never a disagreement.
+                count += (x_ne & y_ne & !inter_ne & valid).count_ones() as usize;
             }
             count
         } else {
-            self.merged_fields(other).filter(|(sf, of)| sf & of == 0).count()
+            self.merged_fields(other)
+                .filter(|&(sf, of)| fields_disagree(sf, of))
+                .count()
         }
     }
 
@@ -618,7 +634,9 @@ impl<L: Label> Minterm<L> {
         if self.symbols == other.symbols {
             let labels = self.symbols.labels();
             (0..self.num_vars())
-                .filter(|&i| field_at(&self.values, i) & field_at(&other.values, i) == 0)
+                .filter(|&i| {
+                    fields_disagree(field_at(&self.values, i), field_at(&other.values, i))
+                })
                 .map(|i| labels[i].clone())
                 .collect()
         } else {
@@ -634,7 +652,7 @@ impl<L: Label> Minterm<L> {
                     Ordering::Less => i += 1,
                     Ordering::Greater => j += 1,
                     Ordering::Equal => {
-                        if field_at(&self.values, ia) & field_at(&other.values, ib) == 0 {
+                        if fields_disagree(field_at(&self.values, ia), field_at(&other.values, ib)) {
                             out.push(la[ia].clone());
                         }
                         i += 1;
@@ -676,13 +694,30 @@ impl<L: Label> Minterm<L> {
     /// ```
     #[must_use]
     pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> Vec<Minterm<L>> {
+        // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm —
+        // short-circuit before the don't-care split rather than copying the malformed field through.
+        if self.has_empty_field() {
+            return Vec::new();
+        }
         let base = self.project_onto(target);
         let positions: Vec<usize> = (0..base.num_vars())
             .filter(|&i| field_at(&base.values, i) == FIELD_DC)
             .collect();
         let k = positions.len();
-        let mut out = Vec::with_capacity(1usize << k);
-        for mask in 0u64..(1u64 << k) {
+        // The expansion materialises 2^k minterms. Guard `k` so the count neither overflows the
+        // `1 << k` shift nor exceeds what a `Vec` can address on this platform (`usize`); beyond
+        // that the result is not sane to materialise, so fail loudly rather than truncate silently.
+        assert!(
+            k < usize::BITS as usize,
+            "expand_over: {k} don't-care positions would expand to 2^{k} minterms, \
+             exceeding the addressable Vec capacity on this {}-bit platform",
+            usize::BITS
+        );
+        let count = 1u64 << k;
+        let capacity = usize::try_from(count)
+            .expect("2^k minterms fit in usize once k is below usize::BITS");
+        let mut out = Vec::with_capacity(capacity);
+        for mask in 0u64..count {
             let mut words: Vec<u64> = base.values.to_vec();
             for (b, &pos) in positions.iter().enumerate() {
                 let field = if (mask >> b) & 1 == 1 {
@@ -1091,6 +1126,20 @@ mod tests {
         assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
     }
 
+    /// A minterm carrying an empty literal (`?`) is at distance 0 from itself with an empty
+    /// disagreement set: an empty field is never counted as a disagreement, so reflexivity holds.
+    #[test]
+    fn hamming_and_disagreement_reflexive_on_empty_literal() {
+        let s = syms(&["a", "b", "c"]);
+        let x = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert!(x.has_empty_field());
+        assert_eq!(x.hamming_distance(&x), 0);
+        assert!(x.disagreement(&x).is_empty());
+    }
+
     // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
 
     /// `a` fixed, expanded over [a, b], splits b into both polarities: {a:1,b:0}, {a:1,b:1}.
@@ -1155,5 +1204,27 @@ mod tests {
         let got = m.expand_over(&vars);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], m);
+    }
+
+    /// A cube carrying an empty literal (`?`) denotes the empty set, so it expands to no minterms.
+    #[test]
+    fn expand_over_empty_literal_yields_no_minterms() {
+        let vars = syms(&["a", "b"]);
+        let m = Minterm::from_symbols_input_fields(
+            Arc::clone(&vars),
+            [InputField::Empty, InputField::DontCare],
+        );
+        assert!(m.has_empty_field());
+        assert!(m.expand_over(&vars).is_empty());
+    }
+
+    /// Expanding past the don't-care guard fails loudly rather than overflowing the shift or
+    /// truncating: 64 don't-care positions cannot be materialised within `usize`.
+    #[test]
+    #[should_panic(expected = "exceeding the addressable Vec capacity")]
+    fn expand_over_panics_past_capacity_guard() {
+        let values = vec![None; 64];
+        let m = Minterm::anonymous(&values);
+        let _ = m.expand_over(m.symbols());
     }
 }
