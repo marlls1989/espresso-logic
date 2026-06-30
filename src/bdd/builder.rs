@@ -60,6 +60,17 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
         }
     }
 
+    /// Build a builder onto an existing manager cell (a refcount bump). The recovered builder shares
+    /// the originating manager, so its handles interoperate with handles already minted from that
+    /// manager. Mirrors [`Bdd::from_root`](super::handle::Bdd) and backs
+    /// [`Bdd::builder`](crate::bdd::Bdd::builder).
+    pub(super) fn from_cell(cell: &C) -> Self {
+        BddBuilder {
+            cell: cell.clone(),
+            _brand: PhantomData,
+        }
+    }
+
     /// A handle for the single variable `name`, creating it in this builder's variable ordering on first
     /// use.
     #[must_use]

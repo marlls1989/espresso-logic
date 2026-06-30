@@ -20,6 +20,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::brand::Brand;
+use super::builder::BddBuilder;
 use crate::cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
 };
@@ -85,6 +86,34 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
             root,
             _brand: PhantomData,
         }
+    }
+
+    /// Recover a [`BddBuilder`] onto this handle's manager.
+    ///
+    /// The returned builder shares this handle's manager (a refcounted clone of the same cell) and its
+    /// brand, so handles it mints combine freely with `self`. This lets a stored `Bdd` outlive its
+    /// original builder yet still seed further construction in the same namespace.
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// // Build a handle, then drop the builder that made it.
+    /// let a = {
+    ///     let builder = bdd_builder!();
+    ///     builder.var("a")
+    /// };
+    ///
+    /// // Recover a builder onto the same manager and derive more handles.
+    /// let builder = a.builder();
+    /// let b = builder.var("b");
+    ///
+    /// // Handles from the recovered builder combine with the stored one.
+    /// let f = &a & &b;
+    /// assert!(f.equivalent_to(&(builder.parse("a & b").unwrap())));
+    /// ```
+    #[must_use]
+    pub fn builder(&self) -> BddBuilder<B, C> {
+        BddBuilder::from_cell(&self.cell)
     }
 
     /// Assert that two handles share one manager. A type-correct pair of handles came from the same

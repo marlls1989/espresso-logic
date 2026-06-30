@@ -752,6 +752,45 @@ fn sync_context_shared_by_reference_across_threads() {
     let _ = t2.join().unwrap();
 }
 
+// ---- recovering the builder from a handle ---------------------------------------------------------
+
+/// `Bdd::builder` recovers a builder onto the *same* manager, even after the original builder is
+/// dropped: handles it mints share the brand and manager, so they combine with the stored handle (no
+/// `assert_same_manager` panic) and a rebuilt function is canonically equal to the original.
+#[test]
+fn builder_recovers_the_same_manager() {
+    // Build a handle, then drop the builder that minted it.
+    let a = {
+        let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+        builder.var("a")
+    };
+
+    // Recover a builder onto the same manager and derive further handles.
+    let builder = a.builder();
+    let b = builder.var("b");
+
+    // Combining the recovered builder's handle with the stored one type-checks and computes.
+    let f = &a & &b;
+    assert!(f.equivalent_to(&builder.parse("a & b").unwrap()));
+    // And the recovered builder builds `a` to the very same canonical handle as the stored one.
+    assert!(builder.var("a").equivalent_to(&a));
+}
+
+/// The same round trip over the `SyncCell` backend.
+#[test]
+fn builder_recovers_the_same_manager_sync() {
+    let a = {
+        let builder: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+        builder.var("a")
+    };
+
+    let builder = a.builder();
+    let b = builder.var("b");
+
+    assert!((&a & &b).equivalent_to(&builder.parse("a & b").unwrap()));
+    assert!(builder.var("a").equivalent_to(&a));
+}
+
 // ---- minimize -------------------------------------------------------------------------------------
 
 #[test]

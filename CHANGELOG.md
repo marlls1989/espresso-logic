@@ -35,7 +35,9 @@ release is **not** backward compatible.
   canonical and semantic operations live here: bitwise operators (by value, with `&` reference
   variants), `ite`, `restrict`/`cofactor`/`forall`/`exists`, `is_tautology`/`is_contradiction`,
   `equivalent_to` (O(1)), `evaluate`, `to_cubes`, `to_minterms`, `minimize`, `to_expr`,
-  `fold`/`fold_with_context`, and `collect_variables`/`node_count`/`var_count`. The brand stops handles
+  `fold`/`fold_with_context`, `collect_variables`/`node_count`/`var_count`, and `builder` (recovers a
+  `BddBuilder` onto the same manager, so a stored handle can seed further construction in its namespace
+  after the original builder is dropped). The brand stops handles
   from two builders unifying (a compile error); an always-on pointer-identity assert is the runtime
   backstop, panicking if handles from different managers are ever combined. `evaluate` is a partial
   evaluator: it takes a `Minterm` and returns `Result<bool, Bdd<B, C>>` — `Ok` when the assignment fixes
