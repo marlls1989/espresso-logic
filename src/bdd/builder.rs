@@ -1,6 +1,6 @@
-//! The two concrete BDD contexts.
+//! The two concrete BDD builders.
 //!
-//! A context owns one BDD manager (an independent node table, unique table and caches) and hands out
+//! A builder owns one BDD manager (an independent node table, unique table and caches) and hands out
 //! [`Bdd`] handles branded to it. Two flavours, distinguished purely by the cell their brand selects:
 //!
 //! - [`BddBuilder`] owns a [`LocalCell`](crate::expression::manager_cell::LocalCell), so it is
@@ -10,11 +10,11 @@
 //!
 //! Both are generic over a [`Brand`]; the brand's [`Cell`](Brand::Cell) associated type selects the
 //! concrete cell, and the body of every method is shared. There is no process-global manager and no
-//! default brand: each context is independent.
+//! default brand: each builder is independent.
 //!
 //! The ergonomic `bdd_builder!` / `sync_bdd_builder!` macros that mint a fresh brand per call arrive
 //! with the 5.0 breaking cut; until then, in-crate tests declare their own brand types (the brand seal
-//! permits in-crate impls) to construct contexts.
+//! permits in-crate impls) to construct builders.
 
 use std::marker::PhantomData;
 
@@ -32,9 +32,9 @@ use crate::Symbol;
 ///
 /// Owns a fresh [`LocalCell`](crate::expression::manager_cell::LocalCell)-backed manager (when its
 /// brand selects that cell) and hands out [`Bdd`] handles branded to it. `!Send`/`!Sync`: use
-/// [`SyncBddBuilder`] to share a context across threads.
+/// [`SyncBddBuilder`] to share a builder across threads.
 ///
-/// The context must outlive every handle it produces (handles borrow it); this is enforced at compile
+/// The builder must outlive every handle it produces (handles borrow it); this is enforced at compile
 /// time by the borrow checker.
 ///
 /// # Not thread-safe
@@ -52,30 +52,30 @@ pub struct BddBuilder<B: Brand> {
 /// A thread-safe, owned BDD namespace.
 ///
 /// Owns a fresh [`SyncCell`](crate::expression::manager_cell::SyncCell)-backed manager (when its brand
-/// selects that cell) and hands out [`Bdd`] handles branded to it. `Send + Sync`: the context can be
+/// selects that cell) and hands out [`Bdd`] handles branded to it. `Send + Sync`: the builder can be
 /// moved to, or shared by reference across, threads. Lock poisoning propagates — a panic while the
 /// manager is borrowed poisons it for every subsequent access.
 ///
-/// The context must outlive every handle it produces (handles borrow it); this is enforced at compile
+/// The builder must outlive every handle it produces (handles borrow it); this is enforced at compile
 /// time by the borrow checker.
 pub struct SyncBddBuilder<B: Brand> {
     cell: B::Cell,
     _brand: PhantomData<fn() -> B>,
 }
 
-macro_rules! context_impl {
-    ($ctx:ident) => {
-        impl<B: Brand> $ctx<B> {
-            /// Create a new context owning a fresh, empty BDD manager (seeded with the two terminals).
+macro_rules! builder_impl {
+    ($builder:ident) => {
+        impl<B: Brand> $builder<B> {
+            /// Create a new builder owning a fresh, empty BDD manager (seeded with the two terminals).
             #[must_use]
             pub fn new() -> Self {
-                $ctx {
+                $builder {
                     cell: <B::Cell as ManagerCell>::new_empty(),
                     _brand: PhantomData,
                 }
             }
 
-            /// A handle for the single variable `name`, creating it in this context's variable ordering
+            /// A handle for the single variable `name`, creating it in this builder's variable ordering
             /// on first use.
             #[must_use]
             pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<'_, B> {
@@ -136,7 +136,7 @@ macro_rules! context_impl {
             /// Build a [`Bdd`] handle from an owned, syntactic [`BoolExpr`].
             ///
             /// Interprets the expression's reverse-Polish token stream into canonical BDD nodes through
-            /// this context's engine: a variable becomes [`var`](Self::var), a constant becomes
+            /// this builder's engine: a variable becomes [`var`](Self::var), a constant becomes
             /// [`constant`](Self::constant), and the operators fold through the handle's `&`/`|`/`^`/`!`.
             /// Evaluated iteratively with an explicit value stack (no recursion), so an arbitrarily deep
             /// expression cannot overflow the call stack. The result is canonical, so two expressions
@@ -173,7 +173,7 @@ macro_rules! context_impl {
                 stack.pop().expect("build: empty expression token stream")
             }
 
-            /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this context.
+            /// Parse a Boolean expression from a string and build it into a [`Bdd`] in this builder.
             ///
             /// A convenience for `self.build(&BoolExpr::parse(input)?)`.
             ///
@@ -204,7 +204,7 @@ macro_rules! context_impl {
             }
         }
 
-        impl<B: Brand> Default for $ctx<B> {
+        impl<B: Brand> Default for $builder<B> {
             fn default() -> Self {
                 Self::new()
             }
@@ -212,5 +212,5 @@ macro_rules! context_impl {
     };
 }
 
-context_impl!(BddBuilder);
-context_impl!(SyncBddBuilder);
+builder_impl!(BddBuilder);
+builder_impl!(SyncBddBuilder);

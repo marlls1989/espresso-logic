@@ -103,16 +103,16 @@
 //! use espresso_logic::{bdd_builder, BoolExpr};
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let ctx = bdd_builder!();
-//! let a = ctx.var("a");
-//! let b = ctx.var("b");
+//! let builder = bdd_builder!();
+//! let a = builder.var("a");
+//! let b = builder.var("b");
 //!
 //! // Handles are Copy; the BDD layer canonicalises, so logical laws hold.
 //! assert!((a & b).equivalent_to(b & a));
 //! assert!((a | !a).is_tautology());
 //!
-//! // Build a parsed expression into the same context and compare functions.
-//! let parsed = ctx.parse("a & b")?;
+//! // Build a parsed expression into the same builder and compare functions.
+//! let parsed = builder.parse("a & b")?;
 //! assert!((a & b).equivalent_to(parsed));
 //! # Ok(())
 //! # }
@@ -369,24 +369,24 @@ pub use symbol::Symbol;
 
 /// Create a fresh, single-threaded [`BddBuilder`] with a private BDD manager.
 ///
-/// Each call mints a unique brand, so handles ([`Bdd`]) from two different contexts cannot be combined
-/// — it is a compile error, not a runtime check. The context owns an independent node table; there is
+/// Each call mints a unique brand, so handles ([`Bdd`]) from two different builders cannot be combined
+/// — it is a compile error, not a runtime check. The builder owns an independent node table; there is
 /// no process-global manager. The resulting `BddBuilder` is `!Send`/`!Sync`; use
 /// [`sync_bdd_builder!`](crate::sync_bdd_builder) for a thread-safe one.
 ///
 /// - `bdd_builder!()` — an anonymous brand, unique to this call site/invocation.
 /// - `bdd_builder!(Name)` — a named brand. The name is only a readable label: each call still mints a
-///   *distinct* brand (mixing two contexts is always a compile error, even two named the same), but a
+///   *distinct* brand (mixing two builders is always a compile error, even two named the same), but a
 ///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
-///   Give distinct contexts distinct names; prefer the anonymous form when you do not need the label.
+///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
 /// use espresso_logic::{bdd_builder, BoolExpr};
 ///
-/// let ctx = bdd_builder!();
-/// let a = ctx.var("a");
-/// let b = ctx.var("b");
-/// assert!((a & b).equivalent_to(ctx.build(&BoolExpr::parse("a & b").unwrap())));
+/// let builder = bdd_builder!();
+/// let a = builder.var("a");
+/// let b = builder.var("b");
+/// assert!((a & b).equivalent_to(builder.build(&BoolExpr::parse("a & b").unwrap())));
 /// ```
 #[macro_export]
 macro_rules! bdd_builder {
@@ -409,15 +409,15 @@ macro_rules! bdd_builder {
 /// Like [`bdd_builder!`](crate::bdd_builder), but the minted brand selects a `RwLock`-backed cell, so
 /// the resulting [`SyncBddBuilder`] is `Send + Sync` and can be moved to, or shared by reference
 /// across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from two
-/// contexts never mix (a compile error).
+/// builders never mix (a compile error).
 ///
 /// ```
 /// use espresso_logic::{sync_bdd_builder, BoolExpr};
 ///
-/// let ctx = sync_bdd_builder!();
-/// let a = ctx.var("a");
-/// let b = ctx.var("b");
-/// assert!((a | b).equivalent_to(ctx.build(&BoolExpr::parse("a | b").unwrap())));
+/// let builder = sync_bdd_builder!();
+/// let a = builder.var("a");
+/// let b = builder.var("b");
+/// assert!((a | b).equivalent_to(builder.build(&BoolExpr::parse("a | b").unwrap())));
 /// ```
 #[macro_export]
 macro_rules! sync_bdd_builder {

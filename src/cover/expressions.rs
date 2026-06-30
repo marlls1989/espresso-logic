@@ -108,8 +108,8 @@ impl Cover<Symbol, Symbol> {
     ///
     /// A convenience wrapper over [`add_bdd`](Self::add_bdd): the owned, syntactic [`BoolExpr`] has no
     /// cubes of its own, so it is first built into a [`Bdd`](crate::bdd::Bdd) in a private, temporary
-    /// single-threaded context (which canonicalises it), then its ON-set is added as a new output. The
-    /// temporary context lives only for this call; the handle is consumed before it returns.
+    /// single-threaded builder (which canonicalises it), then its ON-set is added as a new output. The
+    /// temporary builder lives only for this call; the handle is consumed before it returns.
     ///
     /// This is the bridge *from* the `Symbol`-based expression layer, so it produces the natural
     /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
@@ -141,11 +141,11 @@ impl Cover<Symbol, Symbol> {
         expr: &BoolExpr,
         output_name: S,
     ) -> Result<(), AddExprError> {
-        // Mediate the syntactic → cube transformation through a throwaway BDD context (canonicalises
-        // the expression). The context is local; the handle borrows it and is consumed by `add_bdd`
+        // Mediate the syntactic → cube transformation through a throwaway BDD builder (canonicalises
+        // the expression). The builder is local; the handle borrows it and is consumed by `add_bdd`
         // before this function returns, so the lifetimes work out.
-        let ctx = crate::bdd_builder!();
-        let bdd = ctx.build(expr);
+        let builder = crate::bdd_builder!();
+        let bdd = builder.build(expr);
         self.add_bdd(&bdd, output_name)
     }
 }

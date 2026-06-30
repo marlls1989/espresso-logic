@@ -2076,16 +2076,16 @@ fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
     let b = crate::BoolExpr::variable("b");
     let expr = a.and(&b).or(&a.and(&b)); // redundant on purpose
 
-    // A free `BoolExpr` has no cubes; go through a BDD context to materialise the ON-set cover.
-    let ctx = crate::bdd_builder!();
-    let cover: Cover<Symbol, Anonymous> = ctx.build(&expr).to_cubes();
+    // A free `BoolExpr` has no cubes; go through a BDD builder to materialise the ON-set cover.
+    let builder = crate::bdd_builder!();
+    let cover: Cover<Symbol, Anonymous> = builder.build(&expr).to_cubes();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
     // Reconstruction is index-addressed (no output name needed) and recovers the function.
     let back = cover.to_expr_by_index(0).unwrap();
     // `to_expr` is factored/syntactic, so compare semantically through the BDD layer.
-    assert!(ctx.build(&expr).equivalent_to(ctx.build(&back)));
+    assert!(builder.build(&expr).equivalent_to(builder.build(&back)));
 }
 
 #[test]
@@ -2097,8 +2097,8 @@ fn from_expr_and_from_bdd_agree() {
     };
 
     let expr = crate::BoolExpr::var("a") & crate::BoolExpr::var("b");
-    let ctx = crate::bdd_builder!();
-    let bdd = ctx.build(&expr); // Bdd is Copy, so it survives the by-value `From`
+    let builder = crate::bdd_builder!();
+    let bdd = builder.build(&expr); // Bdd is Copy, so it survives the by-value `From`
 
     // The `Bdd → Cover` primitive and the `BoolExpr` wrapper agree for the same function.
     let from_bdd: Cover<Symbol, Anonymous> = Cover::from(bdd);

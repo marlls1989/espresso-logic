@@ -51,7 +51,7 @@ use std::sync::Arc;
 ///
 /// - **[`Cover`]**: Direct implementation — minimises cubes directly with Espresso.
 ///
-/// To minimise a [`BoolExpr`](crate::BoolExpr), build it into a [`Bdd`](crate::bdd::Bdd) in a context
+/// To minimise a [`BoolExpr`](crate::BoolExpr), build it into a [`Bdd`](crate::bdd::Bdd) in a builder
 /// and call [`Bdd::minimize`](crate::bdd::Bdd::minimize) (or
 /// [`BddBuilder::minimize`](crate::bdd::BddBuilder::minimize)), which returns a [`Cover`].
 ///

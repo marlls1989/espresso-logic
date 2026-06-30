@@ -3,7 +3,7 @@
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 //
 // Each rule builds a reverse-Polish (postfix) `Vec<RpnToken>` bottom-up; the caller wraps the
-// top-level program directly into an owned `BoolExpr` (no BDD, no context). The grammar keeps accepting
+// top-level program directly into an owned `BoolExpr`. The grammar keeps accepting
 // both the `*`/`+`/`~` and the `&`/`|`/`!` spellings, but both lower to the single canonical token set.
 //
 // `Token` is imported under the alias `RpnToken` to avoid colliding with lalrpop's own internal

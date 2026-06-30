@@ -342,10 +342,10 @@ mod tests {
 
     /// Whether two expressions denote the same Boolean function. `BoolExpr` is syntactic, so
     /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
-    /// comparison once both are built into one context).
+    /// comparison once both are built into one builder).
     fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
-        let ctx = crate::bdd_builder!();
-        ctx.build(a).equivalent_to(ctx.build(b))
+        let builder = crate::bdd_builder!();
+        builder.build(a).equivalent_to(builder.build(b))
     }
 
     #[test]

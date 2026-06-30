@@ -1,7 +1,7 @@
 //! Parsing support for boolean expressions.
 //!
 //! The lalrpop grammar (`bool_expr.lalrpop`) emits a reverse-Polish [`Token`] program directly, which
-//! [`BoolExpr::parse`] wraps into an owned [`BoolExpr`] — there is no BDD and no context involved.
+//! [`BoolExpr::parse`] wraps into an owned [`BoolExpr`].
 
 use super::error::{ExpressionParseError, ParseBoolExprError};
 use super::rpn::Token;

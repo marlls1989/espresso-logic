@@ -62,21 +62,21 @@ pub(crate) fn anonymous_cover_from_raw(
 /// ```
 /// use espresso_logic::{bdd_builder, Anonymous, Cover, Symbol};
 ///
-/// let ctx = bdd_builder!();
-/// let f = ctx.var("a") & ctx.var("b");
+/// let builder = bdd_builder!();
+/// let f = builder.var("a") & builder.var("b");
 /// let cover: Cover<Symbol, Anonymous> = f.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<'ctx, B: Brand> From<Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: Bdd<'ctx, B>) -> Self {
+impl<'builder, B: Brand> From<Bdd<'builder, B>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: Bdd<'builder, B>) -> Self {
         bdd.to_cubes()
     }
 }
 
 /// Borrowed counterpart of the `From<Bdd>` impl. [`Bdd`] is `Copy`, so this just
 /// copies the handle and defers to the by-value primitive.
-impl<'ctx, B: Brand> From<&Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: &Bdd<'ctx, B>) -> Self {
+impl<'builder, B: Brand> From<&Bdd<'builder, B>> for Cover<Symbol, Anonymous> {
+    fn from(bdd: &Bdd<'builder, B>) -> Self {
         bdd.to_cubes()
     }
 }
@@ -84,8 +84,8 @@ impl<'ctx, B: Brand> From<&Bdd<'ctx, B>> for Cover<Symbol, Anonymous> {
 /// Convert a `BoolExpr` into a single-output, anonymous-output [`Cover<Symbol, Anonymous>`](Cover).
 ///
 /// A free [`BoolExpr`] has no cubes, so it is first built into a [`Bdd`] in a private,
-/// temporary context (which canonicalises it), then materialised through the `From<Bdd>` primitive
-/// above — the same temporary-context mediation as [`Cover::add_expr`]. The output is anonymous; an
+/// temporary builder (which canonicalises it), then materialised through the `From<Bdd>` primitive
+/// above — the same temporary-builder mediation as [`Cover::add_expr`]. The output is anonymous; an
 /// expression has no output name.
 ///
 /// ```
@@ -101,7 +101,7 @@ impl From<BoolExpr> for Cover<Symbol, Anonymous> {
     }
 }
 
-/// Borrowed counterpart of the `From<BoolExpr>` impl: builds the expression in a temporary context and
+/// Borrowed counterpart of the `From<BoolExpr>` impl: builds the expression in a temporary builder and
 /// funnels through the `From<Bdd>` primitive, without taking ownership.
 ///
 /// ```
@@ -113,10 +113,10 @@ impl From<BoolExpr> for Cover<Symbol, Anonymous> {
 /// ```
 impl From<&BoolExpr> for Cover<Symbol, Anonymous> {
     fn from(expr: &BoolExpr) -> Self {
-        // The temporary context lives for this call; the handle borrows it and is consumed by the
+        // The temporary builder lives for this call; the handle borrows it and is consumed by the
         // `Bdd → Cover` primitive before this function returns.
-        let ctx = crate::bdd_builder!();
-        Cover::from(ctx.build(expr))
+        let builder = crate::bdd_builder!();
+        Cover::from(builder.build(expr))
     }
 }
 

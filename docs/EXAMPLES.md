@@ -1,7 +1,7 @@
 # Usage Examples
 
 This guide provides examples for using espresso-logic across its two layers: the owned, syntactic
-[`BoolExpr`], and the canonical [`Bdd`] context layer. See
+[`BoolExpr`], and the canonical [`Bdd`] builder layer. See
 [BOOLEAN_EXPRESSIONS.md](BOOLEAN_EXPRESSIONS.md) for the deep dive.
 
 ## Table of Contents
@@ -54,15 +54,15 @@ println!("{mixed}");
 ### Evaluation
 
 Evaluation is a semantic operation, so it goes through the `Bdd` layer: build the expression into a
-context and evaluate the handle.
+builder and evaluate the handle.
 
 ```rust
 use espresso_logic::{bdd_builder, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
-let ctx = bdd_builder!();
-let f = ctx.build(&expr);
+let builder = bdd_builder!();
+let f = builder.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
 assignment.insert("a", true);
@@ -84,8 +84,8 @@ assert_eq!(names, ["a", "b", "c", "d"]);
 ## Binary Decision Diagrams
 
 `BoolExpr` is purely syntactic. For canonical, semantic work — logical equivalence, cofactors,
-quantification — build into a [`Bdd`] handle from a [`BddBuilder`]. Each context owns a private
-manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-safe context).
+quantification — build into a [`Bdd`] handle from a [`BddBuilder`]. Each builder owns a private
+manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-safe builder).
 
 ### Construction and operations
 
@@ -93,18 +93,18 @@ manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-s
 use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let ctx = bdd_builder!();
+let builder = bdd_builder!();
 
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 // Handles are Copy; operators work by value and by reference.
 let f = (a & b) | (!a & c);
 
-// Build from a BoolExpr or parse directly into the context.
-let g = ctx.build(&BoolExpr::parse("a & b | !a & c")?);
-let h = ctx.parse("a & b | !a & c")?;
+// Build from a BoolExpr or parse directly into the builder.
+let g = builder.build(&BoolExpr::parse("a & b | !a & c")?);
+let h = builder.parse("a & b | !a & c")?;
 
 assert!(f.equivalent_to(g));
 assert!(f.equivalent_to(h));
@@ -117,16 +117,16 @@ assert!(f.equivalent_to(h));
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 
 // Commutativity holds at the function level (BoolExpr equality would not see this).
 assert!((a & b).equivalent_to(b & a));
 
 // The consensus term is redundant.
-let consensus = (a & b) | (!a & ctx.var("c")) | (b & ctx.var("c"));
-let reduced   = (a & b) | (!a & ctx.var("c"));
+let consensus = (a & b) | (!a & builder.var("c")) | (b & builder.var("c"));
+let reduced   = (a & b) | (!a & builder.var("c"));
 assert!(consensus.equivalent_to(reduced));
 ```
 
@@ -135,9 +135,9 @@ assert!(consensus.equivalent_to(reduced));
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = a & b;
 
 // Restrict (Shannon cofactor): f|a=true == b.
@@ -158,10 +158,10 @@ assert!((a & !a).is_contradiction());
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 let f = (a & b) | (a & b & c); // logically just a & b
 
@@ -175,7 +175,7 @@ assert_eq!(minterms.len(), 1);
 let minimized = f.minimize()?;
 assert_eq!(minimized.num_cubes(), 1);
 let factored = f.to_expr();
-assert!(ctx.build(&factored).equivalent_to(a & b));
+assert!(builder.build(&factored).equivalent_to(a & b));
 # Ok(())
 # }
 ```
@@ -226,10 +226,10 @@ together.
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&(a & b), "and_out")?;
@@ -274,10 +274,10 @@ negation in the next-state logic does not blow up into an exponential sum-of-pro
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
+let builder = bdd_builder!();
 
 // Activation: at least 4 of 5 inputs high.
-let activation = ctx.parse(
+let activation = builder.parse(
     "a & b & c & d & e \
    | a & b & c & d & !e \
    | a & b & c & !d & e \
@@ -287,7 +287,7 @@ let activation = ctx.parse(
 )?;
 
 // Deactivation: at most 1 of 5 inputs high.
-let deactivation = ctx.parse(
+let deactivation = builder.parse(
     "!a & !b & !c & !d & !e \
    | a & !b & !c & !d & !e \
    | !a & b & !c & !d & !e \
@@ -296,7 +296,7 @@ let deactivation = ctx.parse(
    | !a & !b & !c & !d & e",
 )?;
 
-let q = ctx.var("q");
+let q = builder.var("q");
 
 // Next-state function: set on activation, hold while not deactivating.
 let next_q = (activation | q) & !deactivation;
@@ -443,22 +443,22 @@ for handle in handles {
 # }
 ```
 
-### A thread-safe BDD context
+### A thread-safe BDD builder
 
-[`sync_bdd_builder!`] mints a `Send + Sync` context that can be shared by reference across threads:
+[`sync_bdd_builder!`] mints a `Send + Sync` builder that can be shared by reference across threads:
 
 ```rust
 use espresso_logic::sync_bdd_builder;
 use std::thread;
 
-let ctx = sync_bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = sync_bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = a & b;
 
 thread::scope(|s| {
     s.spawn(|| {
-        assert!(f.equivalent_to(ctx.var("a") & ctx.var("b")));
+        assert!(f.equivalent_to(builder.var("a") & builder.var("b")));
     });
 });
 ```

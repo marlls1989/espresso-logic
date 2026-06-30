@@ -8,7 +8,7 @@
 //! Two cells exist:
 //!
 //! - [`LocalCell`] — `Rc<RefCell<BddManager>>`, single-threaded (`!Send`/`!Sync`), the basis for a
-//!   future thread-local context.
+//!   future thread-local builder.
 //! - [`SyncCell`] — `Arc<RwLock<BddManager>>`, `Send`/`Sync`, what the current process-global manager
 //!   and every existing branded expression route through.
 //!
@@ -37,7 +37,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 ///
 /// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). The BDD engine in
 /// [`manager`](super::manager) is generic over this trait, so its node-construction and `ite` logic is
-/// written exactly once and shared by both the single-threaded and the thread-safe contexts.
+/// written exactly once and shared by both the single-threaded and the thread-safe builders.
 ///
 /// `Clone` is a refcount bump (`Rc::clone` / `Arc::clone`): every clone shares the same underlying
 /// manager.
@@ -75,7 +75,7 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
 ///
 /// The single-threaded canonical [`BddBuilder`](crate::bdd::BddBuilder) owns one of these (selected by
 /// its brand's [`Cell`](crate::bdd::Brand::Cell)); the [`bdd_builder!`](crate::bdd_builder) macro mints
-/// `LocalCell`-branded contexts.
+/// `LocalCell`-branded builders.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct LocalCell(Rc<RefCell<BddManager>>);
@@ -108,7 +108,7 @@ impl ManagerCell for LocalCell {
 /// Lock poisoning **propagates**: [`read`](ManagerCell::read)/[`write`](ManagerCell::write) `unwrap()`
 /// the guard, so a panic while the manager is borrowed poisons the lock for every subsequent access.
 ///
-/// The [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints `SyncCell`-branded contexts.
+/// The [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints `SyncCell`-branded builders.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct SyncCell(Arc<RwLock<BddManager>>);

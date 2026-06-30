@@ -1,23 +1,23 @@
 //! Canonical Binary Decision Diagram layer.
 //!
-//! This module provides a context-scoped, canonical BDD engine for Boolean functions. It is built
+//! This module provides a builder-scoped, canonical BDD engine for Boolean functions. It is built
 //! around three pieces:
 //!
 //! - a [`Brand`] — a sealed, zero-sized marker type that names one BDD namespace and selects, at the
-//!   type level, whether its context is single-threaded or thread-safe;
-//! - a context — [`BddBuilder`] (single-threaded) or [`SyncBddBuilder`] (`Send + Sync`) — that owns an
+//!   type level, whether its builder is single-threaded or thread-safe;
+//! - a builder — [`BddBuilder`] (single-threaded) or [`SyncBddBuilder`] (`Send + Sync`) — that owns an
 //!   independent BDD manager and hands out handles branded to it;
-//! - a [`Bdd`] handle — a lightweight, `Copy` borrow into a context denoting one canonical function.
+//! - a [`Bdd`] handle — a lightweight, `Copy` borrow into a builder denoting one canonical function.
 //!
-//! Each context owns its own manager: there is no process-global state and no default brand. Because a
-//! handle borrows its context and carries the context's brand as an invariant type parameter, two
-//! handles can be combined only when they came from the *same* context — combining handles from two
-//! different contexts is a compile error, and the borrow checker prevents a handle from outliving its
-//! context.
+//! Each builder owns its own manager: there is no process-global state and no default brand. Because a
+//! handle borrows its builder and carries the builder's brand as an invariant type parameter, two
+//! handles can be combined only when they came from the *same* builder — combining handles from two
+//! different builders is a compile error, and the borrow checker prevents a handle from outliving its
+//! builder.
 //!
 //! # Canonicity
 //!
-//! Within one context every Boolean function has exactly one root node, so equivalent functions are
+//! Within one builder every Boolean function has exactly one root node, so equivalent functions are
 //! *identical* handles: [`Bdd::equivalent_to`] is an O(1) root-id comparison, and the operators keep
 //! every result canonical via hash-consing.
 //!
@@ -34,9 +34,9 @@
 //!
 //! # Construction
 //!
-//! A context is minted by the [`bdd_builder!`](crate::bdd_builder) (single-threaded) or
+//! A builder is minted by the [`bdd_builder!`](crate::bdd_builder) (single-threaded) or
 //! [`sync_bdd_builder!`](crate::sync_bdd_builder) (thread-safe) macro, each of which mints a fresh
-//! brand per call so handles of two different contexts can never be combined. A [`BoolExpr`] is built
+//! brand per call so handles of two different builders can never be combined. A [`BoolExpr`] is built
 //! into a handle with [`BddBuilder::build`] / [`BddBuilder::parse`], and a handle is lowered back to a
 //! factored [`BoolExpr`] with [`Bdd::to_expr`].
 //!

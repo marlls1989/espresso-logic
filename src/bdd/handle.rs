@@ -1,12 +1,12 @@
 //! The borrowed, `Copy` BDD handle.
 //!
 //! A [`Bdd`] is a lightweight handle into a [`BddBuilder`](super::BddBuilder) /
-//! [`SyncBddBuilder`](super::SyncBddBuilder): a shared reference to the context's cell plus the
-//! canonical root node it denotes. Because it borrows the cell (`&'ctx B::Cell`) rather than owning it,
-//! it is `Copy` — `a & b`, `&a & b`, etc. all work without clones or deref gymnastics.
+//! [`SyncBddBuilder`](super::SyncBddBuilder): a shared reference to the builder's cell plus the
+//! canonical root node it denotes. Because it borrows the cell (`&'builder B::Cell`) rather than owning
+//! it, it is `Copy` — `a & b`, `&a & b`, etc. all work without clones or deref gymnastics.
 //!
-//! Two handles can be combined only when they share the same lifetime `'ctx` **and** the same brand
-//! `B` — i.e. when they came from the same context. Mixing handles from two different contexts is a
+//! Two handles can be combined only when they share the same lifetime `'builder` **and** the same brand
+//! `B` — i.e. when they came from the same builder. Mixing handles from two different builders is a
 //! compile error, enforced by the invariant brand parameter; there is no runtime check.
 
 use std::borrow::Borrow;
@@ -22,38 +22,38 @@ use crate::expression::manager_cell::ManagerCell;
 use crate::expression::BoolExpr;
 use crate::Symbol;
 
-/// A borrowed, `Copy` handle to a canonical BDD root within one context.
+/// A borrowed, `Copy` handle to a canonical BDD root within one builder.
 ///
-/// `mgr` borrows the owning context's cell, so the handle cannot outlive the context (a compile error,
+/// `mgr` borrows the owning builder's cell, so the handle cannot outlive the builder (a compile error,
 /// not a runtime one). `root` is the canonical node id; the brand `B` is carried as an invariant
-/// type-level marker (`PhantomData<fn() -> B>`) so handles of different contexts never unify.
+/// type-level marker (`PhantomData<fn() -> B>`) so handles of different builders never unify.
 ///
 /// # Canonicity
 ///
-/// Within one context every Boolean function has exactly one root node, so two handles denote the same
+/// Within one builder every Boolean function has exactly one root node, so two handles denote the same
 /// function **iff** their roots are equal — making [`equivalent_to`](Self::equivalent_to) an O(1) id
 /// comparison. The brand+lifetime pairing guarantees both handles share the same manager before such a
 /// comparison is even type-correct.
 ///
 /// # Lifetime soundness
 ///
-/// A handle borrows its context, so it cannot escape:
+/// A handle borrows its builder, so it cannot escape:
 ///
 /// ```compile_fail
 /// use espresso_logic::bdd::{Bdd, BddBuilder, Brand};
 /// fn escape<B: Brand>() {
 ///     let f;
 ///     {
-///         let ctx: BddBuilder<B> = BddBuilder::new();
-///         f = ctx.var("a"); // borrows ctx
-///     } // ctx dropped here
-///     let _ = f.node_count(); // error: `ctx` does not live long enough
+///         let builder: BddBuilder<B> = BddBuilder::new();
+///         f = builder.var("a"); // borrows builder
+///     } // builder dropped here
+///     let _ = f.node_count(); // error: `builder` does not live long enough
 /// }
 /// ```
 ///
-/// # Cross-context mixing is a compile error
+/// # Cross-builder mixing is a compile error
 ///
-/// Handles of two different contexts carry distinct brands, which never unify, so an operator over them
+/// Handles of two different builders carry distinct brands, which never unify, so an operator over them
 /// fails to type-check:
 ///
 /// ```compile_fail
@@ -64,8 +64,8 @@ use crate::Symbol;
 ///     let _ = a & b; // error: distinct brands `B1` and `B2` do not unify
 /// }
 /// ```
-pub struct Bdd<'ctx, B: Brand> {
-    mgr: &'ctx B::Cell,
+pub struct Bdd<'builder, B: Brand> {
+    mgr: &'builder B::Cell,
     root: NodeId,
     _brand: PhantomData<fn() -> B>,
 }
@@ -78,10 +78,10 @@ impl<B: Brand> Clone for Bdd<'_, B> {
 
 impl<B: Brand> Copy for Bdd<'_, B> {}
 
-impl<'ctx, B: Brand> Bdd<'ctx, B> {
-    /// Wrap a raw root node into a handle bound to `mgr`. Crate-internal: only the context and the
+impl<'builder, B: Brand> Bdd<'builder, B> {
+    /// Wrap a raw root node into a handle bound to `mgr`. Crate-internal: only the builder and the
     /// operator impls mint handles, so every `Bdd` is guaranteed to denote a node in `mgr`.
-    pub(super) fn from_root(mgr: &'ctx B::Cell, root: NodeId) -> Self {
+    pub(super) fn from_root(mgr: &'builder B::Cell, root: NodeId) -> Self {
         Bdd {
             mgr,
             root,
@@ -209,7 +209,7 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
 
     /// Whether `self` and `other` denote the same Boolean function. O(1).
     ///
-    /// Sharing the lifetime `'ctx` and brand `B` means both handles came from the same context, hence
+    /// Sharing the lifetime `'builder` and brand `B` means both handles came from the same builder, hence
     /// the same canonical manager, so equal functions have equal roots and this reduces to a root-id
     /// comparison. (A `debug_assert!` confirms the two cells are physically the same.)
     #[must_use]
@@ -234,7 +234,7 @@ impl<'ctx, B: Brand> Bdd<'ctx, B> {
     /// may be any `Borrow<str>` (`&str`, `String`, [`Symbol`], `Arc<str>`, …).
     ///
     /// Evaluation is a semantic operation, so it lives here rather than on the syntactic
-    /// [`BoolExpr`](crate::BoolExpr): build the expression into a context with
+    /// [`BoolExpr`](crate::BoolExpr): build the expression into a builder with
     /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
     #[must_use]
     pub fn evaluate<K>(self, assignment: &HashMap<K, bool>) -> bool
@@ -481,7 +481,7 @@ impl<B: Brand> PartialEq for Bdd<'_, B> {
 
 impl<B: Brand> Eq for Bdd<'_, B> {}
 
-/// Shows the canonical root id (the function's identity within its context) and the manager pointer, so
+/// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
 /// [`to_cubes`](Bdd::to_cubes) for that.
 impl<B: Brand> std::fmt::Debug for Bdd<'_, B> {
@@ -497,32 +497,32 @@ impl<B: Brand> std::fmt::Debug for Bdd<'_, B> {
 //
 // Each operator is implemented for every owned/borrowed combination so `a & b`, `&a & b`, `a & &b`, and
 // `&a & &b` all type-check. Handles are `Copy`, so a `&Bdd` is dereferenced cheaply. Mixing two
-// different contexts is impossible: the operands must share `'ctx` and `B`, and a mismatch is a compile
+// different builders is impossible: the operands must share `'builder` and `B`, and a mismatch is a compile
 // error (see the `Bdd` type docs for a `compile_fail` example).
 
 macro_rules! bin_op {
     ($trait:ident, $method:ident, $call:ident) => {
-        impl<'ctx, B: Brand> std::ops::$trait for Bdd<'ctx, B> {
-            type Output = Bdd<'ctx, B>;
-            fn $method(self, rhs: Bdd<'ctx, B>) -> Bdd<'ctx, B> {
+        impl<'builder, B: Brand> std::ops::$trait for Bdd<'builder, B> {
+            type Output = Bdd<'builder, B>;
+            fn $method(self, rhs: Bdd<'builder, B>) -> Bdd<'builder, B> {
                 Bdd::$call(self, rhs)
             }
         }
-        impl<'ctx, B: Brand> std::ops::$trait<&Bdd<'ctx, B>> for Bdd<'ctx, B> {
-            type Output = Bdd<'ctx, B>;
-            fn $method(self, rhs: &Bdd<'ctx, B>) -> Bdd<'ctx, B> {
+        impl<'builder, B: Brand> std::ops::$trait<&Bdd<'builder, B>> for Bdd<'builder, B> {
+            type Output = Bdd<'builder, B>;
+            fn $method(self, rhs: &Bdd<'builder, B>) -> Bdd<'builder, B> {
                 Bdd::$call(self, *rhs)
             }
         }
-        impl<'ctx, B: Brand> std::ops::$trait<Bdd<'ctx, B>> for &Bdd<'ctx, B> {
-            type Output = Bdd<'ctx, B>;
-            fn $method(self, rhs: Bdd<'ctx, B>) -> Bdd<'ctx, B> {
+        impl<'builder, B: Brand> std::ops::$trait<Bdd<'builder, B>> for &Bdd<'builder, B> {
+            type Output = Bdd<'builder, B>;
+            fn $method(self, rhs: Bdd<'builder, B>) -> Bdd<'builder, B> {
                 Bdd::$call(*self, rhs)
             }
         }
-        impl<'ctx, B: Brand> std::ops::$trait<&Bdd<'ctx, B>> for &Bdd<'ctx, B> {
-            type Output = Bdd<'ctx, B>;
-            fn $method(self, rhs: &Bdd<'ctx, B>) -> Bdd<'ctx, B> {
+        impl<'builder, B: Brand> std::ops::$trait<&Bdd<'builder, B>> for &Bdd<'builder, B> {
+            type Output = Bdd<'builder, B>;
+            fn $method(self, rhs: &Bdd<'builder, B>) -> Bdd<'builder, B> {
                 Bdd::$call(*self, *rhs)
             }
         }
@@ -533,16 +533,16 @@ bin_op!(BitAnd, bitand, and);
 bin_op!(BitOr, bitor, or);
 bin_op!(BitXor, bitxor, xor);
 
-impl<'ctx, B: Brand> std::ops::Not for Bdd<'ctx, B> {
-    type Output = Bdd<'ctx, B>;
-    fn not(self) -> Bdd<'ctx, B> {
+impl<'builder, B: Brand> std::ops::Not for Bdd<'builder, B> {
+    type Output = Bdd<'builder, B>;
+    fn not(self) -> Bdd<'builder, B> {
         Bdd::complement(self)
     }
 }
 
-impl<'ctx, B: Brand> std::ops::Not for &Bdd<'ctx, B> {
-    type Output = Bdd<'ctx, B>;
-    fn not(self) -> Bdd<'ctx, B> {
+impl<'builder, B: Brand> std::ops::Not for &Bdd<'builder, B> {
+    type Output = Bdd<'builder, B>;
+    fn not(self) -> Bdd<'builder, B> {
         Bdd::complement(*self)
     }
 }
@@ -579,7 +579,7 @@ pub enum BddNode<'a, T> {
     },
 }
 
-impl<'ctx, B: Brand> Bdd<'ctx, B> {
+impl<'builder, B: Brand> Bdd<'builder, B> {
     /// Fold the decision diagram bottom-up, combining each node's children results with `f`.
     ///
     /// Walks the BDD **as a BDD**: `f` sees a [`BddNode::Terminal`] for each terminal and a

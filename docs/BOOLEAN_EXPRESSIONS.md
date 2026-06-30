@@ -7,14 +7,14 @@ that sits beside it.
 
 The API is split into two layers with distinct responsibilities:
 
-- **[`BoolExpr`]** is an **owned, syntactic** Boolean expression. It carries no manager, context or
+- **[`BoolExpr`]** is an **owned, syntactic** Boolean expression. It carries no manager, builder or
   brand: build it, compose it with the bitwise operators, parse it from text, display it, and fold over
   its structure — all as a plain value. It does **not** canonicalise. `a & b` and `b & a` are different
   expressions, and equality compares syntax, not the Boolean function. Semantic operations (evaluation,
   equivalence) are done through the `Bdd` layer.
 
 - **[`Bdd`]** is the **canonical, semantic** layer. A `Bdd` handle is built from a [`BddBuilder`] (or
-  the thread-safe [`SyncBddBuilder`]), which owns a private BDD manager. Within one context every
+  the thread-safe [`SyncBddBuilder`]), which owns a private BDD manager. Within one builder every
   Boolean function has exactly one root, so logical equivalence is an O(1) comparison and operations
   such as cofactors, quantification and tautology checks are available.
 
@@ -146,7 +146,7 @@ assert_eq!(format!("{}", !(&a & &b)), "!(a & b)");
 ### Evaluation
 
 Evaluation is a semantic operation, so it lives on [`Bdd`], not on the syntactic `BoolExpr`: build the
-expression into a context and evaluate the resulting handle. [`Bdd::evaluate`] follows a single
+expression into a builder and evaluate the resulting handle. [`Bdd::evaluate`] follows a single
 root-to-terminal path, so its cost is bounded by the variables the function depends on rather than the
 size of the original expression. The map key may be any `Borrow<str>` (`&str`, `String`, `Symbol`,
 `Arc<str>`, …); a variable absent from the map is treated as `false`:
@@ -156,8 +156,8 @@ use espresso_logic::{bdd_builder, BoolExpr};
 use std::collections::HashMap;
 
 let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
-let ctx = bdd_builder!();
-let f = ctx.build(&expr);
+let builder = bdd_builder!();
+let f = builder.build(&expr);
 
 let mut assignment: HashMap<&str, bool> = HashMap::new();
 assignment.insert("a", true);
@@ -210,19 +210,19 @@ equality, build both into the BDD layer and use [`Bdd::equivalent_to`].
 
 ### Contexts
 
-A BDD context owns a private manager and hands out [`Bdd`] handles branded to it. Mint one with the
+A BDD builder owns a private manager and hands out [`Bdd`] handles branded to it. Mint one with the
 [`bdd_builder!`] macro (single-threaded, `!Send`) or [`sync_bdd_builder!`] (`Send + Sync`). Each call
-mints a distinct brand, so handles from two different contexts cannot be combined — a compile error,
-not a runtime check. A `Bdd` borrows its context and is `Copy`.
+mints a distinct brand, so handles from two different builders cannot be combined — a compile error,
+not a runtime check. A `Bdd` borrows its builder and is `Copy`.
 
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = a & b;            // handles are Copy; no clones needed
-assert!(f.equivalent_to(ctx.var("a") & ctx.var("b")));
+assert!(f.equivalent_to(builder.var("a") & builder.var("b")));
 ```
 
 An optional readable brand name appears in mismatch diagnostics; each call still mints a distinct
@@ -237,20 +237,20 @@ let _ = routing.var("a");
 
 ### Building handles
 
-A context builds handles directly, from a [`BoolExpr`], or from a [`Cover`]:
+A builder builds handles directly, from a [`BoolExpr`], or from a [`Cover`]:
 
 ```rust
 use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let ctx = bdd_builder!();
+let builder = bdd_builder!();
 
-let a = ctx.var("a");
-let one = ctx.constant(true);
+let a = builder.var("a");
+let one = builder.constant(true);
 
 let expr = BoolExpr::parse("a & b")?;
-let from_expr = ctx.build(&expr);     // build a syntactic expression
-let parsed = ctx.parse("a & b")?;     // parse and build in one step
+let from_expr = builder.build(&expr);     // build a syntactic expression
+let parsed = builder.parse("a & b")?;     // parse and build in one step
 
 assert!(from_expr.equivalent_to(parsed));
 # Ok(())
@@ -264,10 +264,10 @@ assert!(from_expr.equivalent_to(parsed));
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let s = ctx.var("s");
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let s = builder.var("s");
+let a = builder.var("a");
+let b = builder.var("b");
 
 // if-then-else: s ? a : b
 let mux = s.ite(a, b);
@@ -282,15 +282,15 @@ share a canonical root:
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 
 // Commutativity and the consensus theorem hold at the function level.
 assert!((a & b).equivalent_to(b & a));
 
-let consensus = (a & b) | (!a & ctx.var("c")) | (b & ctx.var("c"));
-let reduced   = (a & b) | (!a & ctx.var("c"));
+let consensus = (a & b) | (!a & builder.var("c")) | (b & builder.var("c"));
+let reduced   = (a & b) | (!a & builder.var("c"));
 assert!(consensus.equivalent_to(reduced)); // the b & c term is redundant
 ```
 
@@ -302,9 +302,9 @@ and [`Bdd::exists`] quantify over a set of variables. A name absent from the fun
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = a & b;
 
 // f|a=true == b
@@ -320,8 +320,8 @@ assert!(f.exists(&["a"]).equivalent_to(b));
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
+let builder = bdd_builder!();
+let a = builder.var("a");
 
 assert!((a | !a).is_tautology());
 assert!((a & !a).is_contradiction());
@@ -332,9 +332,9 @@ assert!((a & !a).is_contradiction());
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = (a & b) | (!a & b);
 
 // f depends only on b after canonicalisation.
@@ -354,9 +354,9 @@ let _ = f.node_count();
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 let f = a & b;
 
 let cover = f.to_cubes();
@@ -376,10 +376,10 @@ assert_eq!(minterms.len(), 1);
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 // (a & b) | (a & b & c) is just a & b.
 let f = (a & b) | (a & b & c);
@@ -388,7 +388,7 @@ let minimized = f.minimize()?;
 assert_eq!(minimized.num_cubes(), 1);
 
 let factored = f.to_expr();
-assert!(ctx.build(&factored).equivalent_to(a & b));
+assert!(builder.build(&factored).equivalent_to(a & b));
 # Ok(())
 # }
 ```
@@ -401,13 +401,13 @@ functions cross into it through several entry points.
 ### Converting a function to a cover
 
 `Cover::from` accepts a `Bdd` handle or a `BoolExpr` (the expression forms build through a private
-temporary context):
+temporary builder):
 
 ```rust
 use espresso_logic::{bdd_builder, Anonymous, BoolExpr, Cover, Symbol};
 
-let ctx = bdd_builder!();
-let from_bdd: Cover<Symbol, Anonymous> = Cover::from(ctx.var("a") & ctx.var("b"));
+let builder = bdd_builder!();
+let from_bdd: Cover<Symbol, Anonymous> = Cover::from(builder.var("a") & builder.var("b"));
 let from_expr: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b").unwrap());
 
 assert_eq!(from_bdd.num_outputs(), 1);
@@ -438,10 +438,10 @@ and minimising once optimises them together:
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&(a & b), "p")?;
@@ -458,7 +458,7 @@ println!("q = {q}");
 # }
 ```
 
-[`Cover::add_expr`] is the syntactic counterpart, building each expression through a temporary context:
+[`Cover::add_expr`] is the syntactic counterpart, building each expression through a temporary builder:
 
 ```rust
 use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
@@ -515,9 +515,9 @@ println!("{factored}");
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 
 let xor = a ^ b;
 assert!(xor.equivalent_to((a & !b) | (!a & b)));
@@ -532,13 +532,13 @@ assert!(xnor.equivalent_to((a & b) | (!a & !b)));
 use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
-let c = ctx.var("c");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
 
 let majority = (a & b) | (b & c) | (a & c);
-let parsed = ctx.build(&BoolExpr::parse("a & b | b & c | a & c")?);
+let parsed = builder.build(&BoolExpr::parse("a & b | b & c | a & c")?);
 assert!(majority.equivalent_to(parsed));
 # Ok(())
 # }
@@ -549,9 +549,9 @@ assert!(majority.equivalent_to(parsed));
 ```rust
 use espresso_logic::bdd_builder;
 
-let ctx = bdd_builder!();
-let a = ctx.var("a");
-let b = ctx.var("b");
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
 
 assert!((!(a & b)).equivalent_to(!a | !b));
 assert!((!(a | b)).equivalent_to(!a & !b));

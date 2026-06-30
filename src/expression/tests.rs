@@ -9,11 +9,11 @@ use super::BoolExpr;
 use std::collections::HashSet;
 
 /// Whether two expressions denote the same Boolean function. `BoolExpr` equality is *syntactic*, so
-/// semantic equivalence is checked through the canonical BDD layer: both are built into one context and
+/// semantic equivalence is checked through the canonical BDD layer: both are built into one builder and
 /// compared by `equivalent_to` (an O(1) canonical-root comparison).
 fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
-    let ctx = crate::bdd_builder!();
-    ctx.build(a).equivalent_to(ctx.build(b))
+    let builder = crate::bdd_builder!();
+    builder.build(a).equivalent_to(builder.build(b))
 }
 
 // ---- Construction and structural equality ---------------------------------------------------------
@@ -96,16 +96,16 @@ fn operators_match_named_methods() {
 #[test]
 fn operators_build_the_expected_functions() {
     // The bitwise operators construct the corresponding Boolean functions; checked canonically by
-    // building into a context (evaluation/equivalence are BDD-layer concerns — see `bdd::tests`).
+    // building into a builder (evaluation/equivalence are BDD-layer concerns — see `bdd::tests`).
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let ctx = crate::bdd_builder!();
-    let (ba, bb) = (ctx.var("a"), ctx.var("b"));
+    let builder = crate::bdd_builder!();
+    let (ba, bb) = (builder.var("a"), builder.var("b"));
 
-    assert!(ctx.build(&(&a & &b)).equivalent_to(ba & bb));
-    assert!(ctx.build(&(&a | &b)).equivalent_to(ba | bb));
-    assert!(ctx.build(&(&a ^ &b)).equivalent_to(ba ^ bb));
-    assert!(ctx.build(&!&a).equivalent_to(!ba));
+    assert!(builder.build(&(&a & &b)).equivalent_to(ba & bb));
+    assert!(builder.build(&(&a | &b)).equivalent_to(ba | bb));
+    assert!(builder.build(&(&a ^ &b)).equivalent_to(ba ^ bb));
+    assert!(builder.build(&!&a).equivalent_to(!ba));
 }
 
 // ---- Folding over tokens --------------------------------------------------------------------------
@@ -218,27 +218,27 @@ fn variables_are_syntactic() {
 
 #[test]
 fn bdd_build_matches_parse() {
-    let ctx = crate::bdd_builder!();
+    let builder = crate::bdd_builder!();
     let f = BoolExpr::var("a") & BoolExpr::var("b") | BoolExpr::var("c");
-    let built = ctx.build(&f);
-    let parsed = ctx.parse("a & b | c").unwrap();
+    let built = builder.build(&f);
+    let parsed = builder.parse("a & b | c").unwrap();
     assert!(built.equivalent_to(parsed));
 }
 
 #[test]
 fn bdd_build_canonicalises_commutativity() {
-    let ctx = crate::bdd_builder!();
+    let builder = crate::bdd_builder!();
     // a & b and b & a are different BoolExpr values but the same Bdd.
-    let ab = ctx.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
-    let ba = ctx.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
+    let ab = builder.build(&(BoolExpr::var("a") & BoolExpr::var("b")));
+    let ba = builder.build(&(BoolExpr::var("b") & BoolExpr::var("a")));
     assert!(ab.equivalent_to(ba));
 }
 
 #[test]
 fn to_expr_round_trips_semantically() {
-    let ctx = crate::bdd_builder!();
+    let builder = crate::bdd_builder!();
     let f = (BoolExpr::var("a") & BoolExpr::var("b")) | (BoolExpr::var("a") & BoolExpr::var("c"));
-    let bdd = ctx.build(&f);
+    let bdd = builder.build(&f);
     let recovered = bdd.to_expr();
     // to_expr is factored/syntactic, so compare semantically through the BDD layer.
     assert!(equivalent(&f, &recovered));
@@ -246,7 +246,7 @@ fn to_expr_round_trips_semantically() {
 
 #[test]
 fn sync_context_build_works() {
-    let ctx = crate::sync_bdd_builder!();
+    let builder = crate::sync_bdd_builder!();
     let f = BoolExpr::var("a") ^ BoolExpr::var("b");
-    assert!(ctx.build(&f).equivalent_to(ctx.parse("a ^ b").unwrap()));
+    assert!(builder.build(&f).equivalent_to(builder.parse("a ^ b").unwrap()));
 }

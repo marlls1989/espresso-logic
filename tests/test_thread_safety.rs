@@ -281,18 +281,18 @@ fn concurrent_shared_manager_building_stays_canonical() {
     use espresso_logic::{sync_bdd_builder, Bdd, BoolExpr, Brand, SyncBddBuilder};
 
     // A suite of varied shapes over shared variable names, exercising var/and/or/not/xor/ite, the
-    // expression `build`, and the parser — all against the one shared context.
-    fn build_suite<B: Brand>(ctx: &SyncBddBuilder<B>) -> Vec<Bdd<'_, B>> {
-        let a = ctx.var("share_a");
-        let b = ctx.var("share_b");
-        let c = ctx.var("share_c");
+    // expression `build`, and the parser — all against the one shared builder.
+    fn build_suite<B: Brand>(builder: &SyncBddBuilder<B>) -> Vec<Bdd<'_, B>> {
+        let a = builder.var("share_a");
+        let b = builder.var("share_b");
+        let c = builder.var("share_c");
         vec![
             (a ^ b) ^ c,             // XOR chain
             (a & b) | (b & c) | (a & c), // majority
-            ctx.parse("share_a * share_b + ~share_c").unwrap(),
+            builder.parse("share_a * share_b + ~share_c").unwrap(),
             // Same function as the parsed entry above, but constructed via owned `BoolExpr` operators
-            // and fed through `ctx.build`; canonicity means it must reduce to the same root.
-            ctx.build(
+            // and fed through `builder.build`; canonicity means it must reduce to the same root.
+            builder.build(
                 &((BoolExpr::var("share_a") & BoolExpr::var("share_b")) | !BoolExpr::var("share_c")),
             ),
             a.ite(b, c),
@@ -302,20 +302,20 @@ fn concurrent_shared_manager_building_stays_canonical() {
     const THREADS: usize = 16;
     const ITERS: usize = 200;
 
-    // One thread-safe context, shared by reference across every worker (`SyncBddBuilder` is Send + Sync).
-    let ctx = sync_bdd_builder!();
+    // One thread-safe builder, shared by reference across every worker (`SyncBddBuilder` is Send + Sync).
+    let builder = sync_bdd_builder!();
 
     // Reference built on the main thread.
-    let reference = build_suite(&ctx);
+    let reference = build_suite(&builder);
 
     thread::scope(|scope| {
         let handles: Vec<_> = (0..THREADS)
             .map(|_| {
                 scope.spawn(|| {
                     // Re-build the suite many times under contention; return the last for the check.
-                    let mut last = build_suite(&ctx);
+                    let mut last = build_suite(&builder);
                     for _ in 1..ITERS {
-                        last = build_suite(&ctx);
+                        last = build_suite(&builder);
                     }
                     last
                 })
@@ -330,7 +330,7 @@ fn concurrent_shared_manager_building_stays_canonical() {
             for (got, want) in suite.iter().zip(reference.iter()) {
                 assert!(
                     got.equivalent_to(*want),
-                    "concurrent builds against the shared context must yield identical canonical BDDs"
+                    "concurrent builds against the shared builder must yield identical canonical BDDs"
                 );
             }
         }

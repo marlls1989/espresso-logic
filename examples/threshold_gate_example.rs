@@ -459,11 +459,11 @@ fn main() -> std::io::Result<()> {
     println!();
 
     // Logical equality is now a canonical BDD comparison: build both expressions
-    // in a shared context and compare the resulting handles.
-    let ctx = bdd_builder!();
-    if ctx
+    // in a shared builder and compare the resulting handles.
+    let builder = bdd_builder!();
+    if builder
         .build(&min_next_q_v1)
-        .equivalent_to(ctx.build(&min_next_q_v2))
+        .equivalent_to(builder.build(&min_next_q_v2))
     {
         println!("✓ Both formulations are logically equivalent!");
         println!("  - Version 1: (activation | q) & !deactivation");
