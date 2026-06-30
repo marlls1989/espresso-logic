@@ -190,11 +190,11 @@ the fixed variables; [`Bdd::evaluate`] restricts the function by each fixed vari
 therefore always yields `Ok`:
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, Minterm, Symbol, Symbols};
 
-let expr = BoolExpr::var("a") & BoolExpr::var("b") | !BoolExpr::var("a");
 let builder = bdd_builder!();
-let f = builder.build(&expr);
+// The expression is only needed as a function here, so build the BDD directly.
+let f = builder.parse("a & b | !a").unwrap();
 
 let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
 
@@ -300,6 +300,22 @@ let f = a & b;            // handles are Clone (a refcount bump), not Copy
 assert!(f.equivalent_to(&(builder.var("a") & builder.var("b"))));
 ```
 
+A handle keeps its manager alive, so it can outlive the builder. Recover a builder onto the same
+manager — and the same brand — with [`Bdd::builder`]:
+
+```rust
+use espresso_logic::bdd_builder;
+
+// Build a handle, then drop the builder that made it.
+let a = {
+    let builder = bdd_builder!();
+    builder.var("a")
+};
+// Recover a builder onto the same manager and keep building; equal functions are the identical handle.
+let builder = a.builder();
+assert!(builder.var("a").equivalent_to(&a));
+```
+
 An optional readable brand name appears in mismatch diagnostics; each call still mints a distinct
 brand even when two are named the same:
 
@@ -330,6 +346,19 @@ let parsed = builder.parse("a & b")?;     // parse and build in one step
 assert!(from_expr.equivalent_to(&parsed));
 # Ok(())
 # }
+```
+
+For allocation-free composition, [`BddBuilder::scope`] hands a closure a [`Scope`] of `Copy`,
+by-reference [`ScopedBdd`] handles: the operators compose them in place with no `.clone()`, and only the
+owned [`Bdd`] for the result leaves the closure. [`Scope::lift`] splices an existing owned handle in.
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+// (a ^ b) & !c, composed from Copy handles — no `.clone()`, an operand may be reused for free.
+let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
+assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
 ```
 
 ### Operations
@@ -604,16 +633,18 @@ assert!(xnor.equivalent_to(&((a.clone() & b.clone()) | (!a & !b))));
 ### Majority function
 
 ```rust
-use espresso_logic::{bdd_builder, BoolExpr};
+use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let builder = bdd_builder!();
-let a = builder.var("a");
-let b = builder.var("b");
-let c = builder.var("c");
-
-let majority = (a.clone() & b.clone()) | (b & c.clone()) | (a & c);
-let parsed = builder.build(&BoolExpr::parse("a & b | b & c | a & c")?);
+// Compose in a scope: the handles are Copy, so each variable is named twice with no `.clone()`.
+let majority = builder.scope(|s| {
+    let a = s.var("a");
+    let b = s.var("b");
+    let c = s.var("c");
+    (a & b) | (b & c) | (a & c)
+});
+let parsed = builder.parse("a & b | b & c | a & c")?;
 assert!(majority.equivalent_to(&parsed));
 # Ok(())
 # }
@@ -683,7 +714,12 @@ match cover.minimize() {
 [`Bdd::to_minterms`]: crate::bdd::Bdd::to_minterms
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
+[`Bdd::builder`]: crate::bdd::Bdd::builder
 [`BddBuilder`]: crate::bdd::BddBuilder
+[`BddBuilder::scope`]: crate::bdd::BddBuilder::scope
+[`Scope`]: crate::bdd::Scope
+[`Scope::lift`]: crate::bdd::Scope::lift
+[`ScopedBdd`]: crate::bdd::ScopedBdd
 [`Cover`]: crate::Cover
 [`Minterm`]: crate::Minterm
 [`Cover::add_bdd`]: crate::Cover::add_bdd

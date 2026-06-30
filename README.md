@@ -31,7 +31,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-espresso-logic = "4.2"
+espresso-logic = "5.0"
 ```
 
 ### Boolean Expression Minimisation
@@ -133,21 +133,25 @@ quantification, tautology checks — build expressions into a BDD. A builder own
 and hands out `Bdd` handles branded to it, so handles from two different builders cannot be mixed (a
 compile error, not a runtime check). Mint one with `bdd_builder!` (single-threaded) or
 `sync_bdd_builder!` (`Send + Sync`); a `Bdd` handle is `Clone` and itself `Send`/`Sync` under the
-sync builder.
+sync builder. It also keeps its manager alive, so a handle can outlive the builder — recover a builder
+onto the same manager with `handle.builder()`.
 
 ```rust
 use espresso_logic::{bdd_builder, Minimizable};
 
 let builder = bdd_builder!();
-let a = builder.var("a");
-let b = builder.var("b");
 
-// Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
-let f = a.clone() & b.clone();
+// Compose without `.clone()` in a scope: `ScopedBdd` handles are `Copy`, so operands compose in place
+// (and may be reused). The BDD layer canonicalises, so logical laws hold.
+let f = builder.scope(|s| s.var("a") & s.var("b"));
 assert!(f.equivalent_to(&builder.parse("a & b").unwrap()));
-assert!((a.clone() | !a.clone()).is_tautology());
+assert!(builder.scope(|s| { let a = s.var("a"); a | !a }).is_tautology());
 
 let minimised = f.minimize().unwrap();        // minimise the function to a cover
+
+// A stored handle can recover a builder onto its manager and seed further construction.
+let g = f.builder().parse("a | b").unwrap();
+assert!(g.equivalent_to(&builder.parse("a | b").unwrap()));
 ```
 
 ### Cover - For Truth Tables and Multi-Output Functions

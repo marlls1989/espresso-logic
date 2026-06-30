@@ -115,18 +115,22 @@
 //! [`bdd_builder!`](crate::bdd_builder):
 //!
 //! ```
-//! use espresso_logic::{bdd_builder, BoolExpr};
+//! use espresso_logic::bdd_builder;
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
 //! let builder = bdd_builder!();
 //! let a = builder.var("a");
 //! let b = builder.var("b");
 //!
-//! // Handles are Clone (a refcount bump); the BDD layer canonicalises, so logical laws hold.
-//! assert!((a.clone() & b.clone()).equivalent_to(&(b.clone() & a.clone())));
-//! assert!((a.clone() | !a.clone()).is_tautology());
+//! // Compose without `.clone()` in a `scope`: `ScopedBdd` handles are `Copy`. The BDD layer
+//! // canonicalises, so logical laws hold — `a & b` and `b & a` are the same function, and `a | !a`
+//! // (the handle reused, no clone) is a tautology.
+//! let ab = builder.scope(|s| s.var("a") & s.var("b"));
+//! let ba = builder.scope(|s| s.var("b") & s.var("a"));
+//! assert!(ab.equivalent_to(&ba));
+//! assert!(builder.scope(|s| { let a = s.var("a"); a | !a }).is_tautology());
 //!
-//! // Build a parsed expression into the same builder and compare functions.
+//! // A single by-value combination of owned handles needs no builder; compare against a parse.
 //! let parsed = builder.parse("a & b")?;
 //! assert!((a & b).equivalent_to(&parsed));
 //! # Ok(())
@@ -457,12 +461,12 @@ pub(crate) use impl_binary_operator;
 ///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
 /// ```
-/// use espresso_logic::{bdd_builder, BoolExpr};
+/// use espresso_logic::bdd_builder;
 ///
 /// let builder = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a & b).equivalent_to(&builder.build(&BoolExpr::parse("a & b").unwrap())));
+/// assert!((a & b).equivalent_to(&builder.parse("a & b").unwrap()));
 /// ```
 #[macro_export]
 macro_rules! bdd_builder {
@@ -486,12 +490,12 @@ macro_rules! bdd_builder {
 /// two builders never mix (a compile error).
 ///
 /// ```
-/// use espresso_logic::{sync_bdd_builder, BoolExpr};
+/// use espresso_logic::sync_bdd_builder;
 ///
 /// let builder = sync_bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
-/// assert!((a | b).equivalent_to(&builder.build(&BoolExpr::parse("a | b").unwrap())));
+/// assert!((a | b).equivalent_to(&builder.parse("a | b").unwrap()));
 /// ```
 #[macro_export]
 macro_rules! sync_bdd_builder {

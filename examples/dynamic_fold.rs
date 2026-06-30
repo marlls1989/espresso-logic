@@ -44,6 +44,20 @@ fn main() {
         conj_bdd.equivalent_to(&reversed)
     );
 
+    // 3. The same canonical function through a scope. A `ScopedBdd` is Copy, so the fold composes the
+    //    handles in place — no refcount bump per `&` — and one owned `Bdd` is materialised at the end.
+    let conj_scoped = builder.scope(|s| {
+        names
+            .iter()
+            .map(|n| s.var(*n))
+            .reduce(|x, y| x & y)
+            .unwrap()
+    });
+    println!(
+        "scope fold     : matches the owned fold: {}",
+        conj_scoped.equivalent_to(&conj_bdd)
+    );
+
     // The two layers answer different questions:
     //  - keep `conj_expr` to display, persist, or minimise the expression as written;
     //  - keep `conj_bdd` to ask about the function (equivalence, evaluation, cofactors).
