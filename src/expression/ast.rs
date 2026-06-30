@@ -163,19 +163,6 @@ impl BoolExpr {
         )
     }
 
-    /// Fold over an AST bottom-up.
-    ///
-    /// The no-top-down-context special case of [`fold_with_context_ast`](Self::fold_with_context_ast):
-    /// a unit context flows down (a trivial `descend`) and `f` is the bottom-up `combine`. Routing
-    /// through the one iterative work-stack keeps the de-recursion logic in a single place. `pub(super)`
-    /// so sibling modules (e.g. factorisation's `ast_to_expr`) can reuse it.
-    pub(super) fn fold_ast<T, F>(ast: &BoolExprAst, f: &F) -> T
-    where
-        F: Fn(ExprNode<T>) -> T,
-    {
-        Self::fold_with_context_ast(ast, (), &|_node, _ctx| ((), ()), &|node, ()| f(node))
-    }
-
     /// Fold with a context that flows **top-down** through the tree.
     ///
     /// Unlike [`fold`], which only carries results bottom-up from children to parents, this carries
