@@ -313,6 +313,6 @@ mod tests {
         });
         // N variables + (N - 1) AND tokens.
         assert_eq!(built.tokens().len(), N + (N - 1));
-        assert_eq!(built.variables().len(), N);
+        assert_eq!(built.variables().count(), N);
     }
 }

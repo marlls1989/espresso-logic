@@ -124,7 +124,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     let minimized = cover.to_expr("out").unwrap();
 
     // After minimisation, should have only a and b (c is absorbed)
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 2);
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
@@ -268,7 +268,7 @@ fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
     // After Espresso minimisation: still 1 cube (BDD already optimised it)
     assert_eq!(cover.num_cubes(), 1);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains("a"));
 
@@ -292,7 +292,7 @@ fn test_minimize_consensus() -> Result<(), Box<dyn std::error::Error>> {
     // After Espresso minimisation: still 2 cubes (BDD already optimised it)
     assert_eq!(cover.num_cubes(), 2);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 3);
 
     Ok(())
@@ -315,7 +315,7 @@ fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
     // After Espresso minimisation: still 1 cube (BDD already optimised it)
     assert_eq!(cover.num_cubes(), 1);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains("a"));
 
@@ -344,7 +344,10 @@ fn test_complex_parentheses() {
     assert_eq!(cover2.num_inputs(), 3);
 
     // Both should have same variables
-    assert_eq!(expr1.variables(), expr2.variables());
+    assert_eq!(
+        expr1.variables().collect::<std::collections::BTreeSet<_>>(),
+        expr2.variables().collect::<std::collections::BTreeSet<_>>()
+    );
 }
 
 #[test]
@@ -365,12 +368,18 @@ fn test_nested_parentheses_operators() {
 
     // Compare with parser
     let expr2 = BoolExpr::parse("a * (b + c)").unwrap();
-    assert_eq!(expr1.variables(), expr2.variables());
+    assert_eq!(
+        expr1.variables().collect::<std::collections::BTreeSet<_>>(),
+        expr2.variables().collect::<std::collections::BTreeSet<_>>()
+    );
 
     // More complex: (a + b) * (c + d)
     let expr3 = expr!((a | b) & (c | d));
     let expr4 = BoolExpr::parse("(a + b) * (c + d)").unwrap();
-    assert_eq!(expr3.variables(), expr4.variables());
+    assert_eq!(
+        expr3.variables().collect::<std::collections::BTreeSet<_>>(),
+        expr4.variables().collect::<std::collections::BTreeSet<_>>()
+    );
 }
 
 #[test]
@@ -380,7 +389,10 @@ fn test_parentheses_precedence() {
     let expr2 = BoolExpr::parse("a + b * c").unwrap();
 
     // Both have same variables
-    assert_eq!(expr1.variables(), expr2.variables());
+    assert_eq!(
+        expr1.variables().collect::<std::collections::BTreeSet<_>>(),
+        expr2.variables().collect::<std::collections::BTreeSet<_>>()
+    );
 
     // But different structure - verify by converting to PLA via Cover
     let cover1 = {
@@ -416,7 +428,7 @@ fn test_minimize_distributive() -> Result<(), Box<dyn std::error::Error>> {
     // After Espresso minimisation: stays at 2 cubes (already minimal)
     assert_eq!(cover.num_cubes(), 2);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 3);
 
     Ok(())
@@ -439,7 +451,7 @@ fn test_complex_minimize_real_world() -> Result<(), Box<dyn std::error::Error>> 
     // After Espresso minimisation: should reduce further
     assert!(cover.num_cubes() <= cubes_before);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 4);
 
     Ok(())
@@ -463,7 +475,7 @@ fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
     // After Espresso minimisation: still 1 cube (BDD already optimised it to ~a)
     assert_eq!(cover.num_cubes(), 1);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 1);
     assert!(vars.contains("a"));
 
@@ -508,7 +520,7 @@ fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> 
     // After Espresso minimisation: still 2 cubes (BDD already optimised it)
     assert_eq!(cover.num_cubes(), 2);
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert_eq!(vars.len(), 3);
 
     Ok(())
@@ -525,7 +537,7 @@ fn test_cover_empty_to_expr() {
     assert_eq!(expr_str, "0");
 
     // Verify it's actually a constant false
-    let vars = expr.variables();
+    let vars: std::collections::BTreeSet<_> = expr.variables().collect();
     assert_eq!(vars.len(), 0);
 }
 

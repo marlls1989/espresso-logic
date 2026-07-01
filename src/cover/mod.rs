@@ -120,7 +120,7 @@ pub use error::{AddExprError, ArityMismatch, CoverError, DuplicateLabel, ToExprE
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
-pub use minterm::{Minterm, MintermIter};
+pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
 pub use output_set::OutputSet;
 pub use symbols::Symbols;
 
@@ -603,6 +603,15 @@ impl<I, O> Cover<I, O> {
                 .filter(|cube| cube.cube_type() == CubeType::F)
                 .count()
         }
+    }
+
+    /// The cube at raw storage index `index`, or `None` if out of range.
+    ///
+    /// Unlike [`cubes`](Self::cubes) this does **not** apply the cover-type filter: it indexes the
+    /// backing storage directly (all cubes, in insertion order). Crate-internal; used where the caller
+    /// knows the cover holds a single cube type (e.g. an `F` cover), so raw and filtered order coincide.
+    pub(crate) fn cube_at(&self, index: usize) -> Option<&Cube<I, O>> {
+        self.cubes.get(index)
     }
 
     /// Get the cover type (F, FD, FR, or FDR)

@@ -209,17 +209,18 @@ assert_eq!(f.evaluate(&assignment), Ok(true));
 
 ### Syntactic variables
 
-[`BoolExpr::variables`] returns the variables that occur in the expression's text, as a
-`BTreeSet<Symbol>` in sorted order. This is a syntactic scan: `a & !a` still reports `a`, even though
-the function does not depend on it. For the semantic support of a function, build a `Bdd` and use
-[`Bdd::collect_variables`].
+[`BoolExpr::variables`] returns the variables that occur in the expression's text, as a lazy iterator
+that yields each variable once (deduplicated) in token order — not sorted. This is a syntactic scan:
+`a & !a` still reports `a`, even though the function does not depend on it. For the semantic support of a
+function, build a `Bdd` and use [`Bdd::variables`].
 
 ```rust
 use espresso_logic::{BoolExpr, Symbol};
 use std::collections::BTreeSet;
 
 let expr = BoolExpr::parse("x & y | z").unwrap();
-let vars: BTreeSet<Symbol> = expr.variables();
+// Collect into a `BTreeSet` for sorted, deduplicated comparison.
+let vars: BTreeSet<Symbol> = expr.variables().collect();
 let names: Vec<String> = vars.iter().map(|s| s.to_string()).collect();
 assert_eq!(names, ["x", "y", "z"]);
 ```
@@ -444,7 +445,7 @@ let f = (a.clone() & b.clone()) | (!a & b);
 // f depends only on b after canonicalisation.
 assert_eq!(f.var_count(), 1);
 assert_eq!(
-    f.collect_variables().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    f.variables().map(|s| s.to_string()).collect::<Vec<_>>(),
     ["b"]
 );
 let _ = f.node_count();
@@ -467,7 +468,7 @@ let cover = f.to_cubes();
 assert_eq!(cover.num_outputs(), 1);
 
 // One fully-assigned minterm over [a, b]: a=1, b=1.
-let minterms = f.to_minterms(&["a", "b"]);
+let minterms: Vec<_> = f.to_minterms(&["a", "b"]).collect();
 assert_eq!(minterms.len(), 1);
 ```
 
@@ -709,7 +710,7 @@ match cover.minimize() {
 [`Bdd::cofactor`]: crate::bdd::Bdd::cofactor
 [`Bdd::forall`]: crate::bdd::Bdd::forall
 [`Bdd::exists`]: crate::bdd::Bdd::exists
-[`Bdd::collect_variables`]: crate::bdd::Bdd::collect_variables
+[`Bdd::variables`]: crate::bdd::Bdd::variables
 [`Bdd::to_cubes`]: crate::bdd::Bdd::to_cubes
 [`Bdd::to_minterms`]: crate::bdd::Bdd::to_minterms
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize

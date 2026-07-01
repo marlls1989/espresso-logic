@@ -379,15 +379,16 @@ pub mod sys;
 
 // Re-export high-level public API
 pub use bdd::{
-    Bdd, BddBuilder, BddNode, Brand, LocalCell, ManagerCell, Scope, ScopedBdd, SyncCell,
+    Bdd, BddBuilder, BddMinterms, BddNode, BddVariables, Brand, LocalCell, ManagerCell, Scope,
+    ScopedBdd, SyncCell,
 };
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
-    Anonymous, Cover, CoverType, Cube, CubeType, Label, Minimizable, Minterm, OutputSet,
-    ReconcilableLabel, StringLabel, Symbols,
+    Anonymous, Cover, CoverType, Cube, CubeType, Disagreement, ExpandedMinterms, Label,
+    Minimizable, Minterm, MintermIter, OutputSet, ReconcilableLabel, StringLabel, Symbols,
 };
-pub use espresso::EspressoConfig;
-pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode};
+pub use espresso::{EspressoConfig, EspressoCubes};
+pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables};
 pub use symbol::Symbol;
 
 /// Build a [`BoolExpr`] from infix Boolean syntax.

@@ -53,7 +53,6 @@ pub use builder::{Expr, ExprBuilder};
 use crate::Symbol;
 use rpn::Token;
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// An owned, syntactic Boolean expression.
@@ -120,23 +119,56 @@ impl BoolExpr {
         &self.tokens
     }
 
-    /// The variables appearing syntactically in this expression, in canonical (sorted) order.
+    /// The variables appearing syntactically in this expression, as a lazy [`ExprVariables`] iterator.
     ///
     /// This is a purely **syntactic** scan of the token stream: a variable is reported if it occurs in
     /// the expression's text, regardless of whether the function actually depends on it (e.g. `a & !a`
-    /// still reports `a`). For the semantic support of a function, build a [`Bdd`](crate::bdd::Bdd) and
-    /// use [`Bdd::collect_variables`](crate::bdd::Bdd::collect_variables).
+    /// still reports `a`). Each variable is yielded once (deduplicated) the first time it is seen, in
+    /// token order — not sorted. For the semantic support of a function, build a [`Bdd`](crate::bdd::Bdd)
+    /// and use [`Bdd::variables`](crate::bdd::Bdd::variables).
     #[must_use]
-    pub fn variables(&self) -> BTreeSet<Symbol> {
-        self.tokens
-            .iter()
-            .filter_map(|t| match t {
-                Token::Var(name) => Some(name.clone()),
-                _ => None,
-            })
-            .collect()
+    pub fn variables(&self) -> ExprVariables<'_> {
+        ExprVariables {
+            tokens: self.tokens.iter(),
+            seen: std::collections::HashSet::new(),
+        }
     }
 }
+
+/// Lazy iterator over the variables appearing syntactically in a [`BoolExpr`], created by
+/// [`BoolExpr::variables`].
+///
+/// Scans the reverse-Polish token stream, yielding each variable [`Symbol`] the first time it is seen
+/// (deduplicated via a running seen-set) in token order — nothing is sorted or materialised up front.
+pub struct ExprVariables<'a> {
+    tokens: std::slice::Iter<'a, Token>,
+    seen: std::collections::HashSet<Symbol>,
+}
+
+/// Opaque: the token cursor and seen-set carry no useful `Debug`.
+impl std::fmt::Debug for ExprVariables<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExprVariables").finish_non_exhaustive()
+    }
+}
+
+impl Iterator for ExprVariables<'_> {
+    type Item = Symbol;
+
+    fn next(&mut self) -> Option<Symbol> {
+        for token in self.tokens.by_ref() {
+            if let Token::Var(name) = token {
+                if self.seen.insert(name.clone()) {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
+    }
+}
+
+// Once the token stream is exhausted the cursor stays exhausted, so `None` is terminal.
+impl std::iter::FusedIterator for ExprVariables<'_> {}
 
 #[cfg(test)]
 mod tests;

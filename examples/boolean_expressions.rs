@@ -18,7 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // XOR function: a & !b | !a & b
     let xor = expr!("a" & !"b" | !"a" & "b");
     println!("   XOR = a & !b | !a & b");
-    println!("   Variables: {:?}", xor.variables());
+    println!(
+        "   Variables: {:?}",
+        xor.variables().collect::<std::collections::BTreeSet<_>>()
+    );
     let mut xor_cover = Cover::new(CoverType::F);
     xor_cover.add_expr(&xor, "xor")?;
     println!(
@@ -32,7 +35,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("2. Parsing from String:");
     let parsed_expr = BoolExpr::parse("(a | b) & (c | d)")?;
     println!("   Expression: (a | b) & (c | d)");
-    println!("   Variables: {:?}", parsed_expr.variables());
+    println!(
+        "   Variables: {:?}",
+        parsed_expr
+            .variables()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     let mut parsed_cover = Cover::new(CoverType::F);
     parsed_cover.add_expr(&parsed_expr, "parsed")?;
     println!(
@@ -46,7 +54,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("3. Complex Expression with Negation:");
     let complex = BoolExpr::parse("!(a & b) | (c & !d)")?;
     println!("   Expression: !(a & b) | (c & !d)");
-    println!("   Variables: {:?}", complex.variables());
+    println!(
+        "   Variables: {:?}",
+        complex
+            .variables()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     println!();
 
     // Example 4: Minimisation
@@ -56,7 +69,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redundant = expr!("a" & "b" | "a" & "b" & "c");
 
     println!("   Before minimisation:");
-    println!("      Variables: {:?}", redundant.variables());
+    println!(
+        "      Variables: {:?}",
+        redundant
+            .variables()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
 
     let mut redundant_cover = Cover::new(CoverType::F);
     redundant_cover.add_expr(&redundant, "out")?;
@@ -115,7 +133,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("8. Expressions with Constants:");
     let expr_with_const = BoolExpr::parse("a & 1 | 0 & b")?;
     println!("   Expression: a & 1 | 0 & b");
-    println!("   Variables: {:?}", expr_with_const.variables());
+    println!(
+        "   Variables: {:?}",
+        expr_with_const
+            .variables()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     println!();
 
     // Example 9: De Morgan's laws in action

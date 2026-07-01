@@ -33,7 +33,7 @@
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].
 //! - Materialisation: [`Bdd::to_cubes`] (a single-output sum-of-products cover), [`Bdd::to_minterms`]
 //!   (fully-expanded minterms over an explicit, widenable variable set), and [`Bdd::minimize`].
-//! - Introspection: [`Bdd::collect_variables`], [`Bdd::node_count`], [`Bdd::var_count`].
+//! - Introspection: [`Bdd::variables`], [`Bdd::node_count`], [`Bdd::var_count`].
 //!
 //! # Construction
 //!
@@ -56,7 +56,7 @@ mod scope;
 pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
 pub use brand::Brand;
 pub use builder::BddBuilder;
-pub use handle::{Bdd, BddNode};
+pub use handle::{Bdd, BddMinterms, BddNode, BddVariables};
 pub use scope::{Scope, ScopedBdd};
 
 /// Items the `bdd_builder!` / `sync_bdd_builder!` macros need to name at their (possibly downstream)

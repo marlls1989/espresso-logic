@@ -678,7 +678,7 @@ fn test_to_expr_basic() {
     let retrieved = cover.to_expr("result").unwrap();
 
     // Should be able to collect variables
-    let vars = retrieved.variables();
+    let vars: std::collections::BTreeSet<_> = retrieved.variables().collect();
     assert_eq!(vars.len(), 2);
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
@@ -717,8 +717,8 @@ fn test_to_expr_by_index() {
     let expr0 = cover.to_expr_by_index(0).unwrap();
     let expr1 = cover.to_expr_by_index(1).unwrap();
 
-    assert_eq!(expr0.variables().len(), 1);
-    assert_eq!(expr1.variables().len(), 1);
+    assert_eq!(expr0.variables().count(), 1);
+    assert_eq!(expr1.variables().count(), 1);
 }
 
 #[test]
@@ -767,9 +767,9 @@ fn test_to_exprs_iterator() {
     assert_eq!(exprs[2].0.as_ref(), "out3");
 
     // Each expression should have one variable
-    assert_eq!(exprs[0].1.variables().len(), 1);
-    assert_eq!(exprs[1].1.variables().len(), 1);
-    assert_eq!(exprs[2].1.variables().len(), 1);
+    assert_eq!(exprs[0].1.variables().count(), 1);
+    assert_eq!(exprs[1].1.variables().count(), 1);
+    assert_eq!(exprs[2].1.variables().count(), 1);
 }
 
 #[test]
@@ -794,11 +794,14 @@ fn to_exprs_works_for_any_string_input_label() {
     let arc_cover: Cover<Arc<str>, Arc<str>> = cover.relabel(in_syms, out_syms).unwrap();
 
     // to_expr_by_index / to_exprs / to_expr all work on an `Arc<str>`-labelled cover.
-    assert_eq!(arc_cover.to_expr_by_index(0).unwrap().variables().len(), 2);
+    assert_eq!(
+        arc_cover.to_expr_by_index(0).unwrap().variables().count(),
+        2
+    );
     let pairs: Vec<_> = arc_cover.to_exprs().collect();
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].0.as_ref(), "out"); // (&O, BoolExpr) — output label borrowed
-    assert_eq!(arc_cover.to_expr("out").unwrap().variables().len(), 2);
+    assert_eq!(arc_cover.to_expr("out").unwrap().variables().count(), 2);
 }
 
 #[test]
@@ -822,7 +825,7 @@ fn test_to_exprs_after_minimization() {
 
     // Should still be able to convert to expression
     let minimized = cover.to_expr("out").unwrap();
-    let vars = minimized.variables();
+    let vars: std::collections::BTreeSet<_> = minimized.variables().collect();
     assert!(vars.len() >= 2); // At least a and b
 }
 
@@ -959,7 +962,7 @@ fn test_complex_expression_with_minimization() {
 
     // Should still be able to convert back
     let minimized = cover.to_expr("consensus").unwrap();
-    assert_eq!(minimized.variables().len(), 3);
+    assert_eq!(minimized.variables().count(), 3);
 }
 
 #[test]
@@ -1810,8 +1813,8 @@ fn test_minimize_preserves_structure() {
     let expr1 = cover.to_expr("out1").unwrap();
     let expr2 = cover.to_expr("out2").unwrap();
 
-    assert!(expr1.variables().len() <= 2);
-    assert!(expr2.variables().len() <= 2);
+    assert!(expr1.variables().count() <= 2);
+    assert!(expr2.variables().count() <= 2);
 }
 
 // ===== Generic label type / anonymous covers (M3) =====
@@ -2093,7 +2096,7 @@ fn from_expr_and_from_bdd_agree() {
     assert_eq!(minterms(&from_bdd), minterms(&from_expr));
 
     // a & b has exactly one ON-set cube fixing a=1, b=1.
-    let expected: BTreeSet<Minterm<Symbol>> = bdd.to_minterms(&["a", "b"]).into_iter().collect();
+    let expected: BTreeSet<Minterm<Symbol>> = bdd.to_minterms(&["a", "b"]).collect();
     assert_eq!(minterms(&from_bdd), expected);
 
     // The owned and borrowed `From<BoolExpr>` forms agree too.
@@ -2140,7 +2143,6 @@ fn cube_expand_to_splits_unconstrained_var() {
             .unwrap();
     let got: std::collections::BTreeSet<_> = cube
         .expand_to(&[Symbol::from("a"), Symbol::from("b")])
-        .into_iter()
         .collect();
     let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
     let want: std::collections::BTreeSet<_> = [
@@ -2161,7 +2163,6 @@ fn cube_expand_to_widens_with_absent_var() {
             .unwrap();
     let got: std::collections::BTreeSet<_> = cube
         .expand_to(&[Symbol::from("a"), Symbol::from("b"), Symbol::from("c")])
-        .into_iter()
         .collect();
     let header = Symbols::new(
         [Symbol::from("a"), Symbol::from("b"), Symbol::from("c")]

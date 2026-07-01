@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (minimized, _d, _r) = f.minimize(None, None);
 
     // Extract and display results
-    let result_cubes = minimized.to_cubes(2, 1, CubeType::F);
+    let result_cubes: Vec<_> = minimized.to_cubes(2, 1, CubeType::F).collect();
 
     println!("Minimized cover ({} cubes):", result_cubes.len());
     for cube in result_cubes.iter() {
