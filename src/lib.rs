@@ -379,8 +379,8 @@ pub mod sys;
 
 // Re-export high-level public API
 pub use bdd::{
-    Bdd, BddBuilder, BddMinterms, BddNode, BddVariables, Brand, LocalCell, ManagerCell, Scope,
-    ScopedBdd, SyncCell,
+    Bdd, BddBuilder, BddNode, BddVariables, Brand, LocalCell, ManagerCell, Scope, ScopedBdd,
+    SyncCell,
 };
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{

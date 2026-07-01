@@ -2096,7 +2096,11 @@ fn from_expr_and_from_bdd_agree() {
     assert_eq!(minterms(&from_bdd), minterms(&from_expr));
 
     // a & b has exactly one ON-set cube fixing a=1, b=1.
-    let expected: BTreeSet<Minterm<Symbol>> = bdd.to_minterms(&["a", "b"]).collect();
+    let expected: BTreeSet<Minterm<Symbol>> = bdd
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     assert_eq!(minterms(&from_bdd), expected);
 
     // The owned and borrowed `From<BoolExpr>` forms agree too.

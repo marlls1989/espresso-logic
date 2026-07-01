@@ -369,8 +369,9 @@ where
     }
 }
 
-impl<I: Label, O: Clone> Cover<I, O> {
-    /// Expand every cube into its fully-assigned minterms over the explicit header `vars`.
+impl<I: StringLabel, O: Clone> Cover<I, O> {
+    /// Expand every cube into its fully-assigned minterms over the explicit header of variable names
+    /// `vars`.
     ///
     /// The inverse of minimisation ("maximise"): each cube's input pattern is re-expressed over `vars`
     /// and every don't-care (and every variable of `vars` absent from the cube) is split into both
@@ -382,8 +383,8 @@ impl<I: Label, O: Clone> Cover<I, O> {
     ///
     /// See [`Cube::expand_to`] / [`Minterm::expand_over`] for the per-cube primitive.
     #[must_use]
-    pub fn maximize(&self, vars: &[I]) -> Cover<I, O> {
-        let target = Symbols::new(vars.iter().cloned().collect());
+    pub fn maximize<S: AsRef<str>>(&self, vars: &[S]) -> Cover<I, O> {
+        let target = Symbols::new(vars.iter().map(|s| I::from(s.as_ref())).collect());
         let mut seen: HashSet<Cube<I, O>> = HashSet::new();
         let mut cubes = Vec::new();
         for cube in &self.cubes {
@@ -603,15 +604,6 @@ impl<I, O> Cover<I, O> {
                 .filter(|cube| cube.cube_type() == CubeType::F)
                 .count()
         }
-    }
-
-    /// The cube at raw storage index `index`, or `None` if out of range.
-    ///
-    /// Unlike [`cubes`](Self::cubes) this does **not** apply the cover-type filter: it indexes the
-    /// backing storage directly (all cubes, in insertion order). Crate-internal; used where the caller
-    /// knows the cover holds a single cube type (e.g. an `F` cover), so raw and filtered order coincide.
-    pub(crate) fn cube_at(&self, index: usize) -> Option<&Cube<I, O>> {
-        self.cubes.get(index)
     }
 
     /// Get the cover type (F, FD, FR, or FDR)

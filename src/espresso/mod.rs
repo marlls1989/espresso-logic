@@ -469,9 +469,18 @@ pub struct EspressoCubes<'a> {
     input_syms: Arc<Symbols<Anonymous>>,
     /// Shared anonymous output header every decoded cube is defined over.
     output_syms: Arc<Symbols<Anonymous>>,
-    num_inputs: usize,
     num_outputs: usize,
     cube_type: CubeType,
+    /// Cube word stride (`set_family.wsize`), snapshotted once — constant for the cover's life.
+    wsize: usize,
+    /// Bit offset of the first output field (`num_inputs * 2`).
+    output_start: usize,
+    /// `u64` words per decoded input minterm (`num_inputs.div_ceil(32)`).
+    input_u64_words: usize,
+    /// BPI-wide cube words spanning the input region (`(2 * num_inputs).div_ceil(BPI)`).
+    input_cube_words: usize,
+    /// Total input bit-width (`2 * num_inputs`), the packing bound for the last `u64`.
+    total_input_bits: usize,
     /// Next cube index to decode, in `0..count`.
     idx: usize,
     /// Total cube count, snapshotted at construction.
@@ -486,10 +495,10 @@ impl EspressoCubes<'_> {
     /// `i` must be `< self.count` and the borrowed cover's `pset_family` must still be live (guaranteed
     /// by the `&EspressoCover` borrow).
     unsafe fn decode(&self, i: usize) -> Cube<Anonymous, Anonymous> {
-        let wsize = (*self.cover.ptr).wsize as usize;
-        let data = (*self.cover.ptr).data;
-        let output_start = self.num_inputs * 2;
-        let cube_ptr = data.add(i * wsize);
+        // The input-packing bounds and `output_start` were computed once at construction; only the base
+        // pointer and per-cube offset are derived here (`wsize` is snapshotted, so this is one deref).
+        let wsize = self.wsize;
+        let cube_ptr = (*self.cover.ptr).data.add(i * wsize);
 
         // Read a single bit from the cube's word array (out-of-range words read as 0), via the C
         // WHICH_WORD/WHICH_BIT layout. Words are `c_uint`, matching Espresso's `unsigned int*`.
@@ -500,19 +509,16 @@ impl EspressoCubes<'_> {
 
         // The input region packs the same 2-bit fields as a minterm, so decode it by a direct
         // word-copy — the inverse of `from_packed_cubes` — instead of reading two bits per variable.
-        let input_u64_words = self.num_inputs.div_ceil(32);
-        let input_cube_words = (2 * self.num_inputs).div_ceil(BPI);
         let cube_words_per_u64 = 64 / BPI;
-        let total_input_bits = 2 * self.num_inputs;
 
         // Assemble each `u64` minterm word from `64 / BPI` BPI-wide cube words, bounded by the input
         // region so the (possibly shared) boundary word's output bits are excluded.
-        let mut iwords = vec![0u64; input_u64_words];
+        let mut iwords = vec![0u64; self.input_u64_words];
         for (k, slot) in iwords.iter_mut().enumerate() {
             let mut word = 0u64;
             for c in 0..cube_words_per_u64 {
                 let cw = k * cube_words_per_u64 + c;
-                if cw < input_cube_words {
+                if cw < self.input_cube_words {
                     let cval = (*cube_ptr.add(cw + 1) as u64) & BPI_MASK;
                     word |= cval << (c * BPI);
                 }
@@ -520,7 +526,7 @@ impl EspressoCubes<'_> {
             // Zero any bits past the input region (the boundary cube word may carry output bits; the
             // last `u64` may have padding past the final variable) so the padding stays canonical for
             // `Eq`/`Hash`.
-            let valid = total_input_bits.saturating_sub(k * 64).min(64);
+            let valid = self.total_input_bits.saturating_sub(k * 64).min(64);
             if valid < 64 {
                 word &= (1u64 << valid) - 1;
             }
@@ -530,7 +536,7 @@ impl EspressoCubes<'_> {
 
         // Decode the output membership — one C bit per output, the same 1-bit-per-output packing as
         // `OutputSet`, so read each bit directly into the bitmap.
-        let outputs = (0..self.num_outputs).map(|out| bit_at(output_start + out));
+        let outputs = (0..self.num_outputs).map(|out| bit_at(self.output_start + out));
         let om = OutputSet::from_symbols(Arc::clone(&self.output_syms), outputs);
 
         Cube::new(im, om, self.cube_type)
@@ -938,14 +944,21 @@ impl EspressoCover {
     ) -> EspressoCubes<'_> {
         // The low-level layer has no variable names, so cubes are anonymous (`I = O = Anonymous`):
         // positional only. Callers that need names re-point the cubes onto a real symbol table.
+        // Snapshot the count and the per-cover decode constants once; `decode` reads these fields
+        // rather than recomputing them (and re-dereferencing the C `set_family`) on every cube.
         let count = unsafe { (*self.ptr).count as usize };
+        let wsize = unsafe { (*self.ptr).wsize as usize };
         EspressoCubes {
             cover: self,
             input_syms: Symbols::<Anonymous>::anonymous(num_inputs),
             output_syms: Symbols::<Anonymous>::anonymous(num_outputs),
-            num_inputs,
             num_outputs,
             cube_type,
+            wsize,
+            output_start: num_inputs * 2,
+            input_u64_words: num_inputs.div_ceil(32),
+            input_cube_words: (2 * num_inputs).div_ceil(BPI),
+            total_input_bits: 2 * num_inputs,
             idx: 0,
             count,
         }

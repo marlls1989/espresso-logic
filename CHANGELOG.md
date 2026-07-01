@@ -20,17 +20,22 @@ minor version.
   - `Minterm::disagreement` → `Disagreement`.
   - `EspressoCover::to_cubes` → `EspressoCubes` (decodes one cube from the C `pset_family` per step).
   - `BoolExpr::variables` → `ExprVariables`.
-  - `Bdd::to_minterms` → `BddMinterms` (expands the cover's cubes on demand).
-  - `Bdd::variables` → `BddVariables`.
-- **Ordering relaxed.** The variable/minterm enumerations no longer guarantee sorted order; they yield
-  in traversal order. `BoolExpr::variables` and `Bdd::variables` still deduplicate; `Bdd::to_minterms`
-  no longer deduplicates — a `vars` header covering the support is duplicate-free regardless (the BDD's
-  paths are disjoint), but a header *omitting* a support variable may now repeat a minterm.
-- Collect the result (`.collect::<Vec<_>>()`, `.collect::<BTreeSet<_>>()`) to recover the previous
-  container, and sort explicitly if you relied on ordering.
+  - `Bdd::variables` → `BddVariables`, now a genuinely lazy incremental graph walk that borrows the
+    `Bdd` and resolves one support variable per step (so `.next()`/`.any(..)`/`.take(n)` skip the rest
+    of the walk); no longer `ExactSizeIterator`/`DoubleEndedIterator`.
+- **`Cover::maximize` takes variable *names*.** It now accepts `&[impl AsRef<str>]` on a `StringLabel`
+  input and builds the target header directly, instead of `&[I]` label values. `&[Symbol]` calls are
+  unaffected (`Symbol: AsRef<str>`); `&["a", "b"]` now works too.
+- **Ordering relaxed.** The variable enumerations (`BoolExpr::variables`, `Bdd::variables`) and the
+  minterm expansions yield in traversal order rather than sorted; they still deduplicate. Collect the
+  result (`.collect::<Vec<_>>()`, `.collect::<BTreeSet<_>>()`) to recover the previous container, and
+  sort explicitly if you relied on ordering.
 
 ### Removed
 
+- **`Bdd::to_minterms`** (returned `Vec<Minterm>`) — replaced by **`Bdd::maximize(&[names]) -> Cover`**,
+  the inverse of `Bdd::minimize`: it returns the fully-expanded, **deduplicated** maximal cover over the
+  given variable names, each cube of which is a minterm (iterate `cover.cubes()`).
 - **`Bdd::collect_variables`** — folded into `Bdd::variables`, which is now the single (iterator)
   accessor for a function's support.
 

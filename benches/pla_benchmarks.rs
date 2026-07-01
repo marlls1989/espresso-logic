@@ -608,8 +608,10 @@ fn bench_api_overhead(c: &mut Criterion) {
                         .collect();
                     let cover = EspressoCover::from_cubes(black_box(&refs), p.ni, p.no).unwrap();
                     let (f, _d, _r) = cover.minimize(None, None);
-                    let cubes = f.to_cubes(p.ni, p.no, CubeType::F);
-                    black_box(cubes);
+                    // Consume the lazy iterator so every cube is actually decoded inside the timed loop.
+                    f.to_cubes(p.ni, p.no, CubeType::F).for_each(|c| {
+                        black_box(c);
+                    });
                 });
             },
         );
