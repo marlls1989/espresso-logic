@@ -66,6 +66,31 @@ pub enum PLAError {
     /// PLA file declares no dimensions: a cube appears before both `.i` and `.o` (which are required
     /// up front — dimensions are never inferred from the cube data)
     MissingDimensions,
+    /// The `.i` directive appears more than once in a PLA file.
+    ///
+    /// C's reference reader (`cvrin.c`) treats a repeated `.i` as a no-op once the dimensions are
+    /// already established — it prints "extra .i ignored" to stderr and skips the rest of the line,
+    /// silently keeping the first declaration. This crate rejects the redeclaration outright instead:
+    /// unlike C's incrementally-mutated global cube state, this parser collects `.ilb` labels and cube
+    /// data against the *first* declared width as it reads, so a later `.i` — whether it repeats the
+    /// same value or changes it, and whether or not cube data has already been read — cannot be
+    /// silently absorbed without risking a mismatched re-interpretation of data already consumed.
+    DuplicateInputDirective,
+    /// The `.o` directive appears more than once in a PLA file — the output-side counterpart of
+    /// [`DuplicateInputDirective`](Self::DuplicateInputDirective); see its documentation for the
+    /// rationale (C ignores the redeclaration, this crate rejects it).
+    DuplicateOutputDirective,
+    /// A `.ilb`/`.ob` label section names the same variable more than once.
+    ///
+    /// [`Symbols`](crate::cover::Symbols) requires a header's identities to be unique so it can
+    /// binary-search over an identity-sorted order; a duplicated label would silently violate that
+    /// invariant and misalign later lookups. Rejected at parse time instead.
+    DuplicateLabel {
+        /// Type of label ("input" or "output")
+        label_type: Arc<str>,
+        /// The name repeated within the label section
+        name: Arc<str>,
+    },
 }
 
 impl fmt::Display for PLAError {
@@ -109,6 +134,15 @@ impl fmt::Display for PLAError {
             ),
             PLAError::MissingDimensions => {
                 write!(f, "PLA file has no dimension information")
+            }
+            PLAError::DuplicateInputDirective => {
+                write!(f, "PLA file declares .i more than once")
+            }
+            PLAError::DuplicateOutputDirective => {
+                write!(f, "PLA file declares .o more than once")
+            }
+            PLAError::DuplicateLabel { label_type, name } => {
+                write!(f, "duplicate {} label '{}'", label_type, name)
             }
         }
     }
@@ -271,6 +305,33 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
         let write_err: PLAWriteError = io_err.into();
         assert!(matches!(write_err, PLAWriteError::Io(_)));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_input_directive() {
+        let err = PLAError::DuplicateInputDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".i"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_output_directive() {
+        let err = PLAError::DuplicateOutputDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".o"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_label() {
+        let err = PLAError::DuplicateLabel {
+            label_type: Arc::from("input"),
+            name: Arc::from("a"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("input"));
+        assert!(msg.contains("'a'"));
     }
 
     #[test]

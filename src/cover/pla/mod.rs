@@ -368,6 +368,17 @@ struct ParsedPla {
     cover_type: CoverType,
 }
 
+/// The first name that repeats within a `.ilb`/`.ob` label list, or `None` if all are distinct.
+/// `Symbols::new` (`src/cover/symbols.rs`) requires a header's identities to be unique; a duplicate
+/// here would otherwise build a `Symbols` that silently violates that invariant.
+fn first_duplicate(labels: &[String]) -> Option<&str> {
+    let mut seen = std::collections::HashSet::with_capacity(labels.len());
+    labels
+        .iter()
+        .find(|label| !seen.insert(label.as_str()))
+        .map(String::as_str)
+}
+
 /// Parse a PLA stream into its raw components (dimensions, optional `.ilb`/`.ob` strings, cubes). The
 /// label type is decided later by [`PlaCover`], so this stays label-type-agnostic.
 fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> {
@@ -403,6 +414,13 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
 
             match parts.first().copied() {
                 Some(".i") => {
+                    // A second `.i` is rejected rather than silently re-assigned (unlike C's "extra
+                    // .i ignored") — see `PLAError::DuplicateInputDirective` for the rationale. This
+                    // also covers a redeclaration after cube data has started: by then `num_inputs` is
+                    // necessarily already `Some`, since a cube line requires it (below).
+                    if num_inputs.is_some() {
+                        return Err(PLAError::DuplicateInputDirective.into());
+                    }
                     let val: usize =
                         parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
                             PLAError::InvalidInputDirective {
@@ -412,6 +430,10 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     num_inputs = Some(val);
                 }
                 Some(".o") => {
+                    // See the `.i` arm above — same rejection, same rationale.
+                    if num_outputs.is_some() {
+                        return Err(PLAError::DuplicateOutputDirective.into());
+                    }
                     let val: usize =
                         parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
                             PLAError::InvalidOutputDirective {
@@ -440,6 +462,13 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     // Parse input labels: .ilb label1 label2 label3 ...
                     let labels: Vec<String> = parts.iter().skip(1).map(|s| s.to_string()).collect();
                     if !labels.is_empty() {
+                        if let Some(name) = first_duplicate(&labels) {
+                            return Err(PLAError::DuplicateLabel {
+                                label_type: Arc::from("input"),
+                                name: Arc::from(name),
+                            }
+                            .into());
+                        }
                         input_labels = Some(labels);
                     }
                 }
@@ -447,6 +476,13 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                     // Parse output labels: .ob label1 label2 label3 ...
                     let labels: Vec<String> = parts.iter().skip(1).map(|s| s.to_string()).collect();
                     if !labels.is_empty() {
+                        if let Some(name) = first_duplicate(&labels) {
+                            return Err(PLAError::DuplicateLabel {
+                                label_type: Arc::from("output"),
+                                name: Arc::from(name),
+                            }
+                            .into());
+                        }
                         output_labels = Some(labels);
                     }
                 }

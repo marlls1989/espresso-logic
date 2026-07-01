@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The PLA reader rejects duplicate `.ilb`/`.ob` labels.** A `.ilb`/`.ob` section naming the same
+  variable twice (e.g. `.ilb a a b`) used to build a `Symbols` table that silently violated its
+  documented uniqueness invariant, misaligning later lookups (`merge`/`relabel`/`push`). It is now
+  rejected at parse time with the new `PLAError::DuplicateLabel` variant.
+- **The PLA reader rejects a mid-file `.i`/`.o` redeclaration.** A repeated `.i`/`.o` directive after
+  cube data had already been read used to overwrite the declared dimensions while the accumulated
+  cube character stream was still split at the old width, mis-splitting subsequent cubes. Any second
+  `.i`/`.o` declaration — before or after cube data — is now rejected with the new
+  `PLAError::DuplicateInputDirective` / `PLAError::DuplicateOutputDirective` variants.
+
 - **Invalid input to the low-level minimiser no longer aborts the process.** The vendored C core
   reports unrecoverable conditions by calling `fatal()`, which printed to stderr and `exit()`ed.
   Some of these are reachable from safe Rust — most notably an explicit OFF-set that overlaps the

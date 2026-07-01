@@ -1600,6 +1600,69 @@ fn malformed_pla_other_errors() {
 }
 
 #[test]
+fn pla_duplicate_labels_are_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .ilb repeats a name: would otherwise build a Symbols whose identity order is no longer
+    // unique, silently misaligning later lookups.
+    assert!(matches!(
+        err(".i 3\n.o 1\n.ilb a a b\n001 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateLabel { label_type, name })
+            if &*label_type == "input" && &*name == "a"
+    ));
+    // Same check on the output side (.ob).
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f f\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateLabel { label_type, name })
+            if &*label_type == "output" && &*name == "f"
+    ));
+
+    // A well-formed file with distinct labels on both sides still parses (no regression).
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 2\n.o 2\n.ilb a b\n.ob f g\n01 10\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::InputsOutputsNamed(_)));
+}
+
+#[test]
+fn pla_dimension_redeclaration_is_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .i re-declared after a cube line has already been read: the already-consumed cube stream was
+    // split at the old width, so silently accepting the new width would mis-split later cubes.
+    assert!(matches!(
+        err(".i 2\n.o 1\n01 1\n.i 2\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputDirective)
+    ));
+    // Same check for .o after a cube line.
+    assert!(matches!(
+        err(".i 2\n.o 1\n01 1\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputDirective)
+    ));
+
+    // .i re-declared before any cube data is read is rejected too: C's reference reader silently
+    // ignores a redundant .i/.o ("extra .i ignored") once cube.fullset is allocated, but this parser
+    // has no equivalent no-op — it would need to distinguish a harmless repeat from a width change
+    // that invalidates label/cube state already read — so any second declaration is a hard error,
+    // regardless of whether cube data has started.
+    assert!(matches!(
+        err(".i 2\n.i 2\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputDirective)
+    ));
+    assert!(matches!(
+        err(".i 2\n.o 1\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputDirective)
+    ));
+
+    // A well-formed file that declares each dimension exactly once still parses (no regression).
+    let cover = PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::Positional(_)));
+}
+
+#[test]
 fn pla_delimiters_match_c_positional_reading() {
     // C's read_cube (cvrin.c) treats space, tab and '|' as insignificant delimiters that may appear
     // anywhere; the input/output boundary is positional, fixed by .i/.o. So '|' is NOT a boundary
