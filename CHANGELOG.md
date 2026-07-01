@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ON-set (a non-orthogonal cover) driving `expand`/`complement` into `fatal()`. A thread-local
   recovery point now catches such a fatal and turns it into an error instead of killing the process;
   the thread stays usable for further minimisations. The standalone C reference binary is unchanged.
+- **Allocation failure during instance creation errors instead of panicking.** `Espresso::try_new`
+  used to `panic!` if the `part_size` array could not be allocated, leaving the thread-local C cube
+  state partially written. It now surfaces the new `InstanceError::AllocationFailure` variant, and
+  the cube state is restored first, so a later call on the same thread is unaffected.
+- **Parse-error positions are consistent byte offsets.** `ExpressionParseError.position` is now
+  extracted structurally from lalrpop's `ParseError` variants as a byte offset into the input; it
+  was previously scraped from the human-readable message text, mixing a 0-indexed column with a raw
+  byte offset depending on which message pattern matched.
+- **MSVC builds no longer fail on the C standard flag.** `build.rs` now probes both `-std=c11` and
+  `/std:c11` and uses whichever the active C compiler supports (C11 `_Thread_local` is required
+  either way).
+
+### Changed
+
+- **Clearer `expr!` diagnostics for invalid operands.** The macro now reports an invalid operand
+  with a message naming the accepted operand forms (a string literal, the constants `0`/`1`, a
+  parenthesised expression, or an expression yielding a `BoolExpr`) at the offending token, instead
+  of syn's generic "expected identifier".
 
 ### Added
 
