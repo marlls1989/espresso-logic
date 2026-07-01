@@ -68,13 +68,14 @@ pub enum PLAError {
     MissingDimensions,
     /// The `.i` directive appears more than once in a PLA file.
     ///
-    /// C's reference reader (`cvrin.c`) treats a repeated `.i` as a no-op once the dimensions are
-    /// already established — it prints "extra .i ignored" to stderr and skips the rest of the line,
-    /// silently keeping the first declaration. This crate rejects the redeclaration outright instead:
-    /// unlike C's incrementally-mutated global cube state, this parser collects `.ilb` labels and cube
-    /// data against the *first* declared width as it reads, so a later `.i` — whether it repeats the
-    /// same value or changes it, and whether or not cube data has already been read — cannot be
-    /// silently absorbed without risking a mismatched re-interpretation of data already consumed.
+    /// C's reference reader (`cvrin.c`) is permissive: it silently overwrites the width if no cube
+    /// data has been read yet, and once dimensions are established it prints "extra .i ignored" to
+    /// stderr and keeps the first declaration. This crate rejects any redeclaration outright. The
+    /// rejection is load-bearing once cube data has begun — the cube stream is split at the current
+    /// input+output width as characters arrive, so changing the width mid-stream would silently
+    /// re-interpret data already consumed — and is applied uniformly before that point too:
+    /// a repeated `.i` signals a malformed or concatenated file, and rejecting it is simpler and
+    /// safer than reproducing C's silent overwrite for a case no well-formed file exercises.
     DuplicateInputDirective,
     /// The `.o` directive appears more than once in a PLA file — the output-side counterpart of
     /// [`DuplicateInputDirective`](Self::DuplicateInputDirective); see its documentation for the
