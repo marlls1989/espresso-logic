@@ -33,30 +33,30 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// The storage backend a BDD builder and its handles share: a cloneable handle to one shared,
-/// interior-mutable [`BddManager`].
+/// interior-mutable `BddManager`.
 ///
 /// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). It is the second of a
 /// handle's two orthogonal type parameters — a [`Brand`](crate::bdd::Brand) marks the namespace, this
-/// cell selects single-threaded or thread-safe storage. The BDD engine in [`manager`](super::manager) is
-/// generic over this trait, so its node-construction and `ite` logic is written exactly once and shared
-/// by both backends.
+/// cell selects single-threaded or thread-safe storage. The BDD engine in the crate's internal `manager`
+/// module is generic over this trait, so its node-construction and `ite` logic is written exactly once
+/// and shared by both backends.
 ///
 /// `Clone` is a refcount bump (`Rc::clone` / `Arc::clone`): every clone shares the same underlying
 /// manager. A [`BddBuilder`](crate::bdd::BddBuilder) owns one cell; each [`Bdd`](crate::bdd::Bdd) handle
 /// it mints holds its own refcounted clone, so a handle keeps its manager alive independently of the
 /// builder.
 pub trait ManagerCell: Clone + cell_seal::Sealed {
-    /// Shared-borrow guard, dereferencing to the [`BddManager`] for read-only access.
+    /// Shared-borrow guard, dereferencing to the `BddManager` for read-only access.
     type ReadGuard<'a>: core::ops::Deref<Target = BddManager>
     where
         Self: 'a;
-    /// Exclusive-borrow guard, dereferencing mutably to the [`BddManager`].
+    /// Exclusive-borrow guard, dereferencing mutably to the `BddManager`.
     type WriteGuard<'a>: core::ops::DerefMut<Target = BddManager>
     where
         Self: 'a;
 
     /// A fresh cell wrapping a manager seeded with the two terminal nodes
-    /// ([`new_empty`](BddManager::new_empty)).
+    /// (`BddManager::new_empty`).
     ///
     /// The canonical BDD layer's [`BddBuilder`](crate::bdd::BddBuilder) mints its cell through this.
     fn new_empty() -> Self;

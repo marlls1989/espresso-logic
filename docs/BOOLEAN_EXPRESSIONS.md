@@ -261,7 +261,7 @@ assert_eq!(format!("{conj}"), "a & b & c & d");
 
 The same fold runs on the [`Bdd`] layer, and for the *function* it is the more efficient tool. A
 builder's handles are `Clone` and canonicalise as they combine, so the fold produces a deduplicated,
-canonical `Bdd`: shared subfunctions are merged, [`equivalent_to`](Bdd::equivalent_to) is O(1), and
+canonical `Bdd`: shared subfunctions are merged, [`equivalent_to`][`Bdd::equivalent_to`] is O(1), and
 repeated combination is cheaper than carrying syntax around.
 
 ```rust
@@ -701,7 +701,9 @@ match cover.minimize() {
 - [PLA Format](PLA_FORMAT.md) — PLA file format specification
 - [Examples](../examples/) — working code examples
 
+[`expr!`]: crate::expr
 [`BoolExpr`]: crate::BoolExpr
+[`BoolExpr::build`]: crate::BoolExpr::build
 [`BoolExpr::parse`]: crate::BoolExpr::parse
 [`BoolExpr::variables`]: crate::BoolExpr::variables
 [`Bdd`]: crate::bdd::Bdd
