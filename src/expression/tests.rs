@@ -29,6 +29,11 @@ fn var_and_constant_construct() {
 }
 
 #[test]
+fn default_is_constant_false() {
+    assert_eq!(BoolExpr::default(), BoolExpr::constant(false));
+}
+
+#[test]
 fn var_accepts_any_as_ref_str() {
     // `var` takes any `AsRef<str>`, not only `&str`.
     let from_string = BoolExpr::var(String::from("x"));

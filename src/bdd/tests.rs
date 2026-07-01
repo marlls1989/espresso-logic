@@ -643,6 +643,38 @@ fn operator_ref_combinations_compile_and_agree() {
 }
 
 #[test]
+fn hash_agrees_with_canonical_equality() {
+    use std::collections::HashSet;
+
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+
+    // Syntactically different but logically equal builds are `==` (canonical roots), so they must hash
+    // equal too and collapse to one entry in a `HashSet`.
+    let by_value = a.clone() & b.clone();
+    let by_commuted_value = b.clone() & a.clone();
+    assert_eq!(by_value, by_commuted_value);
+
+    // `Bdd`'s `Hash`/`Eq` are pointer-identity (the manager cell's address) plus the canonical root id —
+    // never a walk of the manager's interior state — so it is a sound `HashSet` key despite `ManagerCell`
+    // structurally containing a `RefCell`/`RwLock`: nothing hashed here can change after insertion in a
+    // way that would move a key to a different bucket. This is the standard `Rc`/`Arc`-pointer-identity
+    // hashing pattern, which `clippy::mutable_key_type` cannot see through.
+    #[allow(clippy::mutable_key_type)]
+    let mut set = HashSet::new();
+    assert!(set.insert(by_value.clone()));
+    assert!(!set.insert(by_commuted_value));
+    assert_eq!(set.len(), 1);
+
+    // A distinct function hashes (and lands) separately.
+    assert!(set.insert(a.clone()));
+    assert_eq!(set.len(), 2);
+    assert!(set.contains(&by_value));
+    assert!(set.contains(&a));
+}
+
+#[test]
 fn equivalent_to_is_root_identity() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");

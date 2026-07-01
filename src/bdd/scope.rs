@@ -84,6 +84,18 @@ impl<B: Brand, C: ManagerCell> Clone for ScopedBdd<'_, B, C> {
 
 impl<B: Brand, C: ManagerCell> Copy for ScopedBdd<'_, B, C> {}
 
+/// Shows the canonical root id and the borrowed manager pointer, mirroring the owned
+/// [`Bdd`](super::handle::Bdd)'s `Debug`. The decoded function is not rendered — materialise the owned
+/// handle and use [`to_cubes`](super::handle::Bdd::to_cubes) for that.
+impl<B: Brand, C: ManagerCell> std::fmt::Debug for ScopedBdd<'_, B, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopedBdd")
+            .field("root", &self.root)
+            .field("mgr", &self.cell.as_ptr())
+            .finish()
+    }
+}
+
 impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     /// Wrap a raw root node into a scoped handle borrowing `cell`.
     fn from_root(cell: &'s C, root: NodeId) -> Self {
@@ -179,6 +191,16 @@ impl<B: Brand, C: ManagerCell> Not for ScopedBdd<'_, B, C> {
 /// to this scope.
 pub struct Scope<'s, B: Brand, C: ManagerCell> {
     builder: &'s BddBuilder<B, C>,
+}
+
+/// Opaque: the borrowed builder carries no useful `Debug` of its own, so only the manager pointer is
+/// shown, as an identity hint.
+impl<B: Brand, C: ManagerCell> std::fmt::Debug for Scope<'_, B, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Scope")
+            .field("mgr", &self.builder.cell().as_ptr())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {

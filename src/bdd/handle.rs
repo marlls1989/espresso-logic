@@ -363,6 +363,12 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// node id so a shared subgraph is walked once). The shared traversal owns the read guard for the
     /// whole walk (NodeIds are stable), the visited set, the bounds-checked node lookup, and the
     /// child scheduling; `visit` sees each reachable node and decides what to record.
+    ///
+    /// No-reentrancy invariant: `mgr` (the manager read guard) is held for the entire walk below, so
+    /// `visit` must never touch this handle's manager — no builder call, no other `Bdd` method on a
+    /// handle sharing this cell, nothing that acquires the guard again. Doing so deadlocks the `RwLock`
+    /// (`SyncCell`) or panics the `RefCell` (`LocalCell`). Every call site in this module passes a plain
+    /// closure that only inspects the `&ManagerNode` it is given — keep it that way.
     fn for_each_reachable_node(&self, mut visit: impl FnMut(&ManagerNode)) {
         let mgr = self.cell.read();
         let mut visited = std::collections::HashSet::new();
@@ -417,6 +423,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         let mut cubes: Vec<Cube<Symbol, Anonymous>> = Vec::new();
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
+        // No-reentrancy invariant: `mgr` is held across the whole walk below (dropped explicitly once the
+        // stack empties), so nothing in this loop may re-acquire this handle's manager — no builder call,
+        // no other `Bdd` method on a handle sharing this cell. Doing so deadlocks the `RwLock`
+        // (`SyncCell`) or panics the `RefCell` (`LocalCell`). The loop body below only reads through `mgr`
+        // and pushes onto local `stack`/`path` state — keep it that way.
         let mgr = self.cell.read();
         let mut stack = vec![Work::Node(self.root)];
         while let Some(work) = stack.pop() {
@@ -519,6 +530,16 @@ impl<B: Brand, C: ManagerCell> PartialEq for Bdd<B, C> {
 }
 
 impl<B: Brand, C: ManagerCell> Eq for Bdd<B, C> {}
+
+/// Agrees with [`PartialEq`]: hashes the manager identity (the cell's pointer address) together with the
+/// canonical root id, so `==` handles always land in the same bucket. Implemented by hand (rather than
+/// `#[derive(Hash)]`) so it does not require `B: Hash` or `C: Hash` bounds, matching the manual `PartialEq`.
+impl<B: Brand, C: ManagerCell> std::hash::Hash for Bdd<B, C> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.cell.as_ptr().hash(state);
+        self.root.hash(state);
+    }
+}
 
 /// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
