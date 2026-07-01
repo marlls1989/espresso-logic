@@ -1394,6 +1394,11 @@ impl Espresso {
     ///   An Espresso instance with different dimensions already exists on this thread
     /// - [`InstanceError::ConfigMismatch`] -
     ///   A config is specified and an instance with different config already exists
+    /// - [`InstanceError::DimensionTooLarge`] -
+    ///   The requested dimensions cannot be represented by the C cube's 32-bit indices
+    /// - [`InstanceError::AllocationFailure`] -
+    ///   A required C allocation failed (out of memory); the thread-local cube state is left
+    ///   unchanged
     ///
     /// # Examples
     ///
@@ -1494,7 +1499,26 @@ impl Espresso {
                     libc::malloc(((*cube).num_vars as usize) * std::mem::size_of::<c_int>())
                         as *mut c_int;
                 if part_size_ptr.is_null() {
-                    panic!("Failed to allocate part_size array");
+                    // `cube_setup()` has not run yet at this point (the `part_size` allocation
+                    // happens strictly before it), so `teardown_cube_state()` is not safe to call
+                    // here: it invokes the C `setdown_cube()`, which frees `cube.var_mask[0
+                    // ..num_vars]` — but `var_mask` is still null (never allocated by
+                    // `cube_setup()`), so that free loop would dereference a null pointer.
+                    //
+                    // Instead, undo exactly the two fields this function wrote above
+                    // (`num_binary_vars`/`num_vars`) so the thread-local cube is restored to a
+                    // state indistinguishable from "no instance was ever created" on this thread:
+                    // `part_size` is still null (this `malloc` never produced a pointer), and
+                    // `fullset` is still null (either this is the thread's first-ever call, or the
+                    // `teardown_cube_state()` above already nulled it) — the exact condition a
+                    // later `try_new` call checks to decide whether a teardown is needed.
+                    (*cube).num_binary_vars = 0;
+                    (*cube).num_vars = 0;
+                    return Err(MinimizationError::Instance(
+                        InstanceError::AllocationFailure {
+                            requested: (num_inputs, num_outputs),
+                        },
+                    ));
                 }
                 (*cube).part_size = part_size_ptr;
 
