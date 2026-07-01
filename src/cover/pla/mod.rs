@@ -52,7 +52,7 @@ pub use error::{PLAError, PLAReadError, PLAWriteError};
 
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Cursor, Write};
+use std::io::{BufReader, BufWriter, Cursor, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -391,8 +391,6 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
     let mut input_labels: Option<Vec<String>> = None;
     let mut output_labels: Option<Vec<String>> = None;
 
-    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
-
     // C's `parse_pla` (cvrin.c) reads cube data as a single character stream: space, tab, `|` and
     // *newlines* are all insignificant, and one cube is exactly `ni + no` significant characters —
     // there are no cube separators. We mirror that by accumulating significant cube characters and
@@ -400,7 +398,10 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
     let is_pla_delimiter = |c: char| c.is_whitespace() || c == '|';
     let mut cube_stream: Vec<char> = Vec::new();
 
-    for raw_line in &lines {
+    // Stream lines one at a time rather than buffering the whole file: each line's `io::Error`
+    // (if any) surfaces at the point it occurs via `?`.
+    for raw_line in reader.lines() {
+        let raw_line = raw_line?;
         let line = raw_line.trim();
 
         // Skip empty lines and comments

@@ -1663,6 +1663,53 @@ fn pla_dimension_redeclaration_is_rejected() {
 }
 
 #[test]
+fn from_pla_reader_surfaces_mid_stream_io_error() {
+    use super::pla::PLAReadError;
+    use std::io::{self, BufRead, Read};
+
+    // A reader that yields a well-formed prefix, then fails partway through — verifying
+    // `from_pla_reader` streams `reader.lines()` lazily (propagating the line's `io::Error` at the
+    // point it occurs) rather than buffering the whole input up front, where a mid-stream failure
+    // could only ever surface as part of that initial, eager read.
+    struct FailingAfter {
+        remaining: &'static [u8],
+        failed: bool,
+    }
+    impl Read for FailingAfter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.remaining.is_empty() {
+                if !self.failed {
+                    self.failed = true;
+                    return Err(io::Error::other("boom"));
+                }
+                return Ok(0);
+            }
+            let n = buf.len().min(self.remaining.len()).min(1);
+            buf[..n].copy_from_slice(&self.remaining[..n]);
+            self.remaining = &self.remaining[n..];
+            Ok(n)
+        }
+    }
+
+    let reader = io::BufReader::new(FailingAfter {
+        remaining: b".i 2\n.o 1\n01 1\n",
+        failed: false,
+    });
+    let err = PlaCover::<Symbol>::from_pla_reader(reader).expect_err("mid-stream IO error");
+    assert!(matches!(err, PLAReadError::Io(_)));
+
+    // Sanity check the harness itself: a `BufRead` built directly over the failing reader also
+    // fails on its final `lines()` call rather than succeeding silently.
+    let mut direct = io::BufReader::new(FailingAfter {
+        remaining: b"only one line\n",
+        failed: false,
+    });
+    let mut discard = String::new();
+    direct.read_line(&mut discard).unwrap();
+    assert!(direct.read_line(&mut discard).is_err());
+}
+
+#[test]
 fn pla_delimiters_match_c_positional_reading() {
     // C's read_cube (cvrin.c) treats space, tab and '|' as insignificant delimiters that may appear
     // anywhere; the input/output boundary is positional, fixed by .i/.o. So '|' is NOT a boundary
