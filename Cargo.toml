@@ -24,8 +24,6 @@ exclude = [
     "/benches",
     "/tests/regression_test.sh",
     "/tests/quick_regression.sh",
-    "/benchmark_results.log",
-    "/.travis.yml",
     "/TESTING.md",
 ]
 

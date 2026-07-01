@@ -21,3 +21,6 @@ package-lock.json
 
 # Generated output files
 output.pla
+
+# Stale bench output, no longer tracked
+benchmark_results.log

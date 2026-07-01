@@ -2,10 +2,13 @@
 name = "espresso-logic-macros"
 version = "5.1.0"
 edition = "2021"
+rust-version = "1.82"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Procedural macros for espresso-logic"
 license = "MIT"
 repository = "https://github.com/marlls1989/espresso-logic"
+keywords = ["logic", "minimization", "boolean", "pla", "espresso"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true
