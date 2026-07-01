@@ -16,8 +16,9 @@ pub enum ExpressionParseError {
         message: Arc<str>,
         /// The original input string that failed to parse
         input: Arc<str>,
-        /// Best-effort, approximate offset into the input where the error occurred (its exact base —
-        /// byte offset vs. line-relative column — depends on which parser branch reported the error)
+        /// Byte offset into `input` where the error occurred, extracted structurally from the
+        /// underlying lalrpop `ParseError`. `None` only for a lalrpop `User` error, which this
+        /// grammar never produces.
         position: Option<usize>,
     },
 }

@@ -1,5 +1,6 @@
 //! Comprehensive tests for boolean expression functionality
 
+use espresso_logic::error::{ExpressionParseError, ParseBoolExprError};
 use espresso_logic::{
     bdd_builder, expr, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol, Symbols,
 };
@@ -623,6 +624,57 @@ fn test_parser_error_missing_operand() {
     assert!(BoolExpr::parse("a +").is_err());
     assert!(BoolExpr::parse("* b").is_err());
     assert!(BoolExpr::parse("a + * b").is_err());
+}
+
+/// Parse `input`, which must fail, and return the byte offset lalrpop reported.
+fn parse_error_position(input: &str) -> Option<usize> {
+    match BoolExpr::parse(input) {
+        Err(ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
+            position, ..
+        })) => position,
+        Err(_) => panic!("unexpected ParseBoolExprError variant for {input:?}"),
+        Ok(_) => panic!("expected a parse error for {input:?}"),
+    }
+}
+
+// `ExpressionParseError::InvalidSyntax.position` is a byte offset into the input, extracted
+// structurally from lalrpop's `ParseError` variants rather than scraped from its message text.
+// One test per variant the grammar can reach (`ExtraToken` is unreachable here: `OrExpr`'s
+// left recursion means the follow set at every accepting state already contains "+"/"|", so the
+// automaton never completes a parse with a still-shiftable trailing token).
+
+#[test]
+fn test_parser_error_position_invalid_token() {
+    // '@' matches no lexer rule at all, so lalrpop reports `InvalidToken` at its own byte
+    // offset: "a @ b" -> a(0) ' '(1) '@'(2).
+    assert_eq!(parse_error_position("a @ b"), Some(2));
+}
+
+#[test]
+fn test_parser_error_position_unrecognized_token() {
+    // "b" is a well-formed `Ident` token, but the grammar expects an operator (or end of input)
+    // after a complete expression, so this is `UnrecognizedToken` at its own byte offset.
+    assert_eq!(parse_error_position("a b"), Some(2));
+}
+
+#[test]
+fn test_parser_error_position_unrecognized_eof() {
+    // The trailing "+" leaves the grammar expecting an operand that never arrives:
+    // `UnrecognizedEof` at the byte offset just past the end of input.
+    assert_eq!(parse_error_position("a +"), Some(3));
+    // Empty input hits the same variant at offset 0.
+    assert_eq!(parse_error_position(""), Some(0));
+}
+
+#[test]
+fn test_parser_error_position_is_byte_offset_not_char_count() {
+    // U+00A0 (NO-BREAK SPACE) is valid lexer whitespace but takes 2 bytes in UTF-8, so the
+    // reported offset of the trailing "b" tells bytes and chars apart.
+    let input = "a\u{00A0}b";
+    assert_eq!(input.chars().count(), 3); // 'a', NBSP, 'b'
+    assert_eq!(input.len(), 4); // 'a' (1 byte) + NBSP (2 bytes) + 'b' (1 byte)
+                                // A char index would report "b" at 2; the byte offset is 3.
+    assert_eq!(parse_error_position(input), Some(3));
 }
 
 #[test]
