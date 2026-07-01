@@ -2,9 +2,11 @@
 #define UTILITY_H
 
 /*
- *  assumes the memory manager is libmm.a
- *	- allows malloc(0) or realloc(obj, 0)
- *	- catches out of memory (and calls MMout_of_memory())
+ *  bare malloc/realloc wrappers, not a checked memory manager
+ *	- no libmm.a: allocation failure is NOT caught here and
+ *	  MMout_of_memory() is never called
+ *	- ALLOC/REALLOC may return NULL on allocation failure; callers
+ *	  (including the Rust FFI boundary) must check the result
  *	- catch free(0) and realloc(0, size) in the macros
  */
 #define NIL(type)		((type *) 0)

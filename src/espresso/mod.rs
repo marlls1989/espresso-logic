@@ -575,6 +575,21 @@ impl Iterator for EspressoCubes<'_> {
 impl ExactSizeIterator for EspressoCubes<'_> {}
 impl std::iter::FusedIterator for EspressoCubes<'_> {}
 
+/// Panics with a clear allocation-failure message if `ptr` is null; otherwise returns it unchanged.
+///
+/// `ALLOC`/`REALLOC` in `espresso-src/utility.h` are bare `malloc`/`realloc` wrappers with no
+/// out-of-memory catching (see the header comment there), so a null result from an unguarded
+/// allocation entry point such as `sf_new`/`sf_save` can only mean allocation exhaustion, never
+/// invalid input. Panicking here matches Rust `std`'s own OOM behaviour rather than surfacing a
+/// recoverable `Result` for a condition callers cannot meaningfully act on.
+#[inline]
+fn check_alloc(ptr: sys::pset_family, context: &str) -> sys::pset_family {
+    if ptr.is_null() {
+        panic!("espresso: C allocation failure ({context}): out of memory");
+    }
+    ptr
+}
+
 impl EspressoCover {
     /// Create from raw pointer with Espresso reference (internal use)
     pub(crate) unsafe fn from_raw(ptr: sys::pset_family, espresso: &Espresso) -> Self {
@@ -720,7 +735,10 @@ impl EspressoCover {
         let cube_size = unsafe { (*sys::get_cube()).size as usize };
 
         // Create empty cover with capacity (reuse the espresso reference)
-        let ptr = unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) };
+        let ptr = check_alloc(
+            unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) },
+            "sf_new in EspressoCover::from_cubes",
+        );
         let mut cover = EspressoCover {
             ptr,
             _espresso: espresso.inner,
@@ -778,7 +796,12 @@ impl EspressoCover {
                     }
                 }
 
-                cover.ptr = sys::sf_addset(cover.ptr, cf);
+                // `sf_addset` may grow the family via REALLOC; never write a null result back
+                // into `cover.ptr` (Drop would then free/dereference it).
+                cover.ptr = check_alloc(
+                    sys::sf_addset(cover.ptr, cf),
+                    "sf_addset in EspressoCover::from_cubes",
+                );
             }
         }
 
@@ -805,7 +828,10 @@ impl EspressoCover {
         let espresso = Espresso::try_new(num_inputs, num_outputs, None)?;
         let cube_size = unsafe { (*sys::get_cube()).size as usize };
 
-        let ptr = unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) };
+        let ptr = check_alloc(
+            unsafe { sys::sf_new(cubes.len() as c_int, cube_size as c_int) },
+            "sf_new in EspressoCover::from_packed_cubes",
+        );
         let mut cover = EspressoCover {
             ptr,
             _espresso: espresso.inner,
@@ -855,7 +881,12 @@ impl EspressoCover {
                     }
                 }
 
-                cover.ptr = sys::sf_addset(cover.ptr, cf);
+                // `sf_addset` may grow the family via REALLOC; never write a null result back
+                // into `cover.ptr` (Drop would then free/dereference it).
+                cover.ptr = check_alloc(
+                    sys::sf_addset(cover.ptr, cf),
+                    "sf_addset in EspressoCover::from_packed_cubes",
+                );
             }
         }
 
@@ -875,7 +906,10 @@ impl Drop for EspressoCover {
 
 impl Clone for EspressoCover {
     fn clone(&self) -> Self {
-        let ptr = unsafe { sys::sf_save(self.ptr) };
+        let ptr = check_alloc(
+            unsafe { sys::sf_save(self.ptr) },
+            "sf_save in EspressoCover::clone",
+        );
         EspressoCover {
             ptr,
             _espresso: Rc::clone(&self._espresso),
@@ -1895,6 +1929,31 @@ unsafe fn espresso_fatal_error(msg: *const c_char) -> MinimizationError {
     MinimizationError::EspressoFatal { message }
 }
 
+/// Turn a guarded trampoline's null result into a [`MinimizationError`], distinguishing a caught C
+/// `fatal()` from an unchecked allocation failure.
+///
+/// By contract (`espresso-src/thread_local_accessors.c`), a guarded trampoline (`guarded_espresso`,
+/// `guarded_minimize_exact`, `guarded_complement`) resets `*msg_out` to null before running, and
+/// only ever writes it non-null on the `setjmp`/`longjmp` path taken when `fatal()` is caught — that
+/// write always targets the thread-local message buffer, so it is never null even for an empty
+/// message. A null result paired with a still-null `msg` therefore cannot be a caught fatal: it can
+/// only mean the C algorithm itself returned null, which (per the bare, unchecked `ALLOC`/`REALLOC`
+/// in `espresso-src/utility.h`) means the underlying allocator ran out of memory. Treat that case
+/// like the unguarded `sf_new`/`sf_save` allocation entry points ([`check_alloc`]) and panic, rather
+/// than surfacing an empty-message `MinimizationError` that would misrepresent an OOM as a
+/// recoverable input error.
+///
+/// # Safety
+///
+/// Same precondition as [`espresso_fatal_error`]: `msg` must be null or a valid, NUL-terminated C
+/// string owned by the C side.
+unsafe fn guarded_result_error(msg: *const c_char, context: &str) -> MinimizationError {
+    if msg.is_null() {
+        panic!("espresso: C allocation failure ({context}): out of memory");
+    }
+    espresso_fatal_error(msg)
+}
+
 /// Private helper shared by `try_minimize()` and `try_minimize_exact()`.
 ///
 /// `algorithm_fn` invokes the appropriate guarded C trampoline (`guarded_espresso` /
@@ -1932,9 +1991,12 @@ where
     // - If not provided: allocate empty cover with sf_new()
     // - C algorithm function uses but does NOT free D (makes internal copy)
     // - We must free d_ptr after algorithm returns (via EspressoCover wrapper)
-    let d_ptr = d
-        .map(|c| c.clone().into_raw())
-        .unwrap_or_else(|| unsafe { sys::sf_new(0, (*sys::get_cube()).size as c_int) });
+    let d_ptr = d.map(|c| c.clone().into_raw()).unwrap_or_else(|| {
+        check_alloc(
+            unsafe { sys::sf_new(0, (*sys::get_cube()).size as c_int) },
+            "sf_new for empty D cover in try_minimize_with_algorithm",
+        )
+    });
 
     // MEMORY OWNERSHIP: R cover
     // - If provided: clone and transfer ownership via into_raw()
@@ -1954,7 +2016,7 @@ where
                 sys::guarded_complement(cube_list, &mut msg)
             };
             if r_ptr.is_null() {
-                return Err(unsafe { espresso_fatal_error(msg) });
+                return Err(unsafe { guarded_result_error(msg, "guarded_complement") });
             }
             r_ptr
         }
@@ -1966,8 +2028,11 @@ where
     let mut msg: *const c_char = ptr::null();
     let f_result = algorithm_fn(f_ptr, d_ptr, r_ptr, &mut msg);
     if f_result.is_null() {
-        // Caught fatal: all three C covers are indeterminate — leak them (see above).
-        return Err(unsafe { espresso_fatal_error(msg) });
+        // Caught fatal: all three C covers are indeterminate — leak them (see above). A null
+        // result with no captured message is an unchecked allocation failure, not a caught fatal;
+        // `guarded_result_error` panics for that case instead of returning a misleading empty
+        // `MinimizationError`.
+        return Err(unsafe { guarded_result_error(msg, "minimisation algorithm") });
     }
 
     // MEMORY OWNERSHIP: Wrap all returned/borrowed pointers in EspressoCover
