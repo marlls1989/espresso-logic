@@ -243,6 +243,9 @@ fn main() {
         .allowlist_function("set_use_random_order")
         .allowlist_function("get_skip_make_sparse_ptr")
         .allowlist_function("set_skip_make_sparse")
+        .allowlist_function("guarded_espresso")
+        .allowlist_function("guarded_minimize_exact")
+        .allowlist_function("guarded_complement")
         // Generate good Rust types
         .derive_default(true)
         .derive_debug(true)

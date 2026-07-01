@@ -2,6 +2,9 @@
  *  espresso.h -- header file for Espresso-mv
  */
 
+#ifndef ESPRESSO_H
+#define ESPRESSO_H
+
 #include "port.h"
 #include "utility.h"
 #include "sparse.h"
@@ -753,3 +756,5 @@ extern _Thread_local struct cdata_struct cdata, temp_cdata_save;
 /* verify.c */ extern int check_consistency (pPLA PLA);
 /* verify.c */ extern int verify (pset_family F, pset_family Fold, pset_family Dold);
 
+
+#endif /* ESPRESSO_H */

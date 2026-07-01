@@ -381,7 +381,7 @@ pub use crate::cover::{Cube, CubeType};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
 use std::marker::PhantomData;
-use std::os::raw::{c_int, c_uint};
+use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1022,17 +1022,56 @@ impl EspressoCover {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Panics
+    ///
+    /// Panics if the C minimiser reports a fatal condition (for example an explicit OFF-set that
+    /// overlaps the ON-set). Use [`try_minimize()`](Self::try_minimize) to recover from such inputs
+    /// as a [`MinimizationError`] instead.
     #[must_use]
     pub fn minimize(
         self,
         d: Option<EspressoCover>,
         r: Option<EspressoCover>,
     ) -> (EspressoCover, EspressoCover, EspressoCover) {
+        self.try_minimize(d, r).unwrap_or_else(|e| panic!("{}", e))
+    }
+
+    /// Minimise this cover, returning an error instead of aborting on invalid input.
+    ///
+    /// This is the fallible counterpart of [`minimize()`](Self::minimize): it consumes the cover and
+    /// returns the same `(minimized_f, d, r)` triple, but surfaces a [`MinimizationError`] where
+    /// `minimize()` would panic. See [`Espresso::try_minimize()`] for how fatal C conditions are
+    /// caught and reported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MinimizationError::EspressoFatal`] if the C minimiser reports a fatal condition for
+    /// the given covers (most commonly an OFF-set `r` that overlaps this ON-set).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::EspressoCover;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let (minimized, _, _) = f.try_minimize(None, None)?;
+    /// println!("Result: {} cubes", minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).count());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_minimize(
+        self,
+        d: Option<EspressoCover>,
+        r: Option<EspressoCover>,
+    ) -> Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError> {
         // Get the Espresso wrapper for this cover
         let espresso = Espresso {
             inner: Rc::clone(&self._espresso),
         };
-        espresso.minimize(&self, d.as_ref(), r.as_ref())
+        espresso.try_minimize(&self, d.as_ref(), r.as_ref())
     }
 
     /// Minimise this cover using exact minimisation
@@ -1070,17 +1109,57 @@ impl EspressoCover {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Panics
+    ///
+    /// Panics if the C minimiser reports a fatal condition (for example an explicit OFF-set that
+    /// overlaps the ON-set). Use [`try_minimize_exact()`](Self::try_minimize_exact) to recover from
+    /// such inputs as a [`MinimizationError`] instead.
     #[must_use]
     pub fn minimize_exact(
         self,
         d: Option<EspressoCover>,
         r: Option<EspressoCover>,
     ) -> (EspressoCover, EspressoCover, EspressoCover) {
+        self.try_minimize_exact(d, r)
+            .unwrap_or_else(|e| panic!("{}", e))
+    }
+
+    /// Exactly minimise this cover, returning an error instead of aborting on invalid input.
+    ///
+    /// This is the fallible counterpart of [`minimize_exact()`](Self::minimize_exact): it consumes
+    /// the cover and returns the same `(minimized_f, d, r)` triple, but surfaces a
+    /// [`MinimizationError`] where `minimize_exact()` would panic. See [`Espresso::try_minimize()`]
+    /// for how fatal C conditions are caught and reported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MinimizationError::EspressoFatal`] if the C minimiser reports a fatal condition for
+    /// the given covers (most commonly an OFF-set `r` that overlaps this ON-set).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::EspressoCover;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let (minimized, _, _) = f.try_minimize_exact(None, None)?;
+    /// println!("Exact: {} cubes", minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).count());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_minimize_exact(
+        self,
+        d: Option<EspressoCover>,
+        r: Option<EspressoCover>,
+    ) -> Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError> {
         // Get the Espresso wrapper for this cover
         let espresso = Espresso {
             inner: Rc::clone(&self._espresso),
         };
-        espresso.minimize_exact(&self, d.as_ref(), r.as_ref())
+        espresso.try_minimize_exact(&self, d.as_ref(), r.as_ref())
     }
 }
 
@@ -1610,6 +1689,11 @@ impl Espresso {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Panics
+    ///
+    /// Panics if the C minimiser reports a fatal condition (for example an explicit OFF-set that
+    /// overlaps the ON-set). Use [`try_minimize()`](Self::try_minimize) to recover from such inputs
+    /// as a [`MinimizationError`] instead.
     #[must_use]
     pub fn minimize(
         &self,
@@ -1617,8 +1701,51 @@ impl Espresso {
         d: Option<&EspressoCover>,
         r: Option<&EspressoCover>,
     ) -> (EspressoCover, EspressoCover, EspressoCover) {
-        minimize_with_algorithm(self, f, d, r, |f_ptr, d_ptr, r_ptr| unsafe {
-            sys::espresso(f_ptr, d_ptr, r_ptr)
+        self.try_minimize(f, d, r)
+            .unwrap_or_else(|e| panic!("{}", e))
+    }
+
+    /// Minimise a boolean function, returning an error instead of aborting on invalid input.
+    ///
+    /// This is the fallible counterpart of [`minimize()`](Self::minimize): it takes the same
+    /// arguments and returns the same `(minimized_f, d, r)` triple, but surfaces a
+    /// [`MinimizationError`] where `minimize()` would panic.
+    ///
+    /// Unlike the high-level [`Cover`](crate::Cover) path, this low-level entry point performs no
+    /// input pre-validation. If the supplied covers drive the C core into a fatal condition — most
+    /// commonly an explicit OFF-set that overlaps the ON-set — the condition is caught and returned
+    /// as [`MinimizationError::EspressoFatal`], leaving the current thread able to run further
+    /// minimisations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MinimizationError::EspressoFatal`] if the C minimiser reports a fatal condition for
+    /// the given covers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
+    /// use espresso_logic::EspressoConfig;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
+    /// let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let (minimized, _, _) = esp.try_minimize(&f, None, None)?;
+    /// println!("Result: {} cubes", minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).count());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_minimize(
+        &self,
+        f: &EspressoCover,
+        d: Option<&EspressoCover>,
+        r: Option<&EspressoCover>,
+    ) -> Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError> {
+        try_minimize_with_algorithm(self, f, d, r, |f_ptr, d_ptr, r_ptr, msg| unsafe {
+            sys::guarded_espresso(f_ptr, d_ptr, r_ptr, msg)
         })
     }
 
@@ -1672,6 +1799,11 @@ impl Espresso {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Panics
+    ///
+    /// Panics if the C minimiser reports a fatal condition (for example an explicit OFF-set that
+    /// overlaps the ON-set). Use [`try_minimize_exact()`](Self::try_minimize_exact) to recover from
+    /// such inputs as a [`MinimizationError`] instead.
     #[must_use]
     pub fn minimize_exact(
         &self,
@@ -1679,27 +1811,96 @@ impl Espresso {
         d: Option<&EspressoCover>,
         r: Option<&EspressoCover>,
     ) -> (EspressoCover, EspressoCover, EspressoCover) {
-        minimize_with_algorithm(self, f, d, r, |f_ptr, d_ptr, r_ptr| unsafe {
-            sys::minimize_exact(f_ptr, d_ptr, r_ptr, 1)
+        self.try_minimize_exact(f, d, r)
+            .unwrap_or_else(|e| panic!("{}", e))
+    }
+
+    /// Exactly minimise a boolean function, returning an error instead of aborting on invalid input.
+    ///
+    /// This is the fallible counterpart of [`minimize_exact()`](Self::minimize_exact): same
+    /// arguments and same `(minimized_f, d, r)` result, but surfacing a [`MinimizationError`] where
+    /// `minimize_exact()` would panic. See [`try_minimize()`](Self::try_minimize) for the details of
+    /// how fatal C conditions are caught and reported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MinimizationError::EspressoFatal`] if the C minimiser reports a fatal condition for
+    /// the given covers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::{Espresso, EspressoCover};
+    /// use espresso_logic::EspressoConfig;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
+    /// let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let (minimized, _, _) = esp.try_minimize_exact(&f, None, None)?;
+    /// println!("Exact: {} cubes", minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).count());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_minimize_exact(
+        &self,
+        f: &EspressoCover,
+        d: Option<&EspressoCover>,
+        r: Option<&EspressoCover>,
+    ) -> Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError> {
+        try_minimize_with_algorithm(self, f, d, r, |f_ptr, d_ptr, r_ptr, msg| unsafe {
+            sys::guarded_minimize_exact(f_ptr, d_ptr, r_ptr, 1, msg)
         })
     }
 }
 
-/// Private helper function to eliminate duplication between minimize() and minimize_exact()
-fn minimize_with_algorithm<F>(
+/// Turn a C `fatal` diagnostic captured by a guarded trampoline into a [`MinimizationError`].
+///
+/// # Safety
+///
+/// `msg` must either be null or point to a valid, NUL-terminated C string owned by the C side (the
+/// thread-local buffer a guarded trampoline fills on a caught fatal). The string is copied out
+/// immediately, so it need only remain valid for the duration of this call.
+unsafe fn espresso_fatal_error(msg: *const c_char) -> MinimizationError {
+    let message = if msg.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned()
+    };
+    MinimizationError::EspressoFatal { message }
+}
+
+/// Private helper shared by `try_minimize()` and `try_minimize_exact()`.
+///
+/// `algorithm_fn` invokes the appropriate guarded C trampoline (`guarded_espresso` /
+/// `guarded_minimize_exact`); it returns the result `pset_family` on success, or null after a caught
+/// fatal, writing the captured diagnostic pointer through its `*mut *const c_char` out-parameter.
+fn try_minimize_with_algorithm<F>(
     espresso: &Espresso,
     f: &EspressoCover,
     d: Option<&EspressoCover>,
     r: Option<&EspressoCover>,
     algorithm_fn: F,
-) -> (EspressoCover, EspressoCover, EspressoCover)
+) -> Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError>
 where
-    F: FnOnce(sys::pset_family, sys::pset_family, sys::pset_family) -> sys::pset_family,
+    F: FnOnce(
+        sys::pset_family,
+        sys::pset_family,
+        sys::pset_family,
+        *mut *const c_char,
+    ) -> sys::pset_family,
 {
     // MEMORY OWNERSHIP: Clone F and extract raw pointer
     // - clone() calls sf_save(), allocating new C memory (independent copy)
     // - into_raw() transfers ownership from Rust to C
     // - C algorithm function takes ownership and returns (possibly different) pointer
+    //
+    // ERROR PATH: on a caught fatal the C core has already freed and/or replaced some of these
+    // covers mid-pipeline (e.g. espresso() frees F), leaving them in an indeterminate state. The
+    // raw pointers are then DELIBERATELY LEAKED: they are never re-wrapped in an EspressoCover and
+    // never freed, which trades a bounded one-off leak on this rare error path for the certainty of
+    // no double-free or use-after-free.
     let f_ptr = f.clone().into_raw();
 
     // MEMORY OWNERSHIP: D cover
@@ -1716,15 +1917,34 @@ where
     // - If not provided: compute complement (allocates new C memory)
     // - C algorithm function uses but does NOT free R
     // - We must free r_ptr after algorithm returns (via EspressoCover wrapper)
-    let r_ptr = r.map(|c| c.clone().into_raw()).unwrap_or_else(|| unsafe {
-        let cube_list = sys::cube2list(f_ptr, d_ptr);
-        sys::complement(cube_list)
-    });
+    //
+    // `complement` can itself raise a fatal (compl.c: non-orthogonal ON/OFF-set), so it runs through
+    // the guarded trampoline. On a catch, f_ptr and d_ptr are leaked (see above) and the error is
+    // returned before the algorithm runs.
+    let r_ptr = match r {
+        Some(c) => c.clone().into_raw(),
+        None => {
+            let mut msg: *const c_char = ptr::null();
+            let r_ptr = unsafe {
+                let cube_list = sys::cube2list(f_ptr, d_ptr);
+                sys::guarded_complement(cube_list, &mut msg)
+            };
+            if r_ptr.is_null() {
+                return Err(unsafe { espresso_fatal_error(msg) });
+            }
+            r_ptr
+        }
+    };
 
-    // Call the provided algorithm function (espresso or minimize_exact)
-    // OWNERSHIP: algorithm_fn takes ownership of f_ptr, returns new/modified pointer
-    // BORROWING: algorithm_fn uses but does not free d_ptr and r_ptr
-    let f_result = algorithm_fn(f_ptr, d_ptr, r_ptr);
+    // Call the provided algorithm through its guarded trampoline (espresso or minimize_exact).
+    // OWNERSHIP: algorithm_fn takes ownership of f_ptr, returns new/modified pointer (or null on a
+    // caught fatal). BORROWING: algorithm_fn uses but does not free d_ptr and r_ptr.
+    let mut msg: *const c_char = ptr::null();
+    let f_result = algorithm_fn(f_ptr, d_ptr, r_ptr, &mut msg);
+    if f_result.is_null() {
+        // Caught fatal: all three C covers are indeterminate — leak them (see above).
+        return Err(unsafe { espresso_fatal_error(msg) });
+    }
 
     // MEMORY OWNERSHIP: Wrap all returned/borrowed pointers in EspressoCover
     // This ensures sf_free() is called on all C memory when covers are dropped
@@ -1734,11 +1954,11 @@ where
     let d_result = unsafe { EspressoCover::from_raw(d_ptr, espresso) };
     let r_result = unsafe { EspressoCover::from_raw(r_ptr, espresso) };
 
-    (
+    Ok((
         unsafe { EspressoCover::from_raw(f_result, espresso) },
         d_result,
         r_result,
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -2261,6 +2481,83 @@ mod tests {
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
         assert_eq!(esp.num_inputs(), 2);
         assert_eq!(esp.num_outputs(), 1);
+    }
+
+    /// A non-orthogonal cover (ON-set and OFF-set sharing a minterm) drives the C core into
+    /// `fatal()`. Through `try_minimize` the guard catches it, the process survives, and the caught
+    /// diagnostic is surfaced as `MinimizationError::EspressoFatal`.
+    #[test]
+    fn try_minimize_catches_non_orthogonal_cover() {
+        // Both F and R assert minterm 01, so the ON-set and OFF-set overlap.
+        let f = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let r = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let err = f
+            .try_minimize(None, Some(r))
+            .expect_err("overlapping ON/OFF-set must be caught");
+        match err {
+            MinimizationError::EspressoFatal { message } => assert!(
+                message.contains("orthogonal"),
+                "unexpected fatal message: {message}"
+            ),
+            other => panic!("expected EspressoFatal, got: {other}"),
+        }
+    }
+
+    /// A non-orthogonal cover through `Espresso::try_minimize_exact` is likewise caught. The exact
+    /// path only reaches the orthogonality check via the sparse-cleanup `expand`, which raises the
+    /// output variables — so the overlap here is on an output (input 0 asserts output 0 as both on
+    /// and off), a multi-output cover.
+    #[test]
+    fn try_minimize_exact_catches_non_orthogonal_cover() {
+        let esp = Espresso::new(1, 2, &EspressoConfig::default());
+        // ON-set: input 0 -> outputs {0,1}; input 1 -> output {1}.
+        let f = EspressoCover::from_cubes(
+            &[(&[0u8][..], &[1u8, 1][..]), (&[1u8][..], &[0u8, 1][..])],
+            1,
+            2,
+        )
+        .unwrap();
+        // OFF-set: input 0 -> output {0}, which overlaps the ON-set at output 0.
+        let r = EspressoCover::from_cubes(&[(&[0u8][..], &[1u8, 0][..])], 1, 2).unwrap();
+        let err = esp
+            .try_minimize_exact(&f, None, Some(&r))
+            .expect_err("overlapping ON/OFF-set must be caught");
+        assert!(
+            matches!(err, MinimizationError::EspressoFatal { ref message } if message.contains("orthogonal")),
+            "expected EspressoFatal mentioning orthogonality, got: {err}"
+        );
+    }
+
+    /// After a caught fatal the thread's cube state is still usable: a fresh, valid minimisation on
+    /// the same thread succeeds. This proves no cube/cdata teardown is needed on the error path.
+    #[test]
+    fn try_minimize_recovers_after_fatal() {
+        // First, trigger and catch a fatal.
+        let f_bad = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let r_bad = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let err = f_bad
+            .try_minimize(None, Some(r_bad))
+            .expect_err("overlapping ON/OFF-set must be caught");
+        assert!(matches!(err, MinimizationError::EspressoFatal { .. }));
+
+        // Now a valid minimisation on the same thread must still work.
+        let cubes = [(&[0u8, 1][..], &[1u8][..]), (&[1u8, 0][..], &[1u8][..])];
+        let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
+        let (minimized, _, _) = f
+            .try_minimize(None, None)
+            .expect("valid minimisation must succeed after recovery");
+        let count = minimized.to_cubes(2, 1, CubeType::F).count();
+        assert!(count >= 2, "expected at least 2 cubes, got {count}");
+    }
+
+    /// The infallible `minimize` panics on a fatal condition (its documented `# Panics` contract),
+    /// mirroring `test_singleton_conflict_panics` for the instance-conflict case.
+    #[test]
+    #[should_panic(expected = "orthogonal")]
+    fn minimize_panics_on_non_orthogonal_cover() {
+        let f = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let r = EspressoCover::from_cubes(&[(&[0u8, 1][..], &[1u8][..])], 2, 1).unwrap();
+        let _ = f.minimize(None, Some(r));
     }
 
     /// Test that creating conflicting Espresso instances panics

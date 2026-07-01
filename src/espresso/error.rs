@@ -159,6 +159,17 @@ pub enum MinimizationError {
         /// An output index at which the ON-set and OFF-set overlap.
         output: usize,
     },
+    /// The C minimiser reported a fatal condition and was caught before it could terminate the
+    /// process. This surfaces at the low-level [`Espresso`](crate::espresso::Espresso) /
+    /// [`EspressoCover`](crate::espresso::EspressoCover) `try_minimize` entry points, which — unlike
+    /// the high-level [`Cover`](crate::Cover) path — do not pre-validate their inputs. The most common
+    /// cause is an explicit OFF-set that overlaps the ON-set (a non-orthogonal cover), for which the C
+    /// core aborts inside `expand`/`complement`.
+    EspressoFatal {
+        /// The diagnostic captured from the C core (the text it would otherwise have printed to
+        /// stderr before exiting).
+        message: String,
+    },
 }
 
 impl From<CoverError> for MinimizationError {
@@ -179,6 +190,9 @@ impl fmt::Display for MinimizationError {
                 "ON-set and OFF-set are not orthogonal (they overlap at output {})",
                 output
             ),
+            MinimizationError::EspressoFatal { message } => {
+                write!(f, "Espresso reported a fatal error: {}", message)
+            }
         }
     }
 }
@@ -191,6 +205,7 @@ impl std::error::Error for MinimizationError {
             MinimizationError::Cover(e) => Some(e),
             MinimizationError::Io(e) => Some(e),
             MinimizationError::NonOrthogonal { .. } => None,
+            MinimizationError::EspressoFatal { .. } => None,
         }
     }
 }
@@ -223,6 +238,9 @@ impl From<MinimizationError> for io::Error {
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
             MinimizationError::Cover(e) => io::Error::new(io::ErrorKind::InvalidData, e),
             e @ MinimizationError::NonOrthogonal { .. } => {
+                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+            }
+            e @ MinimizationError::EspressoFatal { .. } => {
                 io::Error::new(io::ErrorKind::InvalidData, e.to_string())
             }
         }

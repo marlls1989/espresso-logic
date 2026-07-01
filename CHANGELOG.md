@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Invalid input to the low-level minimiser no longer aborts the process.** The vendored C core
+  reports unrecoverable conditions by calling `fatal()`, which printed to stderr and `exit()`ed.
+  Some of these are reachable from safe Rust — most notably an explicit OFF-set that overlaps the
+  ON-set (a non-orthogonal cover) driving `expand`/`complement` into `fatal()`. A thread-local
+  recovery point now catches such a fatal and turns it into an error instead of killing the process;
+  the thread stays usable for further minimisations. The standalone C reference binary is unchanged.
+
+### Added
+
+- **`try_minimize` / `try_minimize_exact`** on both `Espresso` and `EspressoCover`, the fallible
+  counterparts of `minimize` / `minimize_exact`. They return
+  `Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError>`, surfacing a caught C
+  fatal as the new **`MinimizationError::EspressoFatal { message }`** variant. The infallible
+  `minimize` / `minimize_exact` now delegate to these and panic on error (documented under `# Panics`).
+
 ## [5.1.0] - 2026-07-01
 
 Collection-returning query methods now return **lazy iterators** instead of owned collections, so
