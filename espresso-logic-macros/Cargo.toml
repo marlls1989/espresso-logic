@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic-macros"
-version = "5.0.0"
+version = "5.1.0"
 edition = "2021"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
 description = "Procedural macros for espresso-logic"

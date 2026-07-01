@@ -286,7 +286,7 @@
 //! let (minimized, _d, _r) = f.minimize(None, None);
 //!
 //! // Extract results
-//! let result_cubes = minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+//! let result_cubes: Vec<_> = minimized.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).collect();
 //! println!("Minimized to {} cubes", result_cubes.len());
 //! # Ok(())
 //! # }
@@ -455,6 +455,125 @@ pub struct EspressoCover {
     // Keep the internal Espresso instance alive
     _espresso: Rc<InnerEspresso>,
 }
+
+/// Lazy iterator over the decoded cubes of an [`EspressoCover`], created by
+/// [`EspressoCover::to_cubes`].
+///
+/// Each `next()` decodes one anonymous [`Cube`] from the C `pset_family` on demand, so the full set is
+/// never materialised. Borrowing the cover keeps the underlying C memory valid for the iterator's life.
+/// The cube count is known up front, so this is an [`ExactSizeIterator`].
+pub struct EspressoCubes<'a> {
+    /// The borrowed cover; anchors the `pset_family` memory read in `next()`.
+    cover: &'a EspressoCover,
+    /// Shared anonymous input header every decoded cube is defined over.
+    input_syms: Arc<Symbols<Anonymous>>,
+    /// Shared anonymous output header every decoded cube is defined over.
+    output_syms: Arc<Symbols<Anonymous>>,
+    num_outputs: usize,
+    cube_type: CubeType,
+    /// Cube word stride (`set_family.wsize`), snapshotted once — constant for the cover's life.
+    wsize: usize,
+    /// Bit offset of the first output field (`num_inputs * 2`).
+    output_start: usize,
+    /// `u64` words per decoded input minterm (`num_inputs.div_ceil(32)`).
+    input_u64_words: usize,
+    /// BPI-wide cube words spanning the input region (`(2 * num_inputs).div_ceil(BPI)`).
+    input_cube_words: usize,
+    /// Total input bit-width (`2 * num_inputs`), the packing bound for the last `u64`.
+    total_input_bits: usize,
+    /// Next cube index to decode, in `0..count`.
+    idx: usize,
+    /// Total cube count, snapshotted at construction.
+    count: usize,
+}
+
+impl EspressoCubes<'_> {
+    /// Decode the cube at index `i` from the C `pset_family`.
+    ///
+    /// # Safety
+    ///
+    /// `i` must be `< self.count` and the borrowed cover's `pset_family` must still be live (guaranteed
+    /// by the `&EspressoCover` borrow).
+    unsafe fn decode(&self, i: usize) -> Cube<Anonymous, Anonymous> {
+        // The input-packing bounds and `output_start` were computed once at construction; only the base
+        // pointer and per-cube offset are derived here (`wsize` is snapshotted, so this is one deref).
+        let wsize = self.wsize;
+        let cube_ptr = (*self.cover.ptr).data.add(i * wsize);
+
+        // Read a single bit from the cube's word array (out-of-range words read as 0), via the C
+        // WHICH_WORD/WHICH_BIT layout. Words are `c_uint`, matching Espresso's `unsigned int*`.
+        let bit_at = |bit: usize| -> bool {
+            let word = (bit >> LOGBPI) + 1;
+            word < wsize && (*cube_ptr.add(word) & ((1 as c_uint) << (bit & (BPI - 1)))) != 0
+        };
+
+        // The input region packs the same 2-bit fields as a minterm, so decode it by a direct
+        // word-copy — the inverse of `from_packed_cubes` — instead of reading two bits per variable.
+        let cube_words_per_u64 = 64 / BPI;
+
+        // Assemble each `u64` minterm word from `64 / BPI` BPI-wide cube words, bounded by the input
+        // region so the (possibly shared) boundary word's output bits are excluded.
+        let mut iwords = vec![0u64; self.input_u64_words];
+        for (k, slot) in iwords.iter_mut().enumerate() {
+            let mut word = 0u64;
+            for c in 0..cube_words_per_u64 {
+                let cw = k * cube_words_per_u64 + c;
+                if cw < self.input_cube_words {
+                    let cval = (*cube_ptr.add(cw + 1) as u64) & BPI_MASK;
+                    word |= cval << (c * BPI);
+                }
+            }
+            // Zero any bits past the input region (the boundary cube word may carry output bits; the
+            // last `u64` may have padding past the final variable) so the padding stays canonical for
+            // `Eq`/`Hash`.
+            let valid = self.total_input_bits.saturating_sub(k * 64).min(64);
+            if valid < 64 {
+                word &= (1u64 << valid) - 1;
+            }
+            *slot = word;
+        }
+        let im = Minterm::from_packed_words(Arc::clone(&self.input_syms), iwords.into());
+
+        // Decode the output membership — one C bit per output, the same 1-bit-per-output packing as
+        // `OutputSet`, so read each bit directly into the bitmap.
+        let outputs = (0..self.num_outputs).map(|out| bit_at(self.output_start + out));
+        let om = OutputSet::from_symbols(Arc::clone(&self.output_syms), outputs);
+
+        Cube::new(im, om, self.cube_type)
+    }
+}
+
+/// Opaque: the borrowed C memory carries no useful `Debug`, so only the remaining count is shown.
+impl std::fmt::Debug for EspressoCubes<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EspressoCubes")
+            .field("remaining", &(self.count - self.idx))
+            .finish_non_exhaustive()
+    }
+}
+
+impl Iterator for EspressoCubes<'_> {
+    type Item = Cube<Anonymous, Anonymous>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.count {
+            return None;
+        }
+        let i = self.idx;
+        self.idx += 1;
+        // SAFETY: `i < self.count` and the `&EspressoCover` borrow keeps the `pset_family` live.
+        Some(unsafe { self.decode(i) })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.count - self.idx;
+        (remaining, Some(remaining))
+    }
+}
+
+// The remaining count is known exactly and in O(1).
+impl ExactSizeIterator for EspressoCubes<'_> {}
+impl std::iter::FusedIterator for EspressoCubes<'_> {}
 
 impl EspressoCover {
     /// Create from raw pointer with Espresso reference (internal use)
@@ -805,7 +924,7 @@ impl EspressoCover {
     /// let cover = EspressoCover::from_cubes(&cubes, 2, 1)?;
     ///
     /// // Extract cubes as Rust types
-    /// let extracted = cover.to_cubes(2, 1, espresso_logic::espresso::CubeType::F);
+    /// let extracted: Vec<_> = cover.to_cubes(2, 1, espresso_logic::espresso::CubeType::F).collect();
     ///
     /// for cube in extracted.iter() {
     ///     println!("Cube: {:?} -> {:?}", cube.inputs(), cube.outputs());
@@ -822,66 +941,26 @@ impl EspressoCover {
         num_inputs: usize,
         num_outputs: usize,
         cube_type: CubeType,
-    ) -> Arc<[Cube<Anonymous, Anonymous>]> {
+    ) -> EspressoCubes<'_> {
         // The low-level layer has no variable names, so cubes are anonymous (`I = O = Anonymous`):
         // positional only. Callers that need names re-point the cubes onto a real symbol table.
-        let input_syms = Symbols::<Anonymous>::anonymous(num_inputs);
-        let output_syms = Symbols::<Anonymous>::anonymous(num_outputs);
-        unsafe {
-            let count = (*self.ptr).count as usize;
-            let wsize = (*self.ptr).wsize as usize;
-            let data = (*self.ptr).data;
-            let output_start = num_inputs * 2;
-
-            // Read a single bit from a cube's word array (out-of-range words read as 0), via the C
-            // WHICH_WORD/WHICH_BIT layout. Words are `c_uint`, matching Espresso's `unsigned int*`.
-            let bit_at = |cube_ptr: *const c_uint, bit: usize| -> bool {
-                let word = (bit >> LOGBPI) + 1;
-                word < wsize && (*cube_ptr.add(word) & ((1 as c_uint) << (bit & (BPI - 1)))) != 0
-            };
-
-            // The input region packs the same 2-bit fields as a minterm, so decode it by a direct
-            // word-copy — the inverse of `from_packed_cubes` — instead of reading two bits per variable.
-            let input_u64_words = num_inputs.div_ceil(32);
-            let input_cube_words = (2 * num_inputs).div_ceil(BPI);
-            let cube_words_per_u64 = 64 / BPI;
-            let total_input_bits = 2 * num_inputs;
-
-            (0..count)
-                .map(|i| {
-                    let cube_ptr = data.add(i * wsize);
-
-                    // Assemble each `u64` minterm word from `64 / BPI` BPI-wide cube words, bounded by the
-                    // input region so the (possibly shared) boundary word's output bits are excluded.
-                    let mut iwords = vec![0u64; input_u64_words];
-                    for (k, slot) in iwords.iter_mut().enumerate() {
-                        let mut word = 0u64;
-                        for c in 0..cube_words_per_u64 {
-                            let cw = k * cube_words_per_u64 + c;
-                            if cw < input_cube_words {
-                                let cval = (*cube_ptr.add(cw + 1) as u64) & BPI_MASK;
-                                word |= cval << (c * BPI);
-                            }
-                        }
-                        // Zero any bits past the input region (the boundary cube word may carry output
-                        // bits; the last `u64` may have padding past the final variable) so the padding
-                        // stays canonical for `Eq`/`Hash`.
-                        let valid = total_input_bits.saturating_sub(k * 64).min(64);
-                        if valid < 64 {
-                            word &= (1u64 << valid) - 1;
-                        }
-                        *slot = word;
-                    }
-                    let im = Minterm::from_packed_words(Arc::clone(&input_syms), iwords.into());
-
-                    // Decode the output membership — one C bit per output, the same 1-bit-per-output
-                    // packing as `OutputSet`, so read each bit directly into the bitmap.
-                    let outputs = (0..num_outputs).map(|out| bit_at(cube_ptr, output_start + out));
-                    let om = OutputSet::from_symbols(Arc::clone(&output_syms), outputs);
-
-                    Cube::new(im, om, cube_type)
-                })
-                .collect()
+        // Snapshot the count and the per-cover decode constants once; `decode` reads these fields
+        // rather than recomputing them (and re-dereferencing the C `set_family`) on every cube.
+        let count = unsafe { (*self.ptr).count as usize };
+        let wsize = unsafe { (*self.ptr).wsize as usize };
+        EspressoCubes {
+            cover: self,
+            input_syms: Symbols::<Anonymous>::anonymous(num_inputs),
+            output_syms: Symbols::<Anonymous>::anonymous(num_outputs),
+            num_outputs,
+            cube_type,
+            wsize,
+            output_start: num_inputs * 2,
+            input_u64_words: num_inputs.div_ceil(32),
+            input_cube_words: (2 * num_inputs).div_ceil(BPI),
+            total_input_bits: 2 * num_inputs,
+            idx: 0,
+            count,
         }
     }
 
@@ -1770,7 +1849,7 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result has correct structure
-                        let cubes = result.to_cubes(2, 1, CubeType::F);
+                        let cubes: Vec<_> = result.to_cubes(2, 1, CubeType::F).collect();
                         assert!(
                             cubes.len() >= 2,
                             "Thread {} op {} got {} cubes, expected >= 2",
@@ -1833,7 +1912,9 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result structure
-                        let cubes = result.to_cubes(num_inputs, num_outputs, CubeType::F);
+                        let cubes: Vec<_> = result
+                            .to_cubes(num_inputs, num_outputs, CubeType::F)
+                            .collect();
                         assert!(!cubes.is_empty(), "Thread {} got empty result", thread_id);
                     }
                 })
@@ -2102,7 +2183,7 @@ mod tests {
                         let (result, _, _) = esp.minimize(&f, None, None);
 
                         // Verify result
-                        let result_cubes = result.to_cubes(3, 1, CubeType::F);
+                        let result_cubes: Vec<_> = result.to_cubes(3, 1, CubeType::F).collect();
                         assert!(
                             !result_cubes.is_empty(),
                             "Thread {} op {} got empty result",
@@ -2173,8 +2254,8 @@ mod tests {
         let (result2, _, _) = f2.minimize(None, None);
 
         // Verify they worked
-        assert!(!result1.to_cubes(2, 1, CubeType::F).is_empty());
-        assert!(!result2.to_cubes(2, 1, CubeType::F).is_empty());
+        assert!(result1.to_cubes(2, 1, CubeType::F).count() > 0);
+        assert!(result2.to_cubes(2, 1, CubeType::F).count() > 0);
 
         // Can also explicitly create an Espresso handle with same dimensions
         let esp = Espresso::new(2, 1, &EspressoConfig::default());
@@ -2256,7 +2337,9 @@ mod tests {
                     let (result, _, _) = esp.minimize(&f_clone, None, None);
 
                     // Basic validation
-                    let result_cubes = result.to_cubes(num_inputs, num_outputs, CubeType::F);
+                    let result_cubes: Vec<_> = result
+                        .to_cubes(num_inputs, num_outputs, CubeType::F)
+                        .collect();
                     assert!(
                         !result_cubes.is_empty(),
                         "Got empty result for problem {}",
@@ -2311,7 +2394,7 @@ mod tests {
         let (result, d, r) = f.minimize(None, None);
 
         // Verify the result cover has expected structure
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes: Vec<_> = result.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(
             result_cubes.len(),
             1,
@@ -2332,8 +2415,8 @@ mod tests {
         );
 
         // Verify D and R covers are accessible
-        let d_cubes = d.to_cubes(2, 1, CubeType::F);
-        let r_cubes = r.to_cubes(2, 1, CubeType::F);
+        let d_cubes: Vec<_> = d.to_cubes(2, 1, CubeType::F).collect();
+        let r_cubes: Vec<_> = r.to_cubes(2, 1, CubeType::F).collect();
         assert!(
             d_cubes.is_empty() || !d_cubes.is_empty(),
             "D cover should be valid"
@@ -2347,7 +2430,7 @@ mod tests {
         let cubes_f2 = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
         let f2 = EspressoCover::from_cubes(&cubes_f2, 2, 1).unwrap();
         let (result2, _, _) = f2.minimize(None, None);
-        let result2_cubes = result2.to_cubes(2, 1, CubeType::F);
+        let result2_cubes: Vec<_> = result2.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(
             result2_cubes.len(),
             2,
@@ -2435,11 +2518,11 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
         // Verify input has 3 cubes
-        let input_cubes = f.to_cubes(2, 1, CubeType::F);
+        let input_cubes: Vec<_> = f.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(input_cubes.len(), 3, "Should start with 3 cubes");
 
         let (result, _, _) = esp.minimize(&f, None, None);
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes: Vec<_> = result.to_cubes(2, 1, CubeType::F).collect();
 
         // This should minimize to fewer cubes (0- or -0 or -1)
         assert!(
@@ -2467,7 +2550,7 @@ mod tests {
         let (result, _, _) = esp.minimize(&f, None, None);
 
         // XOR cannot be minimized, should still have 2 cubes
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes: Vec<_> = result.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(result_cubes.len(), 2, "XOR should maintain 2 cubes");
     }
 
@@ -2482,7 +2565,7 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 3, 1).unwrap();
         let (result, _, _) = esp.minimize(&f, None, None);
 
-        let result_cubes = result.to_cubes(3, 1, CubeType::F);
+        let result_cubes: Vec<_> = result.to_cubes(3, 1, CubeType::F).collect();
         assert_eq!(result_cubes.len(), 1, "Single cube should remain as 1");
 
         // Verify the cube is correct
@@ -2503,12 +2586,12 @@ mod tests {
         let cover = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
 
         // Verify the cover was created correctly
-        let result_cubes = cover.to_cubes(2, 1, CubeType::F);
+        let result_cubes: Vec<_> = cover.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(result_cubes.len(), 2, "Should have 2 input cubes");
 
         // Verify minimization works
         let (minimized, _, _) = cover.minimize(None, None);
-        let min_cubes = minimized.to_cubes(2, 1, CubeType::F);
+        let min_cubes: Vec<_> = minimized.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(min_cubes.len(), 2, "XOR cannot be minimized");
     }
 
@@ -2525,8 +2608,8 @@ mod tests {
         let cubes2 = [(&[1, 0, 1][..], &[1][..]), (&[1, 1, 1][..], &[1][..])];
         let cover2 = EspressoCover::from_cubes(&cubes2, 3, 1).unwrap();
 
-        let cubes1 = cover1.to_cubes(3, 1, CubeType::F);
-        let cubes2 = cover2.to_cubes(3, 1, CubeType::F);
+        let cubes1: Vec<_> = cover1.to_cubes(3, 1, CubeType::F).collect();
+        let cubes2: Vec<_> = cover2.to_cubes(3, 1, CubeType::F).collect();
 
         assert_eq!(cubes1.len(), 2);
         assert_eq!(cubes2.len(), 2);
@@ -2541,7 +2624,7 @@ mod tests {
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, d, r) = esp.minimize(&f, None, None);
 
-        let result_cubes = result.to_cubes(2, 1, CubeType::F);
+        let result_cubes: Vec<_> = result.to_cubes(2, 1, CubeType::F).collect();
         assert_eq!(
             result_cubes.len(),
             2,
@@ -2549,8 +2632,8 @@ mod tests {
         );
 
         // Verify D and R covers are also valid (they exist even if empty)
-        let _d_cubes = d.to_cubes(2, 1, CubeType::F);
-        let _r_cubes = r.to_cubes(2, 1, CubeType::F);
+        let _d_cubes: Vec<_> = d.to_cubes(2, 1, CubeType::F).collect();
+        let _r_cubes: Vec<_> = r.to_cubes(2, 1, CubeType::F).collect();
         // D and R covers are successfully retrieved
     }
 }

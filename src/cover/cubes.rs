@@ -14,7 +14,7 @@
 
 use super::error::DuplicateLabel;
 use super::label::{Anonymous, Label, StringLabel};
-use super::minterm::Minterm;
+use super::minterm::{ExpandedMinterms, Minterm};
 use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use std::collections::HashSet;
@@ -136,7 +136,8 @@ impl<I: Label, O> Cube<I, O> {
     /// `vars` is the explicit target header and MAY be a superset of the cube's own inputs: variables
     /// of `vars` absent from the cube are split into both polarities, the cube's own don't-cares are
     /// expanded, and any input variable not in `vars` is dropped. Every returned minterm assigns every
-    /// variable in `vars`, all sharing one canonical header. See [`Minterm::expand_over`].
+    /// variable in `vars`, all sharing one canonical header. Returns a lazy [`ExpandedMinterms`]
+    /// iterator that packs each minterm on demand. See [`Minterm::expand_over`].
     ///
     /// # Examples
     ///
@@ -154,7 +155,7 @@ impl<I: Label, O> Cube<I, O> {
     /// assert_eq!(got.len(), 2); // {a:1,b:0}, {a:1,b:1}
     /// ```
     #[must_use]
-    pub fn expand_to(&self, vars: &[I]) -> Vec<Minterm<I>> {
+    pub fn expand_to(&self, vars: &[I]) -> ExpandedMinterms<I> {
         let target = Symbols::new(vars.iter().cloned().collect());
         self.inputs.expand_over(&target)
     }

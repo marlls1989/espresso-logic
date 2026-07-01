@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-07-01
+
+Collection-returning query methods now return **lazy iterators** instead of owned collections, so
+callers compose downstream and expansion happens on demand. A small breaking change, released as a
+minor version.
+
+### Changed
+
+- **Iterator returns instead of owned collections.** These methods now return named, lazy iterator
+  types rather than a `Vec`/`BTreeSet`/`Arc<[…]>`:
+  - `Minterm::expand_over` / `Cube::expand_to` → `ExpandedMinterms` (packs each of the `2^k` minterms
+    on demand — O(1) memory instead of materialising the whole set).
+  - `Minterm::disagreement` → `Disagreement`.
+  - `EspressoCover::to_cubes` → `EspressoCubes` (decodes one cube from the C `pset_family` per step).
+  - `BoolExpr::variables` → `ExprVariables`.
+  - `Bdd::variables` → `BddVariables`, now a genuinely lazy incremental graph walk that borrows the
+    `Bdd` and resolves one support variable per step (so `.next()`/`.any(..)`/`.take(n)` skip the rest
+    of the walk); no longer `ExactSizeIterator`/`DoubleEndedIterator`.
+- **`Cover::maximize` takes variable *names*.** It now accepts `&[impl AsRef<str>]` on a `StringLabel`
+  input and builds the target header directly, instead of `&[I]` label values. `&[Symbol]` calls are
+  unaffected (`Symbol: AsRef<str>`); `&["a", "b"]` now works too.
+- **Ordering relaxed.** The variable enumerations (`BoolExpr::variables`, `Bdd::variables`) and the
+  minterm expansions yield in traversal order rather than sorted; they still deduplicate. Collect the
+  result (`.collect::<Vec<_>>()`, `.collect::<BTreeSet<_>>()`) to recover the previous container, and
+  sort explicitly if you relied on ordering.
+
+### Removed
+
+- **`Bdd::to_minterms`** (returned `Vec<Minterm>`) — replaced by **`Bdd::maximize(&[names]) -> Cover`**,
+  the inverse of `Bdd::minimize`: it returns the fully-expanded, **deduplicated** maximal cover over the
+  given variable names, each cube of which is a minterm (iterate `cover.cubes()`).
+- **`Bdd::collect_variables`** — folded into `Bdd::variables`, which is now the single (iterator)
+  accessor for a function's support.
+
 ## [5.0.0] - 2026-06-30
 
 Major redesign splitting the **syntactic expression** from the **canonical BDD**. `BoolExpr` is now an

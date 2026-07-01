@@ -322,7 +322,7 @@ where
     // cloning the packed-word `Arc`s (the packing is independent of the label type, and variable order
     // is preserved across the boundary) — no per-variable re-packing. Unlike the identity-union
     // re-home in `push`/`from_cubes`, this needs no padding/projection because the arities already match.
-    let rehome = |cube: &Cube<Anonymous, Anonymous>| -> Cube<I, O> {
+    let rehome = |cube: Cube<Anonymous, Anonymous>| -> Cube<I, O> {
         let im = Minterm::from_packed_words(
             Arc::clone(&input_symbols),
             Arc::clone(cube.inputs().packed()),
@@ -346,12 +346,7 @@ where
     Ok(Cover {
         input_symbols: Arc::clone(cover.input_symbols()),
         output_symbols: Arc::clone(cover.output_symbols()),
-        cubes: f_cubes
-            .iter()
-            .chain(d_cubes.iter())
-            .chain(r_cubes.iter())
-            .map(rehome)
-            .collect(),
+        cubes: f_cubes.chain(d_cubes).chain(r_cubes).map(rehome).collect(),
         cover_type: cover.cover_type,
     })
 }

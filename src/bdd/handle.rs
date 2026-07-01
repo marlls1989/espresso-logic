@@ -15,7 +15,7 @@
 //! The handle is [`Clone`] (a refcount bump) but **not** `Copy`: operators consume their operands by
 //! value, with reference variants for reuse, while derivation and query methods borrow `&self`.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -315,18 +315,22 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 
     // ---- Introspection ------------------------------------------------------------------------
 
-    /// The variables this function depends on, sorted alphabetically by name.
+    /// The variables this function depends on, as a lazy [`BddVariables`] iterator.
+    ///
+    /// Yields each support variable once (deduplicated), in the order the shared graph traversal first
+    /// encounters it — **not** sorted. The iterator borrows this handle and walks the shared graph
+    /// incrementally: each `next()` takes a brief read guard and advances the depth-first traversal only
+    /// far enough to surface the next new variable, so callers that stop early (`.next()`, `.any(..)`,
+    /// `.take(n)`) never pay for the whole-graph walk.
     #[must_use]
-    pub fn collect_variables(&self) -> Vec<Symbol> {
-        let mut ids = std::collections::HashSet::new();
-        self.collect_var_ids(&mut ids);
-        let mgr = self.cell.read();
-        let mut names: Vec<Symbol> = ids
-            .into_iter()
-            .filter_map(|id| mgr.var_name(id).cloned())
-            .collect();
-        names.sort();
-        names
+    pub fn variables(&self) -> BddVariables<'_, B, C> {
+        // O(1) construction: seed the DFS frontier with the root and let `next()` do the walking.
+        BddVariables {
+            bdd: self,
+            stack: vec![self.root],
+            visited: std::collections::HashSet::new(),
+            seen_vars: std::collections::HashSet::new(),
+        }
     }
 
     /// Number of distinct, reachable nodes in this BDD (including reached terminals).
@@ -387,8 +391,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// is an `F` (ON-set) cover.
     #[must_use]
     pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
-        // Canonical, alphabetically sorted header shared by every extracted cube.
-        let vars: Arc<[Symbol]> = self.collect_variables().into_iter().collect();
+        // Canonical, alphabetically sorted header shared by every extracted cube. `variables()` yields
+        // the support in traversal (unsorted) order, so sort here to keep the header canonical.
+        let mut names: Vec<Symbol> = self.variables().collect();
+        names.sort();
+        let vars: Arc<[Symbol]> = names.into();
         let index: std::collections::HashMap<Symbol, usize> = vars
             .iter()
             .cloned()
@@ -451,27 +458,22 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         Cover::from_parts(symbols, output_symbols, cubes, CoverType::F)
     }
 
-    /// Fully-expanded canonical minterms over the explicit, widenable variable set `vars`
-    /// (requirement 2).
+    /// The **maximal** cover of this function over the explicit, widenable variable set `vars` — the
+    /// inverse of [`minimize`](Self::minimize).
     ///
-    /// Every returned [`Minterm`] assigns **every** variable in `vars` (no don't-cares left). `vars` MAY
-    /// be a superset of this function's support: a variable in `vars` absent from the function is split
-    /// into both polarities. A variable of the function omitted from `vars` is dropped — for the inverse
-    /// of minimisation, pass at least the function's support. All returned minterms share one canonical,
-    /// identity-aligned header (so they stay on the fast-comparison path and are usable in
-    /// `BTreeSet`/`HashMap`). The result is deduplicated and returned in a deterministic (sorted) order;
-    /// expanding the same function over the same `vars` is idempotent.
+    /// Every cube of the returned [`Cover`] assigns **every** variable in `vars` (no don't-cares left),
+    /// so each cube is a full minterm; enumerate them with [`Cover::cubes`] (each cube's
+    /// [`inputs`](crate::Cube::inputs) is the [`Minterm`]). `vars` MAY be a superset of this function's
+    /// support — a variable in `vars` absent from the function is split into both polarities — or a
+    /// subset, in which case projection collapses distinct minterms onto the retained variables. Either
+    /// way the result is **deduplicated** (first-seen order, **not** sorted) and shares one canonical,
+    /// identity-aligned header (so the cubes stay on the fast-comparison path and are usable in
+    /// `BTreeSet`/`HashMap`). For the exact inverse of minimisation, pass at least the function's support.
     ///
     /// Built from [`to_cubes`](Self::to_cubes) via [`Cover::maximize`].
     #[must_use]
-    pub fn to_minterms<S: AsRef<str>>(&self, vars: &[S]) -> Vec<Minterm<Symbol>> {
-        let header: Vec<Symbol> = vars.iter().map(|s| Symbol::new(s.as_ref())).collect();
-        let maximal = self.to_cubes().maximize(&header);
-        let mut minterms: Vec<Minterm<Symbol>> =
-            maximal.cubes().map(|c| c.inputs().clone()).collect();
-        minterms.sort();
-        minterms.dedup();
-        minterms
+    pub fn maximize<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+        self.to_cubes().maximize(vars)
     }
 
     // ---- Minimisation -------------------------------------------------------------------------
@@ -557,15 +559,61 @@ impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
     }
 }
 
-/// The variables a [`Bdd`] depends on as a `BTreeSet` (a canonical-order convenience over
-/// [`collect_variables`](Bdd::collect_variables)).
-impl<B: Brand, C: ManagerCell> Bdd<B, C> {
-    /// The variables this function depends on, as a `BTreeSet<Symbol>` (canonical iteration order).
-    #[must_use]
-    pub fn variables(&self) -> BTreeSet<Symbol> {
-        self.collect_variables().into_iter().collect()
+/// Lazy iterator over the support variables of a [`Bdd`], created by [`Bdd::variables`].
+///
+/// Borrows its [`Bdd`] and walks the shared graph incrementally: each `next()` takes a brief read guard
+/// and continues a deduplicated depth-first traversal only until it reaches the next support variable,
+/// which it resolves and yields (first-encounter order, **not** sorted). Nothing is materialised up
+/// front, so a caller that stops early skips the rest of the walk. Because finishing the walk is the
+/// only way to know the count, this is not an [`ExactSizeIterator`].
+pub struct BddVariables<'a, B: Brand, C: ManagerCell> {
+    /// The borrowed parent; supplies the manager cell and root, and ties the walk to its lifetime.
+    bdd: &'a Bdd<B, C>,
+    /// DFS frontier of nodes still to visit (seeded with the root).
+    stack: Vec<NodeId>,
+    /// Nodes already popped, so a shared subgraph is walked once.
+    visited: std::collections::HashSet<NodeId>,
+    /// Variable ids already yielded, so each support variable surfaces exactly once.
+    seen_vars: std::collections::HashSet<usize>,
+}
+
+/// Opaque: the borrowed graph carries no useful `Debug`, and the remaining count is unknown without
+/// finishing the walk.
+impl<B: Brand, C: ManagerCell> std::fmt::Debug for BddVariables<'_, B, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BddVariables").finish_non_exhaustive()
     }
 }
+
+impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
+    type Item = Symbol;
+
+    fn next(&mut self) -> Option<Symbol> {
+        // Continue the deduplicated DFS under a brief read guard, stopping at the first not-yet-seen
+        // decision variable. `visited`/`seen_vars` persist across calls, so a full drain performs one
+        // whole-graph walk in total, and an early-stopping caller performs only part of it.
+        let mgr = self.bdd.cell.read();
+        while let Some(node) = self.stack.pop() {
+            if !self.visited.insert(node) {
+                continue;
+            }
+            if let ManagerNode::Decision { var, low, high } = mgr.expect_node(node) {
+                let (var, low, high) = (*var, *low, *high);
+                self.stack.push(low);
+                self.stack.push(high);
+                if self.seen_vars.insert(var) {
+                    // An unnamed decision var id should not occur; skip it rather than end the walk.
+                    if let Some(name) = mgr.var_name(var).cloned() {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+impl<B: Brand, C: ManagerCell> std::iter::FusedIterator for BddVariables<'_, B, C> {}
 
 /// One node of a [`Bdd`], as seen by [`Bdd::fold`] and [`Bdd::fold_with_context`].
 ///

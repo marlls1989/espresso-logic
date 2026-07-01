@@ -77,7 +77,9 @@ assert_eq!(f.evaluate(&assignment), Ok(false));
 use espresso_logic::BoolExpr;
 
 let expr = BoolExpr::parse("a & b | c & d").unwrap();
-let names: Vec<String> = expr.variables().iter().map(|s| s.to_string()).collect();
+// `variables()` is a lazy iterator in token order; sort to compare.
+let mut names: Vec<String> = expr.variables().map(|s| s.to_string()).collect();
+names.sort();
 assert_eq!(names, ["a", "b", "c", "d"]);
 ```
 
@@ -165,7 +167,7 @@ let f = (a.clone() & b.clone()) | (a.clone() & b.clone() & c); // logically just
 // Enumerate cubes / minterms.
 let cubes = f.to_cubes();
 assert_eq!(cubes.num_cubes(), 1);
-let minterms = f.to_minterms(&["a", "b"]);
+let minterms: Vec<_> = f.maximize(&["a", "b"]).cubes().map(|c| c.inputs().clone()).collect();
 assert_eq!(minterms.len(), 1);
 
 // Minimise the ON-set, and lower to a factored expression.

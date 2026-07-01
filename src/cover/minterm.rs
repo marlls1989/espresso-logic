@@ -610,7 +610,8 @@ impl<L: Label> Minterm<L> {
     }
 
     /// The variables on which `self` and `other` disagree (see [`hamming_distance`](Self::hamming_distance)
-    /// for the disagreement rule). The labels are returned cloned; ordering is unspecified.
+    /// for the disagreement rule), as a lazy [`Disagreement`] iterator that yields each disagreeing
+    /// label (cloned) on demand. Ordering is unspecified.
     ///
     /// # Examples
     ///
@@ -625,41 +626,21 @@ impl<L: Label> Minterm<L> {
     ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
     ///     [Some(true), Some(true), Some(false)],
     /// );
-    /// let mut d = a.disagreement(&b);
+    /// let mut d: Vec<_> = a.disagreement(&b).collect();
     /// d.sort();
     /// assert_eq!(d, vec!["b".to_string(), "c".to_string()]);
     /// ```
     #[must_use]
-    pub fn disagreement(&self, other: &Self) -> Vec<L> {
-        if self.symbols == other.symbols {
-            let labels = self.symbols.labels();
-            (0..self.num_vars())
-                .filter(|&i| fields_disagree(field_at(&self.values, i), field_at(&other.values, i)))
-                .map(|i| labels[i].clone())
-                .collect()
+    pub fn disagreement<'a>(&'a self, other: &'a Self) -> Disagreement<'a, L> {
+        let state = if self.symbols == other.symbols {
+            DisagreementState::SameHeader { pos: 0 }
         } else {
-            // Merge-join over the two sorted-identity label sequences; only variables present on both
-            // sides with disjoint fields can disagree (a single-sided variable reads as don't-care).
-            let (la, lb) = (self.symbols.labels(), other.symbols.labels());
-            let (sa, sb) = (self.symbols.sorted_order(), other.symbols.sorted_order());
-            let (mut i, mut j) = (0usize, 0usize);
-            let mut out = Vec::new();
-            while i < sa.len() && j < sb.len() {
-                let (ia, ib) = (sa[i] as usize, sb[j] as usize);
-                match la[ia].identity(ia).cmp(&lb[ib].identity(ib)) {
-                    Ordering::Less => i += 1,
-                    Ordering::Greater => j += 1,
-                    Ordering::Equal => {
-                        if fields_disagree(field_at(&self.values, ia), field_at(&other.values, ib))
-                        {
-                            out.push(la[ia].clone());
-                        }
-                        i += 1;
-                        j += 1;
-                    }
-                }
-            }
-            out
+            DisagreementState::MergeJoin { i: 0, j: 0 }
+        };
+        Disagreement {
+            a: self,
+            b: other,
+            state,
         }
     }
 
@@ -673,6 +654,9 @@ impl<L: Label> Minterm<L> {
     /// `target` as their canonical header (so they stay on the fast-comparison path and are usable as
     /// `BTreeSet`/`HashSet` keys). Expanding an already-maximal minterm over its own header is a no-op.
     ///
+    /// Returns a lazy [`ExpandedMinterms`] iterator that packs each of the `2^k` minterms on demand,
+    /// so a cube with many don't-cares costs O(1) memory rather than materialising the whole set.
+    ///
     /// # Examples
     ///
     /// ```
@@ -682,7 +666,7 @@ impl<L: Label> Minterm<L> {
     /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect());
     /// // a fixed true, b don't-care → both polarities of b.
     /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
-    /// let got: BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+    /// let got: BTreeSet<_> = m.expand_over(&vars).collect();
     /// let want: BTreeSet<_> = [
     ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]),
     ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(true)]),
@@ -692,47 +676,182 @@ impl<L: Label> Minterm<L> {
     /// assert_eq!(got, want);
     /// ```
     #[must_use]
-    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> Vec<Minterm<L>> {
-        // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm —
-        // short-circuit before the don't-care split rather than copying the malformed field through.
+    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> ExpandedMinterms<L> {
+        // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm — a
+        // vacuous (zero-length) expansion, short-circuited before the don't-care split rather than
+        // copying the malformed field through. `base` is unread when `count == 0`.
         if self.has_empty_field() {
-            return Vec::new();
+            return ExpandedMinterms {
+                base: Arc::clone(&self.values),
+                positions: Arc::from([]),
+                target: Arc::clone(target),
+                mask: 0,
+                count: 0,
+            };
         }
         let base = self.project_onto(target);
-        let positions: Vec<usize> = (0..base.num_vars())
+        let positions: Arc<[usize]> = (0..base.num_vars())
             .filter(|&i| field_at(&base.values, i) == FIELD_DC)
             .collect();
         let k = positions.len();
-        // The expansion materialises 2^k minterms. Guard `k` so the count neither overflows the
-        // `1 << k` shift nor exceeds what a `Vec` can address on this platform (`usize`); beyond
-        // that the result is not sane to materialise, so fail loudly rather than truncate silently.
+        // The expansion yields 2^k minterms. Guard `k` so the count neither overflows the `1 << k`
+        // shift nor exceeds what a `usize` can address on this platform (the iterator reports its
+        // length as a `usize`); beyond that the enumeration is not sane, so fail loudly rather than
+        // wrap silently.
         assert!(
             k < usize::BITS as usize,
             "expand_over: {k} don't-care positions would expand to 2^{k} minterms, \
-             exceeding the addressable Vec capacity on this {}-bit platform",
+             exceeding the addressable range on this {}-bit platform",
             usize::BITS
         );
-        let count = 1u64 << k;
-        let capacity =
-            usize::try_from(count).expect("2^k minterms fit in usize once k is below usize::BITS");
-        let mut out = Vec::with_capacity(capacity);
-        for mask in 0u64..count {
-            let mut words: Vec<u64> = base.values.to_vec();
-            for (b, &pos) in positions.iter().enumerate() {
-                let field = if (mask >> b) & 1 == 1 {
-                    FIELD_TRUE
-                } else {
-                    FIELD_FALSE
-                };
-                let shift = (pos % VARS_PER_WORD) * 2;
-                let wi = pos / VARS_PER_WORD;
-                words[wi] = (words[wi] & !(0b11u64 << shift)) | ((field as u64) << shift);
-            }
-            out.push(Minterm::from_packed_words(Arc::clone(target), words.into()));
+        ExpandedMinterms {
+            base: Arc::clone(&base.values),
+            positions,
+            target: Arc::clone(target),
+            mask: 0,
+            count: 1u64 << k,
         }
-        out
     }
 }
+
+/// Lazy iterator over the concrete minterms of an expansion, created by [`Minterm::expand_over`] and
+/// [`Cube::expand_to`](crate::Cube::expand_to).
+///
+/// Each `next()` packs one of the `2^k` minterms on demand (where `k` is the number of don't-care
+/// positions after projection), so the full expansion is never materialised — expanding a cube with
+/// many don't-cares costs O(1) memory rather than O(2^k). The number of minterms is known up front, so
+/// this is an [`ExactSizeIterator`].
+pub struct ExpandedMinterms<L> {
+    /// The projected base words shared by every emitted minterm; the don't-care positions are patched
+    /// per mask. Unread when `count == 0` (a vacuous cube).
+    base: Arc<[u64]>,
+    /// The don't-care positions (in `target`'s index space) split across the expansion.
+    positions: Arc<[usize]>,
+    /// Shared header every emitted minterm is defined over.
+    target: Arc<Symbols<L>>,
+    /// Next mask to emit, in `0..count`.
+    mask: u64,
+    /// Total number of minterms (`2^k`), or `0` for a vacuous (empty-field) cube.
+    count: u64,
+}
+
+/// Opaque: the packed base words carry no useful `Debug`, so only the remaining count is shown.
+impl<L> fmt::Debug for ExpandedMinterms<L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExpandedMinterms")
+            .field("remaining", &(self.count - self.mask))
+            .finish_non_exhaustive()
+    }
+}
+
+impl<L> Iterator for ExpandedMinterms<L> {
+    type Item = Minterm<L>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.mask >= self.count {
+            return None;
+        }
+        let mask = self.mask;
+        self.mask += 1;
+        let mut words: Vec<u64> = self.base.to_vec();
+        for (b, &pos) in self.positions.iter().enumerate() {
+            let field = if (mask >> b) & 1 == 1 {
+                FIELD_TRUE
+            } else {
+                FIELD_FALSE
+            };
+            let shift = (pos % VARS_PER_WORD) * 2;
+            let wi = pos / VARS_PER_WORD;
+            words[wi] = (words[wi] & !(0b11u64 << shift)) | ((field as u64) << shift);
+        }
+        Some(Minterm::from_packed_words(
+            Arc::clone(&self.target),
+            words.into(),
+        ))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // `count` is bounded below `2^usize::BITS` by the guard in `expand_over`, so this fits `usize`.
+        let remaining = usize::try_from(self.count - self.mask).unwrap_or(usize::MAX);
+        (remaining, Some(remaining))
+    }
+}
+
+// The remaining count is known exactly and in O(1).
+impl<L> ExactSizeIterator for ExpandedMinterms<L> {}
+impl<L> std::iter::FusedIterator for ExpandedMinterms<L> {}
+
+/// Traversal state of a [`Disagreement`] iterator: one branch per header relationship.
+enum DisagreementState {
+    /// Shared header: scan positions `pos..num_vars`, yielding those whose fields disagree.
+    SameHeader { pos: usize },
+    /// Distinct headers: merge-join the two sorted-identity sequences at indices `(i, j)`.
+    MergeJoin { i: usize, j: usize },
+}
+
+/// Lazy iterator over the variables on which two minterms disagree, created by
+/// [`Minterm::disagreement`]. Each `next()` advances to the next disagreeing variable and yields its
+/// cloned label; nothing is materialised up front. Ordering is unspecified.
+pub struct Disagreement<'a, L> {
+    a: &'a Minterm<L>,
+    b: &'a Minterm<L>,
+    state: DisagreementState,
+}
+
+/// Opaque: the borrowed minterms are elided (no `Debug` bound on `L`).
+impl<L> fmt::Debug for Disagreement<'_, L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Disagreement").finish_non_exhaustive()
+    }
+}
+
+impl<L: Label> Iterator for Disagreement<'_, L> {
+    type Item = L;
+
+    fn next(&mut self) -> Option<L> {
+        match &mut self.state {
+            DisagreementState::SameHeader { pos } => {
+                let labels = self.a.symbols.labels();
+                while *pos < self.a.num_vars() {
+                    let i = *pos;
+                    *pos += 1;
+                    if fields_disagree(field_at(&self.a.values, i), field_at(&self.b.values, i)) {
+                        return Some(labels[i].clone());
+                    }
+                }
+                None
+            }
+            DisagreementState::MergeJoin { i, j } => {
+                // Only variables present on both sides with disjoint fields can disagree (a
+                // single-sided variable reads as don't-care), so merge-join the two sorted-identity
+                // label sequences and test the coincident ones.
+                let (la, lb) = (self.a.symbols.labels(), self.b.symbols.labels());
+                let (sa, sb) = (self.a.symbols.sorted_order(), self.b.symbols.sorted_order());
+                while *i < sa.len() && *j < sb.len() {
+                    let (ia, ib) = (sa[*i] as usize, sb[*j] as usize);
+                    match la[ia].identity(ia).cmp(&lb[ib].identity(ib)) {
+                        Ordering::Less => *i += 1,
+                        Ordering::Greater => *j += 1,
+                        Ordering::Equal => {
+                            *i += 1;
+                            *j += 1;
+                            if fields_disagree(
+                                field_at(&self.a.values, ia),
+                                field_at(&self.b.values, ib),
+                            ) {
+                                return Some(la[ia].clone());
+                            }
+                        }
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+// Both branches leave their cursors at the end once exhausted, so `None` is terminal.
+impl<L: Label> std::iter::FusedIterator for Disagreement<'_, L> {}
 
 /// Merge-join iterator backing [`Minterm::merged_fields`]; a variable absent from one side reads as
 /// don't-care (`FIELD_DC`).
@@ -1051,11 +1170,11 @@ mod tests {
 
         assert_eq!(a.hamming_distance(&b), 2);
 
-        let mut got = a.disagreement(&b);
+        let mut got: Vec<_> = a.disagreement(&b).collect();
         got.sort();
         assert_eq!(got, vec![Symbol::from("b"), Symbol::from("c")]);
         // The disagreement relation is symmetric.
-        let mut got_rev = b.disagreement(&a);
+        let mut got_rev: Vec<_> = b.disagreement(&a).collect();
         got_rev.sort();
         assert_eq!(got_rev, vec![Symbol::from("b"), Symbol::from("c")]);
     }
@@ -1067,7 +1186,7 @@ mod tests {
         let a = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
         let b = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false)]);
         assert_eq!(a.hamming_distance(&b), 0);
-        assert!(a.disagreement(&b).is_empty());
+        assert_eq!(a.disagreement(&b).count(), 0);
     }
 
     /// `hamming_distance` always equals the cardinality of `disagreement`, exhaustively over a
@@ -1084,7 +1203,7 @@ mod tests {
                             for &y2 in &opts {
                                 let a = Minterm::from_symbols(Arc::clone(&s), [x0, x1, x2]);
                                 let b = Minterm::from_symbols(Arc::clone(&s), [y0, y1, y2]);
-                                assert_eq!(a.hamming_distance(&b), a.disagreement(&b).len());
+                                assert_eq!(a.hamming_distance(&b), a.disagreement(&b).count());
                             }
                         }
                     }
@@ -1121,9 +1240,9 @@ mod tests {
             a_perm.hamming_distance(&b_perm)
         );
 
-        let mut d_shared = a_shared.disagreement(&b_shared);
+        let mut d_shared: Vec<_> = a_shared.disagreement(&b_shared).collect();
         d_shared.sort();
-        let mut d_perm = a_perm.disagreement(&b_perm);
+        let mut d_perm: Vec<_> = a_perm.disagreement(&b_perm).collect();
         d_perm.sort();
         assert_eq!(d_shared, d_perm);
         assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
@@ -1140,7 +1259,7 @@ mod tests {
         );
         assert!(x.has_empty_field());
         assert_eq!(x.hamming_distance(&x), 0);
-        assert!(x.disagreement(&x).is_empty());
+        assert_eq!(x.disagreement(&x).count(), 0);
     }
 
     // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
@@ -1151,7 +1270,7 @@ mod tests {
         let vars = syms(&["a", "b"]);
         // b is don't-care in the source.
         let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), None]);
-        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).collect();
         let want: std::collections::BTreeSet<_> = [
             Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]),
             Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(true)]),
@@ -1169,7 +1288,7 @@ mod tests {
         let target = syms(&["a", "b", "c"]);
         // a fixed true, b fixed false; c is absent from the source so it widens.
         let m = Minterm::from_symbols(src, [Some(true), Some(false)]);
-        let got: std::collections::BTreeSet<_> = m.expand_over(&target).into_iter().collect();
+        let got: std::collections::BTreeSet<_> = m.expand_over(&target).collect();
         let want: std::collections::BTreeSet<_> = [
             Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(false)]),
             Minterm::from_symbols(Arc::clone(&target), [Some(true), Some(false), Some(true)]),
@@ -1185,7 +1304,7 @@ mod tests {
     fn expand_over_dont_care_yields_full_cube() {
         let vars = syms(&["a", "b"]);
         let m = Minterm::from_symbols(Arc::clone(&vars), [None, None]);
-        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).into_iter().collect();
+        let got: std::collections::BTreeSet<_> = m.expand_over(&vars).collect();
         let want: std::collections::BTreeSet<_> = [
             Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(false)]),
             Minterm::from_symbols(Arc::clone(&vars), [Some(false), Some(true)]),
@@ -1204,7 +1323,7 @@ mod tests {
     fn expand_over_is_idempotent_when_already_maximal() {
         let vars = syms(&["a", "b"]);
         let m = Minterm::from_symbols(Arc::clone(&vars), [Some(true), Some(false)]);
-        let got = m.expand_over(&vars);
+        let got: Vec<_> = m.expand_over(&vars).collect();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], m);
     }
@@ -1218,13 +1337,14 @@ mod tests {
             [InputField::Empty, InputField::DontCare],
         );
         assert!(m.has_empty_field());
-        assert!(m.expand_over(&vars).is_empty());
+        assert_eq!(m.expand_over(&vars).count(), 0);
     }
 
     /// Expanding past the don't-care guard fails loudly rather than overflowing the shift or
-    /// truncating: 64 don't-care positions cannot be materialised within `usize`.
+    /// truncating: 64 don't-care positions cannot be addressed within `usize`. The guard is eager
+    /// (in `expand_over` itself), so the panic fires at construction, before any `next()`.
     #[test]
-    #[should_panic(expected = "exceeding the addressable Vec capacity")]
+    #[should_panic(expected = "exceeding the addressable range")]
     fn expand_over_panics_past_capacity_guard() {
         let values = vec![None; 64];
         let m = Minterm::anonymous(&values);

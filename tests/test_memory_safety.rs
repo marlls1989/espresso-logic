@@ -49,7 +49,7 @@ fn test_memory_usage_stability() {
         let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, _d, _r) = esp.minimize(&f, None, None);
-        let _ = result.to_cubes(2, 1, CubeType::F);
+        let _ = result.to_cubes(2, 1, CubeType::F).count();
     }
 
     // Give OS time to reflect memory changes
@@ -64,7 +64,7 @@ fn test_memory_usage_stability() {
         let cubes = [(&[0, 1][..], &[1][..]), (&[1, 0][..], &[1][..])];
         let f = EspressoCover::from_cubes(&cubes, 2, 1).unwrap();
         let (result, _d, _r) = esp.minimize(&f, None, None);
-        let _ = result.to_cubes(2, 1, CubeType::F);
+        let _ = result.to_cubes(2, 1, CubeType::F).count();
     }
 
     // Give OS time to reflect memory changes
@@ -107,9 +107,9 @@ fn test_clone_independence_no_double_free() {
     let cover3 = cover1.clone();
 
     // All should be readable independently
-    let cubes1 = cover1.to_cubes(2, 1, CubeType::F);
-    let cubes2 = cover2.to_cubes(2, 1, CubeType::F);
-    let cubes3 = cover3.to_cubes(2, 1, CubeType::F);
+    let cubes1: Vec<_> = cover1.to_cubes(2, 1, CubeType::F).collect();
+    let cubes2: Vec<_> = cover2.to_cubes(2, 1, CubeType::F).collect();
+    let cubes3: Vec<_> = cover3.to_cubes(2, 1, CubeType::F).collect();
 
     assert_eq!(cubes1.len(), 2);
     assert_eq!(cubes2.len(), 2);
@@ -117,11 +117,11 @@ fn test_clone_independence_no_double_free() {
 
     // Drop them in various orders - should not double-free
     drop(cover2); // Drop middle one
-    let _ = cover1.to_cubes(2, 1, CubeType::F); // Still accessible
-    let _ = cover3.to_cubes(2, 1, CubeType::F); // Still accessible
+    let _ = cover1.to_cubes(2, 1, CubeType::F).count(); // Still accessible
+    let _ = cover3.to_cubes(2, 1, CubeType::F).count(); // Still accessible
     drop(cover1);
-    let _ = cover3.to_cubes(2, 1, CubeType::F); // Still accessible
-                                                // cover3 drops last
+    let _ = cover3.to_cubes(2, 1, CubeType::F).count(); // Still accessible
+                                                        // cover3 drops last
 }
 
 /// Test that into_raw() properly transfers ownership without double-free
@@ -134,10 +134,10 @@ fn test_into_raw_ownership_transfer() {
     let (result, d, r) = cover.minimize(None, None);
 
     // All returned covers should be valid (memory accessible, not freed prematurely)
-    assert!(!result.to_cubes(2, 1, CubeType::F).is_empty());
+    assert!(result.to_cubes(2, 1, CubeType::F).count() > 0);
     // D and R might be empty depending on the minimization result
-    let _ = d.to_cubes(2, 1, CubeType::F);
-    let _ = r.to_cubes(2, 1, CubeType::F);
+    let _ = d.to_cubes(2, 1, CubeType::F).count();
+    let _ = r.to_cubes(2, 1, CubeType::F).count();
 
     // Dropping should free exactly once each (no double-free)
 }
@@ -158,9 +158,9 @@ fn test_minimize_with_explicit_covers() {
     let (result, d_out, r_out) = esp.minimize(&f, Some(&d), Some(&r));
 
     // All returned covers should be valid and independently freeable (memory safety check)
-    assert!(!result.to_cubes(2, 1, CubeType::F).is_empty());
-    let _ = d_out.to_cubes(2, 1, CubeType::F);
-    let _ = r_out.to_cubes(2, 1, CubeType::F);
+    assert!(result.to_cubes(2, 1, CubeType::F).count() > 0);
+    let _ = d_out.to_cubes(2, 1, CubeType::F).count();
+    let _ = r_out.to_cubes(2, 1, CubeType::F).count();
 
     // Each cover should free its own C memory on drop (no double-free)
 }
@@ -184,9 +184,9 @@ fn test_repeated_operations_amplify_leaks() {
         let (result, d, r) = esp.minimize(&f, None, None);
 
         // Use the results to prevent optimizer from removing them
-        let _ = result.to_cubes(2, 1, CubeType::F);
-        let _ = d.to_cubes(2, 1, CubeType::F);
-        let _ = r.to_cubes(2, 1, CubeType::F);
+        let _ = result.to_cubes(2, 1, CubeType::F).count();
+        let _ = d.to_cubes(2, 1, CubeType::F).count();
+        let _ = r.to_cubes(2, 1, CubeType::F).count();
 
         // Explicitly drop to test cleanup
         drop(result);
@@ -363,9 +363,9 @@ fn test_multithreaded_memory_isolation() {
                     let (result, d, r) = esp.minimize(&f, None, None);
 
                     // Use results
-                    let _ = result.to_cubes(2, 1, CubeType::F);
-                    let _ = d.to_cubes(2, 1, CubeType::F);
-                    let _ = r.to_cubes(2, 1, CubeType::F);
+                    let _ = result.to_cubes(2, 1, CubeType::F).count();
+                    let _ = d.to_cubes(2, 1, CubeType::F).count();
+                    let _ = r.to_cubes(2, 1, CubeType::F).count();
                 }
 
                 println!(
@@ -394,10 +394,10 @@ fn test_cover_keeps_espresso_alive() {
     };
 
     // Cover should still be usable - Espresso kept alive by Rc (no use-after-free)
-    let cubes = cover.to_cubes(2, 1, CubeType::F);
+    let cubes: Vec<_> = cover.to_cubes(2, 1, CubeType::F).collect();
     assert_eq!(cubes.len(), 1);
 
     // Minimize should also work (memory still valid)
     let (result, _, _) = cover.minimize(None, None);
-    assert!(!result.to_cubes(2, 1, CubeType::F).is_empty());
+    assert!(result.to_cubes(2, 1, CubeType::F).count() > 0);
 }

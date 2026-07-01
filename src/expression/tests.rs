@@ -286,8 +286,10 @@ fn display_round_trips_right_nested_associative() {
 #[test]
 fn variables_are_syntactic() {
     let f = expr!("b" & ("a" | !"a"));
-    let vars: Vec<String> = f.variables().iter().map(|s| s.to_string()).collect();
-    // Syntactic scan reports every occurring variable (a appears even though a | !a is a tautology).
+    // `variables()` yields in token order (not sorted); sort here to compare. The scan reports every
+    // occurring variable once (a appears even though a | !a is a tautology).
+    let mut vars: Vec<String> = f.variables().map(|s| s.to_string()).collect();
+    vars.sort();
     assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
 }
 

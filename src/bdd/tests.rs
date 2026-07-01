@@ -169,11 +169,7 @@ fn fold_collects_support_variables() {
             set
         }
     });
-    let expected: BTreeSet<String> = f
-        .collect_variables()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let expected: BTreeSet<String> = f.variables().map(|s| s.to_string()).collect();
     assert_eq!(vars, expected);
 }
 
@@ -419,14 +415,18 @@ fn minterm(header: &Arc<Symbols<Symbol>>, values: &[(&str, bool)]) -> Minterm<Sy
 }
 
 #[test]
-fn to_minterms_xor_two_vars() {
+fn maximize_xor_two_vars() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = a ^ b;
 
     let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
-    let got: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b"]).into_iter().collect();
+    let got: BTreeSet<Minterm<Symbol>> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let want: BTreeSet<Minterm<Symbol>> = [
         minterm(&header, &[("a", true), ("b", false)]),
         minterm(&header, &[("a", false), ("b", true)]),
@@ -437,7 +437,7 @@ fn to_minterms_xor_two_vars() {
 }
 
 #[test]
-fn to_minterms_widen_with_absent_variable() {
+fn maximize_widen_with_absent_variable() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
@@ -445,7 +445,11 @@ fn to_minterms_widen_with_absent_variable() {
 
     // Widen with an absent variable c → c split into both polarities.
     let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect());
-    let got: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b", "c"]).into_iter().collect();
+    let got: BTreeSet<Minterm<Symbol>> = f
+        .maximize(&["a", "b", "c"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let want: BTreeSet<Minterm<Symbol>> = [
         minterm(&header, &[("a", true), ("b", false), ("c", false)]),
         minterm(&header, &[("a", true), ("b", false), ("c", true)]),
@@ -458,12 +462,47 @@ fn to_minterms_widen_with_absent_variable() {
 }
 
 #[test]
-fn to_minterms_true_is_full_cube() {
+fn maximize_subset_header_dedups() {
+    // Regression: a header that omits a support variable projects distinct cubes onto the same
+    // minterm, so `maximize` must deduplicate. f = (a & b) | (!a & c); to_cubes = {a1 b1}, {a0 c1}.
+    // Over [b, c] both expansions include b1c1, which must appear exactly once.
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (!a & c.clone());
+
+    let got: Vec<Minterm<Symbol>> = f
+        .maximize(&["b", "c"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
+    // No duplicates: the raw sequence and the deduplicated set have the same length.
+    let set: BTreeSet<Minterm<Symbol>> = got.iter().cloned().collect();
+    assert_eq!(got.len(), set.len(), "maximize must not repeat minterms");
+
+    let header = Symbols::new(["b", "c"].iter().map(Symbol::new).collect());
+    let want: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("b", true), ("c", false)]),
+        minterm(&header, &[("b", true), ("c", true)]),
+        minterm(&header, &[("b", false), ("c", true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(set, want);
+}
+
+#[test]
+fn maximize_true_is_full_cube() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let t = builder.constant(true);
 
     let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
-    let got: BTreeSet<Minterm<Symbol>> = t.to_minterms(&["a", "b"]).into_iter().collect();
+    let got: BTreeSet<Minterm<Symbol>> = t
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let want: BTreeSet<Minterm<Symbol>> = [
         minterm(&header, &[("a", false), ("b", false)]),
         minterm(&header, &[("a", false), ("b", true)]),
@@ -476,13 +515,17 @@ fn to_minterms_true_is_full_cube() {
 }
 
 #[test]
-fn to_minterms_single_var_splits_other() {
+fn maximize_single_var_splits_other() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
 
-    // a.to_minterms(&[a, b]) == { a:1,b:0 ; a:1,b:1 } — b split, a fixed.
+    // a.maximize(&[a, b]) == { a:1,b:0 ; a:1,b:1 } — b split, a fixed.
     let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
-    let got: BTreeSet<Minterm<Symbol>> = a.to_minterms(&["a", "b"]).into_iter().collect();
+    let got: BTreeSet<Minterm<Symbol>> = a
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let want: BTreeSet<Minterm<Symbol>> = [
         minterm(&header, &[("a", true), ("b", false)]),
         minterm(&header, &[("a", true), ("b", true)]),
@@ -493,15 +536,23 @@ fn to_minterms_single_var_splits_other() {
 }
 
 #[test]
-fn to_minterms_is_idempotent_and_deterministic() {
+fn maximize_is_idempotent_and_deterministic() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
     let f = (a.clone() & b.clone()) | (!a & !b); // a == b
 
-    let once = f.to_minterms(&["a", "b"]);
-    let twice = f.to_minterms(&["a", "b"]);
-    // Deterministic order.
+    let once: Vec<_> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
+    let twice: Vec<_> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
+    // Deterministic order (same function + vars → same traversal → same sequence).
     assert_eq!(once, twice);
     // Already-maximal expansion over the same vars is stable as a set.
     let set: BTreeSet<_> = once.iter().cloned().collect();
@@ -516,13 +567,17 @@ fn to_minterms_is_idempotent_and_deterministic() {
 }
 
 #[test]
-fn to_minterms_matches_cube_expand_to() {
-    // Mirror to_minterms against the Cube::expand_to / Cover::maximize primitive directly.
+fn maximize_matches_cube_expand_to() {
+    // Mirror maximize against the Cube::expand_to / Cover::maximize primitive directly.
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let f = a; // a=1, b unconstrained
 
-    let via_handle: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b"]).into_iter().collect();
+    let via_handle: BTreeSet<Minterm<Symbol>> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
 
     // a=1 cube expanded over [a, b]
     let cube =
@@ -530,7 +585,6 @@ fn to_minterms_matches_cube_expand_to() {
             .unwrap();
     let via_cube: BTreeSet<Minterm<Symbol>> = cube
         .expand_to(&[Symbol::new("a"), Symbol::new("b")])
-        .into_iter()
         .collect();
     assert_eq!(via_handle, via_cube);
 }
@@ -634,7 +688,11 @@ fn build_cover_round_trip() {
     assert!(f.equivalent_to(&(a ^ b)));
 
     // The minterm set of build_cover(cover) matches the cover's own maximised minterm set.
-    let from_handle: BTreeSet<Minterm<Symbol>> = f.to_minterms(&["a", "b"]).into_iter().collect();
+    let from_handle: BTreeSet<Minterm<Symbol>> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let from_cover: BTreeSet<Minterm<Symbol>> = cover
         .maximize(&[Symbol::new("a"), Symbol::new("b")])
         .cubes()
@@ -694,8 +752,11 @@ fn both_context_kinds_agree() {
     let lb = local.var("b");
     let lc = local.var("c");
     let lf = (la.clone() & lb) | (la.clone() ^ lc);
-    let local_minterms: BTreeSet<Minterm<Symbol>> =
-        lf.to_minterms(&["a", "b", "c"]).into_iter().collect();
+    let local_minterms: BTreeSet<Minterm<Symbol>> = lf
+        .maximize(&["a", "b", "c"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let local_taut = (la.clone() | !la).is_tautology();
 
     // Thread-safe.
@@ -704,8 +765,11 @@ fn both_context_kinds_agree() {
     let sb = sync.var("b");
     let sc = sync.var("c");
     let sf = (sa.clone() & sb) | (sa.clone() ^ sc);
-    let sync_minterms: BTreeSet<Minterm<Symbol>> =
-        sf.to_minterms(&["a", "b", "c"]).into_iter().collect();
+    let sync_minterms: BTreeSet<Minterm<Symbol>> = sf
+        .maximize(&["a", "b", "c"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
     let sync_taut = (sa.clone() | !sa).is_tautology();
 
     assert_eq!(local_minterms, sync_minterms);
@@ -726,7 +790,8 @@ fn sync_context_is_send_across_threads() {
         let a = sync.var("a");
         let b = sync.var("b");
         let f = (a.clone() & b.clone()) | (!a & !b);
-        f.to_minterms(&["a", "b"]).len()
+        // Each cube of the maximal cover is one minterm, so the cube count is the minterm count.
+        f.maximize(&["a", "b"]).cubes().count()
     });
     let n = handle.join().unwrap();
     assert_eq!(n, 2); // {a:0,b:0}, {a:1,b:1}

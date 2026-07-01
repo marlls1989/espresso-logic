@@ -120,7 +120,7 @@ pub use error::{AddExprError, ArityMismatch, CoverError, DuplicateLabel, ToExprE
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
-pub use minterm::{Minterm, MintermIter};
+pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
 pub use output_set::OutputSet;
 pub use symbols::Symbols;
 
@@ -369,8 +369,9 @@ where
     }
 }
 
-impl<I: Label, O: Clone> Cover<I, O> {
-    /// Expand every cube into its fully-assigned minterms over the explicit header `vars`.
+impl<I: StringLabel, O: Clone> Cover<I, O> {
+    /// Expand every cube into its fully-assigned minterms over the explicit header of variable names
+    /// `vars`.
     ///
     /// The inverse of minimisation ("maximise"): each cube's input pattern is re-expressed over `vars`
     /// and every don't-care (and every variable of `vars` absent from the cube) is split into both
@@ -382,8 +383,8 @@ impl<I: Label, O: Clone> Cover<I, O> {
     ///
     /// See [`Cube::expand_to`] / [`Minterm::expand_over`] for the per-cube primitive.
     #[must_use]
-    pub fn maximize(&self, vars: &[I]) -> Cover<I, O> {
-        let target = Symbols::new(vars.iter().cloned().collect());
+    pub fn maximize<S: AsRef<str>>(&self, vars: &[S]) -> Cover<I, O> {
+        let target = Symbols::new(vars.iter().map(|s| I::from(s.as_ref())).collect());
         let mut seen: HashSet<Cube<I, O>> = HashSet::new();
         let mut cubes = Vec::new();
         for cube in &self.cubes {
