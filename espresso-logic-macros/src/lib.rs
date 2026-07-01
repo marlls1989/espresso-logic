@@ -165,8 +165,18 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
                 "only 0 and 1 are supported as boolean constants",
             )),
         }
-    } else {
+    } else if input.peek(Token![self]) || input.peek(Token![::]) || input.peek(Ident) {
         Ok(Expr::Graft(parse_graft_operand(input)?))
+    } else {
+        // Nothing here can start a graft operand either (no `self`, no path, no identifier), so
+        // `parse_graft_operand` would only surface syn's generic "expected identifier". Report the
+        // domain-specific set of accepted operands instead, at the offending token (or, if input is
+        // exhausted, at the end of the stream).
+        Err(syn::Error::new(
+            input.span(),
+            "expected a Boolean operand: a string literal (\"name\"), a constant (0 or 1), a \
+             parenthesised expression, or an expression yielding a BoolExpr",
+        ))
     }
 }
 

@@ -435,6 +435,14 @@ pub use symbol::Symbol;
 /// use espresso_logic::expr;
 /// let _ = expr!(256 & "x");
 /// ```
+///
+/// An operand that is none of the above — not a graftable expression, string literal, `0`/`1`, or
+/// parenthesised expression — is rejected at compile time with a message naming what is accepted:
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(1.5);
+/// ```
 pub use espresso_logic_macros::expr;
 
 /// Implement the four owned/borrowed combinations of a binary [`std::ops`] operator in terms of an
