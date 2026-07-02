@@ -437,7 +437,7 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::{Minterm, Symbol};
     ///
-    /// // a=1, b a don't-care (b·? => just a=1).
+    /// // a=1; b is not named, so it reads as a don't-care (a & -).
     /// let m = Minterm::<Symbol>::labeled(&[(Symbol::new("a"), Some(true))]).unwrap();
     /// assert_eq!(m.value_of("a"), Some(true));
     /// assert_eq!(m.value_of("b"), None);

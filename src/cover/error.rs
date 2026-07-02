@@ -190,8 +190,11 @@ impl From<ArityMismatch> for io::Error {
     }
 }
 
-/// Returned by [`Cube::labeled`](crate::Cube::labeled) / [`Cube::with_labels`](crate::Cube::with_labels)
-/// when a side carries the same label twice. Variables are aligned by label identity, so a cube's input
+/// Returned by the labelled cube-half constructors — [`Cube::labeled`](crate::Cube::labeled) /
+/// [`Cube::with_labels`](crate::Cube::with_labels) and the per-half
+/// [`Minterm::labeled`](crate::Minterm::labeled) / [`Minterm::with_labels`](crate::Minterm::with_labels),
+/// [`OutputSet::labeled`](crate::OutputSet::labeled) / [`OutputSet::with_labels`](crate::OutputSet::with_labels)
+/// — when a side carries the same label twice. Variables are aligned by label identity, so a cube's input
 /// (or output) labels must be distinct — otherwise the duplicate columns would collapse onto one and
 /// silently drop a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
