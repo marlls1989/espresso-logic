@@ -375,7 +375,7 @@ impl<I: Label, O: Clone> Cover<I, O> {
     /// The inverse of minimisation ("maximise"): each cube's input pattern is expanded so that every
     /// don't-care is split into both polarities, leaving each surviving cube assigning **every** input
     /// variable. Output columns and per-cube set tags are preserved, and the
-    /// [`CoverType`](CoverType) is kept (an F cover stays F, an FR cover keeps both sides); duplicate
+    /// [`CoverType`] is kept (an F cover stays F, an FR cover keeps both sides); duplicate
     /// cubes are removed (first-seen order kept). The result shares one canonical input header, so its
     /// minterms stay on the fast-comparison path, and maximising an already-maximal cover is a no-op.
     ///
@@ -426,7 +426,7 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     /// gives on-set `a=b=1`, off-set `a=b=0`, and `a≠b` undefined.
     ///
     /// The result is returned in **don't-care form** (not minterm-expanded): compose
-    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`](CoverType) is kept
+    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
     /// (F in → F out; FR in → FR out).
     ///
     /// # Panics
