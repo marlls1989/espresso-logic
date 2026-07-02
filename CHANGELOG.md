@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PLA reading streams the input.** `from_pla_reader` iterates the reader line by line instead of
   buffering the whole file into memory first; an I/O error is reported at the point in the stream
   where it occurs.
+- **`Cargo.lock` is now tracked.** The crate ships a binary behind the `cli` feature, so a committed
+  lockfile gives it and CI reproducible dependency resolution. Dependents are unaffected — Cargo
+  ignores a library dependency's lockfile.
+- **The bundled CLI documentation now records the CLI's real divergence from the C tool.** `docs/CLI.md`
+  (embedded into the crate docs) previously claimed option parity that does not exist; it now states the
+  supported option subset and notes that the shipped 1988 Berkeley man pages describe the C tool rather
+  than this CLI.
 - **The PLA reader rejects a repeated `.ilb`/`.ob` label section.** A second `.ilb` or `.ob`
   directive used to silently overwrite the labels declared by the first; it is now rejected with the
   new `PLAError::DuplicateInputLabelDirective` / `DuplicateOutputLabelDirective` variants, completing
