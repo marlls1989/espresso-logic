@@ -356,7 +356,7 @@ fn bench_symbols_construction(c: &mut Criterion) {
             .collect();
         group.bench_with_input(BenchmarkId::from_parameter(width), &labels, |b, labels| {
             b.iter(|| {
-                let syms = Symbols::new(Arc::clone(labels));
+                let syms = Symbols::new(Arc::clone(labels)).unwrap();
                 black_box(syms);
             });
         });
@@ -392,8 +392,8 @@ fn bench_named_align(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(width), &width, |b, _| {
             b.iter(|| {
                 // Fresh tables each iter so construction is included alongside the use.
-                let sa = Symbols::new(Arc::clone(&names_a));
-                let sb = Symbols::new(Arc::clone(&names_b));
+                let sa = Symbols::new(Arc::clone(&names_a)).unwrap();
+                let sb = Symbols::new(Arc::clone(&names_b)).unwrap();
                 let ma = Minterm::from_symbols(sa, vals.iter().copied());
                 let mb = Minterm::from_symbols(sb, vals.iter().copied());
                 black_box(ma.is_subset_of(&mb)); // merge-join => sorted_order on both

@@ -31,7 +31,7 @@
 //! boundary is close to a bit-repack.
 
 use super::error::DuplicateLabel;
-use super::label::{first_duplicate, Anonymous, Label, StringLabel};
+use super::label::{Anonymous, Label, StringLabel};
 use super::symbols::Symbols;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -403,17 +403,15 @@ impl Minterm<Anonymous> {
 }
 
 impl<L: Label> Minterm<L> {
-    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): reject a repeated
-    /// label (variables align by identity, so a duplicate would collapse two columns onto one and drop
-    /// a value), then build over a fresh symbol table.
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): build over a fresh
+    /// symbol table, proxying [`Symbols::new`]'s duplicate-identity check into the input-side
+    /// [`DuplicateLabel::Input`] (a duplicate would collapse two columns onto one and drop a value).
     pub(crate) fn from_label_arcs(
         labels: Arc<[L]>,
         values: impl IntoIterator<Item = Option<bool>>,
     ) -> Result<Minterm<L>, DuplicateLabel> {
-        if let Some(index) = first_duplicate(&labels) {
-            return Err(DuplicateLabel::Input { index });
-        }
-        Ok(Minterm::from_symbols(Symbols::new(labels), values))
+        let symbols = Symbols::new(labels).map_err(|e| DuplicateLabel::Input { index: e.index })?;
+        Ok(Minterm::from_symbols(symbols, values))
     }
 
     /// Build a **labelled** minterm from `(label, value)` pairs.
@@ -698,11 +696,11 @@ impl<L: Label> Minterm<L> {
     /// use espresso_logic::Minterm;
     ///
     /// let a = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
     ///     [Some(true), Some(false), Some(true)],
     /// );
     /// let b = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()),
+    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
     ///     [Some(true), Some(true), Some(false)],
     /// );
     /// let mut d: Vec<_> = a.disagreement(&b).collect();
@@ -742,7 +740,7 @@ impl<L: Label> Minterm<L> {
     /// use espresso_logic::{Minterm, Symbols};
     /// use std::collections::BTreeSet;
     ///
-    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect());
+    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect()).unwrap();
     /// // a fixed true, b don't-care → both polarities of b.
     /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
     /// let got: BTreeSet<_> = m.expand_over(&vars).collect();
@@ -1079,7 +1077,7 @@ mod tests {
     use crate::Symbol;
 
     fn syms(names: &[&str]) -> Arc<Symbols<Symbol>> {
-        Symbols::new(names.iter().map(|s| Symbol::from(*s)).collect())
+        Symbols::new(names.iter().map(|s| Symbol::from(*s)).collect()).unwrap()
     }
 
     /// Round-trip every value through the packed encoding.

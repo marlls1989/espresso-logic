@@ -14,7 +14,7 @@
 //! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is an `Arc` clone.
 
 use super::error::DuplicateLabel;
-use super::label::{first_duplicate, Anonymous, Label, StringLabel};
+use super::label::{Anonymous, Label, StringLabel};
 use super::symbols::Symbols;
 use std::cmp::Ordering;
 use std::fmt;
@@ -213,17 +213,16 @@ impl OutputSet<Anonymous> {
 }
 
 impl<O: Label> OutputSet<O> {
-    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): reject a repeated
-    /// label (outputs align by identity, so a duplicate would collapse two columns onto one), then
-    /// build over a fresh symbol table.
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): build over a fresh
+    /// symbol table, proxying [`Symbols::new`]'s duplicate-identity check into the output-side
+    /// [`DuplicateLabel::Output`] (a duplicate would collapse two columns onto one).
     pub(crate) fn from_label_arcs(
         labels: Arc<[O]>,
         asserted: impl IntoIterator<Item = bool>,
     ) -> Result<OutputSet<O>, DuplicateLabel> {
-        if let Some(index) = first_duplicate(&labels) {
-            return Err(DuplicateLabel::Output { index });
-        }
-        Ok(OutputSet::from_symbols(Symbols::new(labels), asserted))
+        let symbols =
+            Symbols::new(labels).map_err(|e| DuplicateLabel::Output { index: e.index })?;
+        Ok(OutputSet::from_symbols(symbols, asserted))
     }
 
     /// Build a **labelled** output set from `(label, asserted)` pairs.

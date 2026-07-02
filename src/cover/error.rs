@@ -233,6 +233,34 @@ impl From<DuplicateLabel> for io::Error {
     }
 }
 
+/// Returned by [`Symbols::new`](crate::Symbols::new) when the label list repeats an identity.
+///
+/// A symbol table's identities must be distinct — two labels with the same identity would collapse
+/// onto one column and silently drop a value. This is the side-agnostic error at the symbol-table
+/// layer; the cube/cover constructors that build a table proxy it into a side-aware
+/// [`DuplicateLabel`] (input vs output), and the PLA reader into its own error. `index` is the
+/// position of the second occurrence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DuplicateSymbol {
+    /// The position of the duplicate label in the list handed to [`Symbols::new`](crate::Symbols::new).
+    pub index: usize,
+}
+
+impl fmt::Display for DuplicateSymbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "duplicate label at position {}", self.index)
+    }
+}
+
+impl std::error::Error for DuplicateSymbol {}
+
+impl From<DuplicateSymbol> for io::Error {
+    fn from(err: DuplicateSymbol) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -706,7 +706,10 @@ impl<S: StringLabel> PlaCover<S> {
         let p = parse_pla(reader)?;
         let base = anonymous_cover_from_raw(p.num_inputs, p.num_outputs, p.cubes, p.cover_type);
         let to_syms = |labels: Vec<String>| -> Arc<Symbols<S>> {
+            // `parse_pla` rejects a `.ilb`/`.ob` section that repeats a label
+            // (PLAError::DuplicateLabel), so the header is distinct here.
             Symbols::new(labels.iter().map(|s| S::from(s.as_str())).collect())
+                .expect("PLA label sections are duplicate-checked during parsing")
         };
         // `parse_pla` has already checked each present label section against the cube width
         // (PLAError::LabelCountMismatch), so these relabels match by construction.

@@ -7,7 +7,7 @@ use espresso_logic::{
 
 /// Build a complete `Minterm<Symbol>` fixing each `(name, value)` pair, for `Bdd::evaluate`.
 fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
-    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect());
+    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect()).unwrap();
     Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
 }
 
@@ -530,7 +530,8 @@ fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> 
 #[test]
 fn test_cover_empty_to_expr() {
     // Edge case: Cover with dimensions but no cubes
-    let cover: Cover<String, String> = Cover::with_labels(CoverType::F, &["a", "b"], &["out"]);
+    let cover: Cover<String, String> =
+        Cover::with_labels(CoverType::F, ["a", "b"], ["out"]).unwrap();
 
     // Try to get expression for output with no cubes - should return constant false
     let expr = cover.to_expr("out").unwrap();

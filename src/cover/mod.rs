@@ -116,7 +116,9 @@ mod symbols;
 
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
-pub use error::{AddExprError, ArityMismatch, CoverError, DuplicateLabel, ToExprError};
+pub use error::{
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, ToExprError,
+};
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
@@ -266,7 +268,8 @@ impl CoverType {
 ///     CoverType::F,
 ///     &["a", "b", "c"],
 ///     &["sum", "carry"],
-/// );
+/// )
+/// .unwrap();
 ///
 /// println!("Inputs: {:?}", cover.input_labels());
 /// println!("Outputs: {:?}", cover.output_labels());
@@ -338,6 +341,12 @@ where
     /// counts. The label types are inferred from context (e.g. `Cover::<Symbol, Symbol>::with_labels`
     /// or `Cover::<String, String>::with_labels`) — any label type constructible from `&str` works.
     ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if either side repeats a name — labels align by identity, so a
+    /// duplicate would collapse two columns onto one. The input side reports
+    /// [`DuplicateLabel::Input`], the output side [`DuplicateLabel::Output`].
+    ///
     /// # Examples
     ///
     /// ```
@@ -347,25 +356,33 @@ where
     ///     CoverType::F,
     ///     &["a", "b", "c"],
     ///     &["out"],
-    /// );
+    /// )
+    /// .unwrap();
     /// assert_eq!(cover.num_inputs(), 3);
     /// assert_eq!(cover.num_outputs(), 1);
     /// ```
-    #[must_use]
     pub fn with_labels<SI: AsRef<str>, SO: AsRef<str>>(
         cover_type: CoverType,
-        input_labels: &[SI],
-        output_labels: &[SO],
-    ) -> Self {
-        let input_vars: Arc<[I]> = input_labels.iter().map(|s| I::from(s.as_ref())).collect();
-        let output_vars: Arc<[O]> = output_labels.iter().map(|s| O::from(s.as_ref())).collect();
+        input_labels: impl IntoIterator<Item = SI>,
+        output_labels: impl IntoIterator<Item = SO>,
+    ) -> Result<Self, DuplicateLabel> {
+        let input_vars: Arc<[I]> = input_labels
+            .into_iter()
+            .map(|s| I::from(s.as_ref()))
+            .collect();
+        let output_vars: Arc<[O]> = output_labels
+            .into_iter()
+            .map(|s| O::from(s.as_ref()))
+            .collect();
 
-        Cover {
-            input_symbols: Symbols::new(input_vars),
-            output_symbols: Symbols::new(output_vars),
+        Ok(Cover {
+            input_symbols: Symbols::new(input_vars)
+                .map_err(|e| DuplicateLabel::Input { index: e.index })?,
+            output_symbols: Symbols::new(output_vars)
+                .map_err(|e| DuplicateLabel::Output { index: e.index })?,
             cubes: Vec::new(),
             cover_type,
-        }
+        })
     }
 }
 
@@ -429,6 +446,9 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
     /// (F in → F out; FR in → FR out).
     ///
+    /// `vars` names a variable *set*: a repeated name is deduplicated (the first occurrence is kept),
+    /// so `["a", "b", "a"]` and `["a", "b"]` re-base onto the same header.
+    ///
     /// # Panics
     ///
     /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
@@ -436,8 +456,8 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
     /// different dimensions on this thread) or a C fatal.
     #[must_use]
-    pub fn over_vars<S: AsRef<str>>(&self, vars: &[S]) -> Cover<I, O> {
-        let target = Symbols::new(vars.iter().map(|s| I::from(s.as_ref())).collect());
+    pub fn over_vars<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Cover<I, O> {
+        let target = Symbols::deduped(vars.into_iter().map(|s| I::from(s.as_ref())));
 
         // Which of this cover's input columns are eliminated (identity absent from `target`)?
         let excluded_mask: Vec<bool> = self
@@ -982,7 +1002,12 @@ fn identity_union<L: Label>(
             })
         })
         .collect();
-    (Symbols::new(header.into()), (0..a_no).collect(), b_map)
+    (
+        // The union header is deduplicated by identity above (`pos_by_id`), so it is distinct.
+        Symbols::new(header.into()).expect("identity-union header is distinct by construction"),
+        (0..a_no).collect(),
+        b_map,
+    )
 }
 
 /// The union **input** header of two covers, aligned by identity (the header from [`identity_union`];
@@ -1011,7 +1036,8 @@ fn append_outputs<O: ReconcilableLabel>(
     let mut header: Vec<O> = a.labels().to_vec();
     header.extend(O::reconcile(a.labels(), b.labels()));
     (
-        Symbols::new(header.into()),
+        // `reconcile` returns labels distinct from `a`'s and from each other, so the header is distinct.
+        Symbols::new(header.into()).expect("reconciled extend header is distinct by construction"),
         (0..a_no).collect(),
         (a_no..a_no + b_no).collect(),
     )

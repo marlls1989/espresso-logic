@@ -72,7 +72,9 @@ impl Cover<Symbol, Symbol> {
             .cloned()
             .chain(std::iter::once(Symbol::from(output_name)))
             .collect();
-        let out_syms = Symbols::new(out_header);
+        // The existing outputs are distinct and `output_name` was checked absent above, so the
+        // extended header is distinct.
+        let out_syms = Symbols::new(out_header).expect("extended output header is distinct");
         for cube in &mut self.cubes {
             cube.outputs = OutputSet::from_symbols(
                 Arc::clone(&out_syms),

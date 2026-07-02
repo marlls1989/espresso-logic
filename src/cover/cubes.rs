@@ -179,6 +179,9 @@ impl<I: Label, O> Cube<I, O> {
     /// variable in `vars`, all sharing one canonical header. Returns a lazy [`ExpandedMinterms`]
     /// iterator that packs each minterm on demand. See [`Minterm::expand_over`].
     ///
+    /// `vars` names a variable *set*: a repeated variable is deduplicated (the first occurrence is
+    /// kept), so `[a, b, a]` and `[a, b]` expand over the same header.
+    ///
     /// # Examples
     ///
     /// ```
@@ -196,7 +199,7 @@ impl<I: Label, O> Cube<I, O> {
     /// ```
     #[must_use]
     pub fn expand_to(&self, vars: &[I]) -> ExpandedMinterms<I> {
-        let target = Symbols::new(vars.iter().cloned().collect());
+        let target = Symbols::deduped(vars.iter().cloned());
         self.inputs.expand_over(&target)
     }
 }

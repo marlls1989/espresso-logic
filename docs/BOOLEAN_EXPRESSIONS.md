@@ -196,7 +196,7 @@ let builder = bdd_builder!();
 // The expression is only needed as a function here, so build the BDD directly.
 let f = builder.parse("a & b | !a").unwrap();
 
-let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
 
 let assignment = Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]);
 // (a & b) | !a  with a=true, b=false  =  false | false  =  false

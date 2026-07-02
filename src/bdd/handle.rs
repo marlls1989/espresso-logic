@@ -459,7 +459,8 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
-        let symbols = Symbols::new(vars);
+        // A BDD's support variables are distinct, so the header cannot carry a duplicate.
+        let symbols = Symbols::new(vars).expect("BDD support variables are distinct");
         // One asserted Anonymous output column, shared by every cube.
         let output_symbols = Symbols::<Anonymous>::anonymous(1);
 
@@ -547,8 +548,13 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// projection, so the result holds exactly the `vars` assignments that force the output high for
     /// every value of the eliminated variables. The cover is returned in don't-care form — compose
     /// [`Cover::maximize`] for minterms. See [`Cover::over_vars`] for the full semantics.
+    ///
+    /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+    pub fn cover_over<S: AsRef<str>>(
+        &self,
+        vars: impl IntoIterator<Item = S>,
+    ) -> Cover<Symbol, Anonymous> {
         self.cover().over_vars(vars)
     }
 
@@ -561,8 +567,13 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// **orthogonal but not necessarily complementary**: where the output still depends on an
     /// eliminated variable, that assignment lands in neither side (a genuine undef gap — the Muller
     /// C-element case). See [`Cover::over_vars`].
+    ///
+    /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over_fr<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+    pub fn cover_over_fr<S: AsRef<str>>(
+        &self,
+        vars: impl IntoIterator<Item = S>,
+    ) -> Cover<Symbol, Anonymous> {
         self.cover_fr().over_vars(vars)
     }
 

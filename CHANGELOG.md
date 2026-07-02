@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Minterm::anonymous`). The label types flow through `Cube::new`: two labelled halves compose into a
   labelled `Cube<I, O>`, two anonymous halves into an anonymous one.
 
+### Changed
+
+- **Breaking:** `Symbols::new` now returns `Result<Arc<Symbols<L>>, DuplicateSymbol>` (previously
+  infallible). A label list that repeats an identity is rejected rather than silently collapsing two
+  columns onto one; `DuplicateSymbol::index` is the position of the second occurrence.
+- **Breaking:** `Cover::with_labels` now returns `Result<Self, DuplicateLabel>` and takes
+  `impl IntoIterator` label lists. Existing slice-reference call sites (e.g. `&["a", "b"]`) continue
+  to compile unchanged.
+- `Cover::over_vars`, `Bdd::cover_over`, and `Bdd::cover_over_fr` now take
+  `impl IntoIterator<Item = S>` instead of `&[S]` and deduplicate a repeated variable — the argument
+  names a variable *set*, so `["a", "b", "a"]` and `["a", "b"]` behave identically. These remain
+  infallible, and ordinary slice-reference call sites (e.g. `&["a", "b"]`) continue to compile
+  unchanged.
+
+### Fixed
+
+- Building a variable table from user labels that repeat an identity no longer silently collapses two
+  columns onto one and drops a value. The check is centralised in `Symbols::new`; the labelled
+  cube/cover constructors surface it as `DuplicateLabel`, while the variable-set operations
+  (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`) deduplicate their input.
+
 ## [5.2.0] - 2026-07-02
 
 ### Added

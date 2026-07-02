@@ -101,19 +101,6 @@ pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
 
 impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}
 
-/// The position of the first label whose [`identity`](Label::identity) repeats an earlier one, or
-/// `None` if all are distinct. Labels align by identity, so a repeated label would collapse two
-/// columns onto one; the labelled `Minterm`/`OutputSet`/`Cube` constructors use this to reject that.
-/// [`Anonymous`]'s identity is its position, so an anonymous header never reports a duplicate.
-pub(crate) fn first_duplicate<L: Label>(labels: &[L]) -> Option<usize> {
-    let mut seen = HashSet::new();
-    labels
-        .iter()
-        .enumerate()
-        .find(|&(i, l)| !seen.insert(l.identity(i)))
-        .map(|(i, _)| i)
-}
-
 /// How a label type produces conflict-free labels for the columns [`Cover::extend`](crate::Cover::extend)
 /// appends.
 ///
