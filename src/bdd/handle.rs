@@ -418,6 +418,29 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// is an `F` (ON-set) cover.
     #[must_use]
     pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
+        self.extract_cubes(CoverType::F)
+    }
+
+    /// Enumerate the paths to TRUE **and** FALSE as a two-sided `FR` [`Cover`].
+    ///
+    /// Every root→TRUE path becomes an on-set cube ([`CubeType::F`]) and every root→FALSE path an
+    /// off-set cube ([`CubeType::R`]); a variable on a path is fixed `Some(true)` / `Some(false)`, one
+    /// off the path is a don't-care (`None`). The two sides partition the minterm space — a BDD path
+    /// reaches exactly one terminal, so the on-set and off-set are disjoint and jointly exhaustive.
+    /// Variables are carried by name (`Symbol`) over a single asserted [`Anonymous`] output column, as
+    /// in [`to_cubes`](Self::to_cubes). Feeding the result to [`minimize_fr`](Self::minimize_fr)
+    /// minimises the on-set against this exact off-set rather than a recomputed complement.
+    #[must_use]
+    pub fn to_fr_cubes(&self) -> Cover<Symbol, Anonymous> {
+        self.extract_cubes(CoverType::FR)
+    }
+
+    /// Shared DFS backing [`to_cubes`](Self::to_cubes) and [`to_fr_cubes`](Self::to_fr_cubes).
+    ///
+    /// Walks every root→terminal path once under a single read guard, emitting an `F` cube per TRUE
+    /// path and — only when `cover_type` carries an off-set — an `R` cube per FALSE path. The returned
+    /// cover carries `cover_type` verbatim.
+    fn extract_cubes(&self, cover_type: CoverType) -> Cover<Symbol, Anonymous> {
         // Canonical, alphabetically sorted header shared by every extracted cube. `variables()` yields
         // the support in traversal (unsorted) order, so sort here to keep the header canonical.
         let mut names: Vec<Symbol> = self.variables().collect();
@@ -464,7 +487,17 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         );
                         cubes.push(Cube::new(inputs, outputs, CubeType::F));
                     }
-                    ManagerNode::Terminal(false) => {}
+                    ManagerNode::Terminal(false) => {
+                        if cover_type.has_r() {
+                            let inputs =
+                                Minterm::from_symbols(Arc::clone(&symbols), path.iter().copied());
+                            let outputs = OutputSet::from_symbols(
+                                Arc::clone(&output_symbols),
+                                std::iter::once(true),
+                            );
+                            cubes.push(Cube::new(inputs, outputs, CubeType::R));
+                        }
+                    }
                     ManagerNode::Decision { var, low, high } => {
                         let var_name = mgr.var_name(*var).expect(
                             "Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation",
@@ -487,7 +520,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         // contradiction yields zero cubes, and re-deriving from those would give a zero-output header,
         // breaking the later `to_expr_by_index(0)`. `from_parts` keeps the arity-1 `Anonymous` output
         // header, so a contradiction lowers to a one-output, zero-cube cover that renders as "0".
-        Cover::from_parts(symbols, output_symbols, cubes, CoverType::F)
+        Cover::from_parts(symbols, output_symbols, cubes, cover_type)
     }
 
     /// The **maximal** cover of this function over the explicit, widenable variable set `vars` — the
@@ -508,6 +541,22 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         self.to_cubes().maximize(vars)
     }
 
+    /// The **maximal** two-sided `FR` cover of this function over the explicit variable set `vars` — the
+    /// [`maximize`](Self::maximize) counterpart for the on+off-set extraction of
+    /// [`to_fr_cubes`](Self::to_fr_cubes).
+    ///
+    /// Both the on-set ([`CubeType::F`]) and off-set ([`CubeType::R`]) cubes are widened so that every
+    /// cube assigns every variable in `vars`, i.e. each cube is a full minterm. When `vars` covers the
+    /// function's support the two sides partition the minterm space over `vars`; passing a **subset**
+    /// projects the function (collapsing distinct minterms onto the retained variables), after which
+    /// the on- and off-sides may overlap. `vars` handling otherwise matches [`maximize`](Self::maximize).
+    ///
+    /// Built from [`to_fr_cubes`](Self::to_fr_cubes) via [`Cover::maximize`].
+    #[must_use]
+    pub fn maximize_fr<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+        self.to_fr_cubes().maximize(vars)
+    }
+
     // ---- Minimisation -------------------------------------------------------------------------
 
     /// Minimise this function's ON-set with Espresso, returning the minimised single-output
@@ -522,6 +571,22 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     pub fn minimize(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.to_cubes().minimize()
+    }
+
+    /// Minimise this function's ON-set with Espresso against its **exact** off-set, returning an `FR`
+    /// [`Cover`] whose minimised on-set is paired with the off-set.
+    ///
+    /// Equivalent to `self.to_fr_cubes().minimize()`. Unlike [`minimize`](Self::minimize), which lets
+    /// Espresso derive the OFF-set from the ON-set complement, this supplies the off-set directly from
+    /// the BDD's root→FALSE paths (see [`to_fr_cubes`](Self::to_fr_cubes)). Only the ON-set is
+    /// minimised; the off-set is returned as the enumerated path cubes, not separately reduced.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
+    pub fn minimize_fr(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
+        use crate::Minimizable;
+        self.to_fr_cubes().minimize()
     }
 
     // ---- Lowering back to a syntactic expression ----------------------------------------------

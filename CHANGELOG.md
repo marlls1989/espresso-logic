@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BDD on+off-set cover extraction.** `Bdd::to_fr_cubes`, `Bdd::maximize_fr`, and `Bdd::minimize_fr`
+  extract the on-set together with the off-set as a `CoverType::FR` cover (off-set tagged
+  `CubeType::R`), letting Espresso minimise against the exact off-set rather than a recomputed
+  complement.
+
 ### Fixed
 
 - **The PLA reader rejects duplicate `.ilb`/`.ob` labels.** A `.ilb`/`.ob` section naming the same

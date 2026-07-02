@@ -819,6 +819,290 @@ fn to_cubes_is_anonymous_single_output_onset() {
     assert!(cover.cubes().all(|c| c.cube_type() == CubeType::F));
 }
 
+// ---- FR (on+off-set) extraction -------------------------------------------------------------------
+
+/// Collect the input minterms of `cover`'s cubes whose `cube_type()` equals `want`.
+fn inputs_of_type(
+    cover: &Cover<Symbol, crate::Anonymous>,
+    want: CubeType,
+) -> BTreeSet<Minterm<Symbol>> {
+    cover
+        .cubes()
+        .filter(|c| c.cube_type() == want)
+        .map(|c| c.inputs().clone())
+        .collect()
+}
+
+#[test]
+fn to_fr_cubes_carries_both_sets() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a ^ b;
+
+    let cover = f.to_fr_cubes();
+    assert_eq!(cover.cover_type(), CoverType::FR);
+
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    // The XOR BDD is a full depth-2 tree, so every raw path is already a full minterm.
+    let on = inputs_of_type(&cover, CubeType::F);
+    let off = inputs_of_type(&cover, CubeType::R);
+    assert_eq!(
+        on,
+        [
+            minterm(&header, &[("a", true), ("b", false)]),
+            minterm(&header, &[("a", false), ("b", true)]),
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(
+        off,
+        [
+            minterm(&header, &[("a", false), ("b", false)]),
+            minterm(&header, &[("a", true), ("b", true)]),
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    // Non-empty, disjoint, and jointly exhaustive over the four minterms (after widening).
+    assert!(!on.is_empty() && !off.is_empty());
+    assert!(on.is_disjoint(&off));
+    let maxed = f.maximize_fr(&["a", "b"]);
+    let all: BTreeSet<Minterm<Symbol>> = maxed.cubes().map(|c| c.inputs().clone()).collect();
+    let want_all: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("a", false), ("b", false)]),
+        minterm(&header, &[("a", false), ("b", true)]),
+        minterm(&header, &[("a", true), ("b", false)]),
+        minterm(&header, &[("a", true), ("b", true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(all, want_all);
+}
+
+#[test]
+fn maximize_fr_partitions_minterms() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a ^ b;
+
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let maxed = f.maximize_fr(&["a", "b"]);
+
+    let on = inputs_of_type(&maxed, CubeType::F);
+    let off = inputs_of_type(&maxed, CubeType::R);
+    let want_on: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("a", true), ("b", false)]),
+        minterm(&header, &[("a", false), ("b", true)]),
+    ]
+    .into_iter()
+    .collect();
+    let want_off: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("a", false), ("b", false)]),
+        minterm(&header, &[("a", true), ("b", true)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(on, want_on);
+    assert_eq!(off, want_off);
+
+    // The two sides together are exactly the four minterms.
+    let union: BTreeSet<Minterm<Symbol>> = on.union(&off).cloned().collect();
+    assert_eq!(union.len(), 4);
+}
+
+#[test]
+fn minimize_fr_returns_fr_cover() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a ^ b;
+
+    let m = f.minimize_fr().expect("XOR minimises without error");
+    assert_eq!(m.cover_type(), CoverType::FR);
+
+    // The minimised ON-set, widened to full minterms, reproduces the plain ON-set maximisation.
+    let on = inputs_of_type(&m.maximize(&["a", "b"]), CubeType::F);
+    let want: BTreeSet<Minterm<Symbol>> = f
+        .maximize(&["a", "b"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
+    assert_eq!(on, want);
+}
+
+#[test]
+fn contradiction_and_tautology_fr() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+
+    // Contradiction: no ON-set path, so zero F cubes but a non-empty R region.
+    let contradiction = a.clone() & !a.clone();
+    let cc = contradiction.to_fr_cubes();
+    assert_eq!(cc.cover_type(), CoverType::FR);
+    assert_eq!(cc.num_outputs(), 1);
+    assert_eq!(
+        cc.cubes().filter(|c| c.cube_type() == CubeType::F).count(),
+        0
+    );
+    assert!(cc.cubes().any(|c| c.cube_type() == CubeType::R));
+
+    // Tautology: no OFF-set path, so zero R cubes but a non-empty F region.
+    let tautology = a.clone() | !a;
+    let tc = tautology.to_fr_cubes();
+    assert_eq!(tc.cover_type(), CoverType::FR);
+    assert_eq!(tc.num_outputs(), 1);
+    assert_eq!(
+        tc.cubes().filter(|c| c.cube_type() == CubeType::R).count(),
+        0
+    );
+    assert!(tc.cubes().any(|c| c.cube_type() == CubeType::F));
+}
+
+#[test]
+fn to_cubes_unchanged_after_refactor() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a & b;
+
+    let cover = f.to_cubes();
+    assert_eq!(cover.cover_type(), CoverType::F);
+    assert_eq!(cover.num_outputs(), 1);
+    assert!(cover.cubes().all(|c| c.cube_type() == CubeType::F));
+}
+
+#[test]
+fn both_context_kinds_agree_fr() {
+    // Single-threaded.
+    let local: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let la = local.var("a");
+    let lb = local.var("b");
+    let lf = la ^ lb;
+    let local_maxed = lf.maximize_fr(&["a", "b"]);
+    let local_on = inputs_of_type(&local_maxed, CubeType::F);
+    let local_off = inputs_of_type(&local_maxed, CubeType::R);
+
+    // Thread-safe.
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let sa = sync.var("a");
+    let sb = sync.var("b");
+    let sf = sa ^ sb;
+    let sync_maxed = sf.maximize_fr(&["a", "b"]);
+    let sync_on = inputs_of_type(&sync_maxed, CubeType::F);
+    let sync_off = inputs_of_type(&sync_maxed, CubeType::R);
+
+    assert_eq!(local_on, sync_on);
+    assert_eq!(local_off, sync_off);
+}
+
+#[test]
+fn minimize_fr_matches_plain_minimize_on_majority() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let maj = (a.clone() & b.clone()) | (b.clone() & c.clone()) | (a.clone() & c.clone());
+
+    let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect());
+    let m = maj.minimize_fr().expect("majority minimises without error");
+    assert_eq!(m.cover_type(), CoverType::FR);
+
+    let maxed = m.maximize(&["a", "b", "c"]);
+    let on = inputs_of_type(&maxed, CubeType::F);
+    let off = inputs_of_type(&maxed, CubeType::R);
+
+    // ON-set: the four minterms with at least two of a, b, c set.
+    let want_on: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("a", false), ("b", true), ("c", true)]),
+        minterm(&header, &[("a", true), ("b", false), ("c", true)]),
+        minterm(&header, &[("a", true), ("b", true), ("c", false)]),
+        minterm(&header, &[("a", true), ("b", true), ("c", true)]),
+    ]
+    .into_iter()
+    .collect();
+    // OFF-set: the complementary four minterms.
+    let want_off: BTreeSet<Minterm<Symbol>> = [
+        minterm(&header, &[("a", false), ("b", false), ("c", false)]),
+        minterm(&header, &[("a", false), ("b", false), ("c", true)]),
+        minterm(&header, &[("a", false), ("b", true), ("c", false)]),
+        minterm(&header, &[("a", true), ("b", false), ("c", false)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(on, want_on);
+    assert_eq!(off, want_off);
+
+    // Supplying the exact off-set does not change the minimised ON-set: it matches plain `minimize`.
+    let plain_on: BTreeSet<Minterm<Symbol>> = maj
+        .minimize()
+        .expect("majority minimises without error")
+        .maximize(&["a", "b", "c"])
+        .cubes()
+        .map(|c| c.inputs().clone())
+        .collect();
+    assert_eq!(on, plain_on);
+}
+
+#[test]
+fn minimize_fr_on_constants() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+
+    // Contradiction: empty ON-set, full OFF-set — minimises without error, no F cubes.
+    let contradiction = a.clone() & !a.clone();
+    let cm = contradiction
+        .minimize_fr()
+        .expect("contradiction minimises without error");
+    assert_eq!(cm.cover_type(), CoverType::FR);
+    assert_eq!(cm.num_outputs(), 1);
+    assert_eq!(
+        cm.cubes().filter(|c| c.cube_type() == CubeType::F).count(),
+        0
+    );
+
+    // Tautology: full ON-set, empty OFF-set — minimises without error, no R cubes.
+    let tautology = a.clone() | !a;
+    let tm = tautology
+        .minimize_fr()
+        .expect("tautology minimises without error");
+    assert_eq!(tm.cover_type(), CoverType::FR);
+    assert_eq!(tm.num_outputs(), 1);
+    assert_eq!(
+        tm.cubes().filter(|c| c.cube_type() == CubeType::R).count(),
+        0
+    );
+}
+
+#[test]
+fn maximize_fr_subset_vars_projects_and_may_overlap() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a & b;
+
+    // Projecting onto a subset of the support collapses minterms, so the on- and off-sides
+    // need not stay disjoint: a = 1 appears on the on-side (via b = 1) and the off-side (via b = 0).
+    let header = Symbols::new(["a"].iter().map(Symbol::new).collect());
+    let maxed = f.maximize_fr(&["a"]);
+    let on = inputs_of_type(&maxed, CubeType::F);
+    let off = inputs_of_type(&maxed, CubeType::R);
+    assert_eq!(on, [minterm(&header, &[("a", true)])].into_iter().collect());
+    assert_eq!(
+        off,
+        [
+            minterm(&header, &[("a", false)]),
+            minterm(&header, &[("a", true)]),
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(!on.is_disjoint(&off));
+}
+
 // ---- Both builder kinds agree ---------------------------------------------------------------------
 
 #[test]
