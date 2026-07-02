@@ -98,11 +98,10 @@ fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
-// `forall`/`exists` moved from `&[S]` to `impl IntoIterator<Item = S>`; the `&["a"]` call sites below are
-// kept deliberately unchanged (not switched to the clippy-preferred `["a"]`) to prove that pre-existing,
-// borrowed-slice callers still compile unmodified against the widened bound — the same guarantee the
+// `forall`/`exists` moved from `&[S]` to `impl IntoIterator<Item = S>`; the `vars` binding below is a
+// `&[&str]` (not an inline `["a"]` array literal) to prove that pre-existing, borrowed-slice callers
+// still compile unmodified against the widened bound — the same guarantee the
 // `docs/EXAMPLES.md`/`docs/BOOLEAN_EXPRESSIONS.md` doctests make.
-#[allow(clippy::needless_borrows_for_generic_args)]
 #[test]
 fn restrict_acceptance_table() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -121,12 +120,13 @@ fn restrict_acceptance_table() {
     assert!((a.clone() | b.clone())
         .restrict("a", false)
         .equivalent_to(&b));
+    let vars: &[&str] = &["a"];
     // (a | b).forall(&["a"]) ≡ b
-    assert!((a.clone() | b.clone()).forall(&["a"]).equivalent_to(&b));
+    assert!((a.clone() | b.clone()).forall(vars).equivalent_to(&b));
     // (a & b).exists(&["a"]) ≡ b
-    assert!((a.clone() & b.clone()).exists(&["a"]).equivalent_to(&b));
+    assert!((a.clone() & b.clone()).exists(vars).equivalent_to(&b));
     // (a ^ b).forall(&["a"]) ≡ false
-    assert!((a ^ b).forall(&["a"]).is_contradiction());
+    assert!((a ^ b).forall(vars).is_contradiction());
 }
 
 #[test]
@@ -357,9 +357,9 @@ fn cofactor_is_restrict() {
         .equivalent_to(&f.restrict("a", false)));
 }
 
-// See the comment on `restrict_acceptance_table` above: `&["a", "b"]` is kept deliberately unchanged
-// to prove the widened `impl IntoIterator` bound still accepts a borrowed slice literal.
-#[allow(clippy::needless_borrows_for_generic_args)]
+// See the comment on `restrict_acceptance_table` above: `vars` is a `&[&str]` binding, kept
+// deliberately unchanged (not inlined) to prove the widened `impl IntoIterator` bound still accepts a
+// borrowed slice.
 #[test]
 fn forall_exists_multiple_vars() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -367,13 +367,14 @@ fn forall_exists_multiple_vars() {
     let b = builder.var("b");
     let c = builder.var("c");
 
+    let vars: &[&str] = &["a", "b"];
     // ∀a,b. (a & b & c) = c restricted to a&b both polarities = false (since a=0 kills it)
     assert!((a.clone() & b.clone() & c.clone())
-        .forall(&["a", "b"])
+        .forall(vars)
         .is_contradiction());
     // ∃a,b. (a & b & c) = c
     assert!((a.clone() & b.clone() & c.clone())
-        .exists(&["a", "b"])
+        .exists(vars)
         .equivalent_to(&c));
     // Quantifying over no variables is the identity.
     let empty: &[&str] = &[];
