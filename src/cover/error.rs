@@ -190,8 +190,11 @@ impl From<ArityMismatch> for io::Error {
     }
 }
 
-/// Returned by [`Cube::labeled`](crate::Cube::labeled) / [`Cube::with_labels`](crate::Cube::with_labels)
-/// when a side carries the same label twice. Variables are aligned by label identity, so a cube's input
+/// Returned by the labelled cube-half constructors — [`Cube::labeled`](crate::Cube::labeled) /
+/// [`Cube::with_labels`](crate::Cube::with_labels) and the per-half
+/// [`Minterm::labeled`](crate::Minterm::labeled) / [`Minterm::with_labels`](crate::Minterm::with_labels),
+/// [`OutputSet::labeled`](crate::OutputSet::labeled) / [`OutputSet::with_labels`](crate::OutputSet::with_labels)
+/// — when a side carries the same label twice. Variables are aligned by label identity, so a cube's input
 /// (or output) labels must be distinct — otherwise the duplicate columns would collapse onto one and
 /// silently drop a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,6 +229,34 @@ impl std::error::Error for DuplicateLabel {}
 
 impl From<DuplicateLabel> for io::Error {
     fn from(err: DuplicateLabel) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
+/// Returned by [`Symbols::new`](crate::Symbols::new) when the label list repeats an identity.
+///
+/// A symbol table's identities must be distinct — two labels with the same identity would collapse
+/// onto one column and silently drop a value. This is the side-agnostic error at the symbol-table
+/// layer; the cube/cover constructors that build a table proxy it into a side-aware
+/// [`DuplicateLabel`] (input vs output), and the PLA reader into its own error. `index` is the
+/// position of the second occurrence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DuplicateSymbol {
+    /// The position of the duplicate label in the list handed to [`Symbols::new`](crate::Symbols::new).
+    pub index: usize,
+}
+
+impl fmt::Display for DuplicateSymbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "duplicate label at position {}", self.index)
+    }
+}
+
+impl std::error::Error for DuplicateSymbol {}
+
+impl From<DuplicateSymbol> for io::Error {
+    fn from(err: DuplicateSymbol) -> Self {
         io::Error::new(io::ErrorKind::InvalidInput, err)
     }
 }

@@ -92,7 +92,7 @@ fn context_send_asymmetry() {
 /// Build a `Minterm<Symbol>` fixing each `(name, value)` pair (every field concrete). Variables not
 /// listed are simply absent from the minterm, i.e. left free for [`Bdd::evaluate`].
 fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
-    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect());
+    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect()).unwrap();
     Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
 }
 
@@ -453,7 +453,7 @@ fn maximize_xor_two_vars() {
     let b = builder.var("b");
     let f = a ^ b;
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = f.maximize().cubes().map(|c| c.inputs().clone()).collect();
     let want: BTreeSet<Minterm<Symbol>> = [
         minterm(&header, &[("a", true), ("b", false)]),
@@ -472,9 +472,9 @@ fn maximize_widen_with_absent_variable() {
     let f = a ^ b;
 
     // Widen with an absent variable c → c split into both polarities.
-    let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["a", "b", "c"])
+        .cover_over(["a", "b", "c"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -502,17 +502,31 @@ fn cover_over_subset_projects_universally() {
     let f = (a.clone() & b.clone()) | (!a & c.clone());
 
     let got: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["b", "c"])
+        .cover_over(["b", "c"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
         .collect();
 
-    let header = Symbols::new(["b", "c"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["b", "c"].iter().map(Symbol::new).collect()).unwrap();
     let want: BTreeSet<Minterm<Symbol>> = [minterm(&header, &[("b", true), ("c", true)])]
         .into_iter()
         .collect();
     assert_eq!(got, want);
+}
+
+/// `cover_over`'s `vars` names a variable *set*: a repeated name is deduplicated, so the projection
+/// is unaffected.
+#[test]
+fn cover_over_deduplicates_repeated_variable_name() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a ^ b;
+
+    let with_dup = f.cover_over(["a", "b", "a"]);
+    let without_dup = f.cover_over(["a", "b"]);
+    assert_eq!(with_dup, without_dup);
 }
 
 #[test]
@@ -520,9 +534,9 @@ fn maximize_true_is_full_cube() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let t = builder.constant(true);
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = t
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -544,9 +558,9 @@ fn maximize_single_var_splits_other() {
     let a = builder.var("a");
 
     // a.cover_over(&[a, b]).maximize() == { a:1,b:0 ; a:1,b:1 } — b split, a fixed.
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = a
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -573,7 +587,7 @@ fn maximize_is_idempotent_and_deterministic() {
     assert_eq!(once, twice);
     // Already-maximal expansion over the same vars is stable as a set.
     let set: BTreeSet<_> = once.iter().cloned().collect();
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let want: BTreeSet<_> = [
         minterm(&header, &[("a", false), ("b", false)]),
         minterm(&header, &[("a", true), ("b", true)]),
@@ -591,7 +605,7 @@ fn maximize_matches_cube_expand_to() {
     let f = a; // a=1, b unconstrained
 
     let via_handle: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -826,7 +840,7 @@ fn cover_fr_carries_both_sets() {
     let cover = f.cover_fr();
     assert_eq!(cover.cover_type(), CoverType::FR);
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     // The XOR BDD is a full depth-2 tree, so every raw path is already a full minterm.
     let on = inputs_of_type(&cover, CubeType::F);
     let off = inputs_of_type(&cover, CubeType::R);
@@ -872,7 +886,7 @@ fn maximize_fr_partitions_minterms() {
     let b = builder.var("b");
     let f = a ^ b;
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let maxed = f.maximize_fr();
 
     let on = inputs_of_type(&maxed, CubeType::F);
@@ -987,7 +1001,7 @@ fn minimize_fr_matches_plain_minimize_on_majority() {
     let c = builder.var("c");
     let maj = (a.clone() & b.clone()) | (b.clone() & c.clone()) | (a.clone() & c.clone());
 
-    let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b", "c"].iter().map(Symbol::new).collect()).unwrap();
     let m = maj.minimize_fr().expect("majority minimises without error");
     assert_eq!(m.cover_type(), CoverType::FR);
 
@@ -1068,8 +1082,8 @@ fn cover_over_fr_subset_opens_undef_gap() {
     let b = builder.var("b");
     let f = a & b;
 
-    let header = Symbols::new(["a"].iter().map(Symbol::new).collect());
-    let cover = f.cover_over_fr(&["a"]);
+    let header = Symbols::new(["a"].iter().map(Symbol::new).collect()).unwrap();
+    let cover = f.cover_over_fr(["a"]);
     let m = cover.maximize();
     let on = inputs_of_type(&m, CubeType::F);
     let off = inputs_of_type(&m, CubeType::R);
@@ -1096,8 +1110,8 @@ fn cover_over_fr_c_element_gap() {
     let q = builder.var("q");
     let q_next = (a.clone() & b.clone()) | (q.clone() & a.clone()) | (q & b.clone());
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
-    let m = q_next.cover_over_fr(&["a", "b"]).maximize();
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
+    let m = q_next.cover_over_fr(["a", "b"]).maximize();
     assert_eq!(m.cover_type(), CoverType::FR);
 
     let on = inputs_of_type(&m, CubeType::F);
@@ -1130,9 +1144,9 @@ fn cover_over_keeps_partial_support_prime() {
     let c = builder.var("c");
     let f = a.clone() | (b.clone() & c);
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -1158,9 +1172,9 @@ fn cover_over_survives_irredundant_prime_trap() {
     let x = builder.var("x");
     let f = (a.clone() & x.clone()) | (b.clone() & !x) | (a & b);
 
-    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect());
+    let header = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
     let got: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
@@ -1182,14 +1196,14 @@ fn cover_over_agrees_with_bdd_forall() {
     let f = (a.clone() & x.clone()) | (b.clone() & !x.clone()) | (a & b);
 
     let via_project: BTreeSet<Minterm<Symbol>> = f
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())
         .collect();
     let via_forall: BTreeSet<Minterm<Symbol>> = f
         .forall(["x"])
-        .cover_over(&["a", "b"])
+        .cover_over(["a", "b"])
         .maximize()
         .cubes()
         .map(|c| c.inputs().clone())

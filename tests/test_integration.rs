@@ -66,8 +66,8 @@ fn test_pla_roundtrip() {
     // PLA serialisation is string-labelled; give the anonymous cover real input/output names.
     let cover = cover
         .relabel(
-            Symbols::new(vec![Symbol::from("x0"), Symbol::from("x1")].into()),
-            Symbols::new(vec![Symbol::from("y0")].into()),
+            Symbols::new(vec![Symbol::from("x0"), Symbol::from("x1")].into()).unwrap(),
+            Symbols::new(vec![Symbol::from("y0")].into()).unwrap(),
         )
         .expect("relabel arity matches");
 

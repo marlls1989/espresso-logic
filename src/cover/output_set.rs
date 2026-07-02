@@ -13,7 +13,8 @@
 //! shared [`Symbols<O>`] handle — the same one the cover holds. The bit packing itself is independent of
 //! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is an `Arc` clone.
 
-use super::label::Anonymous;
+use super::error::DuplicateLabel;
+use super::label::{Anonymous, Label, StringLabel};
 use super::symbols::Symbols;
 use std::cmp::Ordering;
 use std::fmt;
@@ -185,11 +186,109 @@ impl<O> fmt::Debug for OutputSet<O> {
 }
 
 impl OutputSet<Anonymous> {
-    /// Build an anonymous (positional) output set from a per-output membership slice.
-    pub(crate) fn anonymous(membership: &[bool]) -> Self {
+    /// Build an **anonymous** (positional) output set from a per-output membership slice.
+    ///
+    /// `membership[i]` says whether the cube asserts output `i` **in its set** (the cube's
+    /// [`CubeType`](super::CubeType)); the arity is `membership.len()`. This is the output-side
+    /// counterpart of [`Minterm::anonymous`](super::Minterm::anonymous), and pairs with it to build a
+    /// positional cube through [`Cube::new`](super::Cube::new).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::OutputSet;
+    ///
+    /// // assert outputs 0 and 2 of three.
+    /// let outputs = OutputSet::anonymous(&[true, false, true]);
+    /// assert_eq!(outputs.num_vars(), 3);
+    /// assert!(outputs.value_at(0) && !outputs.value_at(1) && outputs.value_at(2));
+    /// ```
+    #[must_use]
+    pub fn anonymous(membership: &[bool]) -> Self {
         OutputSet::from_symbols(
             Symbols::<Anonymous>::anonymous(membership.len()),
             membership.iter().copied(),
+        )
+    }
+}
+
+impl<O: Label> OutputSet<O> {
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): build over a fresh
+    /// symbol table, proxying [`Symbols::new`]'s duplicate-identity check into the output-side
+    /// [`DuplicateLabel::Output`] (a duplicate would collapse two columns onto one).
+    pub(crate) fn from_label_arcs(
+        labels: Arc<[O]>,
+        asserted: impl IntoIterator<Item = bool>,
+    ) -> Result<OutputSet<O>, DuplicateLabel> {
+        let symbols =
+            Symbols::new(labels).map_err(|e| DuplicateLabel::Output { index: e.index })?;
+        Ok(OutputSet::from_symbols(symbols, asserted))
+    }
+
+    /// Build a **labelled** output set from `(label, asserted)` pairs.
+    ///
+    /// Each pair is `(label, asserted)`, where `asserted` says whether the cube asserts that output
+    /// **in its set** (an `F` cube asserts the ON-set outputs, a `D` cube the don't-care outputs, an
+    /// `R` cube the OFF-set outputs). Pairing each label with its flag makes a length mismatch
+    /// unrepresentable. The labels need no particular order — outputs align by variable
+    /// [identity](crate::Label). Pair with a [`Minterm`](super::Minterm) of the same label style
+    /// through [`Cube::new`](super::Cube::new) to build a labelled cube.
+    ///
+    /// Works for any label type — [`Symbol`](crate::Symbol), `String`, `u32`, … For `&str` names,
+    /// [`with_labels`](Self::with_labels) avoids naming the label type at each pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if a label is repeated — the columns would otherwise collapse onto
+    /// one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{OutputSet, Symbol};
+    ///
+    /// // assert output `f`, not output `g`.
+    /// let outputs = OutputSet::<Symbol>::labeled(
+    ///     &[(Symbol::new("f"), true), (Symbol::new("g"), false)],
+    /// )
+    /// .unwrap();
+    /// assert_eq!(outputs.num_vars(), 2);
+    /// assert!(outputs.value_at(0) && !outputs.value_at(1));
+    /// ```
+    pub fn labeled(outputs: &[(O, bool)]) -> Result<OutputSet<O>, DuplicateLabel> {
+        Self::from_label_arcs(
+            outputs.iter().map(|(l, _)| l.clone()).collect(),
+            outputs.iter().map(|(_, a)| *a),
+        )
+    }
+}
+
+impl<O: StringLabel> OutputSet<O> {
+    /// Build a labelled output set from `(name, asserted)` pairs, naming outputs with any `&str`-like
+    /// type.
+    ///
+    /// A string-name convenience over [`labeled`](Self::labeled): each label is built via `From<&str>`,
+    /// so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work). The label type is
+    /// inferred from context (e.g. `OutputSet::<Symbol>::with_labels`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if a name is repeated (see [`labeled`](Self::labeled)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{OutputSet, Symbol};
+    ///
+    /// let outputs = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false)]).unwrap();
+    /// assert!(outputs.value_at(0) && !outputs.value_at(1));
+    /// ```
+    pub fn with_labels<S: AsRef<str>>(
+        outputs: &[(S, bool)],
+    ) -> Result<OutputSet<O>, DuplicateLabel> {
+        Self::from_label_arcs(
+            outputs.iter().map(|(s, _)| O::from(s.as_ref())).collect(),
+            outputs.iter().map(|(_, a)| *a),
         )
     }
 }

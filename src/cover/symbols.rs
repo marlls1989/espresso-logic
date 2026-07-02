@@ -12,10 +12,25 @@
 //! pointer-equality check ([`Arc::ptr_eq`]) and looking a variable up by name is O(log n) (binary
 //! search over the identity-sorted order).
 
+use super::error::DuplicateSymbol;
 use super::label::{Anonymous, Label};
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
+
+/// The position of the first label whose [`identity`](Label::identity) repeats an earlier one, or
+/// `None` if all are distinct. A symbol table's identities must be unique — a repeat would collapse
+/// two columns onto one — so [`Symbols::new`] rejects it. [`Anonymous`]'s identity is its position,
+/// so an anonymous header never reports a duplicate.
+fn first_duplicate<L: Label>(labels: &[L]) -> Option<usize> {
+    let mut seen = HashSet::new();
+    labels
+        .iter()
+        .enumerate()
+        .find(|&(i, l)| !seen.insert(l.identity(i)))
+        .map(|(i, _)| i)
+}
 
 /// A cover's variable table: one label of type `L` per position (`0..arity`), plus the positions in
 /// identity order for reverse lookups. Construct via [`Symbols::new`] (from a label list) or
@@ -143,8 +158,30 @@ impl<L: Label> Symbols<L> {
     ///
     /// Computes the identity-sorted order eagerly (one O(n log n) sort). When the labels are already
     /// in identity order, the crate-internal `from_identity_sorted` skips it.
-    #[must_use]
-    pub fn new(labels: Arc<[L]>) -> Arc<Symbols<L>> {
+    ///
+    /// This is the single place a table is validated: a table's identities must be distinct (they key
+    /// every alignment), so a repeated label is rejected here rather than silently collapsing two
+    /// columns onto one. For an [`Anonymous`] header identity is position, so it never fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateSymbol`] if two labels share an identity; `index` is the second occurrence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Symbols, Symbol};
+    ///
+    /// let ok = Symbols::new([Symbol::new("a"), Symbol::new("b")].into());
+    /// assert!(ok.is_ok());
+    ///
+    /// let dup = Symbols::new([Symbol::new("a"), Symbol::new("a")].into());
+    /// assert_eq!(dup.unwrap_err().index, 1);
+    /// ```
+    pub fn new(labels: Arc<[L]>) -> Result<Arc<Symbols<L>>, DuplicateSymbol> {
+        if let Some(index) = first_duplicate(&labels) {
+            return Err(DuplicateSymbol { index });
+        }
         let mut order: Vec<u32> = (0..labels.len() as u32).collect();
         // Unstable sort: a header's identities are unique, so there are no equal keys for a stable
         // sort to order — and unstable (pdqsort) avoids the merge sort's temporary allocation
@@ -154,10 +191,30 @@ impl<L: Label> Symbols<L> {
                 .identity(x as usize)
                 .cmp(&labels[y as usize].identity(y as usize))
         });
-        Arc::new(Symbols {
+        Ok(Arc::new(Symbols {
             labels,
             sorted: order.into_boxed_slice(),
-        })
+        }))
+    }
+
+    /// Build a table from labels that may repeat, keeping the first occurrence of each identity.
+    ///
+    /// This is the shared deduplication path behind the variable-*set* arguments of
+    /// [`Cover::over_vars`](crate::Cover::over_vars) and [`Cube::expand_to`](crate::Cube::expand_to),
+    /// where a repeated variable means the same set (`{a, a}` ≡ `{a}`) rather than an error. Validation
+    /// still lives solely in [`new`](Self::new): the retained labels are distinct by construction, so
+    /// the inner call cannot fail. Deduplicating by `identity(kept.len())` — the identity a label would
+    /// take at the position it would occupy — makes an [`Anonymous`] header (identity = position) a
+    /// no-op, so nothing is ever dropped from a positional set.
+    pub(crate) fn deduped(labels: impl IntoIterator<Item = L>) -> Arc<Symbols<L>> {
+        let mut seen = HashSet::new();
+        let mut kept: Vec<L> = Vec::new();
+        for label in labels {
+            if seen.insert(label.identity(kept.len())) {
+                kept.push(label);
+            }
+        }
+        Symbols::new(kept.into()).expect("deduplicated labels are distinct by construction")
     }
 
     /// The index of a label, or `None` if absent. O(log n) via binary search over the identity-sorted
