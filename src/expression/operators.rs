@@ -14,26 +14,38 @@ use std::ops::Not;
 // Boolean operation methods (the by-value/by-ref operator impls all delegate here).
 impl BoolExpr {
     /// Logical AND: a new expression that is the conjunction of `self` and `other`.
+    ///
+    /// Crate-internal: an implementation detail of the `&` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn and(&self, other: &BoolExpr) -> BoolExpr {
+    pub(crate) fn and(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr::from_tokens(rpn::binary(Token::And, self.tokens(), other.tokens()))
     }
 
     /// Logical OR: a new expression that is the disjunction of `self` and `other`.
+    ///
+    /// Crate-internal: an implementation detail of the `|` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn or(&self, other: &BoolExpr) -> BoolExpr {
+    pub(crate) fn or(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr::from_tokens(rpn::binary(Token::Or, self.tokens(), other.tokens()))
     }
 
     /// Logical XOR: a new expression that is the exclusive-or of `self` and `other`.
+    ///
+    /// Crate-internal: an implementation detail of the `^` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn xor(&self, other: &BoolExpr) -> BoolExpr {
+    pub(crate) fn xor(&self, other: &BoolExpr) -> BoolExpr {
         BoolExpr::from_tokens(rpn::binary(Token::Xor, self.tokens(), other.tokens()))
     }
 
     /// Logical NOT: a new expression that is the negation of `self`.
+    ///
+    /// Crate-internal: an implementation detail of the `!` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn not(&self) -> BoolExpr {
+    pub(crate) fn not(&self) -> BoolExpr {
         BoolExpr::from_tokens(rpn::unary_not(self.tokens()))
     }
 }

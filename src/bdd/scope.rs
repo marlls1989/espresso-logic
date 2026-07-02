@@ -121,8 +121,11 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     // [`super::encoding`] so the two layers cannot drift.
 
     /// Logical AND: `self ∧ other`. Equivalent to the `&` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `&` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn and(self, other: Self) -> Self {
+    pub(crate) fn and(self, other: Self) -> Self {
         Self::from_root(
             self.cell,
             super::encoding::and(self.cell, self.root, other.root),
@@ -130,8 +133,11 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     }
 
     /// Logical OR: `self ∨ other`. Equivalent to the `|` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `|` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn or(self, other: Self) -> Self {
+    pub(crate) fn or(self, other: Self) -> Self {
         Self::from_root(
             self.cell,
             super::encoding::or(self.cell, self.root, other.root),
@@ -139,8 +145,11 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     }
 
     /// Logical XOR: `self ⊕ other`. Equivalent to the `^` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `^` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn xor(self, other: Self) -> Self {
+    pub(crate) fn xor(self, other: Self) -> Self {
         Self::from_root(
             self.cell,
             super::encoding::xor(self.cell, self.root, other.root),
@@ -148,8 +157,11 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `!` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn complement(self) -> Self {
+    pub(crate) fn complement(self) -> Self {
         Self::from_root(self.cell, super::encoding::not(self.cell, self.root))
     }
 }

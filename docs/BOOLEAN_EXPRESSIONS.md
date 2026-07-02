@@ -92,7 +92,8 @@ let not = !&a;         // NOT
 let xnor = !(&a ^ &b);
 ```
 
-The equivalent named methods are also available:
+The operators are the API — there are no separate named methods. Every combination of owned/borrowed
+operands type-checks, so an operand can be reused without an explicit clone:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -100,10 +101,9 @@ use espresso_logic::BoolExpr;
 let a = BoolExpr::var("a");
 let b = BoolExpr::var("b");
 
-let and = a.and(&b);
-let or  = a.or(&b);
-let xor = a.xor(&b);
-let not = a.not();
+let by_ref   = &a & &b;        // both operands borrowed, `a`/`b` still usable afterwards
+let mixed    = a.clone() & &b; // left owned, right borrowed
+let by_value = a & b;          // both operands consumed
 ```
 
 Composition concatenates token streams: each operator reallocates and copies, so a long chain is
@@ -375,7 +375,7 @@ let a = builder.var("a");
 let b = builder.var("b");
 
 // if-then-else: s ? a : b
-let mux = s.clone().ite(a.clone(), b.clone());
+let mux = s.ite(&a, &b);
 assert!(mux.equivalent_to(&((s.clone() & a) | (!s & b))));
 ```
 

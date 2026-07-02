@@ -89,6 +89,9 @@ fn operator_ref_and_value_forms_agree() {
 
 #[test]
 fn operators_match_named_methods() {
+    // The named forms (`and`/`or`/`xor`/`not`) are `pub(crate)` — implementation details the operators
+    // delegate to, not part of the public API — but remain visible here since this test module is
+    // crate-internal too; this checks operator/named equivalence.
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     assert_eq!(&a & &b, a.and(&b));

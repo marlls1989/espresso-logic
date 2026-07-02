@@ -98,6 +98,11 @@ fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
+// `forall`/`exists` moved from `&[S]` to `impl IntoIterator<Item = S>`; the `&["a"]` call sites below are
+// kept deliberately unchanged (not switched to the clippy-preferred `["a"]`) to prove that pre-existing,
+// borrowed-slice callers still compile unmodified against the widened bound — the same guarantee the
+// `docs/EXAMPLES.md`/`docs/BOOLEAN_EXPRESSIONS.md` doctests make.
+#[allow(clippy::needless_borrows_for_generic_args)]
 #[test]
 fn restrict_acceptance_table() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -352,6 +357,9 @@ fn cofactor_is_restrict() {
         .equivalent_to(&f.restrict("a", false)));
 }
 
+// See the comment on `restrict_acceptance_table` above: `&["a", "b"]` is kept deliberately unchanged
+// to prove the widened `impl IntoIterator` bound still accepts a borrowed slice literal.
+#[allow(clippy::needless_borrows_for_generic_args)]
 #[test]
 fn forall_exists_multiple_vars() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -375,6 +383,29 @@ fn forall_exists_multiple_vars() {
     assert!((a.clone() & b.clone())
         .exists(empty)
         .equivalent_to(&(a & b)));
+}
+
+#[test]
+fn forall_exists_accept_owned_iterator_and_adaptor() {
+    // `forall`/`exists` take `impl IntoIterator<Item: AsRef<str>>`, not just borrowed slices: an owned
+    // `Vec<String>` and an arbitrary adaptor chain both work.
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+
+    // Owned iterator: a `Vec<String>` passed by value.
+    let owned: Vec<String> = vec![String::from("a"), String::from("b")];
+    assert!((a.clone() & b.clone() & c.clone())
+        .forall(owned)
+        .is_contradiction());
+
+    // Adaptor chain: filter an iterator of names down to the ones actually being quantified.
+    let names = ["a", "b", "z"];
+    let adaptor = names.iter().filter(|&&n| n != "z");
+    assert!((a.clone() & b.clone() & c.clone())
+        .exists(adaptor)
+        .equivalent_to(&c));
 }
 
 #[test]

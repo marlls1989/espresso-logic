@@ -141,41 +141,53 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     // ---- Boolean operations -------------------------------------------------------------------
 
     /// Logical AND of two handles: `self ∧ other`. Equivalent to the `&` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `&` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn and(&self, other: &Self) -> Self {
+    pub(crate) fn and(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::and(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical OR of two handles: `self ∨ other`. Equivalent to the `|` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `|` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn or(&self, other: &Self) -> Self {
+    pub(crate) fn or(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::or(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical XOR of two handles: `self ⊕ other`. Equivalent to the `^` operator.
+    ///
+    /// Crate-internal: an implementation detail of the `^` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn xor(&self, other: &Self) -> Self {
+    pub(crate) fn xor(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::xor(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
+    ///
+    /// Crate-internal: an implementation detail of the `!` operator, not part of the public API — call
+    /// the operator instead.
     #[must_use]
-    pub fn complement(self) -> Self {
+    pub(crate) fn complement(&self) -> Self {
         let root = super::encoding::not(&self.cell, self.root);
         Self::from_root(&self.cell, root)
     }
 
     /// If-then-else: `if self then g else h`. The fundamental BDD operation the others derive from.
     #[must_use]
-    pub fn ite(self, g: Self, h: Self) -> Self {
-        self.assert_same_manager(&g);
-        self.assert_same_manager(&h);
+    pub fn ite(&self, g: &Self, h: &Self) -> Self {
+        self.assert_same_manager(g);
+        self.assert_same_manager(h);
         let root = BddManager::ite(&self.cell, self.root, g.root, h.root);
         Self::from_root(&self.cell, root)
     }
@@ -216,8 +228,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Folds `restrict(v, true) & restrict(v, false)` across each variable in `vars`. A name absent from
     /// the function contributes a no-op cofactor (`self & self == self`). Quantifying over no variables
     /// returns `self`.
+    ///
+    /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.forall(&["a", "b"])`), an
+    /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn forall<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+    pub fn forall<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::and)
     }
 
@@ -226,14 +241,21 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Folds `restrict(v, true) | restrict(v, false)` across each variable in `vars`. A name absent from
     /// the function contributes a no-op cofactor (`self | self == self`). Quantifying over no variables
     /// returns `self`.
+    ///
+    /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.exists(&["a", "b"])`), an
+    /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn exists<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+    pub fn exists<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::or)
     }
 
     /// Quantify over `vars`, folding `combine` across each variable's two cofactors. Universal and
     /// existential quantification differ only in `combine` (`and` vs `or`); this is the shared body.
-    fn quantify<S: AsRef<str>>(&self, vars: &[S], combine: fn(&Self, &Self) -> Self) -> Self {
+    fn quantify<S: AsRef<str>>(
+        &self,
+        vars: impl IntoIterator<Item = S>,
+        combine: fn(&Self, &Self) -> Self,
+    ) -> Self {
         let mut acc = self.clone();
         for v in vars {
             let lo = acc.restrict(v.as_ref(), false);
@@ -569,14 +591,14 @@ impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitXor, bitxor, xor)
 impl<B: Brand, C: ManagerCell> std::ops::Not for Bdd<B, C> {
     type Output = Bdd<B, C>;
     fn not(self) -> Bdd<B, C> {
-        Bdd::complement(self)
+        Bdd::complement(&self)
     }
 }
 
 impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
     type Output = Bdd<B, C>;
     fn not(self) -> Bdd<B, C> {
-        Bdd::complement(self.clone())
+        Bdd::complement(self)
     }
 }
 

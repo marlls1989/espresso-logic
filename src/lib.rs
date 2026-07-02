@@ -92,10 +92,9 @@
 //! println!("{conj}");  // a & b & c
 //! ```
 //!
-//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) and the equivalent
-//! [`and`](BoolExpr::and)/[`or`](BoolExpr::or)/[`xor`](BoolExpr::xor)/[`not`](BoolExpr::not)
-//! methods also compose `BoolExpr`s, but each operator reallocates the token stream, so
-//! `expr!`/`build` are preferred beyond a couple of terms.
+//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) also compose `BoolExpr`s,
+//! but each operator reallocates the token stream, so `expr!`/`build` are preferred beyond a
+//! couple of terms.
 //!
 //! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
 //!
