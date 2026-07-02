@@ -26,8 +26,8 @@
 //!
 //! # What this layer offers
 //!
-//! - Boolean operators by value and by reference: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT), plus
-//!   [`Bdd::ite`].
+//! - Boolean operators by value and by reference: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT) — the
+//!   last also available as the named [`Bdd::complement`] / [`Bdd::not`] aliases — plus [`Bdd::ite`].
 //! - Shannon cofactor / quantification: [`Bdd::restrict`] / [`Bdd::cofactor`], [`Bdd::forall`],
 //!   [`Bdd::exists`].
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].

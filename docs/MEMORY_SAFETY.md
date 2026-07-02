@@ -47,7 +47,10 @@ pub fn minimize(
 ```
 
 The inputs are **borrowed**; the cloning below happens internally so the caller's covers are left
-intact.
+intact. `minimize()` is the infallible variant; `try_minimize()` has the same memory flow but
+returns `Result<…, MinimizationError>`, surfacing a C `fatal()` caught by the thread-local recovery
+guard as `MinimizationError::EspressoFatal` instead of aborting the process (`minimize()` delegates to
+it and panics on that error).
 
 **Memory Flow:**
 
@@ -79,7 +82,8 @@ intact.
        .unwrap_or_else(|| complement(cube2list(f_ptr, d_ptr)));
    ```
    - If Some: clone and extract
-   - If None: compute complement (allocates new C memory)
+   - If None: compute complement (allocates new C memory) via the guarded trampoline, so a C
+     `fatal()` on a malformed cover is caught and returned as an error rather than aborting
    - C `espresso()` uses but does NOT free R
    - We wrap `r_ptr` in `EspressoCover` for cleanup
 
@@ -102,6 +106,11 @@ Each C allocation is wrapped in a Rust type that calls `sf_free()` on drop:
 - Created via `sf_new()` → wrapped → dropped → freed
 - Created via `sf_save()` → wrapped → dropped → freed  
 - Returned from C function → wrapped → dropped → freed
+
+One deliberate exception: when the recovery guard catches a C `fatal()` mid-pipeline, the in-flight
+cover pointers are intentionally leaked rather than freed. `espresso()` frees and replaces covers as
+it runs, so after a `longjmp` their state is indeterminate and freeing them could double-free; leaking
+them is the safe choice on this already-exceptional error path.
 
 ### ✅ No Double-Free
 

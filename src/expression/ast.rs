@@ -122,7 +122,7 @@ impl BoolExpr {
     /// Fold the expression tree depth-first from leaves to root.
     ///
     /// Walks the expression's reverse-Polish token stream directly through the shared
-    /// [`rpn::fold_postfix`] value-stack pass, calling the provided function `f` on each node. The
+    /// `rpn::fold_postfix` value-stack pass, calling the provided function `f` on each node. The
     /// function receives an [`ExprNode`] carrying the node type and the accumulated results from child
     /// nodes. The traversal is iterative, so a deeply nested expression cannot overflow the call stack.
     ///

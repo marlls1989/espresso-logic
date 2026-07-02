@@ -1600,6 +1600,164 @@ fn malformed_pla_other_errors() {
 }
 
 #[test]
+fn pla_duplicate_labels_are_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .ilb repeats a name: would otherwise build a Symbols whose identity order is no longer
+    // unique, silently misaligning later lookups.
+    assert!(matches!(
+        err(".i 3\n.o 1\n.ilb a a b\n001 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateLabel { label_type, name })
+            if &*label_type == "input" && &*name == "a"
+    ));
+    // Same check on the output side (.ob).
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f f\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateLabel { label_type, name })
+            if &*label_type == "output" && &*name == "f"
+    ));
+
+    // A well-formed file with distinct labels on both sides still parses (no regression).
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 2\n.o 2\n.ilb a b\n.ob f g\n01 10\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::InputsOutputsNamed(_)));
+}
+
+#[test]
+fn pla_dimension_redeclaration_is_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .i re-declared after a cube line has already been read: the already-consumed cube stream was
+    // split at the old width, so silently accepting the new width would mis-split later cubes.
+    assert!(matches!(
+        err(".i 2\n.o 1\n01 1\n.i 2\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputDirective)
+    ));
+    // Same check for .o after a cube line.
+    assert!(matches!(
+        err(".i 2\n.o 1\n01 1\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputDirective)
+    ));
+
+    // .i re-declared before any cube data is read is rejected too: C's reference reader silently
+    // ignores a redundant .i/.o ("extra .i ignored") once cube.fullset is allocated, but this parser
+    // has no equivalent no-op — it would need to distinguish a harmless repeat from a width change
+    // that invalidates label/cube state already read — so any second declaration is a hard error,
+    // regardless of whether cube data has started.
+    assert!(matches!(
+        err(".i 2\n.i 2\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputDirective)
+    ));
+    assert!(matches!(
+        err(".i 2\n.o 1\n.o 1\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputDirective)
+    ));
+
+    // A well-formed file that declares each dimension exactly once still parses (no regression).
+    let cover = PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n01 1\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::Positional(_)));
+}
+
+#[test]
+fn pla_label_section_redeclaration_is_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .ilb re-declared with a different second section: unlike C's silent overwrite (which leaks
+    // the previously `strdup`'d strings), this is a hard error.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n.ilb c d\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    // Same check on the output side (.ob).
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n.ob h i\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // The second section is rejected even when it is identical to the first.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n.ilb a b\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n.ob f g\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // The repeat is rejected even when it comes after cube data has already been read.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n01 1\n.ilb c d\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n0 11\n.ob h i\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // An empty second `.ilb`/`.ob` line remains a no-op today (as an empty line is for the first
+    // declaration) and does not error.
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n.ilb a b\n.ilb\n01 1\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::InputsNamed(_)));
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 1\n.o 2\n.ob f g\n.ob\n0 11\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::OutputsNamed(_)));
+}
+
+#[test]
+fn from_pla_reader_surfaces_mid_stream_io_error() {
+    use super::pla::PLAReadError;
+    use std::io::{self, BufRead, Read};
+
+    // A reader that yields a well-formed prefix, then fails partway through — verifying
+    // `from_pla_reader` streams `reader.lines()` lazily (propagating the line's `io::Error` at the
+    // point it occurs) rather than buffering the whole input up front, where a mid-stream failure
+    // could only ever surface as part of that initial, eager read.
+    struct FailingAfter {
+        remaining: &'static [u8],
+        failed: bool,
+    }
+    impl Read for FailingAfter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.remaining.is_empty() {
+                if !self.failed {
+                    self.failed = true;
+                    return Err(io::Error::other("boom"));
+                }
+                return Ok(0);
+            }
+            let n = buf.len().min(self.remaining.len()).min(1);
+            buf[..n].copy_from_slice(&self.remaining[..n]);
+            self.remaining = &self.remaining[n..];
+            Ok(n)
+        }
+    }
+
+    let reader = io::BufReader::new(FailingAfter {
+        remaining: b".i 2\n.o 1\n01 1\n",
+        failed: false,
+    });
+    let err = PlaCover::<Symbol>::from_pla_reader(reader).expect_err("mid-stream IO error");
+    assert!(matches!(err, PLAReadError::Io(_)));
+
+    // Sanity check the harness itself: a `BufRead` built directly over the failing reader also
+    // fails on its final `lines()` call rather than succeeding silently.
+    let mut direct = io::BufReader::new(FailingAfter {
+        remaining: b"only one line\n",
+        failed: false,
+    });
+    let mut discard = String::new();
+    direct.read_line(&mut discard).unwrap();
+    assert!(direct.read_line(&mut discard).is_err());
+}
+
+#[test]
 fn pla_delimiters_match_c_positional_reading() {
     // C's read_cube (cvrin.c) treats space, tab and '|' as insignificant delimiters that may appear
     // anywhere; the input/output boundary is positional, fixed by .i/.o. So '|' is NOT a boundary

@@ -122,27 +122,31 @@ for file in *.pla; do
 done
 ```
 
-## Comparison with Original
+## Divergence from the original C tool
 
-The Rust CLI aims to be compatible with the original C version:
+The Rust CLI reproduces the C tool's *core* behaviour exactly — for the supported options, its
+PLA output is byte-identical to the reference binary across all `-o {f,fd,fr,fdr}` formats (this
+is enforced by the regression suite). Its *option surface*, however, is a subset, and some
+options that share a letter with the C tool differ in shape:
 
-| Feature | Original C | Rust Wrapper | Status |
-|---------|-----------|--------------|---------|
-| Basic minimisation | ✅ | ✅ | Working |
-| Exact minimisation | ✅ | ✅ | Working |
-| Output formats | ✅ | ✅ | Working |
-| Espresso options | ✅ | ✅ | Working |
-| Summary/trace | ✅ | ✅ | Working |
-| Multiple input files | ✅ | ❌ | Planned |
-| Stdin input | ✅ | ❌ | Planned |
-| All subcommands | ✅ | ⚠️  | Partial |
+| Area | Original C | Rust CLI |
+|---------|-----------|--------------|
+| Core minimisation (`espresso`, `exact`, `echo`, `stats`) | ✅ | ✅ byte-identical output |
+| Output formats `-o {f,fd,fr,fdr}` | ✅ | ✅ byte-identical output |
+| `-D` subcommands (~36 in C: `verify`, `so`, `so_both`, `simplify`, `expand`, …) | ✅ | only `espresso`, `exact`, `echo`, `stats` |
+| `-e <opt>` (C: takes an argument, e.g. `-e fast`) | ✅ | `-e` is a boolean alias for `--do exact` |
+| `-v <type>` (C: takes a verbosity type argument) | ✅ | `-v` is a boolean verbose flag |
+| `-S <strategy>`, `-r <n-m>` | ✅ | not implemented |
+| Multiple input files / stdin input | ✅ | not implemented (single named file) |
 
-## Current Limitations
+The Berkeley man pages shipped in `man/` (`espresso.1`, `espresso.5`, dated 1988) document the
+**C tool's** option set, not this CLI — for the Rust CLI, `espresso --help` is authoritative.
 
-1. **Stdin not supported** - Must specify input file
-2. **Single file only** - Cannot process multiple files at once
-3. **Some C subcommands not implemented** - the reference tool's `verify`, `so`, and `so_both` modes have no Rust equivalent (only `espresso`, `exact`, `echo`, and `stats` are provided)
-4. **No backward compatibility mode** - Old -do/-out syntax not supported
+## Status and future
+
+The CLI exists primarily to validate the library against the C reference implementation (the
+regression suite drives it). It is not being extended incrementally: a later release will either
+reimplement it against the full C option set or remove it in favour of the library API.
 
 ## Programmatic API Alternative
 
@@ -200,16 +204,6 @@ espresso /full/path/to/input.pla
 - Check if `-x` flag is set (suppresses output)
 - Verify input file is valid PLA format
 - Use `-s` to see summary
-
-## Future Enhancements
-
-- [ ] Stdin support for piping
-- [ ] Multiple file processing
-- [ ] All original subcommands
-- [ ] Backward compatibility mode
-- [ ] Progress bars for large files
-- [ ] JSON output format
-- [ ] Parallel processing option
 
 ## See Also
 

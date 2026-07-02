@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The PLA reader rejects duplicate `.ilb`/`.ob` labels.** A `.ilb`/`.ob` section naming the same
+  variable twice (e.g. `.ilb a a b`) used to build a `Symbols` table that silently violated its
+  documented uniqueness invariant, misaligning later lookups (`merge`/`relabel`/`push`). It is now
+  rejected at parse time with the new `PLAError::DuplicateLabel` variant.
+- **The PLA reader rejects a mid-file `.i`/`.o` redeclaration.** A repeated `.i`/`.o` directive after
+  cube data had already been read used to overwrite the declared dimensions while the accumulated
+  cube character stream was still split at the old width, mis-splitting subsequent cubes. Any second
+  `.i`/`.o` declaration — before or after cube data — is now rejected with the new
+  `PLAError::DuplicateInputDirective` / `PLAError::DuplicateOutputDirective` variants.
+
+- **Invalid input to the low-level minimiser no longer aborts the process.** The vendored C core
+  reports unrecoverable conditions by calling `fatal()`, which printed to stderr and `exit()`ed.
+  Some of these are reachable from safe Rust — most notably an explicit OFF-set that overlaps the
+  ON-set (a non-orthogonal cover) driving `expand`/`complement` into `fatal()`. A thread-local
+  recovery point now catches such a fatal and turns it into an error instead of killing the process;
+  the thread stays usable for further minimisations. The standalone C reference binary is unchanged.
+- **Allocation failure during instance creation errors instead of panicking.** `Espresso::try_new`
+  used to `panic!` if the `part_size` array could not be allocated, leaving the thread-local C cube
+  state partially written. It now surfaces the new `InstanceError::AllocationFailure` variant, and
+  the cube state is restored first, so a later call on the same thread is unaffected.
+- **Parse-error positions are consistent byte offsets.** `ExpressionParseError.position` is now
+  extracted structurally from lalrpop's `ParseError` variants as a byte offset into the input; it
+  was previously scraped from the human-readable message text, mixing a 0-indexed column with a raw
+  byte offset depending on which message pattern matched.
+- **MSVC builds no longer fail on the C standard flag.** `build.rs` now probes both `-std=c11` and
+  `/std:c11` and uses whichever the active C compiler supports (C11 `_Thread_local` is required
+  either way).
+- **C allocation failures no longer dereference null.** Results of `sf_new`, `sf_save`,
+  `sf_addset`, and the guarded minimisation/complement calls are now null-checked at the FFI
+  boundary and panic with a clear "out of memory" message instead of crashing on a null pointer.
+- **The Emscripten `ERROR_ON_UNDEFINED_SYMBOLS=0` setting is applied at link time.** `build.rs`
+  passed it as a C compile flag, where `-s KEY=VALUE` is a no-op; it is now emitted as a linker
+  argument for the `wasm32-unknown-emscripten` target, where emcc actually honours it.
+
+### Changed
+
+- **Clearer `expr!` diagnostics for invalid operands.** The macro now reports an invalid operand
+  with a message naming the accepted operand forms (a string literal, the constants `0`/`1`, a
+  parenthesised expression, or an expression yielding a `BoolExpr`) at the offending token, instead
+  of syn's generic "expected identifier".
+- **PLA reading streams the input.** `from_pla_reader` iterates the reader line by line instead of
+  buffering the whole file into memory first; an I/O error is reported at the point in the stream
+  where it occurs.
+- **`Cargo.lock` is now tracked.** The crate ships a binary behind the `cli` feature, so a committed
+  lockfile gives it and CI reproducible dependency resolution. Dependents are unaffected — Cargo
+  ignores a library dependency's lockfile.
+- **The bundled CLI documentation now records the CLI's real divergence from the C tool.** `docs/CLI.md`
+  (embedded into the crate docs) previously claimed option parity that does not exist; it now states the
+  supported option subset and notes that the shipped 1988 Berkeley man pages describe the C tool rather
+  than this CLI.
+- **The PLA reader rejects a repeated `.ilb`/`.ob` label section.** A second `.ilb` or `.ob`
+  directive used to silently overwrite the labels declared by the first; it is now rejected with the
+  new `PLAError::DuplicateInputLabelDirective` / `DuplicateOutputLabelDirective` variants, completing
+  the rejection family alongside duplicate names within a section and a repeated `.i`/`.o`. Breaking
+  for any (malformed) file that relied on the last section silently winning.
+- **`Bdd::ite` takes its operands by reference.** `ite(&self, g: &Self, h: &Self)` instead of
+  consuming three handles by value, matching the `&`/`|`/`^`/`!` operators. Breaking for by-value
+  callers, which now pass references.
+- **`Bdd::complement` takes `&self`.** It borrows rather than consuming the handle, matching the `!`
+  operator. Breaking for by-value callers, which now pass a reference (or use `!`).
+- **`Bdd::forall` / `Bdd::exists` accept any iterable of names.** The `vars` parameter is now
+  `impl IntoIterator<Item = impl AsRef<str>>` rather than `&[S]`, so an owned `Vec<String>` or an
+  iterator adaptor works as well as a borrowed slice. Existing `&["a", "b"]` calls are unaffected.
+
+### Added
+
+- **`Hash` for `Bdd<B, C>`**, agreeing with the existing root-identity `PartialEq` (hashes the
+  manager identity and canonical root id), so equal handles work as `HashSet`/`HashMap` keys.
+- **`Debug`** for `ScopedBdd`, `Scope`, `ExprBuilder`, and `Expr`.
+- **`Default` for `BoolExpr`**, equal to `BoolExpr::constant(false)`.
+- **`Clone`, `PartialEq`, `Eq` for `ParseBoolExprError`.**
+- **`#[must_use]` on `ExprBuilder::var`/`constant`/`graft`**, matching `Scope`'s methods. Code that
+  discards these return values now gets an `unused_must_use` warning.
+
+- **`try_minimize` / `try_minimize_exact`** on both `Espresso` and `EspressoCover`, the fallible
+  counterparts of `minimize` / `minimize_exact`. They return
+  `Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError>`, surfacing a caught C
+  fatal as the new **`MinimizationError::EspressoFatal { message }`** variant. The infallible
+  `minimize` / `minimize_exact` now delegate to these and panic on error (documented under `# Panics`).
+- **`expr!` accepts `&`-referenced and bang-macro-call operands.** An operand may now be a reference
+  (`expr!(&foo)`, through any number of reference levels) or a macro call (`expr!(make!())`, with
+  `()`, `[]`, or `{}` delimiters), in addition to the identifiers, paths, field accesses, method and
+  function calls, and indexes already accepted.
+- **`Bdd::not`**, a named alias of `Bdd::complement` (both take `&self` and are equivalent to the
+  unary `!` operator). Negation is offered under both names because `complement` reads naturally in a
+  method chain while `!` reads naturally in an expression.
+
 ## [5.1.0] - 2026-07-01
 
 Collection-returning query methods now return **lazy iterators** instead of owned collections, so

@@ -92,6 +92,14 @@ pub struct BoolExpr {
     tokens: Arc<[Token]>,
 }
 
+/// The constant `false` — the identity element for `|`/`^`, so it composes cleanly as a starting
+/// accumulator.
+impl Default for BoolExpr {
+    fn default() -> Self {
+        BoolExpr::constant(false)
+    }
+}
+
 impl BoolExpr {
     /// Create a variable expression with the given name.
     #[must_use]

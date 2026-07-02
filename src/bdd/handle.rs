@@ -164,18 +164,29 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         Self::from_root(&self.cell, root)
     }
 
-    /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
+    /// Logical negation: `¬self`. A handle to the complement of this function.
+    ///
+    /// [`not`](Self::not) is an alias of this method, and the unary `!` operator is equivalent (it
+    /// delegates here). Negation is offered under both names because `complement` reads naturally in a
+    /// method chain while `!` reads naturally in an expression.
     #[must_use]
-    pub fn complement(self) -> Self {
+    pub fn complement(&self) -> Self {
         let root = super::encoding::not(&self.cell, self.root);
         Self::from_root(&self.cell, root)
     }
 
+    /// Logical negation: `¬self`. An alias of [`complement`](Self::complement); the unary `!`
+    /// operator is equivalent.
+    #[must_use]
+    pub fn not(&self) -> Self {
+        self.complement()
+    }
+
     /// If-then-else: `if self then g else h`. The fundamental BDD operation the others derive from.
     #[must_use]
-    pub fn ite(self, g: Self, h: Self) -> Self {
-        self.assert_same_manager(&g);
-        self.assert_same_manager(&h);
+    pub fn ite(&self, g: &Self, h: &Self) -> Self {
+        self.assert_same_manager(g);
+        self.assert_same_manager(h);
         let root = BddManager::ite(&self.cell, self.root, g.root, h.root);
         Self::from_root(&self.cell, root)
     }
@@ -216,8 +227,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Folds `restrict(v, true) & restrict(v, false)` across each variable in `vars`. A name absent from
     /// the function contributes a no-op cofactor (`self & self == self`). Quantifying over no variables
     /// returns `self`.
+    ///
+    /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.forall(&["a", "b"])`), an
+    /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn forall<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+    pub fn forall<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::and)
     }
 
@@ -226,14 +240,21 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Folds `restrict(v, true) | restrict(v, false)` across each variable in `vars`. A name absent from
     /// the function contributes a no-op cofactor (`self | self == self`). Quantifying over no variables
     /// returns `self`.
+    ///
+    /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.exists(&["a", "b"])`), an
+    /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn exists<S: AsRef<str>>(&self, vars: &[S]) -> Self {
+    pub fn exists<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::or)
     }
 
     /// Quantify over `vars`, folding `combine` across each variable's two cofactors. Universal and
     /// existential quantification differ only in `combine` (`and` vs `or`); this is the shared body.
-    fn quantify<S: AsRef<str>>(&self, vars: &[S], combine: fn(&Self, &Self) -> Self) -> Self {
+    fn quantify<S: AsRef<str>>(
+        &self,
+        vars: impl IntoIterator<Item = S>,
+        combine: fn(&Self, &Self) -> Self,
+    ) -> Self {
         let mut acc = self.clone();
         for v in vars {
             let lo = acc.restrict(v.as_ref(), false);
@@ -363,6 +384,12 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// node id so a shared subgraph is walked once). The shared traversal owns the read guard for the
     /// whole walk (NodeIds are stable), the visited set, the bounds-checked node lookup, and the
     /// child scheduling; `visit` sees each reachable node and decides what to record.
+    ///
+    /// No-reentrancy invariant: `mgr` (the manager read guard) is held for the entire walk below, so
+    /// `visit` must never touch this handle's manager — no builder call, no other `Bdd` method on a
+    /// handle sharing this cell, nothing that acquires the guard again. Doing so deadlocks the `RwLock`
+    /// (`SyncCell`) or panics the `RefCell` (`LocalCell`). Every call site in this module passes a plain
+    /// closure that only inspects the `&ManagerNode` it is given — keep it that way.
     fn for_each_reachable_node(&self, mut visit: impl FnMut(&ManagerNode)) {
         let mgr = self.cell.read();
         let mut visited = std::collections::HashSet::new();
@@ -417,6 +444,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         let mut cubes: Vec<Cube<Symbol, Anonymous>> = Vec::new();
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
+        // No-reentrancy invariant: `mgr` is held across the whole walk below (dropped explicitly once the
+        // stack empties), so nothing in this loop may re-acquire this handle's manager — no builder call,
+        // no other `Bdd` method on a handle sharing this cell. Doing so deadlocks the `RwLock`
+        // (`SyncCell`) or panics the `RefCell` (`LocalCell`). The loop body below only reads through `mgr`
+        // and pushes onto local `stack`/`path` state — keep it that way.
         let mgr = self.cell.read();
         let mut stack = vec![Work::Node(self.root)];
         while let Some(work) = stack.pop() {
@@ -520,6 +552,16 @@ impl<B: Brand, C: ManagerCell> PartialEq for Bdd<B, C> {
 
 impl<B: Brand, C: ManagerCell> Eq for Bdd<B, C> {}
 
+/// Agrees with [`PartialEq`]: hashes the manager identity (the cell's pointer address) together with the
+/// canonical root id, so `==` handles always land in the same bucket. Implemented by hand (rather than
+/// `#[derive(Hash)]`) so it does not require `B: Hash` or `C: Hash` bounds, matching the manual `PartialEq`.
+impl<B: Brand, C: ManagerCell> std::hash::Hash for Bdd<B, C> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.cell.as_ptr().hash(state);
+        self.root.hash(state);
+    }
+}
+
 /// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
 /// [`to_cubes`](Bdd::to_cubes) for that.
@@ -548,14 +590,14 @@ impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitXor, bitxor, xor)
 impl<B: Brand, C: ManagerCell> std::ops::Not for Bdd<B, C> {
     type Output = Bdd<B, C>;
     fn not(self) -> Bdd<B, C> {
-        Bdd::complement(self)
+        Bdd::complement(&self)
     }
 }
 
 impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
     type Output = Bdd<B, C>;
     fn not(self) -> Bdd<B, C> {
-        Bdd::complement(self.clone())
+        Bdd::complement(self)
     }
 }
 

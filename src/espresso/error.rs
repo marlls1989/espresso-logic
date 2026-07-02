@@ -34,6 +34,14 @@ pub enum InstanceError {
         /// The maximum value supported for a single dimension
         max: usize,
     },
+    /// Allocating the C cube's `part_size` array failed (the underlying `malloc` returned a null
+    /// pointer, i.e. the system is out of memory). The thread-local cube state is restored to its
+    /// pre-call condition before this error is returned, so a later [`Espresso::try_new`](
+    /// crate::espresso::Espresso::try_new) call on the same thread is unaffected.
+    AllocationFailure {
+        /// The requested dimensions (num_inputs, num_outputs)
+        requested: (usize, usize),
+    },
 }
 
 impl fmt::Display for InstanceError {
@@ -64,6 +72,12 @@ impl fmt::Display for InstanceError {
                 "Espresso dimensions {:?} are too large; each must be at most {} (the C core uses \
                  32-bit signed cube indices).",
                 requested, max
+            ),
+            InstanceError::AllocationFailure { requested } => write!(
+                f,
+                "Failed to allocate the part_size array for an Espresso instance with dimensions \
+                 {:?}: out of memory.",
+                requested
             ),
         }
     }
@@ -159,6 +173,17 @@ pub enum MinimizationError {
         /// An output index at which the ON-set and OFF-set overlap.
         output: usize,
     },
+    /// The C minimiser reported a fatal condition and was caught before it could terminate the
+    /// process. This surfaces at the low-level [`Espresso`](crate::espresso::Espresso) /
+    /// [`EspressoCover`](crate::espresso::EspressoCover) `try_minimize` entry points, which — unlike
+    /// the high-level [`Cover`](crate::Cover) path — do not pre-validate their inputs. The most common
+    /// cause is an explicit OFF-set that overlaps the ON-set (a non-orthogonal cover), for which the C
+    /// core aborts inside `expand`/`complement`.
+    EspressoFatal {
+        /// The diagnostic captured from the C core (the text it would otherwise have printed to
+        /// stderr before exiting).
+        message: String,
+    },
 }
 
 impl From<CoverError> for MinimizationError {
@@ -179,6 +204,9 @@ impl fmt::Display for MinimizationError {
                 "ON-set and OFF-set are not orthogonal (they overlap at output {})",
                 output
             ),
+            MinimizationError::EspressoFatal { message } => {
+                write!(f, "Espresso reported a fatal error: {}", message)
+            }
         }
     }
 }
@@ -191,6 +219,7 @@ impl std::error::Error for MinimizationError {
             MinimizationError::Cover(e) => Some(e),
             MinimizationError::Io(e) => Some(e),
             MinimizationError::NonOrthogonal { .. } => None,
+            MinimizationError::EspressoFatal { .. } => None,
         }
     }
 }
@@ -223,6 +252,9 @@ impl From<MinimizationError> for io::Error {
             MinimizationError::Cube(e) => io::Error::new(io::ErrorKind::InvalidData, e),
             MinimizationError::Cover(e) => io::Error::new(io::ErrorKind::InvalidData, e),
             e @ MinimizationError::NonOrthogonal { .. } => {
+                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+            }
+            e @ MinimizationError::EspressoFatal { .. } => {
                 io::Error::new(io::ErrorKind::InvalidData, e.to_string())
             }
         }
@@ -345,5 +377,29 @@ mod tests {
         let min_err = MinimizationError::Cube(cube_err);
         let io_err: io::Error = min_err.into();
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_instance_error_allocation_failure() {
+        let err = InstanceError::AllocationFailure { requested: (4, 2) };
+        let msg = err.to_string();
+        assert!(msg.contains("Failed to allocate"));
+        assert!(msg.contains("(4, 2)"));
+        assert!(msg.contains("out of memory"));
+    }
+
+    #[test]
+    fn test_instance_error_allocation_failure_to_io_error() {
+        let err = InstanceError::AllocationFailure { requested: (4, 2) };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_minimization_error_from_allocation_failure() {
+        let inst_err = InstanceError::AllocationFailure { requested: (4, 2) };
+        let min_err: MinimizationError = inst_err.into();
+        assert!(matches!(min_err, MinimizationError::Instance(_)));
+        assert!(min_err.source().is_some());
     }
 }

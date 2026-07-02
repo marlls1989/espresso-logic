@@ -28,6 +28,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Doc
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       - name: Test
         run: cargo test
 
@@ -43,6 +48,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Fast smoke test (4 cases, ~1s) so an obvious break fails early, before the full ~363-case
+      # suite below spends the time to build and run everything.
+      - name: Quick regression (fail-early smoke test)
+        run: ./tests/quick_regression.sh
 
       # Builds the reference C binary (espresso-src/Makefile) and the Rust CLI, then asserts the Rust
       # CLI's PLA output is byte-identical to C across every -o {f,fd,fr,fdr} variant.

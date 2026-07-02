@@ -143,8 +143,14 @@ fn parse_unary(input: ParseStream) -> Result<Expr> {
     }
 }
 
-/// Parse atoms: identifiers, string literals, the `0`/`1` constants, and parenthesised expressions.
+/// Parse atoms: identifiers, string literals, the `0`/`1` constants, parenthesised expressions, and
+/// (optionally `&`-referenced) graft operands.
 fn parse_atom(input: ParseStream) -> Result<Expr> {
+    // Domain-specific message for a token that cannot start an operand, shared by every failure path
+    // below (`parse_graft_operand` on its own would only surface syn's generic "expected identifier").
+    const EXPECTED: &str = "expected a Boolean operand: a string literal (\"name\"), a constant (0 or \
+        1), a parenthesised expression, or a (possibly `&`-referenced) expression yielding a `BoolExpr`";
+
     if input.peek(syn::token::Paren) {
         let content;
         syn::parenthesized!(content in input);
@@ -165,24 +171,56 @@ fn parse_atom(input: ParseStream) -> Result<Expr> {
                 "only 0 and 1 are supported as boolean constants",
             )),
         }
-    } else {
+    } else if input.peek(Token![&]) {
+        // `&` in operand position is a reference, never the binary AND operator: `parse_atom` is only
+        // ever invoked in operand position (immediately after an operator, or at expression start), and
+        // `parse_and` already peels off any *binary* `&` between two complete operands before recursing
+        // down to an atom. So this branch is only reached for a leading `&`.
+        //
+        // Peek (on a fork, so nothing is consumed on a `false` result) past the leading `&`(s) — there
+        // may be several, e.g. `&&foo` — for a graft-operand starter. Only then commit: fold the `&`(s)
+        // into the captured graft stream verbatim. `graft` takes `&BoolExpr`, and `&(&foo)` (or deeper
+        // reference levels) deref-coerces back down to it at the call site.
+        let ahead = input.fork();
+        while ahead.peek(Token![&]) {
+            ahead.parse::<Token![&]>()?;
+        }
+        if ahead.peek(Token![self]) || ahead.peek(Token![::]) || ahead.peek(Ident) {
+            let mut tokens = proc_macro2::TokenStream::new();
+            while input.peek(Token![&]) {
+                input.parse::<Token![&]>()?.to_tokens(&mut tokens);
+            }
+            tokens.extend(parse_graft_operand(input)?);
+            Ok(Expr::Graft(tokens))
+        } else {
+            // A `&` not followed by a graft starter is not a valid operand either.
+            Err(syn::Error::new(input.span(), EXPECTED))
+        }
+    } else if input.peek(Token![self]) || input.peek(Token![::]) || input.peek(Ident) {
         Ok(Expr::Graft(parse_graft_operand(input)?))
+    } else {
+        // Nothing here can start a graft operand either (no `&`, no `self`, no path, no identifier).
+        // Report the domain-specific set of accepted operands, at the offending token (or, if input is
+        // exhausted, at the end of the stream).
+        Err(syn::Error::new(input.span(), EXPECTED))
     }
 }
 
 /// Parse a graft operand — an in-scope expression to splice in via `graft` — capturing its tokens.
 ///
-/// Accepts a *postfix* expression: a leading `self` or a (possibly `::`-rooted) path, followed by any number
-/// of field accesses (`.field`), method calls (`.method(args)`), function calls (`(args)`), and indexes
-/// (`[index]`). Argument and index groups are captured whole (their delimiters bound them), so the
-/// expressions inside them are unrestricted. Parsing stops before any binary operator, leaving it for the
-/// surrounding precedence parser — so the macro's own `&`/`|`/`^`/`+`/`*` are never mistaken for Rust
-/// operators. An operand that itself needs a top-level binary operator must be bound to a local first.
+/// Accepts a *postfix* expression: a leading `self` or a (possibly `::`-rooted) path, optionally followed by
+/// a bang-macro call (`path!(…)` / `path![…]` / `path!{…}`) grafting the macro's expansion whole, then any
+/// number of field accesses (`.field`), method calls (`.method(args)`), function calls (`(args)`), and
+/// indexes (`[index]`). Argument, index, and macro-call groups are captured whole (their delimiters bound
+/// them), so the tokens inside them are unrestricted. Parsing stops before any binary operator, leaving it
+/// for the surrounding precedence parser — so the macro's own `&`/`|`/`^`/`+`/`*` are never mistaken for
+/// Rust operators. An operand that itself needs a top-level binary operator must be bound to a local first.
 fn parse_graft_operand(input: ParseStream) -> Result<proc_macro2::TokenStream> {
     let mut tokens = proc_macro2::TokenStream::new();
 
     // Leading primary: `self`, or a path of identifiers with an optional leading `::`.
-    if input.peek(Token![self]) {
+    let is_self = input.peek(Token![self]);
+    if is_self {
         input.parse::<Token![self]>()?.to_tokens(&mut tokens);
     } else {
         if input.peek(Token![::]) {
@@ -193,6 +231,22 @@ fn parse_graft_operand(input: ParseStream) -> Result<proc_macro2::TokenStream> {
             input.parse::<Token![::]>()?.to_tokens(&mut tokens);
             input.parse::<Ident>()?.to_tokens(&mut tokens);
         }
+    }
+
+    // A bang-macro call (`path!(…)`, `path![…]`, or `path!{…}`) grafts the macro's expansion whole, e.g.
+    // `expr!(make!())`. Only valid after a path — `self!` is not valid Rust — and only when a delimited
+    // group follows the `!` (mirroring how the postfix loop below only takes `(…)` as call parens after a
+    // method name); otherwise the `!` is left where it is (e.g. for the unary-NOT parser to pick up).
+    if !is_self
+        && input.peek(Token![!])
+        && (input.peek2(syn::token::Paren)
+            || input.peek2(syn::token::Brace)
+            || input.peek2(syn::token::Bracket))
+    {
+        input.parse::<Token![!]>()?.to_tokens(&mut tokens);
+        input
+            .parse::<proc_macro2::TokenTree>()?
+            .to_tokens(&mut tokens);
     }
 
     // Postfix chain: field access / tuple index, method or function calls, and indexing. A `(…)`/`[…]`

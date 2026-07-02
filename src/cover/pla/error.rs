@@ -66,6 +66,45 @@ pub enum PLAError {
     /// PLA file declares no dimensions: a cube appears before both `.i` and `.o` (which are required
     /// up front — dimensions are never inferred from the cube data)
     MissingDimensions,
+    /// The `.i` directive appears more than once in a PLA file.
+    ///
+    /// C's reference reader (`cvrin.c`) is permissive: it silently overwrites the width if no cube
+    /// data has been read yet, and once dimensions are established it prints "extra .i ignored" to
+    /// stderr and keeps the first declaration. This crate rejects any redeclaration outright. The
+    /// rejection is load-bearing once cube data has begun — the cube stream is split at the current
+    /// input+output width as characters arrive, so changing the width mid-stream would silently
+    /// re-interpret data already consumed — and is applied uniformly before that point too:
+    /// a repeated `.i` signals a malformed or concatenated file, and rejecting it is simpler and
+    /// safer than reproducing C's silent overwrite for a case no well-formed file exercises.
+    DuplicateInputDirective,
+    /// The `.o` directive appears more than once in a PLA file — the output-side counterpart of
+    /// [`DuplicateInputDirective`](Self::DuplicateInputDirective); see its documentation for the
+    /// rationale (C ignores the redeclaration, this crate rejects it).
+    DuplicateOutputDirective,
+    /// A `.ilb`/`.ob` label section names the same variable more than once.
+    ///
+    /// [`Symbols`](crate::cover::Symbols) requires a header's identities to be unique so it can
+    /// binary-search over an identity-sorted order; a duplicated label would silently violate that
+    /// invariant and misalign later lookups. Rejected at parse time instead.
+    DuplicateLabel {
+        /// Type of label ("input" or "output")
+        label_type: Arc<str>,
+        /// The name repeated within the label section
+        name: Arc<str>,
+    },
+    /// The `.ilb` label section appears more than once in a PLA file.
+    ///
+    /// C's reference reader (`cvrin.c`) silently overwrites the input label slots on a repeated
+    /// `.ilb` section — no warning at all, unlike the "extra .i ignored" it prints for a repeated
+    /// `.i`/`.o` directive — leaking the previously `strdup`'d strings in the process. This crate
+    /// rejects the redeclaration outright, completing the family: a duplicated name within a
+    /// single label section is already rejected ([`DuplicateLabel`](Self::DuplicateLabel)), as is
+    /// a repeated `.i`/`.o` directive ([`DuplicateInputDirective`](Self::DuplicateInputDirective)).
+    DuplicateInputLabelDirective,
+    /// The `.ob` label section appears more than once in a PLA file — the output-side counterpart
+    /// of [`DuplicateInputLabelDirective`](Self::DuplicateInputLabelDirective); see its
+    /// documentation for the rationale.
+    DuplicateOutputLabelDirective,
 }
 
 impl fmt::Display for PLAError {
@@ -109,6 +148,21 @@ impl fmt::Display for PLAError {
             ),
             PLAError::MissingDimensions => {
                 write!(f, "PLA file has no dimension information")
+            }
+            PLAError::DuplicateInputDirective => {
+                write!(f, "PLA file declares .i more than once")
+            }
+            PLAError::DuplicateOutputDirective => {
+                write!(f, "PLA file declares .o more than once")
+            }
+            PLAError::DuplicateLabel { label_type, name } => {
+                write!(f, "duplicate {} label '{}'", label_type, name)
+            }
+            PLAError::DuplicateInputLabelDirective => {
+                write!(f, "PLA file declares .ilb more than once")
+            }
+            PLAError::DuplicateOutputLabelDirective => {
+                write!(f, "PLA file declares .ob more than once")
             }
         }
     }
@@ -271,6 +325,49 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
         let write_err: PLAWriteError = io_err.into();
         assert!(matches!(write_err, PLAWriteError::Io(_)));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_input_directive() {
+        let err = PLAError::DuplicateInputDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".i"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_output_directive() {
+        let err = PLAError::DuplicateOutputDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".o"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_label() {
+        let err = PLAError::DuplicateLabel {
+            label_type: Arc::from("input"),
+            name: Arc::from("a"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("input"));
+        assert!(msg.contains("'a'"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_input_label_directive() {
+        let err = PLAError::DuplicateInputLabelDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".ilb"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_output_label_directive() {
+        let err = PLAError::DuplicateOutputLabelDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".ob"));
+        assert!(msg.contains("more than once"));
     }
 
     #[test]

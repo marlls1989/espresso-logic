@@ -95,8 +95,14 @@ fn main() {
     build.include(&espresso_src);
 
     // Set compiler flags
+    //
+    // C11 `_Thread_local` storage is required (see thread_local_accessors.c/.h) regardless of which
+    // compiler is driving the build, but the flag spelling differs: GCC/Clang want `-std=c11`, while
+    // MSVC's `cl.exe` wants `/std:c11` (and errors out on `-std=c11`). Probe both and let the one the
+    // active compiler understands win.
     build
-        .flag("-std=c11") // Ensure C11 standard for _Thread_local support
+        .flag_if_supported("-std=c11")
+        .flag_if_supported("/std:c11")
         .flag_if_supported("-w"); // Suppress warnings from C code
 
     // Detect and enable AddressSanitizer if requested
@@ -136,7 +142,12 @@ fn main() {
         // Emscripten handles compiler selection automatically via emcc wrapper
         // The cc crate will detect and use emcc when TARGET is wasm32-unknown-emscripten
         // Just ensure we have optimization and don't enable features that don't work in WASM
-        build.flag("-s").flag("ERROR_ON_UNDEFINED_SYMBOLS=0");
+
+        // `-s KEY=VALUE` is an emcc *link-time* setting, not a compile flag: passing it to `build`
+        // here only decorates each `.c -> .o` compile step (a no-op/warning there, since nothing is
+        // linked yet). The actual link happens later, when cargo links the final artefact, so the
+        // setting must be forwarded to *that* link line instead.
+        println!("cargo:rustc-link-arg=-sERROR_ON_UNDEFINED_SYMBOLS=0");
     }
 
     // Compile
@@ -203,21 +214,6 @@ fn main() {
         .allowlist_function("set_clear")
         .allowlist_type("set_family_t")
         .allowlist_type("pset_family")
-        .allowlist_type("pset")
-        .allowlist_type("cost_t")
-        .allowlist_var("F_type")
-        .allowlist_var("FD_type")
-        .allowlist_var("FR_type")
-        .allowlist_var("FDR_type")
-        // Debug flags
-        .allowlist_var("EXPAND")
-        .allowlist_var("ESSEN")
-        .allowlist_var("IRRED")
-        .allowlist_var("REDUCE")
-        .allowlist_var("SPARSE")
-        .allowlist_var("GASP")
-        .allowlist_var("SHARP")
-        .allowlist_var("MINCOV")
         // Thread-local accessors (replacing direct global variable access)
         .allowlist_function("get_cube")
         .allowlist_function("get_cdata")
@@ -243,6 +239,9 @@ fn main() {
         .allowlist_function("set_use_random_order")
         .allowlist_function("get_skip_make_sparse_ptr")
         .allowlist_function("set_skip_make_sparse")
+        .allowlist_function("guarded_espresso")
+        .allowlist_function("guarded_minimize_exact")
+        .allowlist_function("guarded_complement")
         // Generate good Rust types
         .derive_default(true)
         .derive_debug(true)

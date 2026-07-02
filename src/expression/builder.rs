@@ -53,11 +53,13 @@ impl ExprBuilder {
     }
 
     /// A variable leaf with the given name.
+    #[must_use]
     pub fn var<S: AsRef<str>>(&self, name: S) -> Expr<'_> {
         Expr::new(self, self.push(BuildNode::Var(Symbol::from(name.as_ref()))))
     }
 
     /// A constant leaf (`true` or `false`).
+    #[must_use]
     pub fn constant(&self, value: bool) -> Expr<'_> {
         Expr::new(self, self.push(BuildNode::Const(value)))
     }
@@ -66,8 +68,20 @@ impl ExprBuilder {
     ///
     /// The expression's tokens are emitted verbatim when the build is serialised; holding it here is a
     /// refcount bump (its tokens are an [`Arc`]).
+    #[must_use]
     pub fn graft(&self, expr: &BoolExpr) -> Expr<'_> {
         Expr::new(self, self.push(BuildNode::Graft(expr.clone())))
+    }
+}
+
+/// Opaque: the arena's nodes carry no useful `Debug` of their own, so only the accumulated node count is
+/// shown. `push` never holds the `RefCell` borrow across a call back into user code, so borrowing it here
+/// (e.g. from inside a `BoolExpr::build` closure) is safe.
+impl std::fmt::Debug for ExprBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExprBuilder")
+            .field("nodes", &self.nodes.borrow().len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -104,6 +118,17 @@ impl<'b> Clone for Expr<'b> {
 }
 
 impl Copy for Expr<'_> {}
+
+/// Shows the arena index and the owning builder's pointer, so two handles into the same build compare
+/// visibly. The node itself is not rendered — the arena is a private `ExprBuilder` implementation detail.
+impl std::fmt::Debug for Expr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Expr")
+            .field("id", &self.id)
+            .field("builder", &std::ptr::from_ref(self.builder))
+            .finish()
+    }
+}
 
 impl<'b> Expr<'b> {
     fn new(builder: &'b ExprBuilder, id: u32) -> Self {

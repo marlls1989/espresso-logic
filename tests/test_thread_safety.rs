@@ -296,7 +296,7 @@ fn concurrent_shared_manager_building_stays_canonical() {
                 &((BoolExpr::var("share_a") & BoolExpr::var("share_b"))
                     | !BoolExpr::var("share_c")),
             ),
-            a.ite(b, c),
+            a.ite(&b, &c),
         ]
     }
 

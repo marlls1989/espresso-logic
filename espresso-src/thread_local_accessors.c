@@ -1,8 +1,12 @@
 #include "espresso.h"
+#include "thread_local_accessors.h"
+
+#include <setjmp.h>
+#include <string.h>
 
 /*
  * Thread-local variable accessors
- * 
+ *
  * These functions provide safe access to thread-local global variables
  * from Rust FFI. Each function returns a pointer to the thread-local
  * variable for the current thread.
@@ -104,5 +108,75 @@ bool* get_skip_make_sparse_ptr(void) {
 
 void set_skip_make_sparse(bool value) {
     skip_make_sparse = value;
+}
+
+/*
+ * Recoverable-fatal guard
+ *
+ * Per-thread recovery state shared with fatal() (cvrmisc.c). The jmp_buf target
+ * is established by whichever guarded_* trampoline is currently running; fatal()
+ * consults fatal_armed and, when set, copies its message into fatal_message and
+ * longjmps back to that trampoline. The trampolines always disarm before using
+ * the state again, so at most one recovery point is armed per thread at a time.
+ */
+#define FATAL_MESSAGE_MAX 256
+static _Thread_local jmp_buf fatal_env;
+static _Thread_local bool fatal_armed = FALSE;
+static _Thread_local char fatal_message[FATAL_MESSAGE_MAX];
+
+bool espresso_fatal_guard_armed(void) {
+    return fatal_armed;
+}
+
+void espresso_fatal_guard_trigger(const char* s) {
+    if (s != NULL) {
+        strncpy(fatal_message, s, FATAL_MESSAGE_MAX - 1);
+        fatal_message[FATAL_MESSAGE_MAX - 1] = '\0';
+    } else {
+        fatal_message[0] = '\0';
+    }
+    /* Disarm before jumping so the buffer is not clobbered by a stray fatal on
+     * the unwind path, and so the guard is inert once control leaves C. */
+    fatal_armed = FALSE;
+    longjmp(fatal_env, 1);
+}
+
+pset_family guarded_espresso(pset_family F, pset_family D, pset_family R,
+                             const char** msg_out) {
+    *msg_out = NULL;
+    if (setjmp(fatal_env) != 0) {
+        /* fatal() jumped back here; it has already disarmed the guard. */
+        *msg_out = fatal_message;
+        return NULL;
+    }
+    fatal_armed = TRUE;
+    pset_family result = espresso(F, D, R);
+    fatal_armed = FALSE;
+    return result;
+}
+
+pset_family guarded_minimize_exact(pset_family F, pset_family D, pset_family R,
+                                   int exact_cover, const char** msg_out) {
+    *msg_out = NULL;
+    if (setjmp(fatal_env) != 0) {
+        *msg_out = fatal_message;
+        return NULL;
+    }
+    fatal_armed = TRUE;
+    pset_family result = minimize_exact(F, D, R, exact_cover);
+    fatal_armed = FALSE;
+    return result;
+}
+
+pset_family guarded_complement(pset* T, const char** msg_out) {
+    *msg_out = NULL;
+    if (setjmp(fatal_env) != 0) {
+        *msg_out = fatal_message;
+        return NULL;
+    }
+    fatal_armed = TRUE;
+    pset_family result = complement(T);
+    fatal_armed = FALSE;
+    return result;
 }
 

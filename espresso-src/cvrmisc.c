@@ -1,4 +1,5 @@
 #include "espresso.h"
+#include "thread_local_accessors.h"
 
 
 /* cost -- compute the cost of a cover */
@@ -113,6 +114,18 @@ void totals(long int time, int i, pset_family T, pcost cost)
 /* fatal -- report fatal error message and take a dive */
 void fatal(char *s)
 {
+    /*
+     * When the current thread has armed a recovery point (see the guarded
+     * trampolines in thread_local_accessors.c), hand the message to the guard
+     * and longjmp back to it instead of killing the process. This lets the
+     * Rust bindings turn an otherwise fatal condition (e.g. a non-orthogonal
+     * ON-set/OFF-set) into a recoverable error. espresso_fatal_guard_trigger
+     * does not return in that case. The standalone C reference binary never
+     * arms the guard, so it falls through to the original behaviour below.
+     */
+    if (espresso_fatal_guard_armed()) {
+        espresso_fatal_guard_trigger(s);
+    }
     fprintf(stderr, "espresso: %s\n", s);
     exit(1);
 }

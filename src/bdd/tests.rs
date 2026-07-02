@@ -98,6 +98,10 @@ fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
 
+// `forall`/`exists` moved from `&[S]` to `impl IntoIterator<Item = S>`; the `vars` binding below is a
+// `&[&str]` (not an inline `["a"]` array literal) to prove that pre-existing, borrowed-slice callers
+// still compile unmodified against the widened bound — the same guarantee the
+// `docs/EXAMPLES.md`/`docs/BOOLEAN_EXPRESSIONS.md` doctests make.
 #[test]
 fn restrict_acceptance_table() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -116,12 +120,13 @@ fn restrict_acceptance_table() {
     assert!((a.clone() | b.clone())
         .restrict("a", false)
         .equivalent_to(&b));
+    let vars: &[&str] = &["a"];
     // (a | b).forall(&["a"]) ≡ b
-    assert!((a.clone() | b.clone()).forall(&["a"]).equivalent_to(&b));
+    assert!((a.clone() | b.clone()).forall(vars).equivalent_to(&b));
     // (a & b).exists(&["a"]) ≡ b
-    assert!((a.clone() & b.clone()).exists(&["a"]).equivalent_to(&b));
+    assert!((a.clone() & b.clone()).exists(vars).equivalent_to(&b));
     // (a ^ b).forall(&["a"]) ≡ false
-    assert!((a ^ b).forall(&["a"]).is_contradiction());
+    assert!((a ^ b).forall(vars).is_contradiction());
 }
 
 #[test]
@@ -352,6 +357,9 @@ fn cofactor_is_restrict() {
         .equivalent_to(&f.restrict("a", false)));
 }
 
+// See the comment on `restrict_acceptance_table` above: `vars` is a `&[&str]` binding, kept
+// deliberately unchanged (not inlined) to prove the widened `impl IntoIterator` bound still accepts a
+// borrowed slice.
 #[test]
 fn forall_exists_multiple_vars() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
@@ -359,13 +367,14 @@ fn forall_exists_multiple_vars() {
     let b = builder.var("b");
     let c = builder.var("c");
 
+    let vars: &[&str] = &["a", "b"];
     // ∀a,b. (a & b & c) = c restricted to a&b both polarities = false (since a=0 kills it)
     assert!((a.clone() & b.clone() & c.clone())
-        .forall(&["a", "b"])
+        .forall(vars)
         .is_contradiction());
     // ∃a,b. (a & b & c) = c
     assert!((a.clone() & b.clone() & c.clone())
-        .exists(&["a", "b"])
+        .exists(vars)
         .equivalent_to(&c));
     // Quantifying over no variables is the identity.
     let empty: &[&str] = &[];
@@ -375,6 +384,29 @@ fn forall_exists_multiple_vars() {
     assert!((a.clone() & b.clone())
         .exists(empty)
         .equivalent_to(&(a & b)));
+}
+
+#[test]
+fn forall_exists_accept_owned_iterator_and_adaptor() {
+    // `forall`/`exists` take `impl IntoIterator<Item: AsRef<str>>`, not just borrowed slices: an owned
+    // `Vec<String>` and an arbitrary adaptor chain both work.
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+
+    // Owned iterator: a `Vec<String>` passed by value.
+    let owned: Vec<String> = vec![String::from("a"), String::from("b")];
+    assert!((a.clone() & b.clone() & c.clone())
+        .forall(owned)
+        .is_contradiction());
+
+    // Adaptor chain: filter an iterator of names down to the ones actually being quantified.
+    let names = ["a", "b", "z"];
+    let adaptor = names.iter().filter(|&&n| n != "z");
+    assert!((a.clone() & b.clone() & c.clone())
+        .exists(adaptor)
+        .equivalent_to(&c));
 }
 
 #[test]
@@ -640,6 +672,51 @@ fn operator_ref_combinations_compile_and_agree() {
     assert!((a.clone() & rb).equivalent_to(&by_value));
     assert!((ra & rb).equivalent_to(&by_value));
     assert!((!ra).equivalent_to(&!a));
+}
+
+#[test]
+fn complement_not_and_operator_agree() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+
+    // `complement` and `not` are public aliases of each other and of the unary `!` operator; all three
+    // negate the function, and negating twice returns the original.
+    let by_complement = a.complement();
+    assert!(by_complement.equivalent_to(&a.not()));
+    assert!(by_complement.equivalent_to(&!&a));
+    assert!(a.complement().complement().equivalent_to(&a));
+}
+
+#[test]
+fn hash_agrees_with_canonical_equality() {
+    use std::collections::HashSet;
+
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+
+    // Syntactically different but logically equal builds are `==` (canonical roots), so they must hash
+    // equal too and collapse to one entry in a `HashSet`.
+    let by_value = a.clone() & b.clone();
+    let by_commuted_value = b.clone() & a.clone();
+    assert_eq!(by_value, by_commuted_value);
+
+    // `Bdd`'s `Hash`/`Eq` are pointer-identity (the manager cell's address) plus the canonical root id —
+    // never a walk of the manager's interior state — so it is a sound `HashSet` key despite `ManagerCell`
+    // structurally containing a `RefCell`/`RwLock`: nothing hashed here can change after insertion in a
+    // way that would move a key to a different bucket. This is the standard `Rc`/`Arc`-pointer-identity
+    // hashing pattern, which `clippy::mutable_key_type` cannot see through.
+    #[allow(clippy::mutable_key_type)]
+    let mut set = HashSet::new();
+    assert!(set.insert(by_value.clone()));
+    assert!(!set.insert(by_commuted_value));
+    assert_eq!(set.len(), 1);
+
+    // A distinct function hashes (and lands) separately.
+    assert!(set.insert(a.clone()));
+    assert_eq!(set.len(), 2);
+    assert!(set.contains(&by_value));
+    assert!(set.contains(&a));
 }
 
 #[test]

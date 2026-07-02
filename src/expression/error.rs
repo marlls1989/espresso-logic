@@ -16,8 +16,9 @@ pub enum ExpressionParseError {
         message: Arc<str>,
         /// The original input string that failed to parse
         input: Arc<str>,
-        /// Best-effort, approximate offset into the input where the error occurred (its exact base —
-        /// byte offset vs. line-relative column — depends on which parser branch reported the error)
+        /// Byte offset into `input` where the error occurred, extracted structurally from the
+        /// underlying lalrpop `ParseError`. `None` only for a lalrpop `User` error, which this
+        /// grammar never produces.
         position: Option<usize>,
     },
 }
@@ -59,7 +60,7 @@ impl From<ExpressionParseError> for io::Error {
 /// Errors that can occur when parsing a boolean expression
 ///
 /// This error type is returned by `BoolExpr::parse()`.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParseBoolExprError {
     /// Expression parsing error
@@ -133,6 +134,27 @@ mod tests {
         };
         let bool_err: ParseBoolExprError = parse_err.into();
         assert!(matches!(bool_err, ParseBoolExprError::Parse(_)));
+    }
+
+    #[test]
+    fn parse_bool_expr_error_is_clone_and_structural_eq() {
+        let mk = || {
+            ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
+                message: Arc::from("test"),
+                input: Arc::from("bad input"),
+                position: Some(5),
+            })
+        };
+        let original = mk();
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+
+        let different = ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
+            message: Arc::from("different"),
+            input: Arc::from("bad input"),
+            position: Some(5),
+        });
+        assert_ne!(original, different);
     }
 
     #[test]

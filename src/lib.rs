@@ -92,10 +92,9 @@
 //! println!("{conj}");  // a & b & c
 //! ```
 //!
-//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) and the equivalent
-//! [`and`](BoolExpr::and)/[`or`](BoolExpr::or)/[`xor`](BoolExpr::xor)/[`not`](BoolExpr::not)
-//! methods also compose `BoolExpr`s, but each operator reallocates the token stream, so
-//! `expr!`/`build` are preferred beyond a couple of terms.
+//! The bitwise operators (`&`, `|`, `^`, `!`, by value or reference) also compose `BoolExpr`s,
+//! but each operator reallocates the token stream, so `expr!`/`build` are preferred beyond a
+//! couple of terms.
 //!
 //! Parse expressions from strings (the `*`/`+`/`~` and `&`/`|`/`!` spellings both parse):
 //!
@@ -400,8 +399,12 @@ pub use symbol::Symbol;
 ///
 /// - an expression in scope — spliced in as an existing `BoolExpr`. This is a *postfix* expression: a bare
 ///   identifier, but also a path (`mod::EXPR`), field access (`self.gate`), method/function call
-///   (`make_expr()`, `self.gate()`), or index (`gates[0]`). A non-`BoolExpr` operand is a type error at the
-///   splice. An operand needing a top-level binary operator must be bound to a local first;
+///   (`make_expr()`, `self.gate()`), a bang-macro call (`make_expr!()`), or index (`gates[0]`). It may be
+///   `&`-referenced (`&expr`, including through multiple reference levels — a leading `&` is only ever a
+///   reference, never the binary AND operator). Only a graft operand can be `&`-referenced; a string
+///   literal or `0`/`1` constant cannot, so `expr!("a" && "b")` — whose second `&` would reference the
+///   literal `"b"` — is a compile error (write `"a" & "b"` for AND). A non-`BoolExpr` operand is a type
+///   error at the splice. An operand needing a top-level binary operator must be bound to a local first;
 /// - `"x"` — a fresh variable named `x`;
 /// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
 ///
@@ -422,6 +425,10 @@ pub use symbol::Symbol;
 /// let g = Gates { reset: BoolExpr::var("r") };
 /// fn make() -> BoolExpr { BoolExpr::var("m") }
 /// assert_eq!(expr!(g.reset | make()), g.reset.clone() | make());
+///
+/// // Graft operands may also be `&`-referenced, or a bang-macro call.
+/// macro_rules! reset_gate { () => { g.reset.clone() } }
+/// assert_eq!(expr!(&a | reset_gate!()), a.clone() | reset_gate!());
 /// ```
 ///
 /// Only `0` and `1` are valid integer constants; any other integer is rejected at compile time:
@@ -434,6 +441,14 @@ pub use symbol::Symbol;
 /// ```compile_fail
 /// use espresso_logic::expr;
 /// let _ = expr!(256 & "x");
+/// ```
+///
+/// An operand that is none of the above — not a graftable expression, string literal, `0`/`1`, or
+/// parenthesised expression — is rejected at compile time with a message naming what is accepted:
+///
+/// ```compile_fail
+/// use espresso_logic::expr;
+/// let _ = expr!(1.5);
 /// ```
 pub use espresso_logic_macros::expr;
 
