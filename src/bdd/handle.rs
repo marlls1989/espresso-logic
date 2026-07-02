@@ -173,14 +173,23 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         Self::from_root(&self.cell, root)
     }
 
-    /// Logical NOT: `¬self`. Equivalent to the unary `!` operator (which delegates here).
+    /// Logical negation: `¬self`. A handle to the complement of this function.
     ///
-    /// Crate-internal: an implementation detail of the `!` operator, not part of the public API — call
-    /// the operator instead.
+    /// [`not`](Self::not) is an alias of this method, and the unary `!` operator is equivalent (it
+    /// delegates here). Unlike `and`/`or`/`xor`, whose named forms are internal to the operators,
+    /// negation is offered under both names because `complement` reads naturally in a method chain
+    /// while `!` reads naturally in an expression.
     #[must_use]
-    pub(crate) fn complement(&self) -> Self {
+    pub fn complement(&self) -> Self {
         let root = super::encoding::not(&self.cell, self.root);
         Self::from_root(&self.cell, root)
+    }
+
+    /// Logical negation: `¬self`. An alias of [`complement`](Self::complement); the unary `!`
+    /// operator is equivalent.
+    #[must_use]
+    pub fn not(&self) -> Self {
+        self.complement()
     }
 
     /// If-then-else: `if self then g else h`. The fundamental BDD operation the others derive from.

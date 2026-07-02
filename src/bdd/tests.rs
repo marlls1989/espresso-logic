@@ -675,6 +675,19 @@ fn operator_ref_combinations_compile_and_agree() {
 }
 
 #[test]
+fn complement_not_and_operator_agree() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+
+    // `complement` and `not` are public aliases of each other and of the unary `!` operator; all three
+    // negate the function, and negating twice returns the original.
+    let by_complement = a.complement();
+    assert!(by_complement.equivalent_to(&a.not()));
+    assert!(by_complement.equivalent_to(&!&a));
+    assert!(a.complement().complement().equivalent_to(&a));
+}
+
+#[test]
 fn hash_agrees_with_canonical_equality() {
     use std::collections::HashSet;
 

@@ -60,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Bdd::ite` takes its operands by reference.** `ite(&self, g: &Self, h: &Self)` instead of
   consuming three handles by value, matching the `&`/`|`/`^`/`!` operators. Breaking for by-value
   callers, which now pass references.
+- **`Bdd::complement` takes `&self`.** It borrows rather than consuming the handle, matching the `!`
+  operator. Breaking for by-value callers, which now pass a reference (or use `!`).
 - **`Bdd::forall` / `Bdd::exists` accept any iterable of names.** The `vars` parameter is now
   `impl IntoIterator<Item = impl AsRef<str>>` rather than `&[S]`, so an owned `Vec<String>` or an
   iterator adaptor works as well as a borrowed slice. Existing `&["a", "b"]` calls are unaffected.
@@ -83,14 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`expr!(&foo)`, through any number of reference levels) or a macro call (`expr!(make!())`, with
   `()`, `[]`, or `{}` delimiters), in addition to the identifiers, paths, field accesses, method and
   function calls, and indexes already accepted.
+- **`Bdd::not`**, a named alias of `Bdd::complement` (both take `&self` and are equivalent to the
+  unary `!` operator). Negation is offered under both names because `complement` reads naturally in a
+  method chain while `!` reads naturally in an expression.
 
 ### Removed
 
-- **The named `and` / `or` / `xor` / `complement` / `not` methods are no longer public.** On `Bdd`,
-  `ScopedBdd`, and `BoolExpr` these merely reimplemented the `&` / `|` / `^` / `!` operators, which
-  are now the single public way to compose values; the methods remain as crate-internal
-  implementations of those operators. Replace `a.and(&b)` with `&a & &b`, `x.complement()` /
-  `e.not()` with `!x` / `!e`, and so on. Breaking; there is no deprecation period.
+- **The named binary composition methods are no longer public.** `and` / `or` / `xor` on `Bdd`,
+  `ScopedBdd`, and `BoolExpr` (and `complement` on `ScopedBdd`, `not` on `BoolExpr`) merely
+  reimplemented the `&` / `|` / `^` / `!` operators, which are now the way to compose those values;
+  they remain as crate-internal implementations of the operators. Replace `a.and(&b)` with `&a & &b`,
+  and so on. Breaking; there is no deprecation period. **`Bdd::complement` and `Bdd::not` are the
+  exception** — see the Added/Changed notes: negation stays available under both names on `Bdd`.
 
 ## [5.1.0] - 2026-07-01
 
