@@ -52,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PLA reading streams the input.** `from_pla_reader` iterates the reader line by line instead of
   buffering the whole file into memory first; an I/O error is reported at the point in the stream
   where it occurs.
+- **The PLA reader rejects a repeated `.ilb`/`.ob` label section.** A second `.ilb` or `.ob`
+  directive used to silently overwrite the labels declared by the first; it is now rejected with the
+  new `PLAError::DuplicateInputLabelDirective` / `DuplicateOutputLabelDirective` variants, completing
+  the rejection family alongside duplicate names within a section and a repeated `.i`/`.o`. Breaking
+  for any (malformed) file that relied on the last section silently winning.
+- **`Bdd::ite` takes its operands by reference.** `ite(&self, g: &Self, h: &Self)` instead of
+  consuming three handles by value, matching the `&`/`|`/`^`/`!` operators. Breaking for by-value
+  callers, which now pass references.
+- **`Bdd::forall` / `Bdd::exists` accept any iterable of names.** The `vars` parameter is now
+  `impl IntoIterator<Item = impl AsRef<str>>` rather than `&[S]`, so an owned `Vec<String>` or an
+  iterator adaptor works as well as a borrowed slice. Existing `&["a", "b"]` calls are unaffected.
 
 ### Added
 
@@ -68,6 +79,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Result<(EspressoCover, EspressoCover, EspressoCover), MinimizationError>`, surfacing a caught C
   fatal as the new **`MinimizationError::EspressoFatal { message }`** variant. The infallible
   `minimize` / `minimize_exact` now delegate to these and panic on error (documented under `# Panics`).
+- **`expr!` accepts `&`-referenced and bang-macro-call operands.** An operand may now be a reference
+  (`expr!(&foo)`, through any number of reference levels) or a macro call (`expr!(make!())`, with
+  `()`, `[]`, or `{}` delimiters), in addition to the identifiers, paths, field accesses, method and
+  function calls, and indexes already accepted.
+
+### Removed
+
+- **The named `and` / `or` / `xor` / `complement` / `not` methods are no longer public.** On `Bdd`,
+  `ScopedBdd`, and `BoolExpr` these merely reimplemented the `&` / `|` / `^` / `!` operators, which
+  are now the single public way to compose values; the methods remain as crate-internal
+  implementations of those operators. Replace `a.and(&b)` with `&a & &b`, `x.complement()` /
+  `e.not()` with `!x` / `!e`, and so on. Breaking; there is no deprecation period.
 
 ## [5.1.0] - 2026-07-01
 

@@ -1,60 +1,22 @@
 # Future work
 
-Items identified during the 2026-07 repository audit that were deliberately left out of the
-non-breaking fix branch. They fall into two groups: changes that would break the public API or
-alter accepted behaviour (candidates for a major or feature release), and smaller follow-ups that
-need no compatibility decision but were out of the audit's scope.
+Items identified during the 2026-07 repository audit that remain open. The audit's non-breaking
+fixes and a follow-up round of breaking API clean-ups (removing the operator-duplicate named
+methods, unifying `Bdd` receivers to by-reference, `IntoIterator` quantifiers, rejecting repeated
+`.ilb`/`.ob` sections, extending `expr!` operands, tracking `Cargo.lock`) have already landed; what
+is listed here is deferred.
 
-## Breaking or behaviour-changing candidates (major/feature release)
+## Breaking or behaviour-changing candidates
 
-### API naming and ownership consistency
-
-`Bdd::complement(self)` consumes its receiver while `BoolExpr::not(&self)` borrows; similarly
-`Bdd::ite` takes its arguments by value where `and`/`or`/`xor` take them by reference. Unifying the
-receiver/argument conventions changes signatures and is a semver-major change. Decide one
-convention (by-reference, matching the operator impls, is the natural fit for refcounted handles)
-and apply it across the BDD and expression layers in one release.
-
-### `forall` / `exists` argument type
-
-Both take `&[S]`. `impl IntoIterator<Item = S>` would accept more callers, but changing the bound
-can break type inference at existing call sites, so it is grouped here rather than with the
-additive polish.
-
-### CLI/C option divergence
+### CLI reimplementation or removal
 
 The Rust CLI (`src/bin/espresso.rs`, `cli` feature) mirrors the C tool's core behaviour — the
 regression suite holds it byte-identical across `-o {f,fd,fr,fdr}` — but not its full option set:
-
-- Rust `-e` and `-v` are booleans where the C tool takes an argument (`-e <opt>`, `-v <type>`).
-- Roughly 36 C `-D` subcommands, plus `-S` and `-r`, are unimplemented.
-- The shipped Berkeley man pages (`man/espresso.1`, 1988) document the C option set, not the
-  Rust CLI.
-
-Bringing the CLI to parity (or explicitly documenting the supported subset and refreshing the man
-page) is a coherent feature-release work item. Changing `-e`/`-v` to take arguments alters existing
-command lines.
-
-### Repeated `.ilb`/`.ob` sections silently last-wins
-
-The PLA reader now rejects duplicate names *within* a label section and any `.i`/`.o`
-redeclaration, but a second `.ilb`/`.ob` *line* still silently replaces the first. Rejecting it
-would be consistent with the new strictness; it also rejects files currently accepted, so it is a
-behaviour change to schedule deliberately (new `PLAError` variant, same pattern as the duplicate
-directives).
-
-### `expr!` graft-operand syntax gaps
-
-Inside `expr!`, `&foo` parses as a dangling AND rather than a reference operand, and macro-call
-operands (`foo!()`) are rejected. A real fix extends the accepted grammar, which changes what the
-macro compiles — a feature-release item. The current behaviour is a documented limitation; the
-audit improved only the error message.
-
-### Tracking `Cargo.lock`
-
-The crate ships a binary (the `cli` feature), for which the Cargo guidance is to commit
-`Cargo.lock`; it is currently gitignored. Tracking it changes contributor workflow and CI caching
-rather than the API, but should be decided once and documented.
+`-e`/`-v` are booleans where the C tool takes arguments, roughly 36 `-D` subcommands plus `-S`/`-r`
+are unimplemented, and the shipped 1988 Berkeley man pages document the C option set rather than
+this CLI. The divergence is now documented honestly in `docs/CLI.md`; the open decision is whether
+to bring the CLI to full parity with the C tool or remove it in favour of the library API. Either
+is a deliberate release-level change.
 
 ## Follow-ups (no compatibility impact)
 
