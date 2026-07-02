@@ -141,33 +141,24 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     // ---- Boolean operations -------------------------------------------------------------------
 
     /// Logical AND of two handles: `self ∧ other`. Equivalent to the `&` operator.
-    ///
-    /// Crate-internal: an implementation detail of the `&` operator, not part of the public API — call
-    /// the operator instead.
     #[must_use]
-    pub(crate) fn and(&self, other: &Self) -> Self {
+    pub fn and(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::and(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical OR of two handles: `self ∨ other`. Equivalent to the `|` operator.
-    ///
-    /// Crate-internal: an implementation detail of the `|` operator, not part of the public API — call
-    /// the operator instead.
     #[must_use]
-    pub(crate) fn or(&self, other: &Self) -> Self {
+    pub fn or(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::or(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
     /// Logical XOR of two handles: `self ⊕ other`. Equivalent to the `^` operator.
-    ///
-    /// Crate-internal: an implementation detail of the `^` operator, not part of the public API — call
-    /// the operator instead.
     #[must_use]
-    pub(crate) fn xor(&self, other: &Self) -> Self {
+    pub fn xor(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
         let root = super::encoding::xor(&self.cell, self.root, other.root);
         Self::from_root(&self.cell, root)
@@ -176,9 +167,8 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Logical negation: `¬self`. A handle to the complement of this function.
     ///
     /// [`not`](Self::not) is an alias of this method, and the unary `!` operator is equivalent (it
-    /// delegates here). Unlike `and`/`or`/`xor`, whose named forms are internal to the operators,
-    /// negation is offered under both names because `complement` reads naturally in a method chain
-    /// while `!` reads naturally in an expression.
+    /// delegates here). Negation is offered under both names because `complement` reads naturally in a
+    /// method chain while `!` reads naturally in an expression.
     #[must_use]
     pub fn complement(&self) -> Self {
         let root = super::encoding::not(&self.cell, self.root);

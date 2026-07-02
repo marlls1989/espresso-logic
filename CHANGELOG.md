@@ -96,15 +96,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unary `!` operator). Negation is offered under both names because `complement` reads naturally in a
   method chain while `!` reads naturally in an expression.
 
-### Removed
-
-- **The named binary composition methods are no longer public.** `and` / `or` / `xor` on `Bdd`,
-  `ScopedBdd`, and `BoolExpr` (and `complement` on `ScopedBdd`, `not` on `BoolExpr`) merely
-  reimplemented the `&` / `|` / `^` / `!` operators, which are now the way to compose those values;
-  they remain as crate-internal implementations of the operators. Replace `a.and(&b)` with `&a & &b`,
-  and so on. Breaking; there is no deprecation period. **`Bdd::complement` and `Bdd::not` are the
-  exception** — see the Added/Changed notes: negation stays available under both names on `Bdd`.
-
 ## [5.1.0] - 2026-07-01
 
 Collection-returning query methods now return **lazy iterators** instead of owned collections, so
