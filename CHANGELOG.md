@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MSVC builds no longer fail on the C standard flag.** `build.rs` now probes both `-std=c11` and
   `/std:c11` and uses whichever the active C compiler supports (C11 `_Thread_local` is required
   either way).
+- **C allocation failures no longer dereference null.** Results of `sf_new`, `sf_save`,
+  `sf_addset`, and the guarded minimisation/complement calls are now null-checked at the FFI
+  boundary and panic with a clear "out of memory" message instead of crashing on a null pointer.
 
 ### Changed
 
@@ -43,8 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a message naming the accepted operand forms (a string literal, the constants `0`/`1`, a
   parenthesised expression, or an expression yielding a `BoolExpr`) at the offending token, instead
   of syn's generic "expected identifier".
+- **PLA reading streams the input.** `from_pla_reader` iterates the reader line by line instead of
+  buffering the whole file into memory first; an I/O error is reported at the point in the stream
+  where it occurs.
 
 ### Added
+
+- **`Hash` for `Bdd<B, C>`**, agreeing with the existing root-identity `PartialEq` (hashes the
+  manager identity and canonical root id), so equal handles work as `HashSet`/`HashMap` keys.
+- **`Debug`** for `ScopedBdd`, `Scope`, `ExprBuilder`, and `Expr`.
+- **`Default` for `BoolExpr`**, equal to `BoolExpr::constant(false)`.
+- **`Clone`, `PartialEq`, `Eq` for `ParseBoolExprError`.**
 
 - **`try_minimize` / `try_minimize_exact`** on both `Espresso` and `EspressoCover`, the fallible
   counterparts of `minimize` / `minimize_exact`. They return
