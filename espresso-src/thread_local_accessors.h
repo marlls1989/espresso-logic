@@ -83,6 +83,7 @@ pset_family guarded_espresso(pset_family F, pset_family D, pset_family R,
 pset_family guarded_minimize_exact(pset_family F, pset_family D, pset_family R,
                                    int exact_cover, const char** msg_out);
 pset_family guarded_complement(pset* T, const char** msg_out);
+pset_family guarded_primes(pset* T, const char** msg_out);
 
 #endif /* THREAD_LOCAL_ACCESSORS_H */
 

@@ -242,6 +242,7 @@ fn main() {
         .allowlist_function("guarded_espresso")
         .allowlist_function("guarded_minimize_exact")
         .allowlist_function("guarded_complement")
+        .allowlist_function("guarded_primes")
         // Generate good Rust types
         .derive_default(true)
         .derive_debug(true)

@@ -453,9 +453,9 @@ let _ = f.node_count();
 
 ### Materialisation
 
-[`Bdd::to_cubes`] enumerates the paths to TRUE as a single-output sum-of-products [`Cover`];
-[`Bdd::maximize`] expands the function into its maximal cover over an explicit variable set (each
-cube of which is a fully-assigned minterm):
+[`Bdd::cover`] enumerates the paths to TRUE as a single-output sum-of-products [`Cover`];
+[`Bdd::maximize`] expands the function into its maximal cover over its own support (each cube of
+which is a fully-assigned minterm):
 
 ```rust
 use espresso_logic::bdd_builder;
@@ -465,11 +465,11 @@ let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b;
 
-let cover = f.to_cubes();
+let cover = f.cover();
 assert_eq!(cover.num_outputs(), 1);
 
 // One fully-assigned minterm over [a, b]: a=1, b=1.
-let minterms: Vec<_> = f.maximize(&["a", "b"]).cubes().map(|c| c.inputs().clone()).collect();
+let minterms: Vec<_> = f.maximize().cubes().map(|c| c.inputs().clone()).collect();
 assert_eq!(minterms.len(), 1);
 ```
 
@@ -714,7 +714,7 @@ match cover.minimize() {
 [`Bdd::forall`]: crate::bdd::Bdd::forall
 [`Bdd::exists`]: crate::bdd::Bdd::exists
 [`Bdd::variables`]: crate::bdd::Bdd::variables
-[`Bdd::to_cubes`]: crate::bdd::Bdd::to_cubes
+[`Bdd::cover`]: crate::bdd::Bdd::cover
 [`Bdd::maximize`]: crate::bdd::Bdd::maximize
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr

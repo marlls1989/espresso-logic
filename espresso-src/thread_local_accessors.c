@@ -180,3 +180,15 @@ pset_family guarded_complement(pset* T, const char** msg_out) {
     return result;
 }
 
+pset_family guarded_primes(pset* T, const char** msg_out) {
+    *msg_out = NULL;
+    if (setjmp(fatal_env) != 0) {
+        *msg_out = fatal_message;
+        return NULL;
+    }
+    fatal_armed = TRUE;
+    pset_family result = primes_consensus(T);
+    fatal_armed = FALSE;
+    return result;
+}
+

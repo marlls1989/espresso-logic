@@ -165,9 +165,9 @@ let c = builder.var("c");
 let f = (a.clone() & b.clone()) | (a.clone() & b.clone() & c); // logically just a & b
 
 // Enumerate cubes / minterms.
-let cubes = f.to_cubes();
+let cubes = f.cover();
 assert_eq!(cubes.num_cubes(), 1);
-let minterms: Vec<_> = f.maximize(&["a", "b"]).cubes().map(|c| c.inputs().clone()).collect();
+let minterms: Vec<_> = f.maximize().cubes().map(|c| c.inputs().clone()).collect();
 assert_eq!(minterms.len(), 1);
 
 // Minimise the ON-set, and lower to a factored expression.

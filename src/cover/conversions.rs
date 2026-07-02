@@ -51,11 +51,11 @@ pub(crate) fn anonymous_cover_from_raw(
 }
 
 /// The `Bdd → Cover` primitive: enumerate a handle's ON-set as a single-output, anonymous-output
-/// [`Cover<Symbol, Anonymous>`](Cover) via [`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes).
+/// [`Cover<Symbol, Anonymous>`](Cover) via [`Bdd::cover`](crate::bdd::Bdd::cover).
 ///
 /// This is the single source of truth for materialising a BDD as a cover. The `BoolExpr` conversions
 /// below funnel through it, and the named-output [`Cover::add_bdd`]/[`Cover::add_expr`] share the same
-/// underlying [`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes) extraction. The output is **anonymous**
+/// underlying [`Bdd::cover`](crate::bdd::Bdd::cover) extraction. The output is **anonymous**
 /// (`O = Anonymous`) — a Boolean function has no output name; label it with
 /// [`relabel_outputs`](Cover::relabel_outputs) if needed.
 ///
@@ -69,15 +69,15 @@ pub(crate) fn anonymous_cover_from_raw(
 /// ```
 impl<B: Brand, C: ManagerCell> From<Bdd<B, C>> for Cover<Symbol, Anonymous> {
     fn from(bdd: Bdd<B, C>) -> Self {
-        bdd.to_cubes()
+        bdd.cover()
     }
 }
 
-/// Borrowed counterpart of the `From<Bdd>` impl: [`Bdd::to_cubes`] already borrows `&self`, so this
+/// Borrowed counterpart of the `From<Bdd>` impl: [`Bdd::cover`] already borrows `&self`, so this
 /// defers straight to it.
 impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
     fn from(bdd: &Bdd<B, C>) -> Self {
-        bdd.to_cubes()
+        bdd.cover()
     }
 }
 

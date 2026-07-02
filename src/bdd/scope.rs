@@ -86,7 +86,7 @@ impl<B: Brand, C: ManagerCell> Copy for ScopedBdd<'_, B, C> {}
 
 /// Shows the canonical root id and the borrowed manager pointer, mirroring the owned
 /// [`Bdd`](super::handle::Bdd)'s `Debug`. The decoded function is not rendered — materialise the owned
-/// handle and use [`to_cubes`](super::handle::Bdd::to_cubes) for that.
+/// handle and use [`cover`](super::handle::Bdd::cover) for that.
 impl<B: Brand, C: ManagerCell> std::fmt::Debug for ScopedBdd<'_, B, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ScopedBdd")

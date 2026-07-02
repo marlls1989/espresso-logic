@@ -164,7 +164,7 @@ fn main() -> std::io::Result<()> {
     let mut bdd_counts = Vec::new();
     let mut total_bdd = 0;
     for (name, bdd) in &bdds {
-        let count = bdd.to_cubes().num_cubes();
+        let count = bdd.cover().num_cubes();
         bdd_counts.push(count);
         total_bdd += count;
         println!("  {name:<15} {count:>10} cubes");

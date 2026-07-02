@@ -18,7 +18,7 @@ impl Cover<Symbol, Symbol> {
     /// Add a [`Bdd`](crate::bdd::Bdd)'s ON-set to a named output.
     ///
     /// This is the primitive Boolean-function → cover bridge: the handle's product terms
-    /// ([`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes)) become F cubes asserting `output_name`. Input
+    /// ([`Bdd::cover`](crate::bdd::Bdd::cover)) become F cubes asserting `output_name`. Input
     /// variables are matched by name with existing variables, and new variables are appended.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
@@ -47,7 +47,7 @@ impl Cover<Symbol, Symbol> {
 
         // Extract the function's product terms as input minterms (canonical ON-set from the BDD).
         // Every minterm shares one header: the function's variables, sorted.
-        let on_set = bdd.to_cubes();
+        let on_set = bdd.cover();
         let cubes: Vec<Minterm<Symbol>> = on_set.cubes().map(|c| c.inputs().clone()).collect();
 
         // Union the cover's input header with the expression's variables, re-pointing existing cubes
