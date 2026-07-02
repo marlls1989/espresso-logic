@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **C allocation failures no longer dereference null.** Results of `sf_new`, `sf_save`,
   `sf_addset`, and the guarded minimisation/complement calls are now null-checked at the FFI
   boundary and panic with a clear "out of memory" message instead of crashing on a null pointer.
+- **The Emscripten `ERROR_ON_UNDEFINED_SYMBOLS=0` setting is applied at link time.** `build.rs`
+  passed it as a C compile flag, where `-s KEY=VALUE` is a no-op; it is now emitted as a linker
+  argument for the `wasm32-unknown-emscripten` target, where emcc actually honours it.
 
 ### Changed
 
@@ -57,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Debug`** for `ScopedBdd`, `Scope`, `ExprBuilder`, and `Expr`.
 - **`Default` for `BoolExpr`**, equal to `BoolExpr::constant(false)`.
 - **`Clone`, `PartialEq`, `Eq` for `ParseBoolExprError`.**
+- **`#[must_use]` on `ExprBuilder::var`/`constant`/`graft`**, matching `Scope`'s methods. Code that
+  discards these return values now gets an `unused_must_use` warning.
 
 - **`try_minimize` / `try_minimize_exact`** on both `Espresso` and `EspressoCover`, the fallible
   counterparts of `minimize` / `minimize_exact`. They return
