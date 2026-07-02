@@ -17,7 +17,6 @@ use super::label::{Anonymous, Label, StringLabel};
 use super::minterm::{ExpandedMinterms, Minterm};
 use super::output_set::OutputSet;
 use super::symbols::Symbols;
-use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -93,7 +92,48 @@ impl<I: Label, O> std::hash::Hash for Cube<I, O> {
 
 impl<I, O> Cube<I, O> {
     /// Build a cube from its input pattern, output-membership bitmap, and set tag.
-    pub(crate) fn new(inputs: Minterm<I>, outputs: OutputSet<O>, set: CubeType) -> Self {
+    ///
+    /// This is the raw constructor: it pairs a pre-built input [`Minterm`] with a per-output
+    /// [`OutputSet`] and does no validation — the two halves carry their own independent symbol
+    /// tables. The label types flow through: two labelled halves give a labelled `Cube<I, O>`, two
+    /// anonymous halves an anonymous one. Build each half with its own
+    /// [`Minterm`](Minterm::labeled)/[`OutputSet`](OutputSet::labeled) constructor (`labeled` /
+    /// `with_labels` / `anonymous`). For a cube built in one shot from `(label, value)` pairs use
+    /// [`with_labels`](Self::with_labels) / [`labeled`](Self::labeled) / [`anonymous`](Self::anonymous),
+    /// which are convenience wrappers over this.
+    ///
+    /// A cube carries its own tables until it is added to a [`Cover`](crate::Cover) (via
+    /// [`push`](crate::Cover::push) / [`from_cubes`](crate::Cover::from_cubes)), which re-points it
+    /// onto the cover's shared input/output tables by variable identity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType, Minterm, OutputSet};
+    ///
+    /// // input a=1 (b a don't-care); assert output 0, not output 1; ON-set cube.
+    /// let inputs = Minterm::anonymous(&[Some(true), None]);
+    /// let outputs = OutputSet::anonymous(&[true, false]);
+    /// let cube = Cube::new(inputs, outputs, CubeType::F);
+    ///
+    /// assert_eq!(cube.cube_type(), CubeType::F);
+    /// assert_eq!(cube.inputs().value_at(0), Some(true));
+    /// assert!(cube.outputs().value_at(0) && !cube.outputs().value_at(1));
+    /// ```
+    ///
+    /// Two labelled halves compose into a labelled `Cube<Symbol, Symbol>`:
+    ///
+    /// ```
+    /// use espresso_logic::{Cube, CubeType, Minterm, OutputSet, Symbol};
+    ///
+    /// let inputs = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+    /// let outputs = OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap();
+    /// let cube: Cube<Symbol, Symbol> = Cube::new(inputs, outputs, CubeType::F);
+    ///
+    /// assert_eq!(cube.inputs().value_of("a"), Some(true));
+    /// ```
+    #[must_use]
+    pub fn new(inputs: Minterm<I>, outputs: OutputSet<O>, set: CubeType) -> Self {
         Cube {
             inputs,
             outputs,
@@ -196,17 +236,6 @@ impl Cube<Anonymous, Anonymous> {
     }
 }
 
-/// The position of the first label whose identity repeats an earlier one, or `None` if all distinct.
-/// `Anonymous`'s identity is its position, so an anonymous header never reports a duplicate.
-fn first_duplicate<L: Label>(labels: &[L]) -> Option<usize> {
-    let mut seen = HashSet::new();
-    labels
-        .iter()
-        .enumerate()
-        .find(|&(i, l)| !seen.insert(l.identity(i)))
-        .map(|(i, _)| i)
-}
-
 impl<I: Label, O: Label> Cube<I, O> {
     /// Build a **labelled** cube from `(label, value)` pairs.
     ///
@@ -258,9 +287,9 @@ impl<I: Label, O: Label> Cube<I, O> {
         )
     }
 
-    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): validate
-    /// distinctness, then build the cube directly from the label `Arc`s and value iterators (no
-    /// intermediate pair `Vec`).
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): build each half
+    /// from its label `Arc` and value iterator (each validates its own distinctness), then pair them.
+    /// The input side reports [`DuplicateLabel::Input`], the output side [`DuplicateLabel::Output`].
     fn from_label_arcs(
         in_labels: Arc<[I]>,
         in_values: impl IntoIterator<Item = Option<bool>>,
@@ -268,15 +297,9 @@ impl<I: Label, O: Label> Cube<I, O> {
         out_values: impl IntoIterator<Item = bool>,
         set: CubeType,
     ) -> Result<Cube<I, O>, DuplicateLabel> {
-        if let Some(index) = first_duplicate(&in_labels) {
-            return Err(DuplicateLabel::Input { index });
-        }
-        if let Some(index) = first_duplicate(&out_labels) {
-            return Err(DuplicateLabel::Output { index });
-        }
         Ok(Cube::new(
-            Minterm::from_symbols(Symbols::new(in_labels), in_values),
-            OutputSet::from_symbols(Symbols::new(out_labels), out_values),
+            Minterm::from_label_arcs(in_labels, in_values)?,
+            OutputSet::from_label_arcs(out_labels, out_values)?,
             set,
         ))
     }

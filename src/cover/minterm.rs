@@ -30,7 +30,8 @@
 //! C library's cube layout, so set operations reduce to word-wise bit ops and the Espresso
 //! boundary is close to a bit-repack.
 
-use super::label::{Anonymous, Label};
+use super::error::DuplicateLabel;
+use super::label::{first_duplicate, Anonymous, Label, StringLabel};
 use super::symbols::Symbols;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -397,6 +398,84 @@ impl Minterm<Anonymous> {
         Self::from_symbols(
             Symbols::<Anonymous>::anonymous(values.len()),
             values.iter().copied(),
+        )
+    }
+}
+
+impl<L: Label> Minterm<L> {
+    /// Shared core of [`labeled`](Self::labeled)/[`with_labels`](Self::with_labels): reject a repeated
+    /// label (variables align by identity, so a duplicate would collapse two columns onto one and drop
+    /// a value), then build over a fresh symbol table.
+    pub(crate) fn from_label_arcs(
+        labels: Arc<[L]>,
+        values: impl IntoIterator<Item = Option<bool>>,
+    ) -> Result<Minterm<L>, DuplicateLabel> {
+        if let Some(index) = first_duplicate(&labels) {
+            return Err(DuplicateLabel::Input { index });
+        }
+        Ok(Minterm::from_symbols(Symbols::new(labels), values))
+    }
+
+    /// Build a **labelled** minterm from `(label, value)` pairs.
+    ///
+    /// Each pair is `(label, value)` where `value` is `Some(true)`/`Some(false)`, or `None` for a
+    /// don't-care. Pairing each label with its value makes a length mismatch unrepresentable. The
+    /// labels need no particular order — a minterm aligns by variable [identity](crate::Label). Pair
+    /// with an [`OutputSet`](super::OutputSet) of the same label style through
+    /// [`Cube::new`](super::Cube::new) to build a labelled cube.
+    ///
+    /// Works for any label type — [`Symbol`](crate::Symbol), `String`, `u32`, … For `&str` names,
+    /// [`with_labels`](Self::with_labels) avoids naming the label type at each pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if a label is repeated — the columns would otherwise collapse onto
+    /// one and silently drop a value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbol};
+    ///
+    /// // a=1, b a don't-care (b·? => just a=1).
+    /// let m = Minterm::<Symbol>::labeled(&[(Symbol::new("a"), Some(true))]).unwrap();
+    /// assert_eq!(m.value_of("a"), Some(true));
+    /// assert_eq!(m.value_of("b"), None);
+    /// ```
+    pub fn labeled(values: &[(L, Option<bool>)]) -> Result<Minterm<L>, DuplicateLabel> {
+        Self::from_label_arcs(
+            values.iter().map(|(l, _)| l.clone()).collect(),
+            values.iter().map(|(_, v)| *v),
+        )
+    }
+}
+
+impl<L: StringLabel> Minterm<L> {
+    /// Build a labelled minterm from `(name, value)` pairs, naming variables with any `&str`-like type.
+    ///
+    /// A string-name convenience over [`labeled`](Self::labeled): each label is built via `From<&str>`,
+    /// so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work). The label type is
+    /// inferred from context (e.g. `Minterm::<Symbol>::with_labels`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if a name is repeated (see [`labeled`](Self::labeled)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbol};
+    ///
+    /// let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
+    /// assert_eq!(m.value_of("a"), Some(true));
+    /// assert_eq!(m.value_of("b"), Some(false));
+    /// ```
+    pub fn with_labels<S: AsRef<str>>(
+        values: &[(S, Option<bool>)],
+    ) -> Result<Minterm<L>, DuplicateLabel> {
+        Self::from_label_arcs(
+            values.iter().map(|(s, _)| L::from(s.as_ref())).collect(),
+            values.iter().map(|(_, v)| *v),
         )
     }
 }

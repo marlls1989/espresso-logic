@@ -2569,3 +2569,97 @@ fn over_vars_multi_output_universal() {
         .cubes()
         .any(|c| c.outputs().value_at(o1) && c.inputs().value_of("a") == Some(true)));
 }
+
+#[test]
+fn minterm_labeled_builds_from_pairs_and_rejects_duplicates() {
+    // `labeled` (generic) and `with_labels` (string) agree; order is irrelevant (aligns by identity).
+    let a = Minterm::<Symbol>::labeled(&[(Symbol::new("a"), Some(true)), (Symbol::new("b"), None)])
+        .unwrap();
+    let b = Minterm::<Symbol>::with_labels(&[("b", None), ("a", Some(true))]).unwrap();
+    assert_eq!(a, b);
+    assert_eq!(a.value_of("a"), Some(true));
+    assert_eq!(a.value_of("b"), None);
+
+    // A repeated input label is rejected at the second occurrence.
+    let err = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("a", Some(false))]).unwrap_err();
+    assert_eq!(err, DuplicateLabel::Input { index: 1 });
+}
+
+#[test]
+fn output_set_labeled_builds_from_pairs_and_rejects_duplicates() {
+    let outs = OutputSet::<Symbol>::labeled(&[(Symbol::new("f"), true), (Symbol::new("g"), false)])
+        .unwrap();
+    assert_eq!(outs.num_vars(), 2);
+    assert!(outs.value_at(0) && !outs.value_at(1));
+    assert_eq!(
+        OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false)]).unwrap(),
+        outs
+    );
+
+    // A repeated output label reports the Output side.
+    let err = OutputSet::<Symbol>::with_labels(&[("f", true), ("f", true)]).unwrap_err();
+    assert_eq!(err, DuplicateLabel::Output { index: 1 });
+}
+
+#[test]
+fn cube_new_from_labeled_halves_yields_labeled_cube_and_pushes_into_cover() {
+    // Two labelled halves compose into a labelled Cube<Symbol, Symbol>...
+    let inputs = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
+    let outputs = OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap();
+    let cube: Cube<Symbol, Symbol> = Cube::new(inputs, outputs, CubeType::F);
+
+    // ...that a named cover accepts and reads back by name (re-homed onto the cover's tables).
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.push(cube);
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+    let only = cover.cubes().next().unwrap();
+    assert_eq!(only.inputs().value_of("a"), Some(true));
+    assert_eq!(only.inputs().value_of("b"), Some(false));
+    assert!(only.outputs().value_at(0));
+}
+
+#[test]
+fn cover_converges_differing_variable_sets_from_labeled_new_cubes() {
+    // Two independently-built labelled cubes over DIFFERENT variable sets:
+    //   cube1 over {a, b}, cube2 over {b, c} — each carries its own symbol table.
+    let cube1 = Cube::new(
+        Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap(),
+        OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap(),
+        CubeType::F,
+    );
+    let cube2 = Cube::new(
+        Minterm::<Symbol>::with_labels(&[("b", Some(true)), ("c", Some(true))]).unwrap(),
+        OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap(),
+        CubeType::F,
+    );
+
+    // Both the batch (`from_cubes`) and incremental (`push`) paths union the headers by name and
+    // widen the variable each cube lacks to a don't-care.
+    let batch: Cover<Symbol, Symbol> =
+        Cover::from_cubes(CoverType::F, [cube1.clone(), cube2.clone()]);
+
+    let mut incremental: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    incremental.push(cube1);
+    incremental.push(cube2);
+
+    for cover in [&batch, &incremental] {
+        assert_eq!(
+            cover.num_inputs(),
+            3,
+            "header converges to the union {{a, b, c}}"
+        );
+        assert_eq!(cover.num_outputs(), 1);
+        let rows: Vec<_> = cover.cubes().collect();
+
+        // cube1: a=1, b=0, and c widened to a don't-care.
+        assert_eq!(rows[0].inputs().value_of("a"), Some(true));
+        assert_eq!(rows[0].inputs().value_of("b"), Some(false));
+        assert_eq!(rows[0].inputs().value_of("c"), None);
+
+        // cube2: b=1, c=1, and a widened to a don't-care.
+        assert_eq!(rows[1].inputs().value_of("a"), None);
+        assert_eq!(rows[1].inputs().value_of("b"), Some(true));
+        assert_eq!(rows[1].inputs().value_of("c"), Some(true));
+    }
+}

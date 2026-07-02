@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`Cube` can now be assembled from separately-built halves.** `Cube::new` — pairing a pre-built
+  input `Minterm` with a per-output `OutputSet` — is now public, and both halves gain the full
+  constructor set: `Minterm::labeled`/`with_labels` and `OutputSet::labeled`/`with_labels` build a
+  labelled half from `(label, value)` / `(name, value)` pairs (rejecting duplicate labels with
+  `DuplicateLabel`), and `OutputSet::anonymous` builds a positional one (mirroring the existing
+  `Minterm::anonymous`). The label types flow through `Cube::new`: two labelled halves compose into a
+  labelled `Cube<I, O>`, two anonymous halves into an anonymous one.
+
 ## [5.2.0] - 2026-07-02
 
 ### Added
