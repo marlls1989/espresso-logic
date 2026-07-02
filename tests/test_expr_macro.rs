@@ -64,6 +64,45 @@ fn hygiene_does_not_capture_a_user_ident_named_like_the_builder() {
 }
 
 #[test]
+fn reference_operands_graft() {
+    let foo = BoolExpr::var("x");
+    assert_eq!(expr!(&foo), expr!(foo));
+    assert_eq!(expr!("a" & &foo), expr!("a" & foo));
+
+    // A real `&BoolExpr` binding: `expr!(r)` already works via deref coercion; `expr!(&r)` (a
+    // double reference) must too.
+    let r = &foo;
+    assert_eq!(expr!(r), expr!(foo));
+    assert_eq!(expr!(&r), expr!(foo));
+}
+
+#[test]
+fn not_of_reference() {
+    let foo = BoolExpr::var("x");
+    assert_eq!(expr!(!&foo), expr!(!foo));
+}
+
+#[test]
+fn macro_call_operands_graft() {
+    macro_rules! make {
+        () => {
+            expr!("m")
+        };
+    }
+    assert_eq!(expr!(make!()), expr!("m"));
+
+    macro_rules! wrap {
+        ($e:expr) => {
+            $e
+        };
+    }
+    let foo = BoolExpr::var("x");
+    assert_eq!(expr!(wrap!(foo.clone()) & "y"), expr!(foo.clone() & "y"));
+
+    assert_eq!(expr!(make![]), expr!("m"));
+}
+
+#[test]
 fn macro_and_operator_forms_are_equivalent_as_bdds() {
     let a = BoolExpr::var("a");
     let b = BoolExpr::var("b");
