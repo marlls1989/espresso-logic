@@ -1663,6 +1663,54 @@ fn pla_dimension_redeclaration_is_rejected() {
 }
 
 #[test]
+fn pla_label_section_redeclaration_is_rejected() {
+    use super::pla::{PLAError, PLAReadError};
+
+    let err = |s: &str| PlaCover::<Symbol>::from_pla_string(s).expect_err("should error");
+
+    // .ilb re-declared with a different second section: unlike C's silent overwrite (which leaks
+    // the previously `strdup`'d strings), this is a hard error.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n.ilb c d\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    // Same check on the output side (.ob).
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n.ob h i\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // The second section is rejected even when it is identical to the first.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n.ilb a b\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n.ob f g\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // The repeat is rejected even when it comes after cube data has already been read.
+    assert!(matches!(
+        err(".i 2\n.o 1\n.ilb a b\n01 1\n.ilb c d\n01 1\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateInputLabelDirective)
+    ));
+    assert!(matches!(
+        err(".i 1\n.o 2\n.ob f g\n0 11\n.ob h i\n0 11\n.e\n"),
+        PLAReadError::PLA(PLAError::DuplicateOutputLabelDirective)
+    ));
+
+    // An empty second `.ilb`/`.ob` line remains a no-op today (as an empty line is for the first
+    // declaration) and does not error.
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 2\n.o 1\n.ilb a b\n.ilb\n01 1\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::InputsNamed(_)));
+    let cover =
+        PlaCover::<Symbol>::from_pla_string(".i 1\n.o 2\n.ob f g\n.ob\n0 11\n.e\n").unwrap();
+    assert!(matches!(cover, PlaCover::OutputsNamed(_)));
+}
+
+#[test]
 fn from_pla_reader_surfaces_mid_stream_io_error() {
     use super::pla::PLAReadError;
     use std::io::{self, BufRead, Read};

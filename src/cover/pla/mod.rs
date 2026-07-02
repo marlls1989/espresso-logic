@@ -470,6 +470,13 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                             }
                             .into());
                         }
+                        // A second `.ilb` section is rejected rather than silently replacing the
+                        // first (unlike C's silent overwrite, which leaks the previously
+                        // `strdup`'d strings) — see `PLAError::DuplicateInputLabelDirective` for
+                        // the rationale.
+                        if input_labels.is_some() {
+                            return Err(PLAError::DuplicateInputLabelDirective.into());
+                        }
                         input_labels = Some(labels);
                     }
                 }
@@ -483,6 +490,10 @@ fn parse_pla<R: std::io::BufRead>(reader: R) -> Result<ParsedPla, PLAReadError> 
                                 name: Arc::from(name),
                             }
                             .into());
+                        }
+                        // See the `.ilb` arm above — same rejection, same rationale.
+                        if output_labels.is_some() {
+                            return Err(PLAError::DuplicateOutputLabelDirective.into());
                         }
                         output_labels = Some(labels);
                     }

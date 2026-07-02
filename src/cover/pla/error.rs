@@ -92,6 +92,19 @@ pub enum PLAError {
         /// The name repeated within the label section
         name: Arc<str>,
     },
+    /// The `.ilb` label section appears more than once in a PLA file.
+    ///
+    /// C's reference reader (`cvrin.c`) silently overwrites the input label slots on a repeated
+    /// `.ilb` section — no warning at all, unlike the "extra .i ignored" it prints for a repeated
+    /// `.i`/`.o` directive — leaking the previously `strdup`'d strings in the process. This crate
+    /// rejects the redeclaration outright, completing the family: a duplicated name within a
+    /// single label section is already rejected ([`DuplicateLabel`](Self::DuplicateLabel)), as is
+    /// a repeated `.i`/`.o` directive ([`DuplicateInputDirective`](Self::DuplicateInputDirective)).
+    DuplicateInputLabelDirective,
+    /// The `.ob` label section appears more than once in a PLA file — the output-side counterpart
+    /// of [`DuplicateInputLabelDirective`](Self::DuplicateInputLabelDirective); see its
+    /// documentation for the rationale.
+    DuplicateOutputLabelDirective,
 }
 
 impl fmt::Display for PLAError {
@@ -144,6 +157,12 @@ impl fmt::Display for PLAError {
             }
             PLAError::DuplicateLabel { label_type, name } => {
                 write!(f, "duplicate {} label '{}'", label_type, name)
+            }
+            PLAError::DuplicateInputLabelDirective => {
+                write!(f, "PLA file declares .ilb more than once")
+            }
+            PLAError::DuplicateOutputLabelDirective => {
+                write!(f, "PLA file declares .ob more than once")
             }
         }
     }
@@ -333,6 +352,22 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("input"));
         assert!(msg.contains("'a'"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_input_label_directive() {
+        let err = PLAError::DuplicateInputLabelDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".ilb"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn test_pla_error_duplicate_output_label_directive() {
+        let err = PLAError::DuplicateOutputLabelDirective;
+        let msg = err.to_string();
+        assert!(msg.contains(".ob"));
+        assert!(msg.contains("more than once"));
     }
 
     #[test]
