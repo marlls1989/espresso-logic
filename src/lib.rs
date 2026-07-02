@@ -401,8 +401,10 @@ pub use symbol::Symbol;
 ///   identifier, but also a path (`mod::EXPR`), field access (`self.gate`), method/function call
 ///   (`make_expr()`, `self.gate()`), a bang-macro call (`make_expr!()`), or index (`gates[0]`). It may be
 ///   `&`-referenced (`&expr`, including through multiple reference levels — a leading `&` is only ever a
-///   reference, never the binary AND operator). A non-`BoolExpr` operand is a type error at the splice. An
-///   operand needing a top-level binary operator must be bound to a local first;
+///   reference, never the binary AND operator). Only a graft operand can be `&`-referenced; a string
+///   literal or `0`/`1` constant cannot, so `expr!("a" && "b")` — whose second `&` would reference the
+///   literal `"b"` — is a compile error (write `"a" & "b"` for AND). A non-`BoolExpr` operand is a type
+///   error at the splice. An operand needing a top-level binary operator must be bound to a local first;
 /// - `"x"` — a fresh variable named `x`;
 /// - `0` / `1` — the constants `false` / `true` (any other integer is an error).
 ///
