@@ -5,9 +5,10 @@
 //! for [`Cover`] and [`BoolExpr`].
 
 use super::cubes::{Cube, CubeType};
-use super::label::Anonymous;
+use super::label::{Anonymous, Label};
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
+use super::symbols::Symbols;
 use super::Cover;
 use crate::espresso::error::MinimizationError;
 use crate::EspressoConfig;
@@ -349,6 +350,181 @@ where
         cubes: f_cubes.chain(d_cubes).chain(r_cubes).map(rehome).collect(),
         cover_type: cover.cover_type,
     })
+}
+
+/// Generate the complete prime-implicant set of one cube-set, re-homed onto the caller's symbols.
+///
+/// Shared engine behind [`Cover::primes`] and the projection path of [`Cover::over_vars`]. It
+/// marshals `f_cubes` (the ON-set, taken relative to the optional `d_cubes` don't-care set) into
+/// Espresso, runs [`Espresso::primes`](crate::espresso::Espresso::primes), and re-homes every
+/// returned prime onto `input_symbols`/`output_symbols`, tagging each with `tag`. Vacuous cubes
+/// (empty `00` input field) are dropped first: they cover no minterm, and the prime generator
+/// mishandles them — mirroring the pre-minimisation filter in [`minimize_cover_with`].
+///
+/// Infallible: an Espresso instance conflict (a live low-level instance of different dimensions on
+/// this thread) or a C fatal is a usage error here and panics, matching the panicking `minimize`.
+pub(crate) fn primes_cubes<I, O>(
+    input_symbols: &Arc<Symbols<I>>,
+    output_symbols: &Arc<Symbols<O>>,
+    f_cubes: &[&Cube<I, O>],
+    d_cubes: &[&Cube<I, O>],
+    tag: CubeType,
+) -> Vec<Cube<I, O>> {
+    use crate::espresso::EspressoCover;
+
+    let ni = input_symbols.arity();
+    let no = output_symbols.arity();
+
+    // Drop vacuous cubes up front, as `minimize_cover_with` does.
+    let f: Vec<&Cube<I, O>> = f_cubes
+        .iter()
+        .copied()
+        .filter(|c| !c.inputs().has_empty_field())
+        .collect();
+    let d: Vec<&Cube<I, O>> = d_cubes
+        .iter()
+        .copied()
+        .filter(|c| !c.inputs().has_empty_field())
+        .collect();
+
+    // Arity-0 fast path: with no inputs each output is a constant, and Espresso is not trusted with a
+    // zero-input cover. Output `j` is constant-1 iff some non-vacuous F/D cube asserts it; the single
+    // prime is the empty cube asserting exactly those outputs.
+    if ni == 0 {
+        let asserted: Vec<bool> = (0..no)
+            .map(|j| f.iter().chain(d.iter()).any(|c| c.asserts(j)))
+            .collect();
+        if asserted.iter().any(|&a| a) {
+            return vec![Cube::new(
+                Minterm::from_symbols(Arc::clone(input_symbols), std::iter::empty()),
+                OutputSet::from_symbols(Arc::clone(output_symbols), asserted),
+                tag,
+            )];
+        }
+        return Vec::new();
+    }
+
+    // Marshal each set by copying the cubes' packed input words plus a per-output assertion bit,
+    // exactly as `minimize_cover_with` does. The Espresso instance is created first so that
+    // `from_packed_cubes` (which reads the thread's current instance) sees the right dimensions.
+    let esp = panic_on_instance_conflict(crate::espresso::Espresso::try_new(ni, no, None))
+        .unwrap_or_else(|e| panic!("Espresso prime generation failed: {e}"));
+    let to_cover = |cubes: &[&Cube<I, O>]| -> EspressoCover {
+        let data: Vec<(&[u64], Vec<bool>)> = cubes
+            .iter()
+            .map(|c| {
+                (
+                    c.inputs().raw_words(),
+                    (0..no).map(|i| c.asserts(i)).collect(),
+                )
+            })
+            .collect();
+        let refs: Vec<(&[u64], &[bool])> = data.iter().map(|(w, o)| (*w, o.as_slice())).collect();
+        panic_on_instance_conflict(EspressoCover::from_packed_cubes(&refs, ni, no))
+            .unwrap_or_else(|e| panic!("Espresso prime generation failed: {e}"))
+    };
+
+    let f_cover = to_cover(&f);
+    let d_cover = if d.is_empty() {
+        None
+    } else {
+        Some(to_cover(&d))
+    };
+    let result = panic_on_instance_conflict(esp.try_primes(&f_cover, d_cover.as_ref()))
+        .unwrap_or_else(|e| panic!("Espresso prime generation failed: {e}"));
+
+    // Re-home the anonymous positional primes onto the caller's real symbol tables (same arity, same
+    // packed layout), tagging each with `tag`.
+    result
+        .to_cubes(ni, no, tag)
+        .map(|cube| {
+            let im = Minterm::from_packed_words(
+                Arc::clone(input_symbols),
+                Arc::clone(cube.inputs().packed()),
+            );
+            let om = OutputSet::from_packed_bits(
+                Arc::clone(output_symbols),
+                Arc::clone(cube.outputs().packed()),
+            );
+            Cube::new(im, om, tag)
+        })
+        .collect()
+}
+
+impl<I: Label, O: Clone> Cover<I, O> {
+    /// The complete set of prime implicants of the ON-set, taken relative to the don't-care set.
+    ///
+    /// Returns *every* prime implicant, not the reduced, irredundant cover that
+    /// [`minimize`](Minimizable::minimize) produces — including consensus primes an irredundant cover
+    /// discards. This is the [`Bdd`](crate::bdd::Bdd)-free counterpart of the reference tool's
+    /// `-Dprimes` mode. Any don't-care (D) and OFF-set (R) cubes the cover carries are preserved
+    /// unchanged, and the [`CoverType`](crate::CoverType) is retained.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a low-level Espresso instance of different dimensions is live on this thread (drop it
+    /// first), or if the C core reports a fatal condition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType, Symbol};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // f = a·x + b·x̄ + a·b — the consensus prime a·b is redundant in a minimal cover, but it is a
+    /// // genuine prime implicant, so `primes` keeps it.
+    /// let f = Cover::<Symbol, Symbol>::from_cubes(
+    ///     CoverType::F,
+    ///     [
+    ///         Cube::with_labels(&[("a", Some(true)), ("x", Some(true))], &[("o", true)], CubeType::F)?,
+    ///         Cube::with_labels(&[("b", Some(true)), ("x", Some(false))], &[("o", true)], CubeType::F)?,
+    ///         Cube::with_labels(&[("a", Some(true)), ("b", Some(true))], &[("o", true)], CubeType::F)?,
+    ///     ],
+    /// );
+    /// let primes = f.primes();
+    /// assert_eq!(primes.num_cubes(), 3);
+    /// // The consensus prime a·b (don't-care on x) is present.
+    /// assert!(primes.cubes().any(|c| c.inputs().value_of("a") == Some(true)
+    ///     && c.inputs().value_of("b") == Some(true)
+    ///     && c.inputs().value_of("x").is_none()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn primes(&self) -> Cover<I, O> {
+        let f_refs: Vec<&Cube<I, O>> = self
+            .cubes
+            .iter()
+            .filter(|c| c.cube_type() == CubeType::F)
+            .collect();
+        let d_refs: Vec<&Cube<I, O>> = self
+            .cubes
+            .iter()
+            .filter(|c| c.cube_type() == CubeType::D)
+            .collect();
+
+        let mut cubes = primes_cubes(
+            self.input_symbols(),
+            self.output_symbols(),
+            &f_refs,
+            &d_refs,
+            CubeType::F,
+        );
+        // Carry the don't-care (D) and OFF-set (R) cubes through unchanged, exactly as `minimize`
+        // retains its computed sets, so the cover can still be read/written in its declared type.
+        for c in &self.cubes {
+            if matches!(c.cube_type(), CubeType::D | CubeType::R) {
+                cubes.push(c.clone());
+            }
+        }
+
+        Cover::from_parts(
+            Arc::clone(self.input_symbols()),
+            Arc::clone(self.output_symbols()),
+            cubes,
+            self.cover_type,
+        )
+    }
 }
 
 // Implement public Minimizable trait for Cover (any label type — minimisation is positional).

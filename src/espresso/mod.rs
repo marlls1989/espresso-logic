@@ -1807,6 +1807,116 @@ impl Espresso {
         })
     }
 
+    /// Generate the complete set of prime implicants of a boolean function.
+    ///
+    /// Returns *every* prime implicant of the ON-set `f` taken relative to the don't-care set `d`
+    /// (`None` = empty), not the reduced, irredundant cover that [`minimize()`](Self::minimize)
+    /// produces. This is the operation behind the reference tool's `-Dprimes` mode: the result is
+    /// `sf_contain`-minimal (no prime strictly contains another) but is otherwise the full prime set,
+    /// including consensus primes that an irredundant cover would discard. Multi-output covers are
+    /// handled natively, with the output part carried as the trailing multi-valued variable exactly
+    /// as the minimiser handles it. `f` and `d` are read only and left unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the C core reports a fatal condition. Use [`try_primes()`](Self::try_primes) to
+    /// recover from such inputs as a [`MinimizationError`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+    /// use espresso_logic::EspressoConfig;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
+    /// // xor(a, b) = a·!b + !a·b — both cubes are already prime.
+    /// let cubes = [(&[1, 0][..], &[1][..]), (&[0, 1][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let primes = esp.primes(&f, None);
+    /// assert_eq!(primes.to_cubes(2, 1, CubeType::F).count(), 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn primes(&self, f: &EspressoCover, d: Option<&EspressoCover>) -> EspressoCover {
+        self.try_primes(f, d).unwrap_or_else(|e| panic!("{}", e))
+    }
+
+    /// Generate all prime implicants, returning an error instead of aborting on invalid input.
+    ///
+    /// Fallible counterpart of [`primes()`](Self::primes): it returns the same complete prime set but
+    /// surfaces a [`MinimizationError`] where `primes()` would panic. Like the other low-level entry
+    /// points it performs no input pre-validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MinimizationError::EspressoFatal`] if the C core reports a fatal condition for the
+    /// given covers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::espresso::{Espresso, EspressoCover, CubeType};
+    /// use espresso_logic::EspressoConfig;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let esp = Espresso::new(2, 1, &EspressoConfig::default());
+    /// let cubes = [(&[1, 0][..], &[1][..]), (&[0, 1][..], &[1][..])];
+    /// let f = EspressoCover::from_cubes(&cubes, 2, 1)?;
+    ///
+    /// let primes = esp.try_primes(&f, None)?;
+    /// assert_eq!(primes.to_cubes(2, 1, CubeType::F).count(), 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_primes(
+        &self,
+        f: &EspressoCover,
+        d: Option<&EspressoCover>,
+    ) -> Result<EspressoCover, MinimizationError> {
+        // MEMORY OWNERSHIP: unlike the minimisation path, `f` and `d` are BORROWED here — no
+        // clone/into_raw. `cube2list` only builds a pointer list into the families' cubes
+        // (espresso-src/cofactor.c), and `primes_consensus` frees only that LIST on every path
+        // (espresso-src/primes.c), leaving F and D themselves intact. This is the very contract
+        // `try_minimize_with_algorithm` relies on when it keeps using `f_ptr`/`d_ptr` in the
+        // algorithm call after `cube2list`. So F and D stay owned by their callers' covers and must
+        // NOT be re-wrapped here; only the returned prime family is ours to own.
+        //
+        // For an absent D we allocate an empty family and keep it in a local `EspressoCover` so it is
+        // freed on every exit path.
+        let empty_d;
+        let d_ptr = if let Some(c) = d {
+            c.ptr
+        } else {
+            empty_d = unsafe {
+                EspressoCover::from_raw(
+                    check_alloc(
+                        sys::sf_new(0, (*sys::get_cube()).size as c_int),
+                        "sf_new for empty D cover in try_primes",
+                    ),
+                    self,
+                )
+            };
+            empty_d.ptr
+        };
+
+        let mut msg: *const c_char = ptr::null();
+        let p_ptr = unsafe {
+            let cube_list = sys::cube2list(f.ptr, d_ptr);
+            sys::guarded_primes(cube_list, &mut msg)
+        };
+        if p_ptr.is_null() {
+            // Caught fatal: the cube list is indeterminate and is leaked (the same bounded one-off
+            // leak the minimisation path documents). F and D are untouched. A null result with a
+            // still-null message is an unchecked allocation failure, which `guarded_result_error`
+            // turns into a panic rather than a misleading empty error.
+            return Err(unsafe { guarded_result_error(msg, "guarded_primes") });
+        }
+        Ok(unsafe { EspressoCover::from_raw(p_ptr, self) })
+    }
+
     /// Minimise a boolean function using exact minimisation
     ///
     /// This method uses the exact minimisation algorithm which guarantees minimal results
@@ -2077,6 +2187,36 @@ mod tests {
                 position: 0
             })
         ));
+    }
+
+    #[test]
+    fn try_primes_returns_complete_prime_set() {
+        // f(a,b,x) = a·x + b·x̄ + a·b, encoded with 0/1/2 = must-be-0 / must-be-1 / don't-care. The
+        // consensus prime a·b (1,1,-) is redundant in an irredundant cover but MUST appear in the
+        // complete prime set that `primes()` returns.
+        let esp = Espresso::new(3, 1, &EspressoConfig::default());
+        let cubes = [
+            (&[1u8, 2, 1][..], &[1u8][..]), // a·x
+            (&[2u8, 1, 0][..], &[1u8][..]), // b·x̄
+            (&[1u8, 1, 2][..], &[1u8][..]), // a·b
+        ];
+        let f = EspressoCover::from_cubes(&cubes, 3, 1).unwrap();
+
+        let primes: std::collections::HashSet<Vec<Option<bool>>> = esp
+            .primes(&f, None)
+            .to_cubes(3, 1, CubeType::F)
+            .map(|c| (0..3).map(|i| c.inputs().value_at(i)).collect())
+            .collect();
+
+        let expected: std::collections::HashSet<Vec<Option<bool>>> = [
+            vec![Some(true), None, Some(true)],  // a·x
+            vec![None, Some(true), Some(false)], // b·x̄
+            vec![Some(true), Some(true), None],  // a·b
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(primes, expected);
     }
 
     #[test]

@@ -199,7 +199,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// Minimise a [`BoolExpr`]'s ON-set with Espresso, returning the minimised single-output [`Cover`].
     ///
     /// A convenience for `self.build(expr).minimize()`; the cover is the characteristic function over the
-    /// expression's support variables (see [`Bdd::to_cubes`]).
+    /// expression's support variables (see [`Bdd::cover`]).
     ///
     /// # Errors
     ///

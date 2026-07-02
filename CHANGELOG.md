@@ -7,8 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BDD on+off-set cover extraction.** `Bdd::cover_fr`, `Bdd::maximize_fr`, and `Bdd::minimize_fr`
+  extract the on-set together with the off-set as a `CoverType::FR` cover (off-set tagged
+  `CubeType::R`), letting Espresso minimise against the exact off-set rather than a recomputed
+  complement. `Bdd::cover` is the on-set-only counterpart (the renamed `to_cubes`).
+- **Universal variable projection.** `Cover::over_vars` re-bases a cover onto an explicit set of
+  variable names: variables it does not mention are widened in as don't-cares, and variables it drops
+  are eliminated by **universal** projection (the assignments that force the output for *every* value
+  of the eliminated variables). `Bdd::cover_over` / `Bdd::cover_over_fr` extract and project in one
+  step. The on- and off-sets are derived independently, so they stay orthogonal but need not be
+  complementary — where the output still depends on an eliminated variable, that assignment is left
+  undefined (a genuine don't-care gap; the Muller C-element case).
+- **Complete prime-implicant generation** at every layer — `Espresso::primes` / `Espresso::try_primes`,
+  `Cover::primes`, and `Bdd::primes` return *all* prime implicants (the C tool's `-Dprimes`), not the
+  reduced, irredundant cover `minimize` yields. This also backs `over_vars`.
+
+### Deprecated
+
+- **`Bdd::to_cubes` is renamed to `Bdd::cover`.** The old name still works but is deprecated; the
+  low-level `EspressoCover::to_cubes` is unaffected.
+
 ### Fixed
 
+- **Subset variable extraction now projects universally, not existentially.** Extracting a cover over
+  a strict subset of a function's variables (the old `maximize(vars)` with a subset `vars`) merely
+  dropped the excluded variables' literals and de-duplicated — an **existential** projection — so an
+  `FR` cover's on- and off-sets could spuriously overlap. It is now a **universal** projection
+  (`∀excluded`): each side is derived independently from the complete prime set, keeping only the
+  primes that constrain nothing outside `vars`. On- and off-sets stay orthogonal, and where the
+  output genuinely depends on an eliminated variable that assignment is left undefined instead of
+  being forced into both sets (the Muller C-element gap). Exposed through the new `Cover::over_vars` /
+  `Bdd::cover_over` / `Bdd::cover_over_fr`.
 - **The PLA reader rejects duplicate `.ilb`/`.ob` labels.** A `.ilb`/`.ob` section naming the same
   variable twice (e.g. `.ilb a a b`) used to build a `Symbols` table that silently violated its
   documented uniqueness invariant, misaligning later lookups (`merge`/`relabel`/`push`). It is now
@@ -45,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Cover::maximize` and `Bdd::maximize` are now argument-free** (breaking). Maximisation is the true
+  inverse of minimisation — it expands a cover to minterms over its *own* variables — so it no longer
+  takes a variable set. Re-basing onto a different variable set now lives in `Cover::over_vars` /
+  `Bdd::cover_over` (see Added). Callers passing the function's own support should drop the argument;
+  callers passing a different set should switch to `over_vars` / `cover_over`.
 - **Clearer `expr!` diagnostics for invalid operands.** The macro now reports an invalid operand
   with a message naming the accepted operand forms (a string literal, the constants `0`/`1`, a
   parenthesised expression, or an expression yielding a `BoolExpr`) at the offending token, instead

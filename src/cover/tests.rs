@@ -2225,7 +2225,7 @@ fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
 
     // A free `BoolExpr` has no cubes; go through a BDD builder to materialise the ON-set cover.
     let builder = crate::bdd_builder!();
-    let cover: Cover<Symbol, Anonymous> = builder.build(&expr).to_cubes();
+    let cover: Cover<Symbol, Anonymous> = builder.build(&expr).cover();
     assert_eq!(cover.num_outputs(), 1);
     assert!(!cover.input_labels().is_empty()); // inputs are named (a, b)
 
@@ -2254,11 +2254,8 @@ fn from_expr_and_from_bdd_agree() {
     assert_eq!(minterms(&from_bdd), minterms(&from_expr));
 
     // a & b has exactly one ON-set cube fixing a=1, b=1.
-    let expected: BTreeSet<Minterm<Symbol>> = bdd
-        .maximize(&["a", "b"])
-        .cubes()
-        .map(|c| c.inputs().clone())
-        .collect();
+    let expected: BTreeSet<Minterm<Symbol>> =
+        bdd.maximize().cubes().map(|c| c.inputs().clone()).collect();
     assert_eq!(minterms(&from_bdd), expected);
 
     // The owned and borrowed `From<BoolExpr>` forms agree too.
@@ -2347,7 +2344,6 @@ fn cube_expand_to_widens_with_absent_var() {
 /// minterm set is unchanged and every cube assigns every variable.
 #[test]
 fn cover_maximize_is_idempotent_when_already_maximal() {
-    let vars = [Symbol::from("a"), Symbol::from("b")];
     // An already-maximal cover: both cubes assign every variable, no don't-cares.
     let cover = Cover::<Symbol, Symbol>::from_cubes(
         CoverType::F,
@@ -2367,11 +2363,11 @@ fn cover_maximize_is_idempotent_when_already_maximal() {
         ],
     );
 
-    let maximised = cover.maximize(&vars);
+    let maximised = cover.maximize();
     // Same input minterm set as the input (idempotent).
     assert_eq!(input_minterm_set(&maximised), input_minterm_set(&cover));
     // Re-maximising changes nothing further.
-    let twice = maximised.maximize(&vars);
+    let twice = maximised.maximize();
     assert_eq!(input_minterm_set(&twice), input_minterm_set(&maximised));
     // Every minterm is fully assigned (no don't-cares left).
     for cube in maximised.cubes() {
@@ -2380,15 +2376,26 @@ fn cover_maximize_is_idempotent_when_already_maximal() {
 }
 
 /// `Cover::maximize` expands a cube with a don't-care into both polarities over the explicit header.
+/// The header widening itself is `over_vars`'s job (a new variable is always don't-care, never a real
+/// projection); `maximize` then expands the resulting don't-care form to full minterms.
 #[test]
 fn cover_maximize_expands_dont_care() {
-    let vars = [Symbol::from("a"), Symbol::from("b")];
-    // a=1, b unconstrained → should expand to {a:1,b:0}, {a:1,b:1}.
+    // a=1, b absent (widen target) → should expand to {a:1,b:0}, {a:1,b:1}.
     let cover = Cover::<Symbol, Symbol>::from_cubes(
         CoverType::F,
         [Cube::with_labels(&[("a", Some(true))], &[("f", true)], CubeType::F).unwrap()],
     );
-    let maximised = cover.maximize(&vars);
+
+    let rebased = cover.over_vars(&["a", "b"]);
+    // Widening leaves a single cube with `b` still don't-care.
+    assert_eq!(rebased.num_cubes(), 1);
+    assert_eq!(rebased.num_inputs(), 2);
+    assert_eq!(rebased.cover_type(), CoverType::F);
+    let only_cube = rebased.cubes().next().unwrap();
+    assert_eq!(only_cube.inputs().value_of("a"), Some(true));
+    assert!(only_cube.inputs().value_of("b").is_none());
+
+    let maximised = rebased.maximize();
     let header = Symbols::new([Symbol::from("a"), Symbol::from("b")].into_iter().collect());
     let want: std::collections::BTreeSet<_> = [
         Minterm::from_symbols(Arc::clone(&header), [Some(true), Some(false)]),
@@ -2397,4 +2404,168 @@ fn cover_maximize_expands_dont_care() {
     .into_iter()
     .collect();
     assert_eq!(input_minterm_set(&maximised), want);
+}
+
+// --- Cover::primes -----------------------------------------------------------------------------
+
+/// `primes` primes the ON-set but carries the OFF-set (R) cubes through unchanged and keeps the
+/// cover type.
+#[test]
+fn primes_retains_off_set_and_cover_type() {
+    let on = Cube::<Symbol, Symbol>::with_labels(
+        &[("a", Some(true)), ("b", Some(true))],
+        &[("f", true)],
+        CubeType::F,
+    )
+    .unwrap();
+    let off =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(false))], &[("f", true)], CubeType::R)
+            .unwrap();
+    let cover = Cover::<Symbol, Symbol>::from_cubes(CoverType::FR, [on, off.clone()]);
+
+    let primed = cover.primes();
+    assert_eq!(primed.cover_type(), CoverType::FR);
+
+    // The OFF-set (R) cube is carried through verbatim.
+    let off_cubes: Vec<_> = primed
+        .cubes()
+        .filter(|c| c.cube_type() == CubeType::R)
+        .map(|c| c.inputs().clone())
+        .collect();
+    assert_eq!(off_cubes, vec![off.inputs().clone()]);
+
+    // The ON-set prime a&b is present.
+    assert!(primed.cubes().any(|c| c.cube_type() == CubeType::F
+        && c.inputs().value_of("a") == Some(true)
+        && c.inputs().value_of("b") == Some(true)));
+}
+
+/// With no inputs, `primes` decides each output directly: a cube asserting the output yields a
+/// single constant-1 prime.
+#[test]
+fn primes_arity_zero_constant_output() {
+    let cover = Cover::<Anonymous, Anonymous>::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(&[], &[true], CubeType::F)],
+    );
+    assert_eq!(cover.num_inputs(), 0);
+
+    let primed = cover.primes();
+    assert_eq!(primed.num_cubes(), 1);
+    assert!(primed.cubes().all(|c| c.asserts(0)));
+}
+
+/// With no inputs and nothing asserting the output, `primes` yields no cubes (the empty prime set).
+#[test]
+fn primes_arity_zero_no_assertion_is_empty() {
+    let cover = Cover::<Anonymous, Anonymous>::from_cubes(
+        CoverType::F,
+        [Cube::anonymous(&[], &[false], CubeType::F)],
+    );
+    assert_eq!(cover.num_inputs(), 0);
+    assert_eq!(cover.primes().num_cubes(), 0);
+}
+
+/// An `FR` cover with an empty ON-set has no prime implicants, but its OFF-set cubes are still
+/// carried through unchanged.
+#[test]
+fn primes_empty_on_set_yields_no_f_cubes() {
+    let off =
+        Cube::<Symbol, Symbol>::with_labels(&[("a", Some(false))], &[("f", true)], CubeType::R)
+            .unwrap();
+    let cover = Cover::<Symbol, Symbol>::from_cubes(CoverType::FR, [off.clone()]);
+    assert!(cover.num_inputs() > 0);
+
+    let primed = cover.primes();
+    assert_eq!(
+        primed
+            .cubes()
+            .filter(|c| c.cube_type() == CubeType::F)
+            .count(),
+        0
+    );
+    let off_cubes: Vec<_> = primed
+        .cubes()
+        .filter(|c| c.cube_type() == CubeType::R)
+        .map(|c| c.inputs().clone())
+        .collect();
+    assert_eq!(off_cubes, vec![off.inputs().clone()]);
+}
+
+// --- Cover::over_vars ----------------------------------------------------------------------------
+
+/// A real projection (the excluded variable is dropped from the header) can still be exact without
+/// any splitting: the sole prime never constrains the excluded column, so `over_vars` keeps it in
+/// don't-care form untouched — only `maximize` would expand it further into full minterms.
+#[test]
+fn over_vars_projection_keeps_dont_care_form() {
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [Cube::with_labels(
+            &[("a", Some(true)), ("b", None), ("c", None)],
+            &[("f", true)],
+            CubeType::F,
+        )
+        .unwrap()],
+    );
+    assert_eq!(cover.num_inputs(), 3);
+
+    // Project onto {a, b}, dropping c: a real projection (c excluded), but the prime a=1
+    // constrains nothing outside {a, b}, so it survives whole.
+    let projected = cover.over_vars(&["a", "b"]);
+    assert_eq!(projected.num_cubes(), 1);
+    assert_eq!(projected.num_inputs(), 2);
+    assert_eq!(projected.cover_type(), CoverType::F);
+    let only_cube = projected.cubes().next().unwrap();
+    assert_eq!(only_cube.inputs().value_of("a"), Some(true));
+    assert!(only_cube.inputs().value_of("b").is_none());
+}
+
+/// Multi-output projection reads each output column independently and never touches output bits:
+/// `o0 = a & x` (`∀x.(a & x) = 0`, never asserted after `x` is projected away), `o1 = a | x`
+/// (`∀x.(a | x) = a`, asserted exactly where `a = 1`), `o2` (never asserted, before or after). The
+/// output header itself is untouched — projection/filtering only ever act on inputs.
+#[test]
+fn over_vars_multi_output_universal() {
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::F,
+        [
+            Cube::with_labels(
+                &[("a", Some(false)), ("x", Some(true))],
+                &[("o1", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(true)), ("x", Some(false))],
+                &[("o1", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(true)), ("x", Some(true))],
+                &[("o0", true), ("o1", true), ("o2", false)],
+                CubeType::F,
+            )
+            .unwrap(),
+        ],
+    );
+    assert_eq!(cover.num_outputs(), 3);
+    let index_of = |name: &str| {
+        cover
+            .output_labels()
+            .iter()
+            .position(|l| *l == Symbol::new(name))
+            .unwrap()
+    };
+    let (o0, o1, o2) = (index_of("o0"), index_of("o1"), index_of("o2"));
+
+    let projected = cover.over_vars(&["a"]);
+    assert_eq!(projected.num_outputs(), 3);
+
+    assert!(!projected.cubes().any(|c| c.outputs().value_at(o0)));
+    assert!(!projected.cubes().any(|c| c.outputs().value_at(o2)));
+    assert!(projected
+        .cubes()
+        .any(|c| c.outputs().value_at(o1) && c.inputs().value_of("a") == Some(true)));
 }

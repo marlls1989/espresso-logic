@@ -417,7 +417,37 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// cover is the **characteristic function** of this BDD over its support variables. The returned cover
     /// is an `F` (ON-set) cover.
     #[must_use]
+    pub fn cover(&self) -> Cover<Symbol, Anonymous> {
+        self.extract_cubes(CoverType::F)
+    }
+
+    /// Renamed to [`cover`](Self::cover).
+    #[deprecated(since = "5.2.0", note = "renamed to `cover`")]
+    #[must_use]
     pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
+        self.cover()
+    }
+
+    /// Enumerate the paths to TRUE **and** FALSE as a two-sided `FR` [`Cover`].
+    ///
+    /// Every root→TRUE path becomes an on-set cube ([`CubeType::F`]) and every root→FALSE path an
+    /// off-set cube ([`CubeType::R`]); a variable on a path is fixed `Some(true)` / `Some(false)`, one
+    /// off the path is a don't-care (`None`). The two sides partition the minterm space — a BDD path
+    /// reaches exactly one terminal, so the on-set and off-set are disjoint and jointly exhaustive.
+    /// Variables are carried by name (`Symbol`) over a single asserted [`Anonymous`] output column, as
+    /// in [`cover`](Self::cover). Feeding the result to [`minimize_fr`](Self::minimize_fr) minimises
+    /// the on-set against this exact off-set rather than a recomputed complement.
+    #[must_use]
+    pub fn cover_fr(&self) -> Cover<Symbol, Anonymous> {
+        self.extract_cubes(CoverType::FR)
+    }
+
+    /// Shared DFS backing [`cover`](Self::cover) and [`cover_fr`](Self::cover_fr).
+    ///
+    /// Walks every root→terminal path once under a single read guard, emitting an `F` cube per TRUE
+    /// path and — only when `cover_type` carries an off-set — an `R` cube per FALSE path. The returned
+    /// cover carries `cover_type` verbatim.
+    fn extract_cubes(&self, cover_type: CoverType) -> Cover<Symbol, Anonymous> {
         // Canonical, alphabetically sorted header shared by every extracted cube. `variables()` yields
         // the support in traversal (unsorted) order, so sort here to keep the header canonical.
         let mut names: Vec<Symbol> = self.variables().collect();
@@ -464,7 +494,17 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         );
                         cubes.push(Cube::new(inputs, outputs, CubeType::F));
                     }
-                    ManagerNode::Terminal(false) => {}
+                    ManagerNode::Terminal(false) => {
+                        if cover_type.has_r() {
+                            let inputs =
+                                Minterm::from_symbols(Arc::clone(&symbols), path.iter().copied());
+                            let outputs = OutputSet::from_symbols(
+                                Arc::clone(&output_symbols),
+                                std::iter::once(true),
+                            );
+                            cubes.push(Cube::new(inputs, outputs, CubeType::R));
+                        }
+                    }
                     ManagerNode::Decision { var, low, high } => {
                         let var_name = mgr.var_name(*var).expect(
                             "Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation",
@@ -487,25 +527,71 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         // contradiction yields zero cubes, and re-deriving from those would give a zero-output header,
         // breaking the later `to_expr_by_index(0)`. `from_parts` keeps the arity-1 `Anonymous` output
         // header, so a contradiction lowers to a one-output, zero-cube cover that renders as "0".
-        Cover::from_parts(symbols, output_symbols, cubes, CoverType::F)
+        Cover::from_parts(symbols, output_symbols, cubes, cover_type)
     }
 
-    /// The **maximal** cover of this function over the explicit, widenable variable set `vars` — the
-    /// inverse of [`minimize`](Self::minimize).
+    /// The complete set of prime implicants of this function, as a single-output `F` [`Cover`].
     ///
-    /// Every cube of the returned [`Cover`] assigns **every** variable in `vars` (no don't-cares left),
-    /// so each cube is a full minterm; enumerate them with [`Cover::cubes`] (each cube's
-    /// [`inputs`](crate::Cube::inputs) is the [`Minterm`]). `vars` MAY be a superset of this function's
-    /// support — a variable in `vars` absent from the function is split into both polarities — or a
-    /// subset, in which case projection collapses distinct minterms onto the retained variables. Either
-    /// way the result is **deduplicated** (first-seen order, **not** sorted) and shares one canonical,
-    /// identity-aligned header (so the cubes stay on the fast-comparison path and are usable in
-    /// `BTreeSet`/`HashMap`). For the exact inverse of minimisation, pass at least the function's support.
-    ///
-    /// Built from [`to_cubes`](Self::to_cubes) via [`Cover::maximize`].
+    /// Every prime implicant — not the reduced, irredundant cover [`minimize`](Self::minimize) yields.
+    /// Equivalent to `self.cover().primes()`; see [`Cover::primes`].
     #[must_use]
-    pub fn maximize<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
-        self.to_cubes().maximize(vars)
+    pub fn primes(&self) -> Cover<Symbol, Anonymous> {
+        self.cover().primes()
+    }
+
+    /// Re-base this function's ON-set onto exactly `vars`, universally projecting away any dropped
+    /// variable.
+    ///
+    /// Equivalent to `self.cover().over_vars(vars)`. A variable of `vars` absent from the function is
+    /// widened in as a don't-care; a support variable not in `vars` is eliminated by **universal**
+    /// projection, so the result holds exactly the `vars` assignments that force the output high for
+    /// every value of the eliminated variables. The cover is returned in don't-care form — compose
+    /// [`Cover::maximize`] for minterms. See [`Cover::over_vars`] for the full semantics.
+    #[must_use]
+    pub fn cover_over<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+        self.cover().over_vars(vars)
+    }
+
+    /// Re-base this function onto exactly `vars` as a two-sided `FR` [`Cover`], universally projecting
+    /// away any dropped variable.
+    ///
+    /// Equivalent to `self.cover_fr().over_vars(vars)`. The on-set ([`CubeType::F`]) holds the `vars`
+    /// assignments that force the output high for every value of the eliminated variables, the off-set
+    /// ([`CubeType::R`]) those that force it low. Because each side is derived independently, they are
+    /// **orthogonal but not necessarily complementary**: where the output still depends on an
+    /// eliminated variable, that assignment lands in neither side (a genuine undef gap — the Muller
+    /// C-element case). See [`Cover::over_vars`].
+    #[must_use]
+    pub fn cover_over_fr<S: AsRef<str>>(&self, vars: &[S]) -> Cover<Symbol, Anonymous> {
+        self.cover_fr().over_vars(vars)
+    }
+
+    /// The **maximal** cover of this function — the inverse of [`minimize`](Self::minimize).
+    ///
+    /// Every cube of the returned [`Cover`] assigns **every** support variable (no don't-cares left),
+    /// so each cube is a full minterm; enumerate them with [`Cover::cubes`] (each cube's
+    /// [`inputs`](crate::Cube::inputs) is the [`Minterm`]). The result is **deduplicated** (first-seen
+    /// order, **not** sorted) and shares one canonical, identity-aligned header. To re-base onto a
+    /// different variable set (widening or universally projecting), use [`cover_over`](Self::cover_over)
+    /// first.
+    ///
+    /// Equivalent to `self.cover().maximize()`.
+    #[must_use]
+    pub fn maximize(&self) -> Cover<Symbol, Anonymous> {
+        self.cover().maximize()
+    }
+
+    /// The **maximal** two-sided `FR` cover of this function — the [`maximize`](Self::maximize)
+    /// counterpart for the on+off-set extraction of [`cover_fr`](Self::cover_fr).
+    ///
+    /// Both the on-set ([`CubeType::F`]) and off-set ([`CubeType::R`]) cubes are expanded so that every
+    /// cube assigns every support variable, i.e. each cube is a full minterm. The two sides partition
+    /// the minterm space over the support.
+    ///
+    /// Equivalent to `self.cover_fr().maximize()`.
+    #[must_use]
+    pub fn maximize_fr(&self) -> Cover<Symbol, Anonymous> {
+        self.cover_fr().maximize()
     }
 
     // ---- Minimisation -------------------------------------------------------------------------
@@ -513,31 +599,47 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Minimise this function's ON-set with Espresso, returning the minimised single-output
     /// [`Cover`].
     ///
-    /// Equivalent to `self.to_cubes().minimize()`; the cover is the characteristic function over the
-    /// support variables (see [`to_cubes`](Self::to_cubes)).
+    /// Equivalent to `self.cover().minimize()`; the cover is the characteristic function over the
+    /// support variables (see [`cover`](Self::cover)).
     ///
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
     pub fn minimize(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
-        self.to_cubes().minimize()
+        self.cover().minimize()
+    }
+
+    /// Minimise this function's ON-set with Espresso against its **exact** off-set, returning an `FR`
+    /// [`Cover`] whose minimised on-set is paired with the off-set.
+    ///
+    /// Equivalent to `self.cover_fr().minimize()`. Unlike [`minimize`](Self::minimize), which lets
+    /// Espresso derive the OFF-set from the ON-set complement, this supplies the off-set directly from
+    /// the BDD's root→FALSE paths (see [`cover_fr`](Self::cover_fr)). Only the ON-set is minimised; the
+    /// off-set is returned as the enumerated path cubes, not separately reduced.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
+    pub fn minimize_fr(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
+        use crate::Minimizable;
+        self.cover_fr().minimize()
     }
 
     // ---- Lowering back to a syntactic expression ----------------------------------------------
 
     /// Lower this function to an owned, factored [`BoolExpr`].
     ///
-    /// Enumerates the function's ON-set with [`to_cubes`](Self::to_cubes), then applies algebraic
+    /// Enumerates the function's ON-set with [`cover`](Self::cover), then applies algebraic
     /// **direct factorisation** to that cube set (the same path as [`Cover::to_expr`]) to produce a
     /// compact multi-level expression — it does **not** re-canonicalise through the BDD. The resulting
     /// `BoolExpr` is syntactic; building it back here yields the same canonical handle, but its token
     /// structure reflects the factored cubes, not this BDD's node graph.
     #[must_use]
     pub fn to_expr(&self) -> BoolExpr {
-        self.to_cubes()
+        self.cover()
             .to_expr_by_index(0)
-            .expect("to_cubes yields a single-output cover, so output index 0 is in bounds")
+            .expect("cover yields a single-output cover, so output index 0 is in bounds")
     }
 }
 
@@ -564,7 +666,7 @@ impl<B: Brand, C: ManagerCell> std::hash::Hash for Bdd<B, C> {
 
 /// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
-/// [`to_cubes`](Bdd::to_cubes) for that.
+/// [`cover`](Bdd::cover) for that.
 impl<B: Brand, C: ManagerCell> std::fmt::Debug for Bdd<B, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bdd")

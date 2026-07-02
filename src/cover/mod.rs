@@ -369,22 +369,22 @@ where
     }
 }
 
-impl<I: StringLabel, O: Clone> Cover<I, O> {
-    /// Expand every cube into its fully-assigned minterms over the explicit header of variable names
-    /// `vars`.
+impl<I: Label, O: Clone> Cover<I, O> {
+    /// Expand every cube into its fully-assigned minterms over the cover's **own** input header.
     ///
-    /// The inverse of minimisation ("maximise"): each cube's input pattern is re-expressed over `vars`
-    /// and every don't-care (and every variable of `vars` absent from the cube) is split into both
-    /// polarities, so each surviving cube assigns **every** variable in `vars`. `vars` MAY be a superset
-    /// of the cover's inputs (absent variables widen into both polarities); input variables not in `vars`
-    /// are dropped. Output columns and per-cube set tags are preserved; duplicate cubes are removed
-    /// (first-seen order kept). The result shares one canonical input header, so its minterms stay on the
-    /// fast-comparison path. Maximising an already-maximal cover over the same `vars` is a no-op.
+    /// The inverse of minimisation ("maximise"): each cube's input pattern is expanded so that every
+    /// don't-care is split into both polarities, leaving each surviving cube assigning **every** input
+    /// variable. Output columns and per-cube set tags are preserved, and the
+    /// [`CoverType`] is kept (an F cover stays F, an FR cover keeps both sides); duplicate
+    /// cubes are removed (first-seen order kept). The result shares one canonical input header, so its
+    /// minterms stay on the fast-comparison path, and maximising an already-maximal cover is a no-op.
     ///
-    /// See [`Cube::expand_to`] / [`Minterm::expand_over`] for the per-cube primitive.
+    /// To re-base onto a *different* set of variables — widening in new ones or universally projecting
+    /// old ones away — use [`over_vars`](Self::over_vars) first. See [`Cube::expand_to`] /
+    /// [`Minterm::expand_over`] for the per-cube primitive.
     #[must_use]
-    pub fn maximize<S: AsRef<str>>(&self, vars: &[S]) -> Cover<I, O> {
-        let target = Symbols::new(vars.iter().map(|s| I::from(s.as_ref())).collect());
+    pub fn maximize(&self) -> Cover<I, O> {
+        let target = Arc::clone(&self.input_symbols);
         let mut seen: HashSet<Cube<I, O>> = HashSet::new();
         let mut cubes = Vec::new();
         for cube in &self.cubes {
@@ -401,6 +401,112 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
             cubes,
             cover_type: self.cover_type,
         }
+    }
+}
+
+impl<I: StringLabel, O: Clone> Cover<I, O> {
+    /// Re-base this cover onto exactly the variables named in `vars`, universally projecting away any
+    /// variable it drops.
+    ///
+    /// Two things happen, in one pass:
+    ///
+    /// - **Widen.** Every variable of `vars` absent from this cover is introduced as a don't-care
+    ///   column. This alone (when `vars` is a superset of the cover's inputs) re-homes each cube onto
+    ///   the `vars` header without changing the function.
+    /// - **Universally project.** Every input variable *not* in `vars` is eliminated by **universal**
+    ///   projection: the ON-set of the result holds exactly the `vars` assignments that force the
+    ///   output high for *every* value of the eliminated variables, and (for an
+    ///   [`FR`](CoverType::FR) cover) the OFF-set holds those that force it low for every value.
+    ///
+    /// Because each side is derived independently from its own cubes — via the complete prime set
+    /// (see [`primes`](Self::primes)), keeping only the primes that constrain nothing outside `vars` —
+    /// the ON- and OFF-sets are **orthogonal but not necessarily complementary**: where the output
+    /// still depends on an eliminated variable, that `vars` assignment lands in *neither* set, leaving
+    /// a genuine don't-care/undef gap. A Muller C-element `q⁺ = a·b + q·(a+b)` re-based onto `{a, b}`
+    /// gives on-set `a=b=1`, off-set `a=b=0`, and `a≠b` undefined.
+    ///
+    /// The result is returned in **don't-care form** (not minterm-expanded): compose
+    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
+    /// (F in → F out; FR in → FR out).
+    ///
+    /// # Panics
+    ///
+    /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
+    /// [`FDR`](CoverType::FDR) cover): universal projection is defined only for fully specified
+    /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
+    /// different dimensions on this thread) or a C fatal.
+    #[must_use]
+    pub fn over_vars<S: AsRef<str>>(&self, vars: &[S]) -> Cover<I, O> {
+        let target = Symbols::new(vars.iter().map(|s| I::from(s.as_ref())).collect());
+
+        // Which of this cover's input columns are eliminated (identity absent from `target`)?
+        let excluded_mask: Vec<bool> = self
+            .input_symbols
+            .labels()
+            .iter()
+            .enumerate()
+            .map(|(i, l)| target.position_of_identity(&l.identity(i)).is_none())
+            .collect();
+
+        // Pure widen (nothing eliminated): re-home each cube onto `target` with don't-care columns for
+        // the new variables. No column is dropped, so this is safe for every cover type.
+        if !excluded_mask.iter().any(|&e| e) {
+            let cubes = self
+                .cubes
+                .iter()
+                .map(|c| Cube::new(c.inputs.project_onto(&target), c.outputs.clone(), c.set))
+                .collect();
+            return Cover::from_parts(
+                target,
+                Arc::clone(&self.output_symbols),
+                cubes,
+                self.cover_type,
+            );
+        }
+
+        // Real projection: universal elimination via the complete prime set. Defined only for fully
+        // specified covers — a don't-care set has no well-defined universal projection here.
+        assert!(
+            !self.cover_type.has_d(),
+            "over_vars: universal projection is defined only for fully specified (F/FR) covers; \
+             this cover carries a don't-care set (FD/FDR)"
+        );
+
+        // Project one cube set (F or R) on its own: all primes of that set, then keep only the primes
+        // that constrain nothing outside `vars` (their eliminated columns are all don't-care), then
+        // drop those columns. Reading each set independently — never a complement — is what preserves
+        // the undef gap; output-assertion bits ride through `project_onto` untouched, so multi-output
+        // covers project per output in one pass.
+        let project_set = |set: CubeType| -> Vec<Cube<I, O>> {
+            let members: Vec<&Cube<I, O>> = self.cubes.iter().filter(|c| c.set == set).collect();
+            minimisation::primes_cubes(
+                &self.input_symbols,
+                &self.output_symbols,
+                &members,
+                &[],
+                set,
+            )
+            .into_iter()
+            .filter(|p| {
+                p.inputs()
+                    .iter()
+                    .enumerate()
+                    .all(|(i, v)| !excluded_mask[i] || v.is_none())
+            })
+            .map(|p| Cube::new(p.inputs().project_onto(&target), p.outputs().clone(), set))
+            .collect()
+        };
+
+        let mut cubes = project_set(CubeType::F);
+        if self.cover_type.has_r() {
+            cubes.extend(project_set(CubeType::R));
+        }
+        Cover::from_parts(
+            target,
+            Arc::clone(&self.output_symbols),
+            cubes,
+            self.cover_type,
+        )
     }
 }
 
@@ -427,7 +533,7 @@ impl<I, O> Cover<I, O> {
     ///
     /// This preserves the declared output arity even when there are zero cubes — the case
     /// [`from_cubes`](Self::from_cubes) cannot serve, since with no cubes it would derive a zero-width
-    /// header. The BDD lowering ([`Bdd::to_cubes`](crate::bdd::Bdd::to_cubes)) uses it so a contradiction
+    /// header. The BDD lowering ([`Bdd::cover`](crate::bdd::Bdd::cover)) uses it so a contradiction
     /// lowers to a one-output, zero-cube cover rather than a header-less one.
     pub(crate) fn from_parts(
         input_symbols: Arc<Symbols<I>>,
