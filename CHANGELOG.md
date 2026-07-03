@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consequence of `OutputSet`/`Cube` equality now aligning by label identity: deduplicating expanded
   cubes needs `Cube: Eq + Hash`, which now needs `O: Label`. This affects only generic code bounded
   `O: Clone` — every concrete cover already satisfies `O: Label`, since building one requires it.
+- `Minterm::hamming_distance`/`disagreement` now use Espresso's cube distance — a `?` field counts as
+  a disagreement — restoring `is_disjoint_with ⟺ distance > 0`.
 
 ### Fixed
 

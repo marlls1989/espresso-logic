@@ -140,13 +140,13 @@ fn raw_field(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
-/// Whether two value-set fields disagree: both must be non-empty and their value-sets must not
-/// intersect (one fixes the variable `true`, the other `false`). A don't-care intersects either
-/// polarity, and the empty literal (`00`) is never a disagreement — in particular a field never
-/// disagrees with itself, so the disagreement relation stays reflexive even for `?`.
+/// Whether two value-set fields disagree: their value sets are disjoint, i.e. the raw 2-bit AND is
+/// zero. A don't-care (`11`) intersects either polarity, so it never disagrees with anything. The
+/// empty field (`00`, Espresso's `?`) intersects nothing — not even itself — so it disagrees with
+/// every field, including another empty field. This is Espresso's cube-distance rule.
 #[inline]
 fn fields_disagree(a: u8, b: u8) -> bool {
-    a != FIELD_EMPTY && b != FIELD_EMPTY && a & b == 0
+    a & b == 0
 }
 
 fn pack<I>(values: I, num_vars: usize) -> Arc<[u64]>
@@ -1084,13 +1084,21 @@ impl<L: Label> Minterm<L> {
 }
 
 impl<L: Label> Minterm<L> {
-    /// The number of variables on which `self` and `other` disagree, aligned by variable identity.
+    /// Espresso's input-part cube distance between `self` and `other`, aligned by variable identity:
+    /// the number of variables whose value-sets are disjoint (the field intersection is empty).
     ///
     /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
-    /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
-    /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
-    /// minterms (e.g. the output of [`Cube::expand_to`](crate::Cube::expand_to)), where this is exactly
-    /// the Hamming distance. `hamming_distance == disagreement().len()`.
+    /// `true` and the other `false`, or either field is the empty literal (`?`), which intersects
+    /// nothing, not even itself. A don't-care agrees with any value, and a variable present in only
+    /// one minterm reads as don't-care, so neither counts as a disagreement.
+    ///
+    /// Restricted to fully-assigned minterms (every field `0` or `1`, e.g. the output of
+    /// [`Cube::expand_to`](crate::Cube::expand_to)), this is exactly the ordinary Hamming distance, and
+    /// `hamming_distance == disagreement().len()` always. The family law
+    /// `is_disjoint_with(a, b)` iff `hamming_distance(a, b) > 0` holds unconditionally, including on
+    /// cubes carrying `?` fields — one consequence is that `x.hamming_distance(&x)` is not always `0`:
+    /// it equals the number of `?` fields in `x` (as in Espresso, this relation is not reflexive on
+    /// vacuous cubes).
     ///
     /// # Examples
     ///
@@ -1109,16 +1117,10 @@ impl<L: Label> Minterm<L> {
             let n = self.num_vars();
             let mut count = 0usize;
             for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
-                // Even bit set per variable whose field (on each side, and on the intersection) is
-                // non-empty.
-                let x_ne = (x & ALLOWS0_MASK) | ((x >> 1) & ALLOWS0_MASK);
-                let y_ne = (y & ALLOWS0_MASK) | ((y >> 1) & ALLOWS0_MASK);
                 let inter = x & y;
                 let inter_ne = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
                 let valid = valid_even_mask(k, n);
-                // A variable disagrees only when both sides are non-empty yet their value-sets do
-                // not intersect; an empty field (`?`) on either side is never a disagreement.
-                count += (x_ne & y_ne & !inter_ne & valid).count_ones() as usize;
+                count += (!inter_ne & valid).count_ones() as usize;
             }
             count
         } else {
@@ -1129,8 +1131,9 @@ impl<L: Label> Minterm<L> {
     }
 
     /// The variables on which `self` and `other` disagree (see [`hamming_distance`](Self::hamming_distance)
-    /// for the disagreement rule), as a lazy [`Disagreement`] iterator that yields each disagreeing
-    /// label (cloned) on demand. Ordering is unspecified.
+    /// for the disagreement rule — including that a `?` field disagrees with everything, itself
+    /// included), as a lazy [`Disagreement`] iterator that yields each disagreeing label (cloned) on
+    /// demand. Ordering is unspecified.
     ///
     /// # Examples
     ///
@@ -2115,18 +2118,104 @@ mod tests {
         assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
     }
 
-    /// A minterm carrying an empty literal (`?`) is at distance 0 from itself with an empty
-    /// disagreement set: an empty field is never counted as a disagreement, so reflexivity holds.
+    // --- cdist distance ---------------------------------------------------------------------------
+
+    /// A cube with one `?` field is at distance 1 from itself: the empty field intersects nothing —
+    /// not even itself — so it disagrees with itself while the two `0`/`1` fields still agree with
+    /// themselves. This is Espresso's cube distance, not the ordinary (reflexive) Hamming distance.
+    /// `disagreement` reports exactly that variable's label.
     #[test]
-    fn hamming_and_disagreement_reflexive_on_empty_literal() {
+    fn cdist_self_distance_counts_empty_fields() {
         let s = syms(&["a", "b", "c"]);
         let x = Minterm::from_symbols_input_fields(
             Arc::clone(&s),
             [InputField::One, InputField::Empty, InputField::Zero],
         );
         assert!(x.is_vacuous());
-        assert_eq!(x.hamming_distance(&x), 0);
-        assert_eq!(x.disagreement(&x).count(), 0);
+        assert_eq!(x.hamming_distance(&x), 1);
+        assert_eq!(
+            x.disagreement(&x).collect::<Vec<_>>(),
+            vec![Symbol::from("b")]
+        );
+    }
+
+    /// The family law `is_disjoint_with(a, b)` iff `hamming_distance(a, b) > 0` holds unconditionally,
+    /// exhaustively over every four-state (`0`/`1`/`-`/`?`) combination on 1 and 2 variables.
+    #[test]
+    fn cdist_matches_disjointness_law() {
+        const FIELDS: [InputField; 4] = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+
+        let s1 = syms(&["a"]);
+        for &fa in &FIELDS {
+            for &fb in &FIELDS {
+                let a = Minterm::from_symbols_input_fields(Arc::clone(&s1), [fa]);
+                let b = Minterm::from_symbols_input_fields(Arc::clone(&s1), [fb]);
+                assert_eq!(
+                    a.is_disjoint_with(&b),
+                    a.hamming_distance(&b) > 0,
+                    "1-var {fa:?}/{fb:?}"
+                );
+            }
+        }
+
+        let s2 = syms(&["a", "b"]);
+        for &fa0 in &FIELDS {
+            for &fa1 in &FIELDS {
+                for &fb0 in &FIELDS {
+                    for &fb1 in &FIELDS {
+                        let a = Minterm::from_symbols_input_fields(Arc::clone(&s2), [fa0, fa1]);
+                        let b = Minterm::from_symbols_input_fields(Arc::clone(&s2), [fb0, fb1]);
+                        assert_eq!(
+                            a.is_disjoint_with(&b),
+                            a.hamming_distance(&b) > 0,
+                            "2-var {fa0:?}/{fa1:?} vs {fb0:?}/{fb1:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same-header word path and the differing-header merge-join path must agree on distance and
+    /// disagreement set even when an operand carries a `?` field.
+    #[test]
+    fn cdist_fast_path_matches_merge_path_with_empty() {
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared = Minterm::from_symbols_input_fields(
+            Arc::clone(&shared),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        let b_shared = Minterm::from_symbols_input_fields(
+            Arc::clone(&shared),
+            [InputField::One, InputField::One, InputField::DontCare],
+        );
+        // The same two cubes over independent, differently-permuted headers (merge-join path).
+        let a_perm = Minterm::from_symbols_input_fields(
+            syms(&["c", "a", "b"]),
+            [InputField::Zero, InputField::One, InputField::Empty],
+        );
+        let b_perm = Minterm::from_symbols_input_fields(
+            syms(&["b", "c", "a"]),
+            [InputField::One, InputField::DontCare, InputField::One],
+        );
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+        assert_eq!(
+            a_shared.hamming_distance(&b_shared),
+            a_perm.hamming_distance(&b_perm)
+        );
+
+        let mut d_shared: Vec<_> = a_shared.disagreement(&b_shared).collect();
+        d_shared.sort();
+        let mut d_perm: Vec<_> = a_perm.disagreement(&b_perm).collect();
+        d_perm.sort();
+        assert_eq!(d_shared, d_perm);
     }
 
     // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
