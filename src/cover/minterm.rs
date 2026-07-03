@@ -1515,9 +1515,9 @@ fn rank(value: Option<bool>) -> u8 {
 /// Compare two minterms by denoted set, aligned by variable identity over the sorted union of their
 /// variables (an absent variable counts as don't-care; at each variable don't-care < false < true).
 ///
-/// A vacuous minterm — one carrying any empty literal `?`, so it denotes ∅ — sorts **after** every
-/// non-vacuous one: it is the smallest denoted set, extending the per-field rank `- < 0 < 1`
-/// monotonically by shrinking set size. Two vacuous minterms compare `Equal`, matching `Eq`.
+/// The per-field order is `- < 0 < 1`. A vacuous minterm — one carrying any empty literal `?`, so
+/// it denotes ∅ — sorts **after** every non-vacuous one, ∅ being the smallest denoted set. Two
+/// vacuous minterms compare `Equal`, matching `Eq`.
 ///
 /// The order is total and independent of header ordering, so `Minterm` can be used as a
 /// `BTreeSet`/`BTreeMap` key for deduplication. Non-vacuous pairs are compared by a single O(n+m)
