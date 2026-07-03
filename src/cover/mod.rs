@@ -117,7 +117,8 @@ mod symbols;
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
 pub use error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, RelabelError,
+    ToExprError,
 };
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
@@ -578,18 +579,17 @@ impl<I, O> Cover<I, O> {
         Self::new(cover_type)
     }
 
-    /// Re-express this cover over different label types, position-for-position.
+    /// Re-express this cover over pre-built symbol tables, position-for-position.
     ///
-    /// This is the **explicit** way to relabel or anonymise a cover — labelling and anonymisation
-    /// never happen implicitly. The new symbol tables must have the same arities as this cover.
-    /// To change only one side, use [`relabel_inputs`](Self::relabel_inputs) /
-    /// [`relabel_outputs`](Self::relabel_outputs).
+    /// The in-crate workhorse behind the public [`relabel`](Self::relabel) shim: it takes the tables
+    /// directly so callers that already hold them (the PLA reader, [`anonymize`](Self::anonymize))
+    /// skip rebuilding them.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if either replacement table's arity differs from this cover's
     /// corresponding arity (re-labelling is position-for-position).
-    pub fn relabel<I2: Label, O2: Label>(
+    pub(crate) fn relabel_tables<I2: Label, O2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
         output_symbols: Arc<Symbols<O2>>,
@@ -625,12 +625,14 @@ impl<I, O> Cover<I, O> {
         })
     }
 
-    /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
+    /// Re-express only the **input** variables over a pre-built symbol table, keeping the outputs as-is.
+    ///
+    /// The in-crate workhorse behind the public [`relabel_inputs`](Self::relabel_inputs) shim.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if the new input table's arity differs from this cover's input arity.
-    pub fn relabel_inputs<I2: Label>(
+    pub(crate) fn relabel_inputs_tables<I2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
     ) -> Result<Cover<I2, O>, ArityMismatch> {
@@ -659,12 +661,14 @@ impl<I, O> Cover<I, O> {
         })
     }
 
-    /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
+    /// Re-express only the **output** variables over a pre-built symbol table, keeping the inputs as-is.
+    ///
+    /// The in-crate workhorse behind the public [`relabel_outputs`](Self::relabel_outputs) shim.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if the new output table's arity differs from this cover's output arity.
-    pub fn relabel_outputs<O2: Label>(
+    pub(crate) fn relabel_outputs_tables<O2: Label>(
         self,
         output_symbols: Arc<Symbols<O2>>,
     ) -> Result<Cover<I, O2>, ArityMismatch> {
@@ -693,13 +697,202 @@ impl<I, O> Cover<I, O> {
         })
     }
 
+    /// Re-express this cover over different label types, position-for-position.
+    ///
+    /// This is the explicit way to relabel or anonymise a cover — labelling and anonymisation never
+    /// happen implicitly. The replacement label lists must have the same arities as this cover, and
+    /// each side's labels must be distinct. To change only one side, use
+    /// [`relabel_inputs`](Self::relabel_inputs) / [`relabel_outputs`](Self::relabel_outputs); to give
+    /// the cover new string names of a chosen label type, use [`rename`](Self::rename).
+    ///
+    /// An anonymous target needs no special form: `relabel([Anonymous; n], [Anonymous; m])` works
+    /// since [`Anonymous`] is a [`Label`], and [`anonymize`](Self::anonymize) is the convenience.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if either replacement list's arity differs from this cover's
+    /// corresponding arity (arity is checked first), or [`RelabelError::Duplicate`] if a side repeats
+    /// a label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
+    ///
+    /// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    /// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
+    ///
+    /// // Re-express the positional cover over integer labels.
+    /// let numbered: Cover<u32, u32> = cover.relabel([0u32, 1], [0u32]).unwrap();
+    /// assert_eq!(numbered.num_inputs(), 2);
+    /// assert_eq!(numbered.num_outputs(), 1);
+    /// ```
+    pub fn relabel<I2: Label, O2: Label>(
+        self,
+        input_labels: impl IntoIterator<Item = I2>,
+        output_labels: impl IntoIterator<Item = O2>,
+    ) -> Result<Cover<I2, O2>, RelabelError> {
+        let inputs: Arc<[I2]> = input_labels.into_iter().collect();
+        if inputs.len() != self.num_inputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: inputs.len(),
+            }));
+        }
+        let outputs: Arc<[O2]> = output_labels.into_iter().collect();
+        if outputs.len() != self.num_outputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: outputs.len(),
+            }));
+        }
+        let input_symbols = Symbols::new(inputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Input { index: e.index }))?;
+        let output_symbols = Symbols::new(outputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Output { index: e.index }))?;
+        Ok(self
+            .relabel_tables(input_symbols, output_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
+    ///
+    /// See [`relabel`](Self::relabel) for the two-sided form and [`rename_inputs`](Self::rename_inputs)
+    /// for the string-name convenience.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if the replacement list's arity differs from this cover's input
+    /// arity, or [`RelabelError::Duplicate`] if it repeats a label.
+    pub fn relabel_inputs<I2: Label>(
+        self,
+        input_labels: impl IntoIterator<Item = I2>,
+    ) -> Result<Cover<I2, O>, RelabelError> {
+        let inputs: Arc<[I2]> = input_labels.into_iter().collect();
+        if inputs.len() != self.num_inputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: inputs.len(),
+            }));
+        }
+        let input_symbols = Symbols::new(inputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Input { index: e.index }))?;
+        Ok(self
+            .relabel_inputs_tables(input_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
+    ///
+    /// See [`relabel`](Self::relabel) for the two-sided form and
+    /// [`rename_outputs`](Self::rename_outputs) for the string-name convenience. Passing
+    /// `[Anonymous; n]` here drops the output names positionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if the replacement list's arity differs from this cover's output
+    /// arity, or [`RelabelError::Duplicate`] if it repeats a label.
+    pub fn relabel_outputs<O2: Label>(
+        self,
+        output_labels: impl IntoIterator<Item = O2>,
+    ) -> Result<Cover<I, O2>, RelabelError> {
+        let outputs: Arc<[O2]> = output_labels.into_iter().collect();
+        if outputs.len() != self.num_outputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: outputs.len(),
+            }));
+        }
+        let output_symbols = Symbols::new(outputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Output { index: e.index }))?;
+        Ok(self
+            .relabel_outputs_tables(output_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Give the cover new string names, position-for-position.
+    ///
+    /// A thin wrapper over [`relabel`](Self::relabel) that converts each `&str` name into the chosen
+    /// [`StringLabel`] type (e.g. [`Symbol`](crate::Symbol), `String`, `Arc<str>`). Use `relabel`
+    /// directly for type-changing conversions to non-string labels; to change only one side use
+    /// [`rename_inputs`](Self::rename_inputs) / [`rename_outputs`](Self::rename_outputs).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name (see [`relabel`](Self::relabel)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Symbol};
+    ///
+    /// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    /// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
+    ///
+    /// let named: Cover<Symbol, Symbol> = cover.rename(["x0", "x1"], ["y0"]).unwrap();
+    /// assert_eq!(named.num_inputs(), 2);
+    /// assert_eq!(named.num_outputs(), 1);
+    /// ```
+    pub fn rename<I2, O2, SI, SO>(
+        self,
+        input_names: impl IntoIterator<Item = SI>,
+        output_names: impl IntoIterator<Item = SO>,
+    ) -> Result<Cover<I2, O2>, RelabelError>
+    where
+        I2: StringLabel,
+        O2: StringLabel,
+        SI: AsRef<str>,
+        SO: AsRef<str>,
+    {
+        self.relabel(
+            input_names.into_iter().map(|s| I2::from(s.as_ref())),
+            output_names.into_iter().map(|s| O2::from(s.as_ref())),
+        )
+    }
+
+    /// Give the **input** variables new string names, keeping the outputs as-is.
+    ///
+    /// A thin wrapper over [`relabel_inputs`](Self::relabel_inputs); see [`rename`](Self::rename).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name.
+    pub fn rename_inputs<I2, SI>(
+        self,
+        input_names: impl IntoIterator<Item = SI>,
+    ) -> Result<Cover<I2, O>, RelabelError>
+    where
+        I2: StringLabel,
+        SI: AsRef<str>,
+    {
+        self.relabel_inputs(input_names.into_iter().map(|s| I2::from(s.as_ref())))
+    }
+
+    /// Give the **output** variables new string names, keeping the inputs as-is.
+    ///
+    /// A thin wrapper over [`relabel_outputs`](Self::relabel_outputs); see [`rename`](Self::rename).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name.
+    pub fn rename_outputs<O2, SO>(
+        self,
+        output_names: impl IntoIterator<Item = SO>,
+    ) -> Result<Cover<I, O2>, RelabelError>
+    where
+        O2: StringLabel,
+        SO: AsRef<str>,
+    {
+        self.relabel_outputs(output_names.into_iter().map(|s| O2::from(s.as_ref())))
+    }
+
     /// Drop all labels, yielding a positional [`Cover<Anonymous, Anonymous>`](Cover) (explicit anonymisation).
     ///
     /// Infallible: the anonymous tables are built at this cover's own arities, so they always match.
     #[must_use = "anonymize returns a new cover; the original is consumed"]
     pub fn anonymize(self) -> Cover<Anonymous, Anonymous> {
         let (ni, no) = (self.num_inputs(), self.num_outputs());
-        self.relabel(
+        self.relabel_tables(
             Symbols::<Anonymous>::anonymous(ni),
             Symbols::<Anonymous>::anonymous(no),
         )

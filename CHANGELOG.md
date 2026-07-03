@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NamedLabel`, a sealed marker trait for labels whose alignment identity is a real name/value
   (as opposed to `Anonymous`'s positional identity). Every `Ord + Eq + Hash + Clone` label qualifies
   via a single blanket impl.
+- `Cover::rename`/`rename_inputs`/`rename_outputs`, string-name forms of the `relabel*` methods:
+  they take `&str`-like names (`impl IntoIterator<Item: AsRef<str>>`) and convert each into the
+  chosen `StringLabel` target type. Type-changing conversions to non-string labels stay on
+  `relabel*`.
 - `Minterm::project_to`, `project_to_labels`, and `project_to_arity`, `Arc`-free faces for
   structurally re-homing a minterm onto a target variable set. Variables shared by the minterm and
   the target keep their value (aligned by identity, reordered as needed), target-only variables come
@@ -36,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `Cover::with_labels` now returns `Result<Self, DuplicateLabel>` and takes
   `impl IntoIterator` label lists. Existing slice-reference call sites (e.g. `&["a", "b"]`) continue
   to compile unchanged.
+- **Breaking:** `Cover::relabel`/`relabel_inputs`/`relabel_outputs` now take label iterators
+  (`impl IntoIterator<Item = L>`) rather than `Arc<Symbols>`, and return `RelabelError` — either an
+  arity mismatch (`RelabelError::Arity`, wrapping `ArityMismatch`) or a duplicate label
+  (`RelabelError::Duplicate`, wrapping `DuplicateLabel`).
 - `Cover::over_vars`, `Bdd::cover_over`, and `Bdd::cover_over_fr` now take
   `impl IntoIterator<Item = S>` instead of `&[S]` and deduplicate a repeated variable — the argument
   names a variable *set*, so `["a", "b", "a"]` and `["a", "b"]` behave identically. These remain

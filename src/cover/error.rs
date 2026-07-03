@@ -140,12 +140,12 @@ impl From<ToExprError> for io::Error {
     }
 }
 
-/// A new symbol table's arity did not match the cover it was being applied to.
+/// A replacement label list's arity did not match the cover it was being applied to.
 ///
-/// Returned by [`Cover::relabel`](crate::Cover::relabel),
+/// Carried as the [`RelabelError::Arity`] payload of [`Cover::relabel`](crate::Cover::relabel),
 /// [`relabel_inputs`](crate::Cover::relabel_inputs) and
 /// [`relabel_outputs`](crate::Cover::relabel_outputs): re-labelling is position-for-position, so the
-/// replacement table must have exactly as many labels as the side it replaces.
+/// replacement label list must have exactly as many labels as the side it replaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ArityMismatch {
@@ -186,6 +186,58 @@ impl std::error::Error for ArityMismatch {}
 
 impl From<ArityMismatch> for io::Error {
     fn from(err: ArityMismatch) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
+/// A relabelling could not be applied to a cover.
+///
+/// Returned by [`Cover::relabel`](crate::Cover::relabel),
+/// [`relabel_inputs`](crate::Cover::relabel_inputs), [`relabel_outputs`](crate::Cover::relabel_outputs)
+/// and their string [`rename`](crate::Cover::rename) forms. Relabelling is position-for-position, so a
+/// replacement label list must have the same arity as the side it replaces ([`Arity`](Self::Arity)) and
+/// its labels must be distinct ([`Duplicate`](Self::Duplicate)); arity is checked first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RelabelError {
+    /// A replacement label list's arity did not match the cover.
+    Arity(ArityMismatch),
+    /// A replacement label list repeated a label.
+    Duplicate(DuplicateLabel),
+}
+
+impl fmt::Display for RelabelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RelabelError::Arity(e) => write!(f, "{}", e),
+            RelabelError::Duplicate(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for RelabelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RelabelError::Arity(e) => Some(e),
+            RelabelError::Duplicate(e) => Some(e),
+        }
+    }
+}
+
+impl From<ArityMismatch> for RelabelError {
+    fn from(err: ArityMismatch) -> Self {
+        RelabelError::Arity(err)
+    }
+}
+
+impl From<DuplicateLabel> for RelabelError {
+    fn from(err: DuplicateLabel) -> Self {
+        RelabelError::Duplicate(err)
+    }
+}
+
+impl From<RelabelError> for io::Error {
+    fn from(err: RelabelError) -> Self {
         io::Error::new(io::ErrorKind::InvalidInput, err)
     }
 }
