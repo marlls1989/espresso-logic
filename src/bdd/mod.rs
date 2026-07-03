@@ -30,6 +30,8 @@
 //!   last also available as the named [`Bdd::complement`] / [`Bdd::not`] aliases — plus [`Bdd::ite`].
 //! - Shannon cofactor / quantification: [`Bdd::restrict`] / [`Bdd::cofactor`], [`Bdd::forall`],
 //!   [`Bdd::exists`].
+//! - Composition: [`Bdd::compose`] (substitute a function for a variable) and
+//!   [`Bdd::compose_map`] (simultaneous multi-variable substitution).
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].
 //! - Materialisation: [`Bdd::to_cubes`] (a single-output sum-of-products cover), [`Bdd::maximize`]
 //!   (the fully-expanded maximal cover over an explicit, widenable variable set), and
