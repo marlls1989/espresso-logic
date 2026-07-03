@@ -985,6 +985,26 @@ impl<I, O> Cover<I, O> {
         &self.output_symbols
     }
 
+    /// Get input variable labels.
+    ///
+    /// Returns the input labels (one per input position), in index order. Available for every label
+    /// type — for a positional ([`Anonymous`]) cover these are the zero-sized `Anonymous` placeholders,
+    /// not names.
+    #[must_use]
+    pub fn input_labels(&self) -> &[I] {
+        self.input_symbols.labels()
+    }
+
+    /// Get output variable labels.
+    ///
+    /// Returns the output labels (one per output position), in index order. Available for every label
+    /// type — for a positional ([`Anonymous`]) cover these are the zero-sized `Anonymous` placeholders,
+    /// not names.
+    #[must_use]
+    pub fn output_labels(&self) -> &[O] {
+        self.output_symbols.labels()
+    }
+
     /// Iterate over cubes as `Cube` references
     ///
     /// Returns an iterator over `&Cube` objects.
@@ -1378,28 +1398,6 @@ impl<I: Label, O: ReconcilableLabel> Cover<I, O> {
         let (new_output, a_map, b_map) =
             append_outputs(&self.output_symbols, &other.output_symbols);
         *self = assemble(self, other, new_output, a_map, b_map);
-    }
-}
-
-impl<I: AsRef<str>, O> Cover<I, O> {
-    /// Get input variable labels.
-    ///
-    /// Returns the input labels (one per input position). Available for any string-like input label
-    /// type whatever the output label type is; a positional `Cover<Anonymous, _>` has no such method.
-    #[must_use]
-    pub fn input_labels(&self) -> &[I] {
-        self.input_symbols.labels()
-    }
-}
-
-impl<I, O: AsRef<str>> Cover<I, O> {
-    /// Get output variable labels.
-    ///
-    /// Returns the output labels (one per output position). Available for any string-like output label
-    /// type whatever the input label type is; a positional `Cover<_, Anonymous>` has no such method.
-    #[must_use]
-    pub fn output_labels(&self) -> &[O] {
-        self.output_symbols.labels()
     }
 }
 

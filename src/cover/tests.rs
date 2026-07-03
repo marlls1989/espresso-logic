@@ -2729,6 +2729,14 @@ fn cover_labeled_rejects_duplicate_input() {
     assert_eq!(err, DuplicateLabel::Input { index: 2 });
 }
 
+/// `input_labels`/`output_labels` are available for every label type, not just string-like ones.
+#[test]
+fn input_output_labels_work_for_non_string_labels() {
+    let cover = Cover::<u32, u32>::labeled(CoverType::F, [1, 2, 3], [10]).unwrap();
+    assert_eq!(cover.input_labels(), &[1, 2, 3]);
+    assert_eq!(cover.output_labels(), &[10]);
+}
+
 /// `vars` names a variable *set*: a repeated name is deduplicated (first occurrence kept), so the
 /// projection is unaffected and the header only grows by the distinct names.
 #[test]
