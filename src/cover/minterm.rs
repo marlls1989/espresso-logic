@@ -366,8 +366,10 @@ impl<L> Minterm<L> {
 
     /// Disjointness of two cubes defined over the **same header** (shared [`Symbols`]), computed purely
     /// on the packed words so it needs no [`Label`] bound. Two cubes are disjoint when some variable's
-    /// fields don't intersect (the intersection is the empty field `00`). Used by the orthogonality
-    /// check in the cover minimisation pipeline, where every cube shares the cover's header.
+    /// fields don't intersect (the intersection is the empty field `00`), i.e. their intersection as
+    /// sets is ∅. A vacuous cube (one already carrying an empty `?` field) is disjoint from everything,
+    /// including itself, since ∅ ∩ X = ∅ for every X. Used by the orthogonality check in the cover
+    /// minimisation pipeline, where every cube shares the cover's header.
     #[must_use]
     pub(crate) fn is_disjoint_same_header(&self, other: &Self) -> bool {
         debug_assert!(
@@ -984,26 +986,40 @@ impl<L: Label> Minterm<L> {
         }
     }
 
-    /// Whether every variable's value-set in `self` is contained in `other`'s.
+    /// Whether every variable's value-set in `self` is contained in `other`'s, read as set
+    /// containment: `self` ⊆ `other`.
     ///
     /// `self` is a subset of `other` when `other` covers every position fixed in `self`; a
     /// don't-care in `other` covers any fixed value in `self`, but a fixed value in `other` cannot
-    /// cover a don't-care in `self`.
+    /// cover a don't-care in `self`. A vacuous `self` (an empty `?` field, denoting ∅) is a subset
+    /// of every `other`, since ∅ ⊆ X for all X; a vacuous `other` is only a superset of a `self`
+    /// that is itself vacuous, since X ⊆ ∅ only when X = ∅.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::Minterm;
+    /// use espresso_logic::{InputField, Minterm};
     ///
     /// let minterm1 = Minterm::anonymous(&[Some(true), Some(false), None]);
     /// let minterm2 = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
     ///
     /// assert!(!minterm1.is_subset_of(&minterm2));
     /// assert!(minterm2.is_subset_of(&minterm1));
+    ///
+    /// let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// empty.set_field_at(0, InputField::Empty).unwrap();
+    /// assert!(empty.is_subset_of(&minterm1)); // ∅ ⊆ X for every X
+    /// assert!(!minterm1.is_subset_of(&empty)); // X ⊆ ∅ only if X = ∅
     /// ```
     #[must_use]
     pub fn is_subset_of(&self, other: &Self) -> bool {
         // self ⊆ other  ⟺  every allowed bit of self is allowed in other  ⟺  self & !other == 0.
+        if self.is_vacuous() {
+            return true; // ∅ ⊆ X for all X
+        }
+        if other.is_vacuous() {
+            return false; // X ⊆ ∅ only if X = ∅, already handled by the guard above
+        }
         if self.symbols == other.symbols {
             self.values
                 .iter()
@@ -1014,7 +1030,11 @@ impl<L: Label> Minterm<L> {
         }
     }
 
-    /// Whether `self` covers every position fixed in `other`. The dual of [`is_subset_of`](Self::is_subset_of).
+    /// Whether `self` covers every position fixed in `other`, read as set containment: `self` ⊇
+    /// `other`. The dual of [`is_subset_of`](Self::is_subset_of).
+    ///
+    /// A vacuous `other` is a subset of every `self` (∅ ⊆ X for all X), so `self` is always its
+    /// superset; a vacuous `self` is only a superset of an `other` that is itself vacuous.
     ///
     /// # Examples
     ///
@@ -1032,14 +1052,17 @@ impl<L: Label> Minterm<L> {
         other.is_subset_of(self)
     }
 
-    /// Whether `self` and `other` share no common assignment (their intersection is empty).
+    /// Whether `self` and `other` share no common assignment, i.e. their intersection is the
+    /// empty set.
     ///
-    /// They are disjoint when some variable is fixed to opposite values in the two minterms.
+    /// They are disjoint when some variable is fixed to opposite values in the two minterms. A
+    /// vacuous minterm (an empty `?` field, denoting ∅) is disjoint from everything, including
+    /// itself: ∅ ∩ X = ∅ for every X, and in particular ∅ ∩ ∅ = ∅.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::Minterm;
+    /// use espresso_logic::{InputField, Minterm};
     ///
     /// let minterm1 = Minterm::anonymous(&[Some(true),  Some(false), None]);
     /// let minterm2 = Minterm::anonymous(&[Some(false), Some(true),  Some(false)]);
@@ -1047,6 +1070,10 @@ impl<L: Label> Minterm<L> {
     ///
     /// assert!(minterm1.is_disjoint_with(&minterm2));
     /// assert!(!minterm1.is_disjoint_with(&minterm3));
+    ///
+    /// let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// empty.set_field_at(0, InputField::Empty).unwrap();
+    /// assert!(empty.is_disjoint_with(&empty)); // ∅ is disjoint from itself
     /// ```
     #[must_use]
     pub fn is_disjoint_with(&self, other: &Self) -> bool {
@@ -2024,6 +2051,146 @@ mod tests {
             [vacuous_1q0(), vacuous_0q1(), qq_dc].into_iter().collect();
         assert_eq!(set.len(), 1);
     }
+
+    // --- subset and disjointness with empty ----------------------------------------------------
+
+    /// ∅ ⊆ x for every x, but x ⊆ ∅ only if x = ∅: a vacuous minterm is a subset of a non-vacuous
+    /// one, never the other way round.
+    #[test]
+    fn vacuous_is_subset_of_everything_but_not_superset() {
+        let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+        empty.set_field_at(0, InputField::Empty).unwrap();
+        let x = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
+
+        assert!(empty.is_subset_of(&x));
+        assert!(!x.is_subset_of(&empty));
+    }
+
+    /// ∅ ⊆ ∅ holds — two different vacuous bit-patterns still satisfy the containment.
+    #[test]
+    fn vacuous_is_subset_of_itself() {
+        assert!(vacuous_1q0().is_subset_of(&vacuous_0q1()));
+        assert!(vacuous_0q1().is_subset_of(&vacuous_1q0()));
+    }
+
+    /// Multi-field check: `1?0 ⊆ 011` holds because the left side is vacuous (denotes ∅), not
+    /// because of any per-field containment (field 0 disagrees: `1` vs `0`).
+    #[test]
+    fn vacuous_multi_field_lhs_is_subset_regardless_of_fields() {
+        let lhs = vacuous_1q0(); // 1?0
+        let rhs = Minterm::anonymous(&[Some(false), Some(true), Some(true)]); // 011
+        assert!(lhs.is_subset_of(&rhs));
+    }
+
+    /// `?11 ⊆ 1?0` holds because the left side is vacuous, again despite disagreeing fields.
+    #[test]
+    fn vacuous_multi_field_lhs_qq11_is_subset_of_1q0() {
+        let mut lhs = Minterm::anonymous(&[None, Some(true), Some(true)]); // ?11
+        lhs.set_field_at(0, InputField::Empty).unwrap();
+        let rhs = vacuous_1q0(); // 1?0
+        assert!(lhs.is_subset_of(&rhs));
+    }
+
+    /// A vacuous minterm is disjoint from itself: ∅ ∩ ∅ = ∅.
+    #[test]
+    fn vacuous_is_disjoint_with_itself() {
+        let m = vacuous_1q0();
+        assert!(m.is_disjoint_with(&m));
+    }
+
+    /// The lattice law `a == b ⟺ a.is_subset_of(&b) && b.is_subset_of(&a)`, verified exhaustively
+    /// over a 1-variable sweep across all four field states — this exercises the canonical-∅ `Eq`
+    /// against the subset check built on top of it.
+    #[test]
+    fn subset_both_ways_iff_eq_over_one_variable_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x in &states {
+            for &y in &states {
+                let mut a = Minterm::anonymous(&[None]);
+                a.set_field_at(0, x).unwrap();
+                let mut b = Minterm::anonymous(&[None]);
+                b.set_field_at(0, y).unwrap();
+                assert_eq!(
+                    a.is_subset_of(&b) && b.is_subset_of(&a),
+                    a == b,
+                    "subset-both-ways/eq disagree for {x:?} vs {y:?}"
+                );
+            }
+        }
+    }
+
+    /// The same lattice law over a 2-variable sweep (16×16 pairs), so the check also exercises
+    /// multi-word containment across more than one field.
+    #[test]
+    fn subset_both_ways_iff_eq_over_two_variable_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x0 in &states {
+            for &x1 in &states {
+                for &y0 in &states {
+                    for &y1 in &states {
+                        let mut a = Minterm::anonymous(&[None, None]);
+                        a.set_field_at(0, x0).unwrap();
+                        a.set_field_at(1, x1).unwrap();
+                        let mut b = Minterm::anonymous(&[None, None]);
+                        b.set_field_at(0, y0).unwrap();
+                        b.set_field_at(1, y1).unwrap();
+                        assert_eq!(
+                            a.is_subset_of(&b) && b.is_subset_of(&a),
+                            a == b,
+                            "subset-both-ways/eq disagree for ({x0:?},{x1:?}) vs ({y0:?},{y1:?})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Same-header (word-wise) and differing-header (merge-join) containment must agree when a `?`
+    /// operand is involved, on both sides of the comparison. Mirrors
+    /// [`merge_path_matches_shared_path`], but with variable `b` set to the empty literal on the
+    /// `a` side: `a_perm`/`b_perm` use *different* label orders from each other (not just from the
+    /// shared header) so the comparison genuinely exercises the merge-join path rather than
+    /// happening to hit the word-wise one via structurally-equal permuted headers.
+    #[test]
+    fn empty_subset_fast_path_matches_merge_join_path() {
+        let shared = syms(&["a", "b", "c"]);
+        let mut a_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), None, Some(false)]);
+        a_shared.set_field_at(1, InputField::Empty).unwrap();
+        let b_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(false), Some(false)]);
+        // a = {a:1, b:?, c:0}; b = {a:1, b:0, c:0} expressed over permuted headers.
+        let mut a_perm =
+            Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(false), Some(true), None]);
+        a_perm.set_field_at(2, InputField::Empty).unwrap();
+        let b_perm = Minterm::from_symbols(
+            syms(&["b", "c", "a"]),
+            [Some(false), Some(false), Some(true)],
+        );
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+        assert_eq!(
+            a_shared.is_subset_of(&b_shared),
+            a_perm.is_subset_of(&b_perm)
+        );
+        assert_eq!(
+            b_shared.is_subset_of(&a_shared),
+            b_perm.is_subset_of(&a_perm)
+        );
+    }
+
+    // --- end subset and disjointness with empty ------------------------------------------------
 
     // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
 

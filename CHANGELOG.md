@@ -103,6 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `O: Clone` — every concrete cover already satisfies `O: Label`, since building one requires it.
 - `Minterm::hamming_distance`/`disagreement` now use Espresso's cube distance — a `?` field counts as
   a disagreement — restoring `is_disjoint_with ⟺ distance > 0`.
+- `Minterm::is_subset_of` now follows the empty-cube reading: `∅ ⊆ X` for every `X`, and `X ⊆ ∅` only
+  if `X` is itself vacuous. `is_disjoint_with` already read this way unchanged — a vacuous cube is
+  disjoint from everything, including itself.
 
 ### Fixed
 
