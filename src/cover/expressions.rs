@@ -8,7 +8,7 @@ use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
-use super::symbols::Symbols;
+use super::symbols::{identity_union, Symbols};
 use super::Cover;
 use crate::expression::BoolExpr;
 use crate::Symbol;
@@ -54,7 +54,7 @@ impl Cover<Symbol, Symbol> {
         // onto the grown header (new inputs = don't-care). Reuse the shared identity-union helper
         // rather than re-implementing union-by-name (for `Symbol`, identity *is* the name).
         if let Some(expr_syms) = cubes.first().map(|m| m.symbols()) {
-            let (new_syms, _, _) = super::identity_union(&self.input_symbols, expr_syms);
+            let (new_syms, _, _) = identity_union(&self.input_symbols, expr_syms);
             if new_syms.arity() > self.num_inputs() {
                 for cube in &mut self.cubes {
                     cube.inputs = cube.inputs.project_onto(&new_syms);

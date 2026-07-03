@@ -15,7 +15,7 @@
 use super::error::DuplicateSymbol;
 use super::label::{Anonymous, Label};
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -242,4 +242,43 @@ impl<L: Label> Symbols<L> {
             .ok()
             .map(|k| self.sorted[k])
     }
+}
+
+/// Union two headers by variable identity: `a`'s labels, then each of `b`'s labels whose identity is
+/// new. Returns the combined header plus each side's old→new position map — `a` maps to itself
+/// (`0..a_no`), and `b`'s label reuses the position of a matching identity (in `a` or an earlier `b`
+/// column) or extends the header. Alignment is by name when labelled, by position when anonymous
+/// (`Anonymous`'s identity is its index).
+///
+/// O(n + m): membership is probed through a `HashMap` keyed on [`Identity`](Label::Identity) (which is
+/// `Hash`), not the former per-label linear scan of the growing header.
+pub(crate) fn identity_union<L: Label>(
+    a: &Symbols<L>,
+    b: &Symbols<L>,
+) -> (Arc<Symbols<L>>, Vec<usize>, Vec<usize>) {
+    let a_no = a.arity();
+    let mut header: Vec<L> = a.labels().to_vec();
+    let mut pos_by_id: HashMap<L::Identity, usize> = a
+        .labels()
+        .iter()
+        .enumerate()
+        .map(|(k, la)| (la.identity(k), k))
+        .collect();
+    let b_map = b
+        .labels()
+        .iter()
+        .enumerate()
+        .map(|(j, lb)| {
+            *pos_by_id.entry(lb.identity(j)).or_insert_with(|| {
+                header.push(lb.clone());
+                header.len() - 1
+            })
+        })
+        .collect();
+    (
+        // The union header is deduplicated by identity above (`pos_by_id`), so it is distinct.
+        Symbols::new(header.into()).expect("identity-union header is distinct by construction"),
+        (0..a_no).collect(),
+        b_map,
+    )
 }

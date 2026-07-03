@@ -128,7 +128,9 @@ pub use output_set::OutputSet;
 // (`espresso`, `bdd`) reach it through this path since the `symbols` module itself is private.
 pub(crate) use symbols::Symbols;
 
-use std::collections::{HashMap, HashSet};
+use symbols::identity_union;
+
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Represents the type of cover (F, FD, FR, or FDR)
@@ -1300,45 +1302,6 @@ fn identity_position<L: Label>(target: &Symbols<L>, source: &Symbols<L>, pos: us
     target
         .position_of_identity(&id)
         .expect("target header contains the source column's identity") as usize
-}
-
-/// Union two headers by variable identity: `a`'s labels, then each of `b`'s labels whose identity is
-/// new. Returns the combined header plus each side's old→new position map — `a` maps to itself
-/// (`0..a_no`), and `b`'s label reuses the position of a matching identity (in `a` or an earlier `b`
-/// column) or extends the header. Alignment is by name when labelled, by position when anonymous
-/// (`Anonymous`'s identity is its index).
-///
-/// O(n + m): membership is probed through a `HashMap` keyed on [`Identity`](Label::Identity) (which is
-/// `Hash`), not the former per-label linear scan of the growing header.
-fn identity_union<L: Label>(
-    a: &Symbols<L>,
-    b: &Symbols<L>,
-) -> (Arc<Symbols<L>>, Vec<usize>, Vec<usize>) {
-    let a_no = a.arity();
-    let mut header: Vec<L> = a.labels().to_vec();
-    let mut pos_by_id: HashMap<L::Identity, usize> = a
-        .labels()
-        .iter()
-        .enumerate()
-        .map(|(k, la)| (la.identity(k), k))
-        .collect();
-    let b_map = b
-        .labels()
-        .iter()
-        .enumerate()
-        .map(|(j, lb)| {
-            *pos_by_id.entry(lb.identity(j)).or_insert_with(|| {
-                header.push(lb.clone());
-                header.len() - 1
-            })
-        })
-        .collect();
-    (
-        // The union header is deduplicated by identity above (`pos_by_id`), so it is distinct.
-        Symbols::new(header.into()).expect("identity-union header is distinct by construction"),
-        (0..a_no).collect(),
-        b_map,
-    )
 }
 
 /// The union **input** header of two covers, aligned by identity (the header from [`identity_union`];
