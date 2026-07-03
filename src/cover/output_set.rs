@@ -187,34 +187,141 @@ impl<O> OutputSet<O> {
     }
 }
 
-/// Two output sets are equal when they have the same number of outputs and the same membership bits
-/// (positional — within a cover all cubes share one output `Symbols`, so this matches by column).
-impl<O> PartialEq for OutputSet<O> {
+impl<O: Label> OutputSet<O> {
+    /// Merge-join the two output sets' membership flags, aligned by variable identity in sorted-label
+    /// order.
+    ///
+    /// Yields `(self_asserted, other_asserted)` per output of the union; an output absent from one side
+    /// reads as `false` (unasserted) — the boolean analogue of the don't-care padding
+    /// [`Minterm`](super::Minterm) uses. O(n+m) over the two sorted label sequences — no union set, no
+    /// widening. Callers that share a symbol table take the faster word-wise path directly instead of
+    /// this.
+    fn merged_bits<'a>(&'a self, other: &'a Self) -> MergedBits<'a, O> {
+        MergedBits {
+            a: self,
+            b: other,
+            sa: self.symbols.sorted_order(),
+            sb: other.symbols.sorted_order(),
+            i: 0,
+            j: 0,
+        }
+    }
+}
+
+/// Two output sets are equal when they assert the **same set of output labels**, aligned by variable
+/// [identity](crate::Label) rather than by column position. A shared header (pointer- or
+/// identity-equal `Symbols`) takes the word-wise fast path; otherwise the two are merge-joined over
+/// the union of their labels, an output absent from one side reading as unasserted (`0`). So an output
+/// set equals a longer one that differs only by unasserted outputs (e.g. `{f:1}` equals `{f:1, g:0}`,
+/// but not `{f:1, g:1}`). Within a cover every cube shares one output `Symbols`, so this reduces to
+/// the by-column comparison there.
+impl<O: Label> PartialEq for OutputSet<O> {
     fn eq(&self, other: &Self) -> bool {
-        self.num_vars() == other.num_vars() && self.bits == other.bits
+        if self.symbols == other.symbols {
+            // Same layout: equal membership packs to identical words.
+            self.bits == other.bits
+        } else {
+            self.merged_bits(other).all(|(a, b)| a == b)
+        }
     }
 }
 
-impl<O> Eq for OutputSet<O> {}
+impl<O: Label> Eq for OutputSet<O> {}
 
-impl<O> Hash for OutputSet<O> {
+/// Hashes the same identity-aligned canonical sequence that [`Eq`]/[`Ord`] compare over, so
+/// `a == b` always implies `hash(a) == hash(b)`.
+///
+/// Equality aligns outputs by [`identity`](Label::identity), reading an absent output as unasserted
+/// (`0`), and is independent of physical word/position order. We therefore hash, in sorted-identity
+/// order, the identity of every output that **is** asserted — skipping the unasserted outputs that
+/// `Eq` treats as absent — then the count of asserted outputs, so a shorter set cannot collide with a
+/// longer one that asserts strictly more. The raw words, the `Arc` pointer and the arity that `Eq`
+/// ignores are deliberately left out, preserving the `Hash`/`Eq` contract.
+impl<O: Label> Hash for OutputSet<O> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.num_vars().hash(state);
-        self.bits.hash(state);
+        let labels = self.symbols.labels();
+        let mut len = 0usize;
+        for &pos in self.symbols.sorted_order() {
+            let pos = pos as usize;
+            if self.value_at(pos) {
+                // Walk sorted-identity order so the sequence is canonical regardless of header
+                // ordering; unasserted outputs are skipped to match `Eq`'s absent-equals-`0` rule.
+                labels[pos].identity(pos).hash(state);
+                len += 1;
+            }
+        }
+        len.hash(state);
     }
 }
 
-impl<O> PartialOrd for OutputSet<O> {
+impl<O: Label> PartialOrd for OutputSet<O> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<O> Ord for OutputSet<O> {
+/// Total order over the sorted union of output identities, an absent output reading as unasserted
+/// (`false < true`), independent of header ordering — so `OutputSet` keys a `BTreeSet`/`BTreeMap`
+/// consistently with the identity-based [`Eq`]. Computed by a single O(n+m) merge of the two sorted
+/// label sequences.
+impl<O: Label> Ord for OutputSet<O> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.num_vars()
-            .cmp(&other.num_vars())
-            .then_with(|| self.bits.cmp(&other.bits))
+        for (a, b) in self.merged_bits(other) {
+            match a.cmp(&b) {
+                Ordering::Equal => continue,
+                non_eq => return non_eq,
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+/// Merge-join iterator backing [`OutputSet::merged_bits`]; an output absent from one side reads as
+/// unasserted (`false`).
+struct MergedBits<'a, O> {
+    a: &'a OutputSet<O>,
+    b: &'a OutputSet<O>,
+    sa: &'a [u32],
+    sb: &'a [u32],
+    i: usize,
+    j: usize,
+}
+
+impl<O: Label> Iterator for MergedBits<'_, O> {
+    type Item = (bool, bool);
+
+    fn next(&mut self) -> Option<(bool, bool)> {
+        let la = self.a.symbols.labels();
+        let lb = self.b.symbols.labels();
+        match (self.sa.get(self.i), self.sb.get(self.j)) {
+            (Some(&ia), Some(&ib)) => match la[ia as usize]
+                .identity(ia as usize)
+                .cmp(&lb[ib as usize].identity(ib as usize))
+            {
+                Ordering::Less => {
+                    self.i += 1;
+                    Some((self.a.value_at(ia as usize), false))
+                }
+                Ordering::Greater => {
+                    self.j += 1;
+                    Some((false, self.b.value_at(ib as usize)))
+                }
+                Ordering::Equal => {
+                    self.i += 1;
+                    self.j += 1;
+                    Some((self.a.value_at(ia as usize), self.b.value_at(ib as usize)))
+                }
+            },
+            (Some(&ia), None) => {
+                self.i += 1;
+                Some((self.a.value_at(ia as usize), false))
+            }
+            (None, Some(&ib)) => {
+                self.j += 1;
+                Some((false, self.b.value_at(ib as usize)))
+            }
+            (None, None) => None,
+        }
     }
 }
 
@@ -499,8 +606,8 @@ impl<O: Label> OutputSet<O> {
     /// [`Minterm`](super::Minterm), whose don't-care state gives it three-valued operators. Outputs are
     /// aligned by variable [identity](crate::Label) via the identity union of the two headers; an output
     /// present in only one operand reads as `0` (unasserted) on the absent side, matching
-    /// [`value_at`](Self::value_at)/[`value_of`](Self::value_of). Only the operators are added here —
-    /// `OutputSet`'s [`Eq`] stays label-free and positional.
+    /// [`value_at`](Self::value_at)/[`value_of`](Self::value_of), and by the same identity alignment
+    /// that `OutputSet`'s [`Eq`] uses.
     ///
     /// # Examples
     ///
@@ -524,8 +631,8 @@ impl<O: Label> OutputSet<O> {
     /// [`Minterm`](super::Minterm), whose don't-care state gives it three-valued operators. Outputs are
     /// aligned by variable [identity](crate::Label) via the identity union of the two headers; an output
     /// present in only one operand reads as `0` (unasserted) on the absent side, matching
-    /// [`value_at`](Self::value_at)/[`value_of`](Self::value_of). Only the operators are added here —
-    /// `OutputSet`'s [`Eq`] stays label-free and positional.
+    /// [`value_at`](Self::value_at)/[`value_of`](Self::value_of), and by the same identity alignment
+    /// that `OutputSet`'s [`Eq`] uses.
     ///
     /// # Examples
     ///
@@ -549,8 +656,8 @@ impl<O: Label> OutputSet<O> {
     /// [`Minterm`](super::Minterm), whose don't-care state gives it three-valued operators. Outputs are
     /// aligned by variable [identity](crate::Label) via the identity union of the two headers; an output
     /// present in only one operand reads as `0` (unasserted) on the absent side, so XOR over the union
-    /// yields the symmetric difference (an output asserted in just one operand stays asserted). Only the
-    /// operators are added here — `OutputSet`'s [`Eq`] stays label-free and positional.
+    /// yields the symmetric difference (an output asserted in just one operand stays asserted), by the
+    /// same identity alignment that `OutputSet`'s [`Eq`] uses.
     ///
     /// # Examples
     ///
@@ -596,7 +703,7 @@ mod tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
 
-    fn hash_of(o: &OutputSet<Anonymous>) -> u64 {
+    fn hash_of<O: Label>(o: &OutputSet<O>) -> u64 {
         let mut h = DefaultHasher::new();
         o.hash(&mut h);
         h.finish()
@@ -638,16 +745,116 @@ mod tests {
     }
 
     #[test]
-    fn ord_breaks_ties_by_arity_then_bits() {
-        let one = OutputSet::<Anonymous>::anonymous(&[true]);
-        let two = OutputSet::<Anonymous>::anonymous(&[false, false]);
-        assert!(one < two, "fewer outputs orders first, regardless of bits");
-
-        // Same arity: ordered by the packed words. Bit 1 set (word value 2) > bit 0 set (value 1).
+    fn ord_runs_lexicographically_over_the_sorted_identity_union() {
+        // Ordering runs over the sorted union of positions with an absent output reading as unasserted
+        // (`false < true`), so it turns on the lowest position where the two differ, not on arity.
         let bit0 = OutputSet::<Anonymous>::anonymous(&[true, false]);
         let bit1 = OutputSet::<Anonymous>::anonymous(&[false, true]);
-        assert!(bit0 < bit1);
+        // Position 0 differs first: `bit0` asserts it, `bit1` does not, so `bit0` orders after `bit1`.
+        assert!(bit1 < bit0);
         assert_ne!(bit0, bit1);
+
+        // A shorter set equals a longer one that only adds unasserted outputs — they are `Equal`, not
+        // ordered by arity.
+        let short = OutputSet::<Anonymous>::anonymous(&[true]);
+        let padded = OutputSet::<Anonymous>::anonymous(&[true, false]);
+        assert_eq!(short.cmp(&padded), Ordering::Equal);
+        assert_eq!(short, padded);
+    }
+
+    #[test]
+    fn reordered_header_compares_and_hashes_equal() {
+        use crate::Symbol;
+
+        // The same outputs asserted identically, but the two headers list their labels in opposite
+        // order. Positional comparison would call these unequal; identity alignment must see through
+        // the reordering.
+        let a =
+            OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false), ("h", true)]).unwrap();
+        let b =
+            OutputSet::<Symbol>::with_labels(&[("h", true), ("g", false), ("f", true)]).unwrap();
+
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+    }
+
+    #[test]
+    fn absent_output_reads_as_unasserted_in_eq_and_hash() {
+        use crate::Symbol;
+
+        // `{f:1}` equals `{f:1, g:0}` — the extra output is unasserted, which is how an absent output
+        // reads. It does not equal `{f:1, g:1}`.
+        let one = OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap();
+        let padded = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false)]).unwrap();
+        let asserted = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", true)]).unwrap();
+
+        assert_eq!(one, padded);
+        assert_eq!(hash_of(&one), hash_of(&padded));
+        assert_ne!(one, asserted);
+    }
+
+    #[test]
+    fn anonymous_alignment_reduces_to_positional() {
+        // `Anonymous`'s identity is its position, so identity alignment gives the same answers as the
+        // old positional comparison for equal-arity operands.
+        let a = OutputSet::<Anonymous>::anonymous(&[true, false, true]);
+        let b = OutputSet::<Anonymous>::anonymous(&[true, false, true]);
+        let c = OutputSet::<Anonymous>::anonymous(&[true, true, true]);
+
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn differing_header_operators_are_commutative_under_eq() {
+        use crate::Symbol;
+
+        // Partially overlapping headers (`g` shared, `f`/`h` one-sided). The identity-based `Eq` now
+        // sees the two column orderings `identity_union` produces as equal, so commutativity holds
+        // under plain `==`.
+        let a = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", true)]).unwrap();
+        let b = OutputSet::<Symbol>::with_labels(&[("g", true), ("h", true)]).unwrap();
+
+        assert_eq!(&a & &b, &b & &a);
+        assert_eq!(&a | &b, &b | &a);
+        assert_eq!(&a ^ &b, &b ^ &a);
+    }
+
+    #[test]
+    fn ord_is_a_total_order_usable_as_a_btreeset_key() {
+        use crate::Symbol;
+        use std::collections::BTreeSet;
+
+        // Two headers listing the same asserted labels in different orders are equal by identity, so a
+        // `BTreeSet` deduplicates them to a single element.
+        let a = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false)]).unwrap();
+        let b = OutputSet::<Symbol>::with_labels(&[("g", false), ("f", true)]).unwrap();
+        let c = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", true)]).unwrap();
+
+        let mut set = BTreeSet::new();
+        set.insert(a);
+        set.insert(b); // equal-by-identity to `a`, so dedupes away
+        set.insert(c);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn in_cover_cube_outputs_compare_unchanged() {
+        use crate::{Cover, CoverType, Cube, CubeType};
+
+        // Within a cover every cube shares the one output header, so the identity path lands on the
+        // word-wise fast path and behaves exactly as before. Two cubes asserting the same outputs
+        // compare equal; a differing one does not.
+        let cubes = [
+            Cube::anonymous(&[Some(true), None], &[true, false], CubeType::F),
+            Cube::anonymous(&[Some(false), None], &[true, false], CubeType::F),
+            Cube::anonymous(&[None, Some(true)], &[false, true], CubeType::F),
+        ];
+        let cover = Cover::from_cubes(CoverType::F, cubes.iter().cloned());
+        let rows: Vec<_> = cover.cubes().collect();
+        assert_eq!(rows[0].outputs(), rows[1].outputs());
+        assert_ne!(rows[0].outputs(), rows[2].outputs());
     }
 
     #[test]
@@ -858,16 +1065,13 @@ mod tests {
         assert_eq!(a.xor(&b), b.xor(&a));
 
         // Differing headers: `identity_union` builds the union self-first, so `x.op(y)` and `y.op(x)`
-        // lay their columns out in different orders. The operators are therefore commutative by
-        // variable identity (each output reads the same on both sides via `value_of`), but NOT under
-        // `OutputSet`'s positional `Eq` — see the module note on `and`/`or`/`xor`.
+        // lay their columns out in different orders. Now that `Eq` aligns by output identity, the
+        // operators are commutative under plain `==` regardless of that column order.
         let c = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", true)]).unwrap();
         let d = OutputSet::<Symbol>::with_labels(&[("g", false), ("h", true)]).unwrap();
-        for label in ["f", "g", "h"] {
-            assert_eq!(c.and(&d).value_of(label), d.and(&c).value_of(label));
-            assert_eq!(c.or(&d).value_of(label), d.or(&c).value_of(label));
-            assert_eq!(c.xor(&d).value_of(label), d.xor(&c).value_of(label));
-        }
+        assert_eq!(c.and(&d), d.and(&c));
+        assert_eq!(c.or(&d), d.or(&c));
+        assert_eq!(c.xor(&d), d.xor(&c));
     }
 
     #[test]

@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `OutputSet` equality, ordering, and hashing now align by output-label identity (like `Minterm`), so
+  output sets that assert the same labels compare equal regardless of column order; previously they
+  were compared positionally, which could report two logically-equal sets as unequal once their
+  headers differed.
 - User labels that repeat an identity no longer silently collapse two columns onto one and drop a
   value. The labelled cube/cover constructors reject a repeated label with `DuplicateLabel`, while the
   variable-set operations (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`)

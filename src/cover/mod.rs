@@ -434,7 +434,11 @@ impl<I: Label, O: Label> Cover<I, O> {
     }
 }
 
-impl<I: Label, O: Clone> Cover<I, O> {
+// `O: Label` (rather than the weaker `O: Clone`) so `maximize` can deduplicate cubes through a
+// `HashSet<Cube<I, O>>`: `Cube`'s `Eq`/`Hash` now compare output sets by label identity, which needs
+// `O: Label`. Every constructible cover already has `O: Label` (that is required to build one), so this
+// narrows nothing reachable.
+impl<I: Label, O: Label> Cover<I, O> {
     /// Expand every cube into its fully-assigned minterms over the cover's **own** input header.
     ///
     /// The inverse of minimisation ("maximise"): each cube's input pattern is expanded so that every
@@ -544,7 +548,9 @@ impl<I: Label, O: Clone> Cover<I, O> {
     }
 }
 
-impl<I: StringLabel, O: Clone> Cover<I, O> {
+// `O: Label` (not just `O: Clone`): `over_vars` defers to `over_symbols`, which now requires it (see
+// the `maximize` block). No reachable cover loses this method — building any cover already needs `O: Label`.
+impl<I: StringLabel, O: Label> Cover<I, O> {
     /// Re-base this cover onto exactly the variables named in `vars`, universally projecting away any
     /// variable it drops.
     ///
@@ -589,7 +595,9 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     }
 }
 
-impl<I: NamedLabel, O: Clone> Cover<I, O> {
+// `O: Label` (not just `O: Clone`): `over_labels` defers to `over_symbols`, which now requires it (see
+// the `maximize` block). No reachable cover loses this method — building any cover already needs `O: Label`.
+impl<I: NamedLabel, O: Label> Cover<I, O> {
     /// Re-base this cover onto exactly the variables in `vars` (given as label *values*), universally
     /// projecting away any variable it drops.
     ///
