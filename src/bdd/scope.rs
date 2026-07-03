@@ -152,6 +152,31 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     pub fn complement(self) -> Self {
         Self::from_root(self.cell, super::encoding::not(self.cell, self.root))
     }
+
+    /// Substitute `g` for the variable `var` in `self`: `self[var := g]`. A name that is **not** a
+    /// variable of this function leaves it unchanged (a no-op).
+    #[must_use]
+    pub fn compose<S: AsRef<str>>(self, var: S, g: Self) -> Self {
+        Self::from_root(
+            self.cell,
+            super::encoding::compose(self.cell, self.root, var.as_ref(), g.root),
+        )
+    }
+
+    /// Simultaneous substitution: `self[v1 := g1, v2 := g2, ...]` for each `(name, g)` entry. Names not
+    /// found among `self`'s variables are dropped; a repeated name takes its last entry. All
+    /// substitutions are applied at once, not sequentially, so this differs from chaining `compose`.
+    #[must_use]
+    pub fn compose_map<S: AsRef<str>>(self, map: impl IntoIterator<Item = (S, Self)>) -> Self {
+        Self::from_root(
+            self.cell,
+            super::encoding::compose_map(
+                self.cell,
+                self.root,
+                map.into_iter().map(|(name, g)| (name, g.root)),
+            ),
+        )
+    }
 }
 
 impl<B: Brand, C: ManagerCell> BitAnd for ScopedBdd<'_, B, C> {
