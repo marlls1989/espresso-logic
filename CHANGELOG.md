@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Minterm` now treats the empty literal `?` as the empty cube: equality, ordering and hashing
   compare by denoted set, so all vacuous minterms are equal and sort after non-vacuous ones.
+  `Minterm::hamming_distance`/`disagreement` follow the same reading, now using Espresso's cube
+  distance — a `?` field counts as a disagreement — restoring `is_disjoint_with ⟺ distance > 0`.
+  `Minterm::is_subset_of` follows it too: `∅ ⊆ X` for every `X`, and `X ⊆ ∅` only if `X` is itself
+  vacuous; `is_disjoint_with` already read this way unchanged — a vacuous cube is disjoint from
+  everything, including itself.
 - **Breaking:** `Symbols` and the `Arc<Symbols>`-taking methods are no longer part of the public API.
   `Symbols` itself, `Minterm::from_symbols`/`symbols`/`project_onto`/`expand_over`,
   `OutputSet::symbols`, and the `DuplicateSymbol` error are now crate-internal. Construct minterms and
@@ -101,11 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consequence of `OutputSet`/`Cube` equality now aligning by label identity: deduplicating expanded
   cubes needs `Cube: Eq + Hash`, which now needs `O: Label`. This affects only generic code bounded
   `O: Clone` — every concrete cover already satisfies `O: Label`, since building one requires it.
-- `Minterm::hamming_distance`/`disagreement` now use Espresso's cube distance — a `?` field counts as
-  a disagreement — restoring `is_disjoint_with ⟺ distance > 0`.
-- `Minterm::is_subset_of` now follows the empty-cube reading: `∅ ⊆ X` for every `X`, and `X ⊆ ∅` only
-  if `X` is itself vacuous. `is_disjoint_with` already read this way unchanged — a vacuous cube is
-  disjoint from everything, including itself.
 
 ### Fixed
 

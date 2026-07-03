@@ -81,3 +81,34 @@ fn test_pla_roundtrip() {
     let parsed_cover = parsed_cover.minimize().unwrap();
     assert_eq!(parsed_cover.num_cubes(), 2);
 }
+
+#[test]
+fn test_pla_roundtrip_empty_literal() {
+    // A `?` input field is Espresso's empty literal: the cube denotes the empty set. Confirm it
+    // survives the PLA round-trip byte-for-byte, parses to `InputField::Empty`/a vacuous minterm,
+    // and is dropped by minimisation.
+    let pla_str = ".i 3\n.o 1\n.p 1\n1?0 1\n.e\n";
+
+    let parsed_cover = PlaCover::<Symbol>::from_pla_string(pla_str).expect("Failed to parse PLA");
+    assert_eq!(parsed_cover.num_cubes(), 1);
+
+    // Writing the parsed cover back out at the same cover type reproduces the `?` verbatim.
+    let written = parsed_cover
+        .to_pla_string(CoverType::F)
+        .expect("Failed to serialize");
+    assert_eq!(written, pla_str);
+
+    // The `?` column is `InputField::Empty`, and the whole input minterm is vacuous as a result.
+    let cover = match &parsed_cover {
+        PlaCover::Positional(cover) => cover,
+        other => panic!("a PLA with no .ilb/.ob sections must parse to Positional, got {other:?}"),
+    };
+    let cube = cover.cubes().next().expect("one cube");
+    assert_eq!(cube.inputs().field_at(1), InputField::Empty);
+    assert!(cube.inputs().is_vacuous());
+
+    // Minimisation's pre-pass drops vacuous cubes outright, so the vacuous-only cover minimises to
+    // nothing.
+    let minimized_cover = parsed_cover.minimize().unwrap();
+    assert_eq!(minimized_cover.num_cubes(), 0);
+}
