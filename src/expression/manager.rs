@@ -705,6 +705,209 @@ impl BddManager {
         )
     }
 
+    /// Simultaneous multi-variable substitution: `f[v1 := g1, v2 := g2, ...]` for every `(v,
+    /// g)` in `map`, managing the cell's borrow itself.
+    ///
+    /// This is **not** repeated single-variable [`compose`](Self::compose) calls: it walks `f`'s
+    /// original graph exactly once. Each original node's variable is substituted exactly once, at
+    /// its own level; the substituting functions `g_v` never get traversed themselves — they enter
+    /// the computation only as ITE selectors at the level of the variable they replace. That is
+    /// what makes the substitution simultaneous rather than sequential: composing with a swap map
+    /// `{x := y, y := x}` exchanges the two variables in one pass, which sequential composition
+    /// (`f[x := y]` then `[y := x]`) cannot do (the first step would already have destroyed the
+    /// original `x`-tests that the second step needs to swap in).
+    ///
+    /// Evaluated **iteratively** with an explicit work-stack, in the same style as
+    /// [`ite`](Self::ite), [`restrict`](Self::restrict), and [`compose`](Self::compose), so a tall
+    /// BDD cannot overflow the call stack. Each step takes its own short-lived shared borrow to
+    /// read (a node's shape, or a resolved ITE triple) and, only when a result must be committed, a
+    /// separate short-lived exclusive borrow to intern the node — a shared borrow is never live
+    /// when the exclusive borrow may be taken, the discipline the
+    /// [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires (panics on overlap) and
+    /// the [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires (deadlocks on overlap).
+    ///
+    /// At a node testing an unmapped variable, both children are recombined through a **guarded**
+    /// structural fast path: if both composed children still test variables strictly greater than
+    /// `v` (the ordering `make_node` requires), they are re-interned directly with `v` as the
+    /// splitting variable. That guard is not optional — a substitution applied further down the
+    /// graph can hoist a variable to or above `v` (e.g. mapping some `w > v` to a function of `v`
+    /// itself), and a bare `make_node(v, low, high)` in that case would either violate ordering or
+    /// mint a non-canonical node. When the guard fails, the two children are recombined instead
+    /// through `ite(v_projection, high, low)`, where `v_projection = make_node(v, FALSE, TRUE)` is
+    /// `v` reintroduced as its own two-valued selector — correct regardless of where the composed
+    /// children's variables now sit, at the cost of running the shared inline ITE machine
+    /// (`ite_solve_step`/`ite_combine_step`, the same steps [`ite`](Self::ite) and
+    /// [`compose`](Self::compose) use) instead of a single `make_node` call. A node testing a
+    /// *mapped* variable `v` always takes this ITE recombination path, with the substituting
+    /// function `g_v` itself as the selector: `ite(g_v, high, low)`.
+    ///
+    /// **Canonicity:** every node produced here — by the guarded fast path's `make_node` and by the
+    /// ITE recombination's `insert_node` — is minted through the same hash-consed
+    /// `make_node`/`insert_node` path every other operation uses, so results remain canonical and
+    /// safely comparable by NodeId alone.
+    ///
+    /// **Memoisation** is a per-call `HashMap<NodeId, NodeId>` keyed on `f`'s original node id only
+    /// (there is no persistent cache analogous to `compose_cache`: `map` is not a stable,
+    /// hashable, reusable key the way a single `(var, g)` pair is). The per-call memo still
+    /// collapses `f`'s shared sub-DAG so the walk stays linear in the number of `f`'s distinct
+    /// reachable nodes, and the inline ITE recombinations still hit the persistent `ite_cache`
+    /// across calls.
+    pub(crate) fn compose_map<C: ManagerCell>(
+        cell: &C,
+        f: NodeId,
+        map: &HashMap<VarId, NodeId>,
+    ) -> NodeId {
+        /// One unit of work. `Solve` reads an original `f`-node's shape and schedules its
+        /// children; `Combine` runs after a node's two original children are resolved (composed)
+        /// and either rebuilds the node directly (guarded fast path) or schedules the ITE
+        /// recombination; `Finish` reads back a recombination's resolved ITE triple and records it
+        /// as the node's result; `IteSolve`/`IteCombine` are the shared ITE machine's steps,
+        /// driving the recombination `ite(selector, high, low)` on this same stack.
+        enum Work {
+            Solve(NodeId),
+            Combine {
+                node: NodeId,
+                var: VarId,
+                low: NodeId,
+                high: NodeId,
+            },
+            Finish {
+                node: NodeId,
+                triple: (NodeId, NodeId, NodeId),
+            },
+            IteSolve(NodeId, NodeId, NodeId),
+            IteCombine {
+                triple: (NodeId, NodeId, NodeId),
+                top_var: VarId,
+                low: (NodeId, NodeId, NodeId),
+                high: (NodeId, NodeId, NodeId),
+            },
+        }
+
+        let mut memo: HashMap<NodeId, NodeId> = HashMap::new();
+        let mut stack = vec![Work::Solve(f)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Solve(n) => {
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    // Read this node's shape under one short-lived shared borrow, dropped before
+                    // any push/write below.
+                    let shape = {
+                        let manager = cell.read();
+                        match manager.expect_node(n) {
+                            // Terminals carry no variable: composition cannot change a constant.
+                            BddNode::Terminal(_) => None,
+                            BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
+                        }
+                    };
+                    match shape {
+                        None => {
+                            memo.insert(n, n);
+                        }
+                        Some((v, low, high)) => {
+                            // Schedule both original children and a Combine that runs once they're
+                            // resolved (Combine pushed first → pops last, LIFO).
+                            stack.push(Work::Combine {
+                                node: n,
+                                var: v,
+                                low,
+                                high,
+                            });
+                            stack.push(Work::Solve(high));
+                            stack.push(Work::Solve(low));
+                        }
+                    }
+                }
+                Work::Combine {
+                    node: n,
+                    var: v,
+                    low,
+                    high,
+                } => {
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    // The two children have already been composed from f's original subgraph.
+                    let e = *memo.get(&low).expect(
+                        "compose_map low child resolved before combine - BDD scheduling bug",
+                    );
+                    let t = *memo.get(&high).expect(
+                        "compose_map high child resolved before combine - BDD scheduling bug",
+                    );
+                    match map.get(&v) {
+                        Some(&g_v) => {
+                            // `v` is substituted: splice in via ite(g_v, high, low) — g_v enters
+                            // only as a selector, never traversed.
+                            stack.push(Work::Finish {
+                                node: n,
+                                triple: (g_v, t, e),
+                            });
+                            stack.push(Work::IteSolve(g_v, t, e));
+                        }
+                        None => {
+                            // `v` is unmapped: try the guarded structural fast path first.
+                            let safe = {
+                                let mgr = cell.read();
+                                Self::node_var(mgr.expect_node(e)) > v
+                                    && Self::node_var(mgr.expect_node(t)) > v
+                            };
+                            if safe {
+                                let r = Self::make_node(cell, v, e, t);
+                                memo.insert(n, r);
+                            } else {
+                                // A substitution below hoisted a variable to or above `v`: fall
+                                // back to recombining through v's own projection as a selector.
+                                let proj = Self::make_node(cell, v, FALSE_NODE, TRUE_NODE);
+                                stack.push(Work::Finish {
+                                    node: n,
+                                    triple: (proj, t, e),
+                                });
+                                stack.push(Work::IteSolve(proj, t, e));
+                            }
+                        }
+                    }
+                }
+                Work::Finish { node: n, triple } => {
+                    if memo.contains_key(&n) {
+                        continue;
+                    }
+                    // The inline ITE for this recombination has already run to completion on the
+                    // stack (scheduled before this Finish item), so its triple is resolved.
+                    let r = cell
+                        .read()
+                        .ite_resolved(triple.0, triple.1, triple.2)
+                        .expect("compose_map merge ITE resolved - BDD scheduling bug");
+                    memo.insert(n, r);
+                }
+                Work::IteSolve(a, b, c) => {
+                    let Some((top_var, low, high)) = Self::ite_solve_step(cell, a, b, c) else {
+                        continue;
+                    };
+                    stack.push(Work::IteCombine {
+                        triple: (a, b, c),
+                        top_var,
+                        low,
+                        high,
+                    });
+                    stack.push(Work::IteSolve(high.0, high.1, high.2));
+                    stack.push(Work::IteSolve(low.0, low.1, low.2));
+                }
+                Work::IteCombine {
+                    triple,
+                    top_var,
+                    low,
+                    high,
+                } => Self::ite_combine_step(cell, triple, top_var, low, high),
+            }
+        }
+
+        *memo.get(&f).expect(
+            "top-level compose_map node resolved after iterative evaluation - BDD scheduling bug",
+        )
+    }
+
     /// Resolve an ITE triple **without** Shannon expansion.
     ///
     /// Returns `Some(node)` when `(f, g, h)` is a terminal case or already lives in `ite_cache`,
