@@ -120,7 +120,7 @@ pub use error::{
     AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, ToExprError,
 };
 pub use iterators::{CubesIter, ToExprs};
-pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
+pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
 pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
 pub use output_set::OutputSet;

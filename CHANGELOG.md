@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DuplicateLabel`), and `OutputSet::anonymous` builds a positional one (mirroring the existing
   `Minterm::anonymous`). The label types flow through `Cube::new`: two labelled halves compose into a
   labelled `Cube<I, O>`, two anonymous halves into an anonymous one.
+- `NamedLabel`, a sealed marker trait for labels whose alignment identity is a real name/value
+  (as opposed to `Anonymous`'s positional identity). Every `Ord + Eq + Hash + Clone` label qualifies
+  via a single blanket impl.
 
 ### Changed
 
