@@ -151,6 +151,27 @@ assert!((a.clone() | !a.clone()).is_tautology());
 assert!((a.clone() & !a).is_contradiction());
 ```
 
+### Composition (substituting a function for a variable)
+
+```rust
+use espresso_logic::bdd_builder;
+
+let builder = bdd_builder!();
+let a = builder.var("a");
+let b = builder.var("b");
+let c = builder.var("c");
+let f = a.clone() & !b.clone();
+
+// Substitute a whole function for one variable: f[b := b | c].
+let substituted = f.compose("b", &(b.clone() | c.clone()));
+assert!(substituted.equivalent_to(&(a.clone() & !(b.clone() | c))));
+
+// Simultaneous substitution reads the original function on every entry,
+// so a swap needs no temporary: f[a := b, b := a].
+let swapped = f.compose_map([("a", &b), ("b", &a)]);
+assert!(swapped.equivalent_to(&(b & !a)));
+```
+
 ### Materialisation and lowering
 
 ```rust

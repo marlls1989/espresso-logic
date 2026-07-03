@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Bdd::compose` and `Bdd::compose_map` (mirrored on `ScopedBdd`), native composition
+  primitives on the canonical BDD layer: `compose` substitutes a Boolean function for a
+  variable (`f[var := g]`) and `compose_map` performs several substitutions at once in a
+  single fused traversal — every substitution reads the original function, so
+  `f.compose_map([("a", &b), ("b", &a)])` swaps the two variables. Both are single-pass
+  engines (not `ite`-of-`restrict` chains), evaluated iteratively so a deep variable
+  ordering cannot overflow the call stack, and memoised through a persistent per-manager
+  compose cache alongside the ITE cache. Substituting for a name the function does not
+  test — or passing an empty map — is a no-op; a substituting function may mention any
+  variables, including ones ordered above the substituted variable, and `compose_map`
+  takes the last entry for a repeated name.
+
 ## [5.3.0] - 2026-07-03
 
 ### Added
