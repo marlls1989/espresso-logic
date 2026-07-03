@@ -26,9 +26,21 @@
 //! | `None` (`-`)  | yes      | yes      | `11`        |
 //! | *empty*       | no       | no       | `00`        |
 //!
-//! The packing is private; the public API is expressed in `Option<bool>`. The encoding matches the
-//! C library's cube layout, so set operations reduce to word-wise bit ops and the Espresso
-//! boundary is close to a bit-repack.
+//! The *empty* field (`00`, [`InputField::Empty`]) is Espresso's `?`: the lattice opposite of the
+//! don't-care `-`, meaning the variable allows neither value. A single empty field makes the whole
+//! cube vacuous (denotes the empty set) — see [`Minterm::is_vacuous`].
+//!
+//! The row has two read/write views onto this packing:
+//!
+//! - The **faithful, four-state view** ([`InputField`] and the `field_at`/`field_of`/`set_field_at`/
+//!   `set_field_of`/`fields` family) reads and writes all four 2-bit states verbatim, including the
+//!   empty literal.
+//! - The **legacy, deliberately-lossy `Option<bool>` view** (`value_at`/`value_of`/`iter` and their
+//!   setters) folds the empty literal to `None` on read, since `Option<bool>` has no fourth state;
+//!   its setters privilege `None` as `-`, so they can never write the empty literal.
+//!
+//! The encoding matches the C library's cube layout, so set operations reduce to word-wise bit ops
+//! and the Espresso boundary is close to a bit-repack.
 
 use super::error::{DuplicateLabel, IndexOutOfRange, LabelNotFound};
 use super::label::{Anonymous, Label, NamedLabel, StringLabel};
@@ -53,14 +65,28 @@ const FIELD_DC: u8 = 0b11;
 /// minterm. `Option<bool>` cannot express it; the public value API folds it back to `None`.
 const FIELD_EMPTY: u8 = 0b00;
 
-/// A parsed input-field value. Carries the three logical states *plus* Espresso's empty literal, which
-/// `Option<bool>` cannot represent — used only on the PLA read path so a `?` survives into the
-/// minterm's packed bits (and on to the C backend) verbatim.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InputField {
+/// The faithful, four-state value of a cube's input field: Espresso's 2-bit value-set encoding,
+/// exposed verbatim rather than folded down to `Option<bool>`.
+///
+/// | variant             | 2-bit field | meaning                              |
+/// |---------------------|-------------|---------------------------------------|
+/// | [`Zero`](Self::Zero)         | `01` (`0`)  | fixed `0`                              |
+/// | [`One`](Self::One)           | `10` (`1`)  | fixed `1`                               |
+/// | [`DontCare`](Self::DontCare) | `11` (`-`)  | don't-care                             |
+/// | [`Empty`](Self::Empty)       | `00` (`?`)  | empty (Espresso's `?`)                 |
+///
+/// `Empty` is the lattice opposite of `DontCare`: the variable allows neither value, so a field of
+/// `Empty` makes the whole containing cube vacuous (denotes the empty set) — see
+/// [`Minterm::is_vacuous`].
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum InputField {
+    /// Fixed `0` (`01`).
     Zero,
+    /// Fixed `1` (`10`).
     One,
+    /// Don't-care `-` (`11`).
     DontCare,
+    /// Empty `?` (`00`) — makes the containing cube vacuous.
     Empty,
 }
 
@@ -110,7 +136,7 @@ fn decode(field: u8) -> Option<bool> {
 }
 
 #[inline]
-fn field_at(words: &[u64], i: usize) -> u8 {
+fn raw_field(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
@@ -240,17 +266,18 @@ pub struct Minterm<L> {
 }
 
 impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
-    /// Renders values by variable — e.g. `Minterm { "a": 1, "b": - }` for named minterms, or
-    /// `Minterm { 0: 1, 1: - }` for anonymous (positional) ones — where `1`/`0`/`-` are
-    /// true/false/don't-care, rather than exposing the internal packed words.
+    /// Renders fields by variable — e.g. `Minterm { "a": 1, "b": - }` for named minterms, or
+    /// `Minterm { 0: 1, 1: - }` for anonymous (positional) ones — where `1`/`0`/`-`/`?` are
+    /// true/false/don't-care/empty, rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Minterm {{")?;
         let labels = self.symbols.labels();
-        for (i, value) in self.iter().enumerate() {
-            let sym = match value {
-                Some(true) => '1',
-                Some(false) => '0',
-                None => '-',
+        for (i, field) in self.fields().enumerate() {
+            let sym = match field {
+                InputField::One => '1',
+                InputField::Zero => '0',
+                InputField::DontCare => '-',
+                InputField::Empty => '?',
             };
             let sep = if i == 0 { "" } else { "," };
             if L::NAMED {
@@ -263,16 +290,17 @@ impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
     }
 }
 
-/// Renders the tri-state values as a bare `1`/`0`/`-` row (true/false/don't-care), in index order —
-/// the cube body of a PLA line. Unlike the `Debug` form, no variable labels are shown, so this
-/// needs no bound on `L`.
+/// Renders the faithful, four-state fields as a bare `1`/`0`/`-`/`?` row (true/false/don't-care/empty),
+/// in index order — the cube body of a PLA line. Unlike the `Debug` form, no variable labels are
+/// shown, so this needs no bound on `L`.
 impl<L> fmt::Display for Minterm<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for value in self.iter() {
-            f.write_str(match value {
-                Some(true) => "1",
-                Some(false) => "0",
-                None => "-",
+        for field in self.fields() {
+            f.write_str(match field {
+                InputField::One => "1",
+                InputField::Zero => "0",
+                InputField::DontCare => "-",
+                InputField::Empty => "?",
             })?;
         }
         Ok(())
@@ -370,13 +398,6 @@ impl<L> Minterm<L> {
         false
     }
 
-    /// Iterate the raw input fields in index order, preserving the empty literal (`00`) that the
-    /// public `Option<bool>` view folds to `None`. Crate-internal; used by the PLA writer so a `?`
-    /// read into a cube is echoed back faithfully (matching C's `print_cube`).
-    pub(crate) fn input_fields(&self) -> impl Iterator<Item = InputField> + '_ {
-        (0..self.num_vars()).map(|i| decode_field(field_at(&self.values, i)))
-    }
-
     /// The shared symbol table this minterm is defined over.
     #[must_use]
     pub(crate) fn symbols(&self) -> &Arc<Symbols<L>> {
@@ -401,9 +422,33 @@ impl<L> Minterm<L> {
     #[must_use]
     pub fn value_at(&self, i: usize) -> Option<bool> {
         if i < self.num_vars() {
-            decode(field_at(&self.values, i))
+            decode(raw_field(&self.values, i))
         } else {
             None
+        }
+    }
+
+    /// The faithful, four-state field at positional index `i` in this minterm's own variable order.
+    ///
+    /// Unlike [`value_at`](Self::value_at), the empty literal (`?`) is not folded to don't-care.
+    /// Returns [`InputField::DontCare`] for indices beyond the minterm's width.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// assert_eq!(m.field_at(0), InputField::One);
+    /// assert_eq!(m.field_at(1), InputField::DontCare);
+    /// assert_eq!(m.field_at(2), InputField::DontCare); // beyond the minterm's width
+    /// ```
+    #[must_use]
+    pub fn field_at(&self, i: usize) -> InputField {
+        if i < self.num_vars() {
+            decode_field(raw_field(&self.values, i))
+        } else {
+            InputField::DontCare
         }
     }
 
@@ -413,6 +458,31 @@ impl<L> Minterm<L> {
     #[must_use]
     pub fn iter(&self) -> MintermIter<'_, L> {
         self.into_iter()
+    }
+
+    /// Iterate over the faithful, four-state fields in this minterm's own variable order.
+    ///
+    /// Unlike [`iter`](Self::iter), the empty literal (`?`) is yielded as [`InputField::Empty`]
+    /// rather than folded to don't-care.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+    /// let got: Vec<_> = m.fields().collect();
+    /// assert_eq!(
+    ///     got,
+    ///     vec![InputField::One, InputField::DontCare, InputField::Zero]
+    /// );
+    /// ```
+    #[must_use]
+    pub fn fields(&self) -> FieldsIter<'_, L> {
+        FieldsIter {
+            minterm: self,
+            pos: 0,
+        }
     }
 
     /// Set the value at positional index `i` in this minterm's own variable order, in place.
@@ -449,6 +519,42 @@ impl<L> Minterm<L> {
         words[word] |= (encode(value) as u64) << shift;
         Ok(())
     }
+
+    /// Set the faithful, four-state field at positional index `i` in this minterm's own variable
+    /// order, in place. The counterpart setter to [`field_at`](Self::field_at).
+    ///
+    /// Unlike [`set_value_at`](Self::set_value_at), this may write [`InputField::Empty`] (`?`),
+    /// which makes the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). Mutates the
+    /// packed word buffer copy-on-write (via [`Arc::make_mut`]), so a minterm sharing its buffer
+    /// with clones is cloned first and only the receiver is mutated; a uniquely-held buffer is
+    /// mutated directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexOutOfRange`] if `i >= self.num_vars()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// m.set_field_at(1, InputField::Empty).unwrap();
+    /// assert_eq!(m.field_at(1), InputField::Empty);
+    /// assert!(m.is_vacuous());
+    /// ```
+    pub fn set_field_at(&mut self, i: usize, field: InputField) -> Result<(), IndexOutOfRange> {
+        let arity = self.num_vars();
+        if i >= arity {
+            return Err(IndexOutOfRange { index: i, arity });
+        }
+        let words = Arc::make_mut(&mut self.values);
+        let word = i / VARS_PER_WORD;
+        let shift = (i % VARS_PER_WORD) * 2;
+        words[word] &= !(0b11u64 << shift);
+        words[word] |= (encode_field(field) as u64) << shift;
+        Ok(())
+    }
 }
 
 /// Iterator over a minterm's tri-state values in index order, created by `(&minterm).into_iter()`
@@ -479,6 +585,36 @@ impl<L> Iterator for MintermIter<'_, L> {
 
 // The length is known exactly (and O(1)): it is the number of variables still to yield.
 impl<L> ExactSizeIterator for MintermIter<'_, L> {}
+
+/// Iterator over a minterm's faithful, four-state fields in index order, created by
+/// [`Minterm::fields`]. Unlike [`MintermIter`], the empty literal (`?`) is yielded as
+/// [`InputField::Empty`] rather than folded to don't-care.
+pub struct FieldsIter<'a, L> {
+    minterm: &'a Minterm<L>,
+    pos: usize,
+}
+
+impl<L> Iterator for FieldsIter<'_, L> {
+    type Item = InputField;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos < self.minterm.num_vars() {
+            let field = self.minterm.field_at(self.pos);
+            self.pos += 1;
+            Some(field)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.minterm.num_vars() - self.pos;
+        (remaining, Some(remaining))
+    }
+}
+
+// The length is known exactly (and O(1)): it is the number of variables still to yield.
+impl<L> ExactSizeIterator for FieldsIter<'_, L> {}
 
 impl<'a, L> IntoIterator for &'a Minterm<L> {
     type Item = Option<bool>;
@@ -663,7 +799,7 @@ impl<L: Label> Minterm<L> {
         Q: Ord + ?Sized,
     {
         match self.symbols.index_of(label) {
-            Some(i) => decode(field_at(&self.values, i as usize)),
+            Some(i) => decode(raw_field(&self.values, i as usize)),
             None => None,
         }
     }
@@ -698,6 +834,70 @@ impl<L: Label> Minterm<L> {
         // `i` came straight from this minterm's own symbol table, so it is in range by
         // construction; `set_value_at` cannot fail here.
         self.set_value_at(i as usize, value)
+            .expect("index from symbol table is in range");
+        Ok(())
+    }
+
+    /// The faithful, four-state field of a named variable ([`InputField::DontCare`] if the variable
+    /// is absent → implicitly don't-care).
+    ///
+    /// Unlike [`value_of`](Self::value_of), the empty literal (`?`) is not folded to don't-care.
+    /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be queried with `&str`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm, Symbol};
+    ///
+    /// let m = Minterm::<Symbol>::labeled(&[(Symbol::new("a"), Some(true))]).unwrap();
+    /// assert_eq!(m.field_of("a"), InputField::One);
+    /// assert_eq!(m.field_of("b"), InputField::DontCare);
+    /// ```
+    #[must_use]
+    pub fn field_of<Q>(&self, label: &Q) -> InputField
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        match self.symbols.index_of(label) {
+            Some(i) => decode_field(raw_field(&self.values, i as usize)),
+            None => InputField::DontCare,
+        }
+    }
+
+    /// Set the faithful, four-state field of a named variable, in place. The counterpart setter to
+    /// [`field_of`](Self::field_of).
+    ///
+    /// Unlike [`set_value_of`](Self::set_value_of), this may write [`InputField::Empty`] (`?`), which
+    /// makes the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). Accepts any borrowed
+    /// form of the label (so a `Minterm<Symbol>` can be set with `&str`). An absent label is always
+    /// an error — even when `field` is [`InputField::DontCare`] — so a typo in the label surfaces
+    /// rather than silently doing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelNotFound`] if `label` is not present in this minterm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm, Symbol};
+    ///
+    /// let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+    /// m.set_field_of("b", InputField::Empty).unwrap();
+    /// assert_eq!(m.field_of("b"), InputField::Empty);
+    /// assert!(m.is_vacuous());
+    /// assert!(m.set_field_of("c", InputField::One).is_err());
+    /// ```
+    pub fn set_field_of<Q>(&mut self, label: &Q, field: InputField) -> Result<(), LabelNotFound>
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let i = self.symbols.index_of(label).ok_or(LabelNotFound)?;
+        // `i` came straight from this minterm's own symbol table, so it is in range by
+        // construction; `set_field_at` cannot fail here.
+        self.set_field_at(i as usize, field)
             .expect("index from symbol table is in range");
         Ok(())
     }
@@ -740,7 +940,7 @@ impl<L: Label> Minterm<L> {
             let field = self
                 .symbols
                 .position_of_identity(&id)
-                .map(|j| field_at(&self.values, j as usize))
+                .map(|j| raw_field(&self.values, j as usize))
                 .unwrap_or(FIELD_DC);
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
@@ -996,7 +1196,7 @@ impl<L: Label> Minterm<L> {
         }
         let base = self.project_onto(target);
         let positions: Arc<[usize]> = (0..base.num_vars())
-            .filter(|&i| field_at(&base.values, i) == FIELD_DC)
+            .filter(|&i| raw_field(&base.values, i) == FIELD_DC)
             .collect();
         let k = positions.len();
         // The expansion yields 2^k minterms. Guard `k` so the count neither overflows the `1 << k`
@@ -1120,7 +1320,7 @@ impl<L: Label> Iterator for Disagreement<'_, L> {
                 while *pos < self.a.num_vars() {
                     let i = *pos;
                     *pos += 1;
-                    if fields_disagree(field_at(&self.a.values, i), field_at(&self.b.values, i)) {
+                    if fields_disagree(raw_field(&self.a.values, i), raw_field(&self.b.values, i)) {
                         return Some(labels[i].clone());
                     }
                 }
@@ -1141,8 +1341,8 @@ impl<L: Label> Iterator for Disagreement<'_, L> {
                             *i += 1;
                             *j += 1;
                             if fields_disagree(
-                                field_at(&self.a.values, ia),
-                                field_at(&self.b.values, ib),
+                                raw_field(&self.a.values, ia),
+                                raw_field(&self.b.values, ib),
                             ) {
                                 return Some(la[ia].clone());
                             }
@@ -1182,28 +1382,28 @@ impl<L: Label> Iterator for MergedFields<'_, L> {
             {
                 Ordering::Less => {
                     self.i += 1;
-                    Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+                    Some((raw_field(&self.a.values, ia as usize), FIELD_DC))
                 }
                 Ordering::Greater => {
                     self.j += 1;
-                    Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+                    Some((FIELD_DC, raw_field(&self.b.values, ib as usize)))
                 }
                 Ordering::Equal => {
                     self.i += 1;
                     self.j += 1;
                     Some((
-                        field_at(&self.a.values, ia as usize),
-                        field_at(&self.b.values, ib as usize),
+                        raw_field(&self.a.values, ia as usize),
+                        raw_field(&self.b.values, ib as usize),
                     ))
                 }
             },
             (Some(&ia), None) => {
                 self.i += 1;
-                Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+                Some((raw_field(&self.a.values, ia as usize), FIELD_DC))
             }
             (None, Some(&ib)) => {
                 self.j += 1;
-                Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+                Some((FIELD_DC, raw_field(&self.b.values, ib as usize)))
             }
             (None, None) => None,
         }
@@ -1285,7 +1485,7 @@ impl<L: Label> Hash for Minterm<L> {
         let mut len = 0usize;
         for &pos in self.symbols.sorted_order() {
             let pos = pos as usize;
-            if let Some(value) = decode(field_at(&self.values, pos)) {
+            if let Some(value) = decode(raw_field(&self.values, pos)) {
                 // Walk sorted-identity order so the sequence is canonical regardless of header
                 // ordering; don't-cares are skipped to match `Eq`'s absent-equals-don't-care rule.
                 labels[pos].identity(pos).hash(state);
@@ -2332,5 +2532,119 @@ mod tests {
         let mut set = HashSet::new();
         set.insert(fresh);
         assert!(set.contains(&got));
+    }
+
+    // --- InputField / field accessors ---------------------------------------------------------
+
+    /// Setting each of `InputField::One`, `InputField::Zero`, `InputField::DontCare`,
+    /// `InputField::Empty` at a position round-trips through `field_at`, including the empty
+    /// literal that `Option<bool>` cannot express.
+    #[test]
+    fn set_field_at_roundtrips_all_four_states() {
+        let mut m = Minterm::anonymous(&[Some(true), Some(false), None]);
+        m.set_field_at(0, InputField::Zero).unwrap();
+        assert_eq!(m.field_at(0), InputField::Zero);
+        m.set_field_at(1, InputField::DontCare).unwrap();
+        assert_eq!(m.field_at(1), InputField::DontCare);
+        m.set_field_at(2, InputField::One).unwrap();
+        assert_eq!(m.field_at(2), InputField::One);
+        m.set_field_at(2, InputField::Empty).unwrap();
+        assert_eq!(m.field_at(2), InputField::Empty);
+        assert!(m.is_vacuous());
+    }
+
+    /// `field_at` past the arity reads as `InputField::DontCare`, mirroring `value_at`.
+    #[test]
+    fn field_at_past_arity_is_dont_care() {
+        let m = Minterm::anonymous(&[Some(true)]);
+        assert_eq!(m.field_at(1), InputField::DontCare);
+        assert_eq!(m.field_at(100), InputField::DontCare);
+    }
+
+    /// `field_of`/`set_field_of` write and read by name, including the empty literal; an absent
+    /// label reads as `InputField::DontCare` and is always an error to set.
+    #[test]
+    fn field_of_and_set_field_of_roundtrip() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+        assert_eq!(m.field_of("a"), InputField::One);
+        assert_eq!(m.field_of("missing"), InputField::DontCare);
+
+        m.set_field_of("b", InputField::Empty).unwrap();
+        assert_eq!(m.field_of("b"), InputField::Empty);
+        assert!(m.is_vacuous());
+        assert_eq!(
+            m.set_field_of("missing", InputField::One),
+            Err(LabelNotFound)
+        );
+    }
+
+    /// An out-of-range index is rejected with `IndexOutOfRange`, reporting the requested index and
+    /// the row's actual arity.
+    #[test]
+    fn set_field_at_out_of_range_errors() {
+        let mut m = Minterm::anonymous(&[Some(true), None]);
+        let err = m.set_field_at(2, InputField::Zero).unwrap_err();
+        assert_eq!(err, IndexOutOfRange { index: 2, arity: 2 });
+    }
+
+    /// `set_field_of` on a label absent from the row is an error, even when `field` is
+    /// `InputField::DontCare` — a typo in the label must surface rather than silently succeed.
+    #[test]
+    fn set_field_of_absent_label_errors() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+        assert_eq!(
+            m.set_field_of("missing", InputField::One),
+            Err(LabelNotFound)
+        );
+        assert_eq!(
+            m.set_field_of("missing", InputField::DontCare),
+            Err(LabelNotFound)
+        );
+    }
+
+    /// Mutating one clone via `set_field_at` must not affect another clone sharing the same packed
+    /// buffer: `Arc::make_mut` has to detach (copy-on-write) rather than mutate in place.
+    #[test]
+    fn set_field_at_copy_on_write_isolates_clones() {
+        let original = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let mut mutated = original.clone();
+        mutated.set_field_at(1, InputField::Empty).unwrap();
+
+        assert_eq!(original.field_at(1), InputField::DontCare);
+        assert_eq!(mutated.field_at(1), InputField::Empty);
+        assert!(!original.is_vacuous());
+        assert!(mutated.is_vacuous());
+        assert_eq!(
+            original,
+            Minterm::anonymous(&[Some(true), None, Some(false)])
+        );
+    }
+
+    /// `fields()` yields the same four-state sequence as `field_at`, in index order, including a
+    /// leading empty literal.
+    #[test]
+    fn fields_iterator_matches_field_at() {
+        let s = syms(&["a", "b", "c"]);
+        let m = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::Empty, InputField::One, InputField::DontCare],
+        );
+        let got: Vec<_> = m.fields().collect();
+        assert_eq!(
+            got,
+            vec![InputField::Empty, InputField::One, InputField::DontCare]
+        );
+        assert_eq!(m.fields().len(), 3);
+    }
+
+    /// `Display` renders the faithful four-state row, so a cube carrying the empty literal (`?`)
+    /// shows it verbatim rather than folding it to `-` (unlike the `Option<bool>` view).
+    #[test]
+    fn display_renders_empty_literal_as_question_mark() {
+        let m = Minterm::from_symbols_input_fields(
+            Symbols::<Anonymous>::anonymous(3),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert_eq!(m.to_string(), "1?0");
     }
 }

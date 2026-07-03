@@ -123,7 +123,7 @@ pub use error::{
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
-pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
+pub use minterm::{Disagreement, ExpandedMinterms, FieldsIter, InputField, Minterm, MintermIter};
 pub use output_set::OutputSet;
 // Crate-internal only: `Symbols` is not part of the public API, but other in-crate modules
 // (`espresso`, `bdd`) reach it through this path since the `symbols` module itself is private.

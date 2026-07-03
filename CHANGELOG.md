@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Minterm::is_vacuous`, a public predicate reporting whether any variable in the row holds the
   empty value set (`?`/`00`) — the lattice opposite of the don't-care `-`. A cube with even one such
   field denotes the empty set (covers no assignment); such cubes are dropped before minimisation.
+- `InputField`, the faithful, four-state value of a cube's input field (`Zero`/`One`/`DontCare`/
+  `Empty`), alongside a matching read/write surface on `Minterm`: `field_at`/`set_field_at` (by
+  position), `field_of`/`set_field_of` (by label), and `fields` (a `FieldsIter` iterator). Unlike the
+  existing `value_*`/`iter` family, which folds the empty literal (`?`) down to don't-care because
+  `Option<bool>` has no fourth state, this view reads and writes `?` verbatim — `set_field_at`/
+  `set_field_of` can write `InputField::Empty`, making the containing cube vacuous. `Display`/`Debug`
+  now render the faithful view too, so `?` shows up rather than being folded to `-`.
 - `Minterm`'s three-valued (Kleene) bitwise operators `& | ^` and complement `!`, combining rows
   element-wise where `None` is the unknown/don't-care value (`-`): AND shortcuts on `0`, OR on `1`,
   XOR/complement propagate `-`. Operands are auto-aligned by variable identity — a variable present
