@@ -185,62 +185,47 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
     }
 }
 
-/// Both-bit mask covering exactly the valid fields of word `word_idx` — the `allows-0` *and*
-/// `allows-1` bit of every field below `num_vars`, and nothing above. Used by the element-wise
-/// operators to re-zero the padding past the arity after combining, so the word-wise `Eq`/`Hash`
-/// fast path stays canonical.
-#[inline]
-fn valid_field_mask(word_idx: usize, num_vars: usize) -> u64 {
-    let count = (num_vars - word_idx * VARS_PER_WORD).min(VARS_PER_WORD);
-    if count == VARS_PER_WORD {
-        u64::MAX
-    } else {
-        (1u64 << (2 * count)) - 1
-    }
-}
-
-/// Normalise every empty field (`00`, Espresso's `?`) in a packed word to don't-care (`11`), leaving
-/// `01`/`10`/`11` untouched. This matches the public `Option<bool>` view's fold of `?`→`None`, so the
-/// element-wise operators agree with it.
+/// Element-wise **value-set image** AND of two packed words (all 32 fields in parallel), reading each
+/// field as the value set it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`/`00`=`{}`). The result
+/// field is `{ a & b : a ∈ x, b ∈ y }`, which is empty (`00`) whenever either operand is empty.
 ///
-/// A field is empty exactly when neither of its bits is set. `is_empty` carries the per-field
-/// "empty" flag on the `allows-0` (even) bit; OR-ing both that bit and its `allows-1` neighbour in
-/// fills such fields to `11`. Padding past the arity (genuine `00`) is normalised too and must be
-/// re-zeroed by the caller with [`valid_field_mask`].
-#[inline]
-fn normalise_empty(word: u64) -> u64 {
-    let allows0 = word & ALLOWS0_MASK;
-    let allows1 = (word >> 1) & ALLOWS0_MASK;
-    let is_empty = !(allows0 | allows1) & ALLOWS0_MASK;
-    word | is_empty | (is_empty << 1)
-}
-
-/// Element-wise three-valued AND of two packed words (all 32 fields in parallel), reading each field
-/// as the value-set it allows. With `x0`/`y0` the `allows-0` bits and `x1`/`y1` the `allows-1` bits:
-/// the result allows `1` only where both do (`x1 & y1`) and allows `0` where either does (`x0 | y0`).
+/// With `x0`/`y0` the `allows-0` bits and `x1`/`y1` the `allows-1` bits, `nx`/`ny` flag the non-empty
+/// fields (those allowing some value). The result allows `1` only where both operands do (`x1 & y1`),
+/// and allows `0` where either allows `0` *and the other operand is non-empty* — so an empty operand
+/// cannot manufacture a `0`, leaving `(00, y) → 00`. On non-empty fields this is bit-identical to the
+/// three-valued Kleene AND table.
 #[inline]
 fn word_and(x: u64, y: u64) -> u64 {
     let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
     let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
-    let r0 = x0 | y0;
+    let (nx, ny) = (x0 | x1, y0 | y1);
+    let r0 = (x0 & ny) | (y0 & nx);
     let r1 = x1 & y1;
     (r1 << 1) | r0
 }
 
-/// Element-wise three-valued OR of two packed words (all 32 fields in parallel). The result allows
-/// `1` where either operand does (`x1 | y1`) and allows `0` only where both do (`x0 & y0`).
+/// Element-wise **value-set image** OR of two packed words (all 32 fields in parallel), dual to
+/// [`word_and`]: the result field is `{ a | b : a ∈ x, b ∈ y }`, empty (`00`) whenever either operand
+/// is empty. With `nx`/`ny` flagging the non-empty fields, the result allows `1` where either operand
+/// allows `1` *and the other is non-empty* (`(x1 & ny) | (y1 & nx)`) and allows `0` only where both
+/// operands do (`x0 & y0`), leaving `(00, y) → 00`. On non-empty fields this is bit-identical to the
+/// three-valued Kleene OR table.
 #[inline]
 fn word_or(x: u64, y: u64) -> u64 {
     let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
     let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let (nx, ny) = (x0 | x1, y0 | y1);
+    let r1 = (x1 & ny) | (y1 & nx);
     let r0 = x0 & y0;
-    let r1 = x1 | y1;
     (r1 << 1) | r0
 }
 
-/// Element-wise three-valued XOR of two packed words (all 32 fields in parallel). The result allows
-/// `1` where the operands can differ (`(x1 & y0) | (x0 & y1)`) and allows `0` where they can agree
-/// (`(x1 & y1) | (x0 & y0)`).
+/// Element-wise **value-set image** XOR of two packed words (all 32 fields in parallel): the result
+/// field is `{ a ^ b : a ∈ x, b ∈ y }`. It allows `1` where the operands can differ
+/// (`(x1 & y0) | (x0 & y1)`) and allows `0` where they can agree (`(x1 & y1) | (x0 & y0)`). Both
+/// terms take a bit from each operand, so an empty operand yields an empty result (`(00, y) → 00`),
+/// making the formula ∅-correct as written. On non-empty fields this is bit-identical to the
+/// three-valued Kleene XOR table.
 #[inline]
 fn word_xor(x: u64, y: u64) -> u64 {
     let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
@@ -250,8 +235,10 @@ fn word_xor(x: u64, y: u64) -> u64 {
     (r1 << 1) | r0
 }
 
-/// Element-wise three-valued complement of a packed word (all 32 fields in parallel): swap each
-/// field's `allows-0` and `allows-1` bits, so `{0}`↔`{1}` and `{0,1}` (don't-care) is fixed.
+/// Element-wise **value-set image** complement of a packed word (all 32 fields in parallel): swap
+/// each field's `allows-0` and `allows-1` bits, so `{0}`↔`{1}`, `{0,1}` (don't-care) is fixed, and
+/// the empty set is fixed (`00 → 00`, i.e. `!? = ?`) — making the bit-swap ∅-correct as written. On
+/// non-empty fields this is the three-valued Kleene complement.
 #[inline]
 fn word_not(x: u64) -> u64 {
     ((x & ALLOWS0_MASK) << 1) | ((x >> 1) & ALLOWS0_MASK)
@@ -1549,7 +1536,7 @@ impl<L: Label> Hash for Minterm<L> {
 }
 
 impl<L: Label> Minterm<L> {
-    /// Combine `self` and `other` element-wise with `word_op`, a three-valued operation over one
+    /// Combine `self` and `other` element-wise with `word_op`, a value-set image operation over one
     /// packed word (all 32 fields in parallel).
     ///
     /// When both minterms share a header (pointer- or structurally-equal `Symbols`), the words are
@@ -1558,20 +1545,16 @@ impl<L: Label> Minterm<L> {
     /// reads as don't-care (`-`) — so the combination is well-defined regardless of header ordering;
     /// this makes `a op b == b op a` under the crate's identity-based [`Eq`].
     ///
-    /// Each operand word is [`normalise_empty`]d first (so an empty literal `?` behaves as `-`, matching
-    /// the public `Option<bool>` view), and each result word is masked back to its valid fields with
-    /// [`valid_field_mask`] so the padding past the arity stays zero.
+    /// The padding past the arity is genuine `00`, and every `word_op` maps `(00, 00) → 00`, so the
+    /// padding stays zero for free — no re-masking is needed to keep the word-wise `Eq`/`Hash` fast
+    /// path canonical.
     fn combine(&self, other: &Self, word_op: impl Fn(u64, u64) -> u64) -> Self {
         if self.symbols == other.symbols {
-            let n = self.num_vars();
             let values: Arc<[u64]> = self
                 .values
                 .iter()
                 .zip(other.values.iter())
-                .enumerate()
-                .map(|(k, (&x, &y))| {
-                    word_op(normalise_empty(x), normalise_empty(y)) & valid_field_mask(k, n)
-                })
+                .map(|(&x, &y)| word_op(x, y))
                 .collect();
             Minterm::from_packed_words(Arc::clone(&self.symbols), values)
         } else {
@@ -1584,19 +1567,24 @@ impl<L: Label> Minterm<L> {
         }
     }
 
-    /// Element-wise three-valued (Kleene) **AND** of two rows, aligned by variable identity, where
-    /// `None` is the unknown/don't-care value `-`:
+    /// Element-wise **value-set image** **AND** of two rows, aligned by variable identity. Each field
+    /// is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and
+    /// the result field is `{ a & b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) AND table with `None` the unknown/don't-care value `-`:
     ///
     /// ```text
-    ///  &  0 1 -
-    ///  0  0 0 0
-    ///  1  0 1 -
-    ///  -  0 - -
+    ///  &  0 1 - ?
+    ///  0  0 0 0 ?
+    ///  1  0 1 - ?
+    ///  -  0 - - ?
+    ///  ?  ? ? ? ?
     /// ```
     ///
     /// AND shortcuts on a `0` (`0 & anything = 0`, including `0 & - = 0`), while `1 & - = -` and
-    /// `- & - = -`. A variable present in only one operand reads as `-`, and the result is aligned by
-    /// identity, so `a.and(&b) == b.and(&a)` even when the two carry differently-ordered headers.
+    /// `- & - = -`. An empty field (`?`) denotes the empty set and propagates (`? & anything = ?`),
+    /// making the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in
+    /// only one operand reads as `-`, and the result is aligned by identity, so `a.and(&b) ==
+    /// b.and(&a)` even when the two carry differently-ordered headers.
     ///
     /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
     /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
@@ -1618,19 +1606,24 @@ impl<L: Label> Minterm<L> {
         self.combine(other, word_and)
     }
 
-    /// Element-wise three-valued (Kleene) **OR** of two rows, aligned by variable identity, where
-    /// `None` is the unknown/don't-care value `-`:
+    /// Element-wise **value-set image** **OR** of two rows, aligned by variable identity. Each field is
+    /// read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and the
+    /// result field is `{ a | b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) OR table with `None` the unknown/don't-care value `-`:
     ///
     /// ```text
-    ///  |  0 1 -
-    ///  0  0 1 -
-    ///  1  1 1 1
-    ///  -  - 1 -
+    ///  |  0 1 - ?
+    ///  0  0 1 - ?
+    ///  1  1 1 1 ?
+    ///  -  - 1 - ?
+    ///  ?  ? ? ? ?
     /// ```
     ///
     /// OR shortcuts on a `1` (`1 | anything = 1`, including `1 | - = 1`), while `0 | - = -` and
-    /// `- | - = -`. A variable present in only one operand reads as `-`, and the result is aligned by
-    /// identity, so `a.or(&b) == b.or(&a)` even when the two carry differently-ordered headers.
+    /// `- | - = -`. An empty field (`?`) denotes the empty set and propagates (`? | anything = ?`),
+    /// making the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in
+    /// only one operand reads as `-`, and the result is aligned by identity, so `a.or(&b) == b.or(&a)`
+    /// even when the two carry differently-ordered headers.
     ///
     /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
     /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
@@ -1652,19 +1645,24 @@ impl<L: Label> Minterm<L> {
         self.combine(other, word_or)
     }
 
-    /// Element-wise three-valued (Kleene) **XOR** of two rows, aligned by variable identity, where
-    /// `None` is the unknown/don't-care value `-`:
+    /// Element-wise **value-set image** **XOR** of two rows, aligned by variable identity. Each field
+    /// is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and
+    /// the result field is `{ a ^ b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) XOR table with `None` the unknown/don't-care value `-`:
     ///
     /// ```text
-    ///  ^  0 1 -
-    ///  0  0 1 -
-    ///  1  1 0 -
-    ///  -  - - -
+    ///  ^  0 1 - ?
+    ///  0  0 1 - ?
+    ///  1  1 0 - ?
+    ///  -  - - - ?
+    ///  ?  ? ? ? ?
     /// ```
     ///
     /// XOR is unknown whenever either operand is unknown (`- ^ anything = -`, including `- ^ - = -`).
-    /// A variable present in only one operand reads as `-`, and the result is aligned by identity, so
-    /// `a.xor(&b) == b.xor(&a)` even when the two carry differently-ordered headers.
+    /// An empty field (`?`) denotes the empty set and propagates (`? ^ anything = ?`), making the
+    /// containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in only one
+    /// operand reads as `-`, and the result is aligned by identity, so `a.xor(&b) == b.xor(&a)` even
+    /// when the two carry differently-ordered headers.
     ///
     /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
     /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
@@ -1686,18 +1684,22 @@ impl<L: Label> Minterm<L> {
         self.combine(other, word_xor)
     }
 
-    /// Element-wise three-valued (Kleene) **complement** of a row, where `None` is the
-    /// unknown/don't-care value `-`:
+    /// Element-wise **value-set image** **complement** of a row, aligned by variable identity. Each
+    /// field is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`)
+    /// and mapped to `{ !a : a ∈ x }` — restricting, on non-empty fields, to the three-valued (Kleene)
+    /// complement with `None` the unknown/don't-care value `-`:
     ///
     /// ```text
     ///  !  →
     ///  0    1
     ///  1    0
     ///  -    -
+    ///  ?    ?
     /// ```
     ///
-    /// A fixed value flips polarity; `-` is its own complement (`!- = -`), and an empty literal (`?`)
-    /// reads as `-`, so `!? = -`. Equivalent to the unary `!` operator. The header is preserved.
+    /// A fixed value flips polarity; `-` is its own complement (`!- = -`), and an empty field (`?`)
+    /// denotes the empty set and is fixed, so `!? = ?`. Equivalent to the unary `!` operator. The
+    /// header is preserved.
     ///
     /// # Examples
     ///
@@ -1712,13 +1714,7 @@ impl<L: Label> Minterm<L> {
     /// ```
     #[must_use]
     pub fn not(&self) -> Self {
-        let n = self.num_vars();
-        let values: Arc<[u64]> = self
-            .values
-            .iter()
-            .enumerate()
-            .map(|(k, &x)| word_not(normalise_empty(x)) & valid_field_mask(k, n))
-            .collect();
+        let values: Arc<[u64]> = self.values.iter().map(|&x| word_not(x)).collect();
         Minterm::from_packed_words(Arc::clone(&self.symbols), values)
     }
 }
@@ -2538,24 +2534,162 @@ mod tests {
         assert_eq!(&a ^ &b, a.xor(&b));
     }
 
-    /// An empty literal (`?`, from the PLA read path) behaves as `-` under every operator, matching
-    /// the public `Option<bool>` fold of `?`→`None`.
+    // --- operators propagate empty ------------------------------------------------------------
+
+    /// The four-state field as its value set, for the value-set image reference.
+    fn field_set(field: InputField) -> Vec<bool> {
+        match field {
+            InputField::Zero => vec![false],
+            InputField::One => vec![true],
+            InputField::DontCare => vec![false, true],
+            InputField::Empty => vec![],
+        }
+    }
+
+    /// Collapse a value set (which values it allows) back to the field that allows exactly it.
+    fn field_of_set(has_false: bool, has_true: bool) -> InputField {
+        match (has_false, has_true) {
+            (false, false) => InputField::Empty,
+            (true, false) => InputField::Zero,
+            (false, true) => InputField::One,
+            (true, true) => InputField::DontCare,
+        }
+    }
+
+    /// Reference value-set image of a binary Boolean op: `{ a op b : a ∈ x, b ∈ y }`.
+    fn ref_image(x: InputField, y: InputField, op: impl Fn(bool, bool) -> bool) -> InputField {
+        let (mut has_false, mut has_true) = (false, false);
+        for &a in &field_set(x) {
+            for &b in &field_set(y) {
+                if op(a, b) {
+                    has_true = true;
+                } else {
+                    has_false = true;
+                }
+            }
+        }
+        field_of_set(has_false, has_true)
+    }
+
+    /// Reference value-set image of complement: `{ !a : a ∈ x }`.
+    fn ref_not_image(x: InputField) -> InputField {
+        let (mut has_false, mut has_true) = (false, false);
+        for &a in &field_set(x) {
+            if !a {
+                has_true = true;
+            } else {
+                has_false = true;
+            }
+        }
+        field_of_set(has_false, has_true)
+    }
+
+    /// Exhaustive field-level check that `&`/`|`/`^` (4×4) and `!` (over the four states) realise the
+    /// value-set image, so the empty literal (`?`) propagates as the empty set.
     #[test]
-    fn empty_field_behaves_as_dont_care() {
+    fn ops_realize_value_set_image_over_four_states() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        let s = syms(&["a"]);
+        for &a in &states {
+            let ma = Minterm::from_symbols_input_fields(Arc::clone(&s), [a]);
+            assert_eq!(ma.not().field_at(0), ref_not_image(a), "NOT {a:?}");
+            for &b in &states {
+                let mb = Minterm::from_symbols_input_fields(Arc::clone(&s), [b]);
+                assert_eq!(
+                    ma.and(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x & y),
+                    "AND {a:?} {b:?}"
+                );
+                assert_eq!(
+                    ma.or(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x | y),
+                    "OR {a:?} {b:?}"
+                );
+                assert_eq!(
+                    ma.xor(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x ^ y),
+                    "XOR {a:?} {b:?}"
+                );
+            }
+        }
+    }
+
+    /// An empty literal (`?`) denotes the empty set and propagates: `? op x` is vacuous for every
+    /// operator, whatever the other operand.
+    #[test]
+    fn empty_field_propagates() {
         let s = syms(&["a"]);
         let empty = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
         assert!(empty.is_vacuous());
 
         let f = Minterm::from_symbols(Arc::clone(&s), [Some(false)]);
         let t = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
+        let dc = Minterm::from_symbols(Arc::clone(&s), [None]);
 
-        assert_eq!(empty.and(&f).value_at(0), Some(false)); // - & 0 = 0
-        assert_eq!(empty.and(&t).value_at(0), None); //         - & 1 = -
-        assert_eq!(empty.or(&t).value_at(0), Some(true)); //    - | 1 = 1
-        assert_eq!(empty.or(&f).value_at(0), None); //          - | 0 = -
-        assert_eq!(empty.xor(&f).value_at(0), None); //         - ^ 0 = -
-        assert_eq!(empty.xor(&t).value_at(0), None); //         - ^ 1 = -
+        for other in [&f, &t, &dc, &empty] {
+            for result in [empty.and(other), empty.or(other), empty.xor(other)] {
+                assert_eq!(result.field_at(0), InputField::Empty);
+                assert!(result.is_vacuous());
+            }
+        }
+        assert_eq!(empty.not().field_at(0), InputField::Empty);
+        assert!(empty.not().is_vacuous());
     }
+
+    /// A vacuous operand absorbs every binary operator from either side, and complement preserves
+    /// vacuity: the result is always vacuous.
+    #[test]
+    fn vacuous_operand_absorbs() {
+        let s = syms(&["a"]);
+        let vac = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
+        let x = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
+        assert!(vac.and(&x).is_vacuous());
+        assert!(x.and(&vac).is_vacuous());
+        assert!(vac.or(&x).is_vacuous());
+        assert!(x.or(&vac).is_vacuous());
+        assert!(vac.xor(&x).is_vacuous());
+        assert!(x.xor(&vac).is_vacuous());
+        assert!(vac.not().is_vacuous());
+    }
+
+    /// A `?` at variable 32 (the second word) yields canonical padding: the result equals — and
+    /// hashes identically to — a freshly built minterm carrying the empty literal there, so the
+    /// second word's padding past the arity stays zero.
+    #[test]
+    fn empty_result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, so the second word's padding (31 unused fields) is exercised.
+        let mut fa = vec![InputField::DontCare; 33];
+        let mut fb = vec![InputField::DontCare; 33];
+        fa[0] = InputField::One;
+        fb[0] = InputField::One;
+        fa[32] = InputField::Empty; // ? & - = ?
+        let a = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), fa);
+        let b = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), fb);
+        let got = a.and(&b);
+        assert!(got.is_vacuous());
+        assert_eq!(got.field_at(32), InputField::Empty);
+
+        let mut expected = vec![InputField::DontCare; 33];
+        expected[0] = InputField::One; // 1 & 1 = 1
+        expected[32] = InputField::Empty;
+        let fresh =
+            Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
+    }
+
+    // --- end operators propagate empty --------------------------------------------------------
 
     /// A reordered header (same variables, different order): the result aligns by identity.
     #[test]
@@ -2682,7 +2816,7 @@ mod tests {
         assert!(set.contains(&got));
     }
 
-    /// The full complement truth table, including `!- = -` and the `?` empty literal reading as `-`.
+    /// The full complement truth table, including `!- = -` and the empty literal fixed point `!? = ?`.
     #[test]
     fn not_truth_table() {
         assert_eq!(
@@ -2695,10 +2829,12 @@ mod tests {
         );
         assert_eq!(Minterm::anonymous(&[None]).not().value_at(0), None);
 
-        // An empty literal (`?`) reads as `-`, so its complement is `-`.
+        // An empty literal (`?`) denotes the empty set and is its own complement, so `!? = ?`.
         let empty = Minterm::from_symbols_input_fields(syms(&["a"]), [InputField::Empty]);
         assert!(empty.is_vacuous());
-        assert_eq!(empty.not().value_at(0), None);
+        let complemented = empty.not();
+        assert_eq!(complemented.field_at(0), InputField::Empty);
+        assert!(complemented.is_vacuous());
     }
 
     /// The by-value and by-reference `!` operator forms both delegate to the inherent `not`.
