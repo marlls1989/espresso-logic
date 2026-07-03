@@ -17,6 +17,15 @@ pub(crate) type NodeId = usize;
 /// Variable identifier (index in variable ordering)
 pub(crate) type VarId = usize;
 
+/// An ITE cofactor triple `(f, g, h)` — the operand node ids of one `if f then g else h`
+/// subproblem (or, inside the `compose`/`compose_map` engines' embedded ITE machinery, a
+/// splice/recombination triple such as `(g, f_high, f_low)`).
+pub(crate) type NodeTriple = (NodeId, NodeId, NodeId);
+
+/// A Shannon expansion of an ITE triple: the split variable plus its low (false-cofactor) and
+/// high (true-cofactor) child triples.
+pub(crate) type IteSplit = (VarId, NodeTriple, NodeTriple);
+
 /// Terminal node for FALSE
 pub(crate) const FALSE_NODE: NodeId = 0;
 
@@ -65,7 +74,7 @@ pub struct BddManager {
     /// Reverse mapping: variable id -> variable name
     pub(super) id_to_var: Vec<Symbol>,
     /// Cache for ITE operations: (f, g, h) -> result
-    pub(super) ite_cache: HashMap<(NodeId, NodeId, NodeId), NodeId>,
+    pub(super) ite_cache: HashMap<NodeTriple, NodeId>,
     /// Cache for compose operations: (f, var, g) -> f[var := g]
     pub(super) compose_cache: HashMap<(NodeId, VarId, NodeId), NodeId>,
 }
@@ -233,10 +242,10 @@ impl BddManager {
         enum Work {
             Solve(NodeId, NodeId, NodeId),
             Combine {
-                triple: (NodeId, NodeId, NodeId),
+                triple: NodeTriple,
                 top_var: VarId,
-                low: (NodeId, NodeId, NodeId),
-                high: (NodeId, NodeId, NodeId),
+                low: NodeTriple,
+                high: NodeTriple,
             },
         }
 
@@ -285,7 +294,7 @@ impl BddManager {
         f: NodeId,
         g: NodeId,
         h: NodeId,
-    ) -> Option<(VarId, (NodeId, NodeId, NodeId), (NodeId, NodeId, NodeId))> {
+    ) -> Option<IteSplit> {
         let manager = cell.read();
         if manager.ite_resolved(f, g, h).is_some() {
             None
@@ -300,10 +309,10 @@ impl BddManager {
     /// exclusive transaction. This is `ite`'s Combine step, shared with the compose engines.
     fn ite_combine_step<C: ManagerCell>(
         cell: &C,
-        triple: (NodeId, NodeId, NodeId),
+        triple: NodeTriple,
         top_var: VarId,
-        low: (NodeId, NodeId, NodeId),
-        high: (NodeId, NodeId, NodeId),
+        low: NodeTriple,
+        high: NodeTriple,
     ) {
         // Read the resolved children under one short-lived shared borrow. A diamond can
         // schedule the same Combine twice; the first caches the result, so skip if it is
@@ -533,14 +542,14 @@ impl BddManager {
             },
             Splice {
                 pair: (NodeId, NodeId),
-                triple: (NodeId, NodeId, NodeId),
+                triple: NodeTriple,
             },
             IteSolve(NodeId, NodeId, NodeId),
             IteCombine {
-                triple: (NodeId, NodeId, NodeId),
+                triple: NodeTriple,
                 top_var: VarId,
-                low: (NodeId, NodeId, NodeId),
-                high: (NodeId, NodeId, NodeId),
+                low: NodeTriple,
+                high: NodeTriple,
             },
         }
 
@@ -773,14 +782,14 @@ impl BddManager {
             },
             Finish {
                 node: NodeId,
-                triple: (NodeId, NodeId, NodeId),
+                triple: NodeTriple,
             },
             IteSolve(NodeId, NodeId, NodeId),
             IteCombine {
-                triple: (NodeId, NodeId, NodeId),
+                triple: NodeTriple,
                 top_var: VarId,
-                low: (NodeId, NodeId, NodeId),
-                high: (NodeId, NodeId, NodeId),
+                low: NodeTriple,
+                high: NodeTriple,
             },
         }
 
@@ -935,12 +944,7 @@ impl BddManager {
     /// Returns the split variable and the two child triples (low/false cofactor and high/true
     /// cofactor). Only called when [`ite_resolved`](Self::ite_resolved) returned `None`, so at
     /// least `f` is a decision node and `top_var` is a real variable.
-    fn ite_expand(
-        &self,
-        f: NodeId,
-        g: NodeId,
-        h: NodeId,
-    ) -> (VarId, (NodeId, NodeId, NodeId), (NodeId, NodeId, NodeId)) {
+    fn ite_expand(&self, f: NodeId, g: NodeId, h: NodeId) -> IteSplit {
         let f_node = self.expect_node(f);
         let g_node = self.expect_node(g);
         let h_node = self.expect_node(h);
