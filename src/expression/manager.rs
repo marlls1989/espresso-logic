@@ -244,18 +244,8 @@ impl BddManager {
         while let Some(work) = stack.pop() {
             match work {
                 Work::Solve(f, g, h) => {
-                    // Resolve or Shannon-expand under one short-lived shared borrow, released at the end
-                    // of this block (before any later step takes its own borrow).
-                    let expanded = {
-                        let manager = cell.read();
-                        if manager.ite_resolved(f, g, h).is_some() {
-                            None
-                        } else {
-                            Some(manager.ite_expand(f, g, h))
-                        }
-                    };
                     // Bail if the triple was already resolved (terminal or memoised).
-                    let Some((top_var, low, high)) = expanded else {
+                    let Some((top_var, low, high)) = Self::ite_solve_step(cell, f, g, h) else {
                         continue;
                     };
                     // Schedule both cofactor triples and a Combine that runs once they're resolved
@@ -274,37 +264,7 @@ impl BddManager {
                     top_var,
                     low,
                     high,
-                } => {
-                    // Read the resolved children under one short-lived shared borrow. A diamond can
-                    // schedule the same Combine twice; the first caches the result, so skip if it is
-                    // already there.
-                    let children = {
-                        let manager = cell.read();
-                        if manager.ite_cache.contains_key(&triple) {
-                            None
-                        } else {
-                            let low_id = manager.ite_resolved(low.0, low.1, low.2).expect(
-                                "ITE low child unresolved at combine time - BDD scheduling bug",
-                            );
-                            let high_id = manager.ite_resolved(high.0, high.1, high.2).expect(
-                                "ITE high child unresolved at combine time - BDD scheduling bug",
-                            );
-                            Some((low_id, high_id))
-                        }
-                    };
-                    let Some((low_id, high_id)) = children else {
-                        continue;
-                    };
-                    // Commit under a separate short-lived exclusive borrow — taken only after the shared
-                    // borrow above has been dropped, so the two never overlap. Intern the node and record
-                    // its cache entry as one transaction, re-checking in case another thread committed it
-                    // meanwhile.
-                    let mut manager = cell.write();
-                    if !manager.ite_cache.contains_key(&triple) {
-                        let result = manager.insert_node(top_var, low_id, high_id);
-                        manager.ite_cache.insert(triple, result);
-                    }
-                }
+                } => Self::ite_combine_step(cell, triple, top_var, low, high),
             }
         }
 
@@ -312,6 +272,68 @@ impl BddManager {
         cell.read().ite_resolved(f, g, h).expect(
             "top-level ITE triple unresolved after iterative evaluation - BDD scheduling bug",
         )
+    }
+
+    /// Resolve-or-expand one ITE triple under a single short-lived shared borrow.
+    ///
+    /// `None` when `(f, g, h)` is already resolved (a terminal rule or an `ite_cache` hit);
+    /// `Some((top_var, low_triple, high_triple))` when it needs its two child triples solved
+    /// and then a combine. This is `ite`'s Solve step, shared with the compose engines'
+    /// embedded ITE machines.
+    fn ite_solve_step<C: ManagerCell>(
+        cell: &C,
+        f: NodeId,
+        g: NodeId,
+        h: NodeId,
+    ) -> Option<(VarId, (NodeId, NodeId, NodeId), (NodeId, NodeId, NodeId))> {
+        let manager = cell.read();
+        if manager.ite_resolved(f, g, h).is_some() {
+            None
+        } else {
+            Some(manager.ite_expand(f, g, h))
+        }
+    }
+
+    /// Combine one ITE triple once its two child triples are resolved: read the children under
+    /// a shared borrow (skipping if the triple is already cached — a diamond can schedule the
+    /// same combine twice), then intern the node and record its `ite_cache` entry in one
+    /// exclusive transaction. This is `ite`'s Combine step, shared with the compose engines.
+    fn ite_combine_step<C: ManagerCell>(
+        cell: &C,
+        triple: (NodeId, NodeId, NodeId),
+        top_var: VarId,
+        low: (NodeId, NodeId, NodeId),
+        high: (NodeId, NodeId, NodeId),
+    ) {
+        // Read the resolved children under one short-lived shared borrow. A diamond can
+        // schedule the same Combine twice; the first caches the result, so skip if it is
+        // already there.
+        let children = {
+            let manager = cell.read();
+            if manager.ite_cache.contains_key(&triple) {
+                None
+            } else {
+                let low_id = manager
+                    .ite_resolved(low.0, low.1, low.2)
+                    .expect("ITE low child unresolved at combine time - BDD scheduling bug");
+                let high_id = manager
+                    .ite_resolved(high.0, high.1, high.2)
+                    .expect("ITE high child unresolved at combine time - BDD scheduling bug");
+                Some((low_id, high_id))
+            }
+        };
+        let Some((low_id, high_id)) = children else {
+            return;
+        };
+        // Commit under a separate short-lived exclusive borrow — taken only after the shared
+        // borrow above has been dropped, so the two never overlap. Intern the node and record
+        // its cache entry as one transaction, re-checking in case another thread committed it
+        // meanwhile.
+        let mut manager = cell.write();
+        if !manager.ite_cache.contains_key(&triple) {
+            let result = manager.insert_node(top_var, low_id, high_id);
+            manager.ite_cache.insert(triple, result);
+        }
     }
 
     /// Exclusive-or of two nodes, `xor(f, g) = ite(f, ¬g, g)`, managing the cell's borrow itself.
