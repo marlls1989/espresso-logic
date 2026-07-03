@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NamedLabel` bound), and `project_to_arity` projects an anonymous minterm by arity — widening with
   trailing don't-cares, dropping trailing positions, or a no-op at equal arity. A repeated target
   variable is deduplicated, keeping the first occurrence.
+- `Cover::labeled`, the label-value dual of the string-name `Cover::with_labels`: builds a cover
+  from label values directly, so it works for any `Label` type, not just `StringLabel`s.
 
 ### Changed
 

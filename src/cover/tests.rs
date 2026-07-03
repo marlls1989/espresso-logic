@@ -2723,6 +2723,12 @@ fn cover_with_labels_rejects_duplicate_output() {
     assert_eq!(err, DuplicateLabel::Output { index: 1 });
 }
 
+#[test]
+fn cover_labeled_rejects_duplicate_input() {
+    let err = Cover::<u32, u32>::labeled(CoverType::F, [1, 2, 1], [10]).unwrap_err();
+    assert_eq!(err, DuplicateLabel::Input { index: 2 });
+}
+
 /// `vars` names a variable *set*: a repeated name is deduplicated (first occurrence kept), so the
 /// projection is unaffected and the header only grows by the distinct names.
 #[test]

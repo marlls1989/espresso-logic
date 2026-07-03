@@ -338,6 +338,8 @@ where
 {
     /// Create a new cover with pre-defined labels.
     ///
+    /// A string-name convenience over [`labeled`](Cover::labeled): each label is built via
+    /// `From<&str>`, so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work).
     /// Useful when you know the variable names in advance. The dimensions are set from the label
     /// counts. The label types are inferred from context (e.g. `Cover::<Symbol, Symbol>::with_labels`
     /// or `Cover::<String, String>::with_labels`) — any label type constructible from `&str` works.
@@ -375,6 +377,47 @@ where
             .into_iter()
             .map(|s| O::from(s.as_ref()))
             .collect();
+
+        Ok(Cover {
+            input_symbols: Symbols::new(input_vars)
+                .map_err(|e| DuplicateLabel::Input { index: e.index })?,
+            output_symbols: Symbols::new(output_vars)
+                .map_err(|e| DuplicateLabel::Output { index: e.index })?,
+            cubes: Vec::new(),
+            cover_type,
+        })
+    }
+}
+
+impl<I: Label, O: Label> Cover<I, O> {
+    /// Create a new cover with pre-defined labels.
+    ///
+    /// The label-value dual of [`with_labels`](Cover::with_labels): takes label values directly
+    /// instead of names, so it works for any [`Label`] type, not just [`StringLabel`]s (e.g.
+    /// `Cover::<u32, u32>::labeled`). The dimensions are set from the label counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if either side repeats a label — labels align by identity, so a
+    /// duplicate would collapse two columns onto one. The input side reports
+    /// [`DuplicateLabel::Input`], the output side [`DuplicateLabel::Output`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType};
+    ///
+    /// let cover: Cover<u32, u32> = Cover::labeled(CoverType::F, [1, 2, 3], [10]).unwrap();
+    /// assert_eq!(cover.num_inputs(), 3);
+    /// assert_eq!(cover.num_outputs(), 1);
+    /// ```
+    pub fn labeled(
+        cover_type: CoverType,
+        input_labels: impl IntoIterator<Item = I>,
+        output_labels: impl IntoIterator<Item = O>,
+    ) -> Result<Self, DuplicateLabel> {
+        let input_vars: Arc<[I]> = input_labels.into_iter().collect();
+        let output_vars: Arc<[O]> = output_labels.into_iter().collect();
 
         Ok(Cover {
             input_symbols: Symbols::new(input_vars)
