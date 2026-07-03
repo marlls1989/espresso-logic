@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NamedLabel`, a sealed marker trait for labels whose alignment identity is a real name/value
   (as opposed to `Anonymous`'s positional identity). Every `Ord + Eq + Hash + Clone` label qualifies
   via a single blanket impl.
+- `Minterm::project_to`, `project_to_labels`, and `project_to_arity`, `Arc`-free faces for
+  structurally re-homing a minterm onto a target variable set. Variables shared by the minterm and
+  the target keep their value (aligned by identity, reordered as needed), target-only variables come
+  in as don't-care, and self-only variables are dropped. `project_to` names the target set with any
+  `&str`-like type, `project_to_labels` with label values (excluded from `Minterm<Anonymous>` by the
+  `NamedLabel` bound), and `project_to_arity` projects an anonymous minterm by arity — widening with
+  trailing don't-cares, dropping trailing positions, or a no-op at equal arity. A repeated target
+  variable is deduplicated, keeping the first occurrence.
 
 ### Changed
 
