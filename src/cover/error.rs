@@ -285,6 +285,60 @@ impl From<DuplicateLabel> for io::Error {
     }
 }
 
+/// A positional setter on [`Minterm`](crate::Minterm) or [`OutputSet`](crate::OutputSet) was given an
+/// index that does not name a variable in that row.
+///
+/// Rows are dense: valid indices are `0..arity`, so `index` must be strictly less than `arity`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IndexOutOfRange {
+    /// The index that was requested.
+    pub index: usize,
+    /// The row's arity (number of variables).
+    pub arity: usize,
+}
+
+impl fmt::Display for IndexOutOfRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "index {} is out of range for a row of arity {}",
+            self.index, self.arity
+        )
+    }
+}
+
+impl std::error::Error for IndexOutOfRange {}
+
+impl From<IndexOutOfRange> for io::Error {
+    fn from(err: IndexOutOfRange) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
+/// A by-label setter on [`Minterm`](crate::Minterm) or [`OutputSet`](crate::OutputSet) was given a label
+/// that is not present in that row.
+///
+/// Payload-free: the label type is generic, so the requested label cannot be carried here without
+/// adding a type parameter to this error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LabelNotFound;
+
+impl fmt::Display for LabelNotFound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the requested label is not present in this row")
+    }
+}
+
+impl std::error::Error for LabelNotFound {}
+
+impl From<LabelNotFound> for io::Error {
+    fn from(err: LabelNotFound) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 /// Returned by `Symbols::new` when the label list repeats an identity.
 ///
 /// A symbol table's identities must be distinct — two labels with the same identity would collapse
@@ -347,6 +401,37 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("index 5"));
         assert!(msg.contains("0..=2"));
+    }
+
+    #[test]
+    fn test_index_out_of_range_display() {
+        let err = IndexOutOfRange { index: 5, arity: 3 };
+        assert_eq!(
+            err.to_string(),
+            "index 5 is out of range for a row of arity 3"
+        );
+    }
+
+    #[test]
+    fn test_index_out_of_range_to_io_error() {
+        let err = IndexOutOfRange { index: 5, arity: 3 };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_label_not_found_display() {
+        let err = LabelNotFound;
+        assert_eq!(
+            err.to_string(),
+            "the requested label is not present in this row"
+        );
+    }
+
+    #[test]
+    fn test_label_not_found_to_io_error() {
+        let io_err: io::Error = LabelNotFound.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

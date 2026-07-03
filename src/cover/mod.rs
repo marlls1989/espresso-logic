@@ -117,7 +117,8 @@ mod symbols;
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
 pub use error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, RelabelError, ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, IndexOutOfRange, LabelNotFound,
+    RelabelError, ToExprError,
 };
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
