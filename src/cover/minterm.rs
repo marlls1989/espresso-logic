@@ -2,7 +2,7 @@
 //!
 //! A `Minterm` models one row of a Boolean cover — a value per variable, where each value is
 //! `Some(true)` (1), `Some(false)` (0), or `None` (don't-care). Unlike a bare positional slice, a
-//! `Minterm` **carries its variable labels** (via a shared [`Symbols`] table), so comparisons align
+//! `Minterm` **carries its variable labels** (via a shared `Symbols` table), so comparisons align
 //! by variable identity rather than by raw position. This makes it safe to compare minterms that
 //! came from different orderings, and lets the same type serve as both the input pattern and the
 //! (membership) output pattern of a cube.
@@ -14,7 +14,7 @@
 //!
 //! # Representation
 //!
-//! Labels live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols<L>>`, so
+//! Labels live in a shared `Symbols` table (every cube of a cover shares one `Arc<Symbols<L>>`, so
 //! same-cover comparisons take a pointer-equality fast path and label lookup is O(log n)). Values are
 //! packed two bits per variable using Espresso's value-set encoding — for each variable, one bit
 //! means "0 is allowed" and one means "1 is allowed":
@@ -207,12 +207,12 @@ impl<L> fmt::Display for Minterm<L> {
 }
 
 impl<L> Minterm<L> {
-    /// Build a minterm from values against a shared [`Symbols`] table.
+    /// Build a minterm from values against a shared `Symbols` table.
     ///
     /// `values` is read positionally against `symbols`; both describe the same number of variables.
     /// Minterms built from the *same* `Arc<Symbols>` compare via the pointer-equality fast path.
     #[must_use]
-    pub fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
+    pub(crate) fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
     where
         I: IntoIterator<Item = Option<bool>>,
     {
@@ -300,7 +300,7 @@ impl<L> Minterm<L> {
 
     /// The shared symbol table this minterm is defined over.
     #[must_use]
-    pub fn symbols(&self) -> &Arc<Symbols<L>> {
+    pub(crate) fn symbols(&self) -> &Arc<Symbols<L>> {
         &self.symbols
     }
 
@@ -382,8 +382,8 @@ impl Minterm<Anonymous> {
     /// Build a standalone **anonymous** (positional) minterm from a slice of values.
     ///
     /// Convenient for tests and ad-hoc use; the variables are positional ([`Anonymous`]), so two such
-    /// minterms align by position. For a named minterm build a [`Symbols`] table and use
-    /// [`from_symbols`](Minterm::from_symbols).
+    /// minterms align by position. For a named minterm use [`labeled`](Self::labeled) or
+    /// [`with_labels`](Self::with_labels).
     ///
     /// # Examples
     ///
@@ -741,8 +741,8 @@ impl<L: Label> Minterm<L> {
     /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
     /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
     /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
-    /// minterms (e.g. the output of [`expand_over`](Self::expand_over)), where this is exactly the
-    /// Hamming distance. `hamming_distance == disagreement().len()`.
+    /// minterms (e.g. the output of [`Cube::expand_to`](crate::Cube::expand_to)), where this is exactly
+    /// the Hamming distance. `hamming_distance == disagreement().len()`.
     ///
     /// # Examples
     ///
@@ -830,28 +830,10 @@ impl<L: Label> Minterm<L> {
     /// `BTreeSet`/`HashSet` keys). Expanding an already-maximal minterm over its own header is a no-op.
     ///
     /// Returns a lazy [`ExpandedMinterms`] iterator that packs each of the `2^k` minterms on demand,
-    /// so a cube with many don't-cares costs O(1) memory rather than materialising the whole set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Minterm, Symbols};
-    /// use std::collections::BTreeSet;
-    ///
-    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect()).unwrap();
-    /// // a fixed true, b don't-care → both polarities of b.
-    /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
-    /// let got: BTreeSet<_> = m.expand_over(&vars).collect();
-    /// let want: BTreeSet<_> = [
-    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]),
-    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(true)]),
-    /// ]
-    /// .into_iter()
-    /// .collect();
-    /// assert_eq!(got, want);
-    /// ```
+    /// so a cube with many don't-cares costs O(1) memory rather than materialising the whole set. The
+    /// public entry point is [`Cube::expand_to`](crate::Cube::expand_to).
     #[must_use]
-    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> ExpandedMinterms<L> {
+    pub(crate) fn expand_over(&self, target: &Arc<Symbols<L>>) -> ExpandedMinterms<L> {
         // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm — a
         // vacuous (zero-length) expansion, short-circuited before the don't-care split rather than
         // copying the malformed field through. `base` is unread when `count == 0`.
@@ -889,7 +871,7 @@ impl<L: Label> Minterm<L> {
     }
 }
 
-/// Lazy iterator over the concrete minterms of an expansion, created by [`Minterm::expand_over`] and
+/// Lazy iterator over the concrete minterms of an expansion, created by
 /// [`Cube::expand_to`](crate::Cube::expand_to).
 ///
 /// Each `next()` packs one of the `2^k` minterms on demand (where `k` is the number of don't-care

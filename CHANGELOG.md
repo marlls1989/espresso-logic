@@ -36,9 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `Symbols::new` now returns `Result<Arc<Symbols<L>>, DuplicateSymbol>` (previously
-  infallible). A label list that repeats an identity is rejected rather than silently collapsing two
-  columns onto one; `DuplicateSymbol::index` is the position of the second occurrence.
+- **Breaking:** `Symbols` and the `Arc<Symbols>`-taking methods are no longer part of the public API.
+  `Symbols` itself, `Minterm::from_symbols`/`symbols`/`project_onto`/`expand_over`,
+  `OutputSet::symbols`, and the `DuplicateSymbol` error are now crate-internal. Construct minterms and
+  output sets with `Minterm::labeled`/`with_labels`/`anonymous` (and the `OutputSet` equivalents);
+  read a header's labels with `vars()`; re-home a minterm with
+  `project_to`/`project_to_labels`/`project_to_arity`; expand a cube with `Cube::expand_to`; and
+  relabel a cover with `relabel*`/`rename*`.
 - **Breaking:** `Cover::with_labels` now returns `Result<Self, DuplicateLabel>` and takes
   `impl IntoIterator` label lists. Existing slice-reference call sites (e.g. `&["a", "b"]`) continue
   to compile unchanged.
@@ -54,10 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Building a variable table from user labels that repeat an identity no longer silently collapses two
-  columns onto one and drops a value. The check is centralised in `Symbols::new`; the labelled
-  cube/cover constructors surface it as `DuplicateLabel`, while the variable-set operations
-  (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`) deduplicate their input.
+- User labels that repeat an identity no longer silently collapse two columns onto one and drop a
+  value. The labelled cube/cover constructors reject a repeated label with `DuplicateLabel`, while the
+  variable-set operations (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`)
+  treat their argument as a set and deduplicate a repeated variable.
 
 ## [5.2.0] - 2026-07-02
 

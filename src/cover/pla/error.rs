@@ -83,7 +83,7 @@ pub enum PLAError {
     DuplicateOutputDirective,
     /// A `.ilb`/`.ob` label section names the same variable more than once.
     ///
-    /// [`Symbols`](crate::cover::Symbols) requires a header's identities to be unique so it can
+    /// `Symbols` requires a header's identities to be unique so it can
     /// binary-search over an identity-sorted order; a duplicated label would silently violate that
     /// invariant and misalign later lookups. Rejected at parse time instead.
     DuplicateLabel {

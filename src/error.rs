@@ -26,7 +26,6 @@
 //! - [`AddExprError`] - Adding expressions to covers
 //! - [`ToExprError`] - Converting covers to expressions
 //! - [`DuplicateLabel`] - A labelled cube/cover constructor was handed a repeated input or output label
-//! - [`DuplicateSymbol`] - A symbol table (`Symbols::new`) was handed a repeated label
 //!
 //! ## Expression Module Errors
 //!
@@ -41,8 +40,7 @@
 
 // Re-export error types from submodules for backward compatibility
 pub use crate::cover::error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, RelabelError,
-    ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, RelabelError, ToExprError,
 };
 pub use crate::cover::pla::error::{PLAError, PLAReadError, PLAWriteError};
 pub use crate::espresso::error::{CubeError, InstanceError, MinimizationError};

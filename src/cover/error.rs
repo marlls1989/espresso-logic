@@ -285,7 +285,7 @@ impl From<DuplicateLabel> for io::Error {
     }
 }
 
-/// Returned by [`Symbols::new`](crate::Symbols::new) when the label list repeats an identity.
+/// Returned by `Symbols::new` when the label list repeats an identity.
 ///
 /// A symbol table's identities must be distinct — two labels with the same identity would collapse
 /// onto one column and silently drop a value. This is the side-agnostic error at the symbol-table
@@ -294,9 +294,9 @@ impl From<DuplicateLabel> for io::Error {
 /// position of the second occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct DuplicateSymbol {
-    /// The position of the duplicate label in the list handed to [`Symbols::new`](crate::Symbols::new).
-    pub index: usize,
+pub(crate) struct DuplicateSymbol {
+    /// The position of the duplicate label in the list handed to `Symbols::new`.
+    pub(crate) index: usize,
 }
 
 impl fmt::Display for DuplicateSymbol {
@@ -306,12 +306,6 @@ impl fmt::Display for DuplicateSymbol {
 }
 
 impl std::error::Error for DuplicateSymbol {}
-
-impl From<DuplicateSymbol> for io::Error {
-    fn from(err: DuplicateSymbol) -> Self {
-        io::Error::new(io::ErrorKind::InvalidInput, err)
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -117,15 +117,16 @@ mod symbols;
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
 pub use error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, RelabelError,
-    ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, RelabelError, ToExprError,
 };
 pub use iterators::{CubesIter, ToExprs};
 pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
 pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
 pub use output_set::OutputSet;
-pub use symbols::Symbols;
+// Crate-internal only: `Symbols` is not part of the public API, but other in-crate modules
+// (`espresso`, `bdd`) reach it through this path since the `symbols` module itself is private.
+pub(crate) use symbols::Symbols;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -441,8 +442,8 @@ impl<I: Label, O: Clone> Cover<I, O> {
     /// minterms stay on the fast-comparison path, and maximising an already-maximal cover is a no-op.
     ///
     /// To re-base onto a *different* set of variables — widening in new ones or universally projecting
-    /// old ones away — use [`over_vars`](Self::over_vars) first. See [`Cube::expand_to`] /
-    /// [`Minterm::expand_over`] for the per-cube primitive.
+    /// old ones away — use [`over_vars`](Self::over_vars) first. See [`Cube::expand_to`] for the
+    /// per-cube primitive.
     #[must_use]
     pub fn maximize(&self) -> Cover<I, O> {
         let target = Arc::clone(&self.input_symbols);

@@ -37,7 +37,7 @@ fn first_duplicate<L: Label>(labels: &[L]) -> Option<usize> {
 /// [`Symbols::<Anonymous>::anonymous`] (positional); the table is **fully immutable** once built and
 /// shared behind an `Arc`. There is no partial state and no interior mutability — `labels.len()` *is*
 /// the arity, and the sorted order is computed eagerly at construction.
-pub struct Symbols<L> {
+pub(crate) struct Symbols<L> {
     /// index → label, one per position. The single, authoritative copy of the labels.
     labels: Arc<[L]>,
     /// Positions `0..arity` sorted by [`identity`](Label::identity), computed once at construction.
@@ -122,13 +122,13 @@ impl<L> Symbols<L> {
 
     /// An empty symbol table (arity 0).
     #[must_use]
-    pub fn empty() -> Arc<Symbols<L>> {
+    pub(crate) fn empty() -> Arc<Symbols<L>> {
         Symbols::from_identity_sorted(Arc::from([]))
     }
 
     /// The number of variables (positions) this table describes.
     #[must_use]
-    pub fn arity(&self) -> usize {
+    pub(crate) fn arity(&self) -> usize {
         self.labels.len()
     }
 
@@ -136,7 +136,7 @@ impl<L> Symbols<L> {
     /// for a positional ([`Anonymous`]) table they are the zero-sized `Anonymous` placeholders, and a
     /// named table (e.g. `Symbols<Symbol>`) holds real names. There is no separate "is it labelled" flag.
     #[must_use]
-    pub fn labels(&self) -> &[L] {
+    pub(crate) fn labels(&self) -> &[L] {
         &self.labels
     }
 }
@@ -148,7 +148,7 @@ impl Symbols<Anonymous> {
     /// An anonymous label's identity is its position, so the labels are already in identity order and
     /// the sorted order is `0..arity` for free — no comparison sort.
     #[must_use]
-    pub fn anonymous(arity: usize) -> Arc<Symbols<Anonymous>> {
+    pub(crate) fn anonymous(arity: usize) -> Arc<Symbols<Anonymous>> {
         Symbols::from_identity_sorted((0..arity).map(|_| Anonymous).collect())
     }
 }
@@ -166,19 +166,7 @@ impl<L: Label> Symbols<L> {
     /// # Errors
     ///
     /// Returns [`DuplicateSymbol`] if two labels share an identity; `index` is the second occurrence.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Symbols, Symbol};
-    ///
-    /// let ok = Symbols::new([Symbol::new("a"), Symbol::new("b")].into());
-    /// assert!(ok.is_ok());
-    ///
-    /// let dup = Symbols::new([Symbol::new("a"), Symbol::new("a")].into());
-    /// assert_eq!(dup.unwrap_err().index, 1);
-    /// ```
-    pub fn new(labels: Arc<[L]>) -> Result<Arc<Symbols<L>>, DuplicateSymbol> {
+    pub(crate) fn new(labels: Arc<[L]>) -> Result<Arc<Symbols<L>>, DuplicateSymbol> {
         if let Some(index) = first_duplicate(&labels) {
             return Err(DuplicateSymbol { index });
         }
@@ -222,7 +210,7 @@ impl<L: Label> Symbols<L> {
     ///
     /// Accepts any borrowed form of the label (so a `Symbols<Symbol>` can be queried with `&str`).
     #[must_use]
-    pub fn index_of<Q>(&self, label: &Q) -> Option<u32>
+    pub(crate) fn index_of<Q>(&self, label: &Q) -> Option<u32>
     where
         L: Borrow<Q>,
         Q: Ord + ?Sized,
