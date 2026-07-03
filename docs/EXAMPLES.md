@@ -58,15 +58,15 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 builder and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_builder, expr, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, expr, Minterm, Symbol};
 
 let expr = expr!("a" & "b" | !"a");
 let builder = bdd_builder!();
 let f = builder.build(&expr);
 
 // The assignment is a Minterm fixing each variable; a complete one over the support yields `Ok`.
-let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
-let assignment = Minterm::from_symbols(vars, [Some(true), Some(false)]);
+let assignment =
+    Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
 // (a & b) | !a  with a=true, b=false  =  false
 assert_eq!(f.evaluate(&assignment), Ok(false));
 ```

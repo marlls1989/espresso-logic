@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Cover::over_labels`, the label-value counterpart of `Cover::over_vars`: it names the target
+  variable set by input label value (any `NamedLabel`, e.g. `u32`) rather than by string, driving the
+  same universal projection.
 - **`Cube` can now be assembled from separately-built halves.** `Cube::new` — pairing a pre-built
   input `Minterm` with a per-output `OutputSet` — is now public, and both halves gain the full
   constructor set: `Minterm::labeled`/`with_labels` and `OutputSet::labeled`/`with_labels` build a
@@ -16,27 +19,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DuplicateLabel`), and `OutputSet::anonymous` builds a positional one (mirroring the existing
   `Minterm::anonymous`). The label types flow through `Cube::new`: two labelled halves compose into a
   labelled `Cube<I, O>`, two anonymous halves into an anonymous one.
+- `NamedLabel`, a sealed marker trait for labels whose alignment identity is a real name/value
+  (as opposed to `Anonymous`'s positional identity). Every `Ord + Eq + Hash + Clone` label qualifies
+  via a single blanket impl.
+- `Cover::rename`/`rename_inputs`/`rename_outputs`, string-name forms of the `relabel*` methods:
+  they take `&str`-like names (`impl IntoIterator<Item: AsRef<str>>`) and convert each into the
+  chosen `StringLabel` target type. Type-changing conversions to non-string labels stay on
+  `relabel*`.
+- `Minterm::project_to`, `project_to_labels`, and `project_to_arity`, `Arc`-free faces for
+  structurally re-homing a minterm onto a target variable set. Variables shared by the minterm and
+  the target keep their value (aligned by identity, reordered as needed), target-only variables come
+  in as don't-care, and self-only variables are dropped. `project_to` names the target set with any
+  `&str`-like type, `project_to_labels` with label values (excluded from `Minterm<Anonymous>` by the
+  `NamedLabel` bound), and `project_to_arity` projects an anonymous minterm by arity — widening with
+  trailing don't-cares, dropping trailing positions, or a no-op at equal arity. A repeated target
+  variable is deduplicated, keeping the first occurrence.
+- `Cover::labeled`, the label-value dual of the string-name `Cover::with_labels`: builds a cover
+  from label values directly, so it works for any `Label` type, not just `StringLabel`s.
 
 ### Changed
 
-- **Breaking:** `Symbols::new` now returns `Result<Arc<Symbols<L>>, DuplicateSymbol>` (previously
-  infallible). A label list that repeats an identity is rejected rather than silently collapsing two
-  columns onto one; `DuplicateSymbol::index` is the position of the second occurrence.
+- **Breaking:** `Symbols` and the `Arc<Symbols>`-taking methods are no longer part of the public API.
+  `Symbols` itself, `Minterm::from_symbols`/`symbols`/`project_onto`/`expand_over`,
+  `OutputSet::symbols`, and the `DuplicateSymbol` error are now crate-internal. Construct minterms and
+  output sets with `Minterm::labeled`/`with_labels`/`anonymous` (and the `OutputSet` equivalents);
+  read a header's labels with `vars()`; re-home a minterm with
+  `project_to`/`project_to_labels`/`project_to_arity`; expand a cube with `Cube::expand_to`; and
+  relabel a cover with `relabel*`/`rename*`.
 - **Breaking:** `Cover::with_labels` now returns `Result<Self, DuplicateLabel>` and takes
   `impl IntoIterator` label lists. Existing slice-reference call sites (e.g. `&["a", "b"]`) continue
   to compile unchanged.
+- **Breaking:** `Cover::relabel`/`relabel_inputs`/`relabel_outputs` now take label iterators
+  (`impl IntoIterator<Item = L>`) rather than `Arc<Symbols>`, and return `RelabelError` — either an
+  arity mismatch (`RelabelError::Arity`, wrapping `ArityMismatch`) or a duplicate label
+  (`RelabelError::Duplicate`, wrapping `DuplicateLabel`).
 - `Cover::over_vars`, `Bdd::cover_over`, and `Bdd::cover_over_fr` now take
   `impl IntoIterator<Item = S>` instead of `&[S]` and deduplicate a repeated variable — the argument
   names a variable *set*, so `["a", "b", "a"]` and `["a", "b"]` behave identically. These remain
   infallible, and ordinary slice-reference call sites (e.g. `&["a", "b"]`) continue to compile
   unchanged.
+- `Cover::input_labels`/`output_labels` are now available for every label type, not just
+  string-labelled covers.
 
 ### Fixed
 
-- Building a variable table from user labels that repeat an identity no longer silently collapses two
-  columns onto one and drops a value. The check is centralised in `Symbols::new`; the labelled
-  cube/cover constructors surface it as `DuplicateLabel`, while the variable-set operations
-  (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`) deduplicate their input.
+- User labels that repeat an identity no longer silently collapse two columns onto one and drop a
+  value. The labelled cube/cover constructors reject a repeated label with `DuplicateLabel`, while the
+  variable-set operations (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`)
+  treat their argument as a set and deduplicate a repeated variable.
 
 ## [5.2.0] - 2026-07-02
 

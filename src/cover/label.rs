@@ -101,6 +101,24 @@ pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
 
 impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}
 
+/// A [`Label`] whose alignment identity is the label value itself — a real name/value rather than a
+/// position. Every `Ord + Eq + Hash + Clone` label qualifies via the single blanket impl below
+/// ([`Symbol`](crate::Symbol), `String`, `Arc<str>`, `u32`, …); [`Anonymous`] does not, since its
+/// identity is its position rather than a value.
+///
+/// This is the bound taken by variable-set arguments that name variables by value, e.g.
+/// `Minterm::project_to_labels` and `Cover::over_labels`.
+///
+/// Where [`Label::NAMED`] is a const consulted at runtime (to decide whether a label type renders
+/// names), `NamedLabel` is a trait bound: it lets a signature require "a label that has a value
+/// identity" at compile time, rather than checking `NAMED` after the fact.
+///
+/// Sealed via its [`Label`] supertrait and provided by a single blanket impl, so it is an alias
+/// callers name but never implement.
+pub trait NamedLabel: Label {}
+
+impl<T: Ord + Eq + Hash + Clone> NamedLabel for T {}
+
 /// How a label type produces conflict-free labels for the columns [`Cover::extend`](crate::Cover::extend)
 /// appends.
 ///
@@ -193,5 +211,14 @@ mod tests {
         // `Anonymous` has no `PartialEq`; only the count is observable.
         let out = Anonymous::reconcile(&[Anonymous, Anonymous], &[Anonymous]);
         assert_eq!(out.len(), 1);
+    }
+
+    fn is_named<L: NamedLabel>() {}
+
+    #[test]
+    fn named_label_covers_value_identity_labels() {
+        is_named::<Symbol>();
+        is_named::<String>();
+        is_named::<u32>();
     }
 }

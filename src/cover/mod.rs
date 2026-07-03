@@ -117,14 +117,16 @@ mod symbols;
 // Public re-exports - core types
 pub use cubes::{Cube, CubeType};
 pub use error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, DuplicateSymbol, ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, RelabelError, ToExprError,
 };
 pub use iterators::{CubesIter, ToExprs};
-pub use label::{Anonymous, Label, ReconcilableLabel, StringLabel};
+pub use label::{Anonymous, Label, NamedLabel, ReconcilableLabel, StringLabel};
 pub use minimisation::Minimizable;
 pub use minterm::{Disagreement, ExpandedMinterms, Minterm, MintermIter};
 pub use output_set::OutputSet;
-pub use symbols::Symbols;
+// Crate-internal only: `Symbols` is not part of the public API, but other in-crate modules
+// (`espresso`, `bdd`) reach it through this path since the `symbols` module itself is private.
+pub(crate) use symbols::Symbols;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -337,6 +339,8 @@ where
 {
     /// Create a new cover with pre-defined labels.
     ///
+    /// A string-name convenience over [`labeled`](Cover::labeled): each label is built via
+    /// `From<&str>`, so no string type is privileged (`&str`, `String`, `Arc<str>`, … all work).
     /// Useful when you know the variable names in advance. The dimensions are set from the label
     /// counts. The label types are inferred from context (e.g. `Cover::<Symbol, Symbol>::with_labels`
     /// or `Cover::<String, String>::with_labels`) — any label type constructible from `&str` works.
@@ -386,6 +390,47 @@ where
     }
 }
 
+impl<I: Label, O: Label> Cover<I, O> {
+    /// Create a new cover with pre-defined labels.
+    ///
+    /// The label-value dual of [`with_labels`](Cover::with_labels): takes label values directly
+    /// instead of names, so it works for any [`Label`] type, not just [`StringLabel`]s (e.g.
+    /// `Cover::<u32, u32>::labeled`). The dimensions are set from the label counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateLabel`] if either side repeats a label — labels align by identity, so a
+    /// duplicate would collapse two columns onto one. The input side reports
+    /// [`DuplicateLabel::Input`], the output side [`DuplicateLabel::Output`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType};
+    ///
+    /// let cover: Cover<u32, u32> = Cover::labeled(CoverType::F, [1, 2, 3], [10]).unwrap();
+    /// assert_eq!(cover.num_inputs(), 3);
+    /// assert_eq!(cover.num_outputs(), 1);
+    /// ```
+    pub fn labeled(
+        cover_type: CoverType,
+        input_labels: impl IntoIterator<Item = I>,
+        output_labels: impl IntoIterator<Item = O>,
+    ) -> Result<Self, DuplicateLabel> {
+        let input_vars: Arc<[I]> = input_labels.into_iter().collect();
+        let output_vars: Arc<[O]> = output_labels.into_iter().collect();
+
+        Ok(Cover {
+            input_symbols: Symbols::new(input_vars)
+                .map_err(|e| DuplicateLabel::Input { index: e.index })?,
+            output_symbols: Symbols::new(output_vars)
+                .map_err(|e| DuplicateLabel::Output { index: e.index })?,
+            cubes: Vec::new(),
+            cover_type,
+        })
+    }
+}
+
 impl<I: Label, O: Clone> Cover<I, O> {
     /// Expand every cube into its fully-assigned minterms over the cover's **own** input header.
     ///
@@ -397,8 +442,8 @@ impl<I: Label, O: Clone> Cover<I, O> {
     /// minterms stay on the fast-comparison path, and maximising an already-maximal cover is a no-op.
     ///
     /// To re-base onto a *different* set of variables — widening in new ones or universally projecting
-    /// old ones away — use [`over_vars`](Self::over_vars) first. See [`Cube::expand_to`] /
-    /// [`Minterm::expand_over`] for the per-cube primitive.
+    /// old ones away — use [`over_vars`](Self::over_vars) first. See [`Cube::expand_to`] for the
+    /// per-cube primitive.
     #[must_use]
     pub fn maximize(&self) -> Cover<I, O> {
         let target = Arc::clone(&self.input_symbols);
@@ -418,6 +463,81 @@ impl<I: Label, O: Clone> Cover<I, O> {
             cubes,
             cover_type: self.cover_type,
         }
+    }
+
+    /// Re-base this cover onto the pre-built `target` variable table, universally projecting away any
+    /// variable it drops. The label-generic core of [`over_vars`](Self::over_vars) /
+    /// [`over_labels`](Self::over_labels): both build `target` from their own operand kind, then defer
+    /// here.
+    fn over_symbols(&self, target: Arc<Symbols<I>>) -> Cover<I, O> {
+        // Which of this cover's input columns are eliminated (identity absent from `target`)?
+        let excluded_mask: Vec<bool> = self
+            .input_symbols
+            .labels()
+            .iter()
+            .enumerate()
+            .map(|(i, l)| target.position_of_identity(&l.identity(i)).is_none())
+            .collect();
+
+        // Pure widen (nothing eliminated): re-home each cube onto `target` with don't-care columns for
+        // the new variables. No column is dropped, so this is safe for every cover type.
+        if !excluded_mask.iter().any(|&e| e) {
+            let cubes = self
+                .cubes
+                .iter()
+                .map(|c| Cube::new(c.inputs.project_onto(&target), c.outputs.clone(), c.set))
+                .collect();
+            return Cover::from_parts(
+                target,
+                Arc::clone(&self.output_symbols),
+                cubes,
+                self.cover_type,
+            );
+        }
+
+        // Real projection: universal elimination via the complete prime set. Defined only for fully
+        // specified covers — a don't-care set has no well-defined universal projection here.
+        assert!(
+            !self.cover_type.has_d(),
+            "over_symbols: universal projection is defined only for fully specified (F/FR) covers; \
+             this cover carries a don't-care set (FD/FDR)"
+        );
+
+        // Project one cube set (F or R) on its own: all primes of that set, then keep only the primes
+        // that constrain nothing outside the target set (their eliminated columns are all don't-care),
+        // then drop those columns. Reading each set independently — never a complement — is what
+        // preserves the undef gap; output-assertion bits ride through `project_onto` untouched, so
+        // multi-output covers project per output in one pass.
+        let project_set = |set: CubeType| -> Vec<Cube<I, O>> {
+            let members: Vec<&Cube<I, O>> = self.cubes.iter().filter(|c| c.set == set).collect();
+            minimisation::primes_cubes(
+                &self.input_symbols,
+                &self.output_symbols,
+                &members,
+                &[],
+                set,
+            )
+            .into_iter()
+            .filter(|p| {
+                p.inputs()
+                    .iter()
+                    .enumerate()
+                    .all(|(i, v)| !excluded_mask[i] || v.is_none())
+            })
+            .map(|p| Cube::new(p.inputs().project_onto(&target), p.outputs().clone(), set))
+            .collect()
+        };
+
+        let mut cubes = project_set(CubeType::F);
+        if self.cover_type.has_r() {
+            cubes.extend(project_set(CubeType::R));
+        }
+        Cover::from_parts(
+            target,
+            Arc::clone(&self.output_symbols),
+            cubes,
+            self.cover_type,
+        )
     }
 }
 
@@ -449,6 +569,9 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     /// `vars` names a variable *set*: a repeated name is deduplicated (the first occurrence is kept),
     /// so `["a", "b", "a"]` and `["a", "b"]` re-base onto the same header.
     ///
+    /// For a cover whose input labels *are* the variable values (any [`NamedLabel`], e.g. `u32`),
+    /// [`over_labels`](Self::over_labels) is the same projection driven by the label values directly.
+    ///
     /// # Panics
     ///
     /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
@@ -457,76 +580,72 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
     /// different dimensions on this thread) or a C fatal.
     #[must_use]
     pub fn over_vars<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Cover<I, O> {
-        let target = Symbols::deduped(vars.into_iter().map(|s| I::from(s.as_ref())));
+        self.over_symbols(Symbols::deduped(
+            vars.into_iter().map(|s| I::from(s.as_ref())),
+        ))
+    }
+}
 
-        // Which of this cover's input columns are eliminated (identity absent from `target`)?
-        let excluded_mask: Vec<bool> = self
-            .input_symbols
-            .labels()
-            .iter()
-            .enumerate()
-            .map(|(i, l)| target.position_of_identity(&l.identity(i)).is_none())
-            .collect();
-
-        // Pure widen (nothing eliminated): re-home each cube onto `target` with don't-care columns for
-        // the new variables. No column is dropped, so this is safe for every cover type.
-        if !excluded_mask.iter().any(|&e| e) {
-            let cubes = self
-                .cubes
-                .iter()
-                .map(|c| Cube::new(c.inputs.project_onto(&target), c.outputs.clone(), c.set))
-                .collect();
-            return Cover::from_parts(
-                target,
-                Arc::clone(&self.output_symbols),
-                cubes,
-                self.cover_type,
-            );
-        }
-
-        // Real projection: universal elimination via the complete prime set. Defined only for fully
-        // specified covers — a don't-care set has no well-defined universal projection here.
-        assert!(
-            !self.cover_type.has_d(),
-            "over_vars: universal projection is defined only for fully specified (F/FR) covers; \
-             this cover carries a don't-care set (FD/FDR)"
-        );
-
-        // Project one cube set (F or R) on its own: all primes of that set, then keep only the primes
-        // that constrain nothing outside `vars` (their eliminated columns are all don't-care), then
-        // drop those columns. Reading each set independently — never a complement — is what preserves
-        // the undef gap; output-assertion bits ride through `project_onto` untouched, so multi-output
-        // covers project per output in one pass.
-        let project_set = |set: CubeType| -> Vec<Cube<I, O>> {
-            let members: Vec<&Cube<I, O>> = self.cubes.iter().filter(|c| c.set == set).collect();
-            minimisation::primes_cubes(
-                &self.input_symbols,
-                &self.output_symbols,
-                &members,
-                &[],
-                set,
-            )
-            .into_iter()
-            .filter(|p| {
-                p.inputs()
-                    .iter()
-                    .enumerate()
-                    .all(|(i, v)| !excluded_mask[i] || v.is_none())
-            })
-            .map(|p| Cube::new(p.inputs().project_onto(&target), p.outputs().clone(), set))
-            .collect()
-        };
-
-        let mut cubes = project_set(CubeType::F);
-        if self.cover_type.has_r() {
-            cubes.extend(project_set(CubeType::R));
-        }
-        Cover::from_parts(
-            target,
-            Arc::clone(&self.output_symbols),
-            cubes,
-            self.cover_type,
-        )
+impl<I: NamedLabel, O: Clone> Cover<I, O> {
+    /// Re-base this cover onto exactly the variables in `vars` (given as label *values*), universally
+    /// projecting away any variable it drops.
+    ///
+    /// The label-value counterpart of [`over_vars`](Self::over_vars): where `over_vars` names the
+    /// target variables by string, this names them by the input label value itself (any
+    /// [`NamedLabel`], e.g. `u32`). The projection is identical — widen in every `vars` variable absent
+    /// from this cover as a don't-care column, then **universally** eliminate every input variable not
+    /// in `vars` (the ON-set of the result holds exactly the `vars` assignments that force the output
+    /// high for *every* value of the eliminated variables; for an [`FR`](CoverType::FR) cover the
+    /// OFF-set holds those that force it low for every value). ON- and OFF-sets are derived
+    /// independently from the complete prime set (see [`primes`](Self::primes)), so they are orthogonal
+    /// but not necessarily complementary: where the output still depends on an eliminated variable,
+    /// that assignment lands in neither set, leaving a genuine don't-care/undef gap.
+    ///
+    /// The result is returned in **don't-care form** (not minterm-expanded): compose
+    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
+    /// (F in → F out; FR in → FR out).
+    ///
+    /// `vars` names a variable *set*: a repeated label is deduplicated (the first occurrence is kept),
+    /// so `[a, b, a]` and `[a, b]` re-base onto the same header.
+    ///
+    /// The [`NamedLabel`] bound excludes the positional [`Anonymous`] header at the type level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
+    /// [`FDR`](CoverType::FDR) cover): universal projection is defined only for fully specified
+    /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
+    /// different dimensions on this thread) or a C fatal.
+    ///
+    /// # Examples
+    ///
+    /// Universally project a two-input AND (`u32`-labelled) onto just variable `0`: the output depends
+    /// on variable `1`, so no assignment of `0` forces it high for every value of `1`, and the ON-set
+    /// projects to empty.
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType};
+    ///
+    /// // f(v0, v1) = v0 & v1, as an F cover over the u32 labels 0 and 1.
+    /// let cover = Cover::<u32, u32>::from_cubes(
+    ///     CoverType::F,
+    ///     [Cube::labeled(
+    ///         &[(0u32, Some(true)), (1u32, Some(true))],
+    ///         &[(9u32, true)],
+    ///         CubeType::F,
+    ///     )
+    ///     .unwrap()],
+    /// );
+    ///
+    /// // Project onto {0}: the output still depends on variable 1, so no assignment of 0 forces it
+    /// // high for every value of 1 — the ON-set projects to empty.
+    /// let projected = cover.over_labels([0u32]);
+    /// assert_eq!(projected.num_inputs(), 1);
+    /// assert_eq!(projected.num_cubes(), 0);
+    /// ```
+    #[must_use]
+    pub fn over_labels(&self, vars: impl IntoIterator<Item = I>) -> Cover<I, O> {
+        self.over_symbols(Symbols::deduped(vars))
     }
 }
 
@@ -578,18 +697,17 @@ impl<I, O> Cover<I, O> {
         Self::new(cover_type)
     }
 
-    /// Re-express this cover over different label types, position-for-position.
+    /// Re-express this cover over pre-built symbol tables, position-for-position.
     ///
-    /// This is the **explicit** way to relabel or anonymise a cover — labelling and anonymisation
-    /// never happen implicitly. The new symbol tables must have the same arities as this cover.
-    /// To change only one side, use [`relabel_inputs`](Self::relabel_inputs) /
-    /// [`relabel_outputs`](Self::relabel_outputs).
+    /// The in-crate workhorse behind the public [`relabel`](Self::relabel) shim: it takes the tables
+    /// directly so callers that already hold them (the PLA reader, [`anonymize`](Self::anonymize))
+    /// skip rebuilding them.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if either replacement table's arity differs from this cover's
     /// corresponding arity (re-labelling is position-for-position).
-    pub fn relabel<I2: Label, O2: Label>(
+    pub(crate) fn relabel_tables<I2: Label, O2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
         output_symbols: Arc<Symbols<O2>>,
@@ -625,12 +743,14 @@ impl<I, O> Cover<I, O> {
         })
     }
 
-    /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
+    /// Re-express only the **input** variables over a pre-built symbol table, keeping the outputs as-is.
+    ///
+    /// The in-crate workhorse behind the public [`relabel_inputs`](Self::relabel_inputs) shim.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if the new input table's arity differs from this cover's input arity.
-    pub fn relabel_inputs<I2: Label>(
+    pub(crate) fn relabel_inputs_tables<I2: Label>(
         self,
         input_symbols: Arc<Symbols<I2>>,
     ) -> Result<Cover<I2, O>, ArityMismatch> {
@@ -659,12 +779,14 @@ impl<I, O> Cover<I, O> {
         })
     }
 
-    /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
+    /// Re-express only the **output** variables over a pre-built symbol table, keeping the inputs as-is.
+    ///
+    /// The in-crate workhorse behind the public [`relabel_outputs`](Self::relabel_outputs) shim.
     ///
     /// # Errors
     ///
     /// Returns [`ArityMismatch`] if the new output table's arity differs from this cover's output arity.
-    pub fn relabel_outputs<O2: Label>(
+    pub(crate) fn relabel_outputs_tables<O2: Label>(
         self,
         output_symbols: Arc<Symbols<O2>>,
     ) -> Result<Cover<I, O2>, ArityMismatch> {
@@ -693,13 +815,202 @@ impl<I, O> Cover<I, O> {
         })
     }
 
+    /// Re-express this cover over different label types, position-for-position.
+    ///
+    /// This is the explicit way to relabel or anonymise a cover — labelling and anonymisation never
+    /// happen implicitly. The replacement label lists must have the same arities as this cover, and
+    /// each side's labels must be distinct. To change only one side, use
+    /// [`relabel_inputs`](Self::relabel_inputs) / [`relabel_outputs`](Self::relabel_outputs); to give
+    /// the cover new string names of a chosen label type, use [`rename`](Self::rename).
+    ///
+    /// An anonymous target needs no special form: `relabel([Anonymous; n], [Anonymous; m])` works
+    /// since [`Anonymous`] is a [`Label`], and [`anonymize`](Self::anonymize) is the convenience.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if either replacement list's arity differs from this cover's
+    /// corresponding arity (arity is checked first), or [`RelabelError::Duplicate`] if a side repeats
+    /// a label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType};
+    ///
+    /// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    /// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
+    ///
+    /// // Re-express the positional cover over integer labels.
+    /// let numbered: Cover<u32, u32> = cover.relabel([0u32, 1], [0u32]).unwrap();
+    /// assert_eq!(numbered.num_inputs(), 2);
+    /// assert_eq!(numbered.num_outputs(), 1);
+    /// ```
+    pub fn relabel<I2: Label, O2: Label>(
+        self,
+        input_labels: impl IntoIterator<Item = I2>,
+        output_labels: impl IntoIterator<Item = O2>,
+    ) -> Result<Cover<I2, O2>, RelabelError> {
+        let inputs: Arc<[I2]> = input_labels.into_iter().collect();
+        if inputs.len() != self.num_inputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: inputs.len(),
+            }));
+        }
+        let outputs: Arc<[O2]> = output_labels.into_iter().collect();
+        if outputs.len() != self.num_outputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: outputs.len(),
+            }));
+        }
+        let input_symbols = Symbols::new(inputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Input { index: e.index }))?;
+        let output_symbols = Symbols::new(outputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Output { index: e.index }))?;
+        Ok(self
+            .relabel_tables(input_symbols, output_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Re-express only the **input** variables over a new label type, keeping the outputs as-is.
+    ///
+    /// See [`relabel`](Self::relabel) for the two-sided form and [`rename_inputs`](Self::rename_inputs)
+    /// for the string-name convenience.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if the replacement list's arity differs from this cover's input
+    /// arity, or [`RelabelError::Duplicate`] if it repeats a label.
+    pub fn relabel_inputs<I2: Label>(
+        self,
+        input_labels: impl IntoIterator<Item = I2>,
+    ) -> Result<Cover<I2, O>, RelabelError> {
+        let inputs: Arc<[I2]> = input_labels.into_iter().collect();
+        if inputs.len() != self.num_inputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Inputs {
+                expected: self.num_inputs(),
+                actual: inputs.len(),
+            }));
+        }
+        let input_symbols = Symbols::new(inputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Input { index: e.index }))?;
+        Ok(self
+            .relabel_inputs_tables(input_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Re-express only the **output** variables over a new label type, keeping the inputs as-is.
+    ///
+    /// See [`relabel`](Self::relabel) for the two-sided form and
+    /// [`rename_outputs`](Self::rename_outputs) for the string-name convenience. Passing
+    /// `[Anonymous; n]` here drops the output names positionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError::Arity`] if the replacement list's arity differs from this cover's output
+    /// arity, or [`RelabelError::Duplicate`] if it repeats a label.
+    pub fn relabel_outputs<O2: Label>(
+        self,
+        output_labels: impl IntoIterator<Item = O2>,
+    ) -> Result<Cover<I, O2>, RelabelError> {
+        let outputs: Arc<[O2]> = output_labels.into_iter().collect();
+        if outputs.len() != self.num_outputs() {
+            return Err(RelabelError::Arity(ArityMismatch::Outputs {
+                expected: self.num_outputs(),
+                actual: outputs.len(),
+            }));
+        }
+        let output_symbols = Symbols::new(outputs)
+            .map_err(|e| RelabelError::Duplicate(DuplicateLabel::Output { index: e.index }))?;
+        Ok(self
+            .relabel_outputs_tables(output_symbols)
+            .expect("arity pre-checked"))
+    }
+
+    /// Give the cover new string names, position-for-position.
+    ///
+    /// A thin wrapper over [`relabel`](Self::relabel) that converts each `&str` name into the chosen
+    /// [`StringLabel`] type (e.g. [`Symbol`](crate::Symbol), `String`, `Arc<str>`). Use `relabel`
+    /// directly for type-changing conversions to non-string labels; to change only one side use
+    /// [`rename_inputs`](Self::rename_inputs) / [`rename_outputs`](Self::rename_outputs).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name (see [`relabel`](Self::relabel)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Anonymous, Cover, CoverType, Cube, CubeType, Symbol};
+    ///
+    /// let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    /// cover.push(Cube::anonymous(&[Some(true), Some(false)], &[true], CubeType::F));
+    ///
+    /// let named: Cover<Symbol, Symbol> = cover.rename(["x0", "x1"], ["y0"]).unwrap();
+    /// assert_eq!(named.num_inputs(), 2);
+    /// assert_eq!(named.num_outputs(), 1);
+    /// ```
+    pub fn rename<I2, O2, SI, SO>(
+        self,
+        input_names: impl IntoIterator<Item = SI>,
+        output_names: impl IntoIterator<Item = SO>,
+    ) -> Result<Cover<I2, O2>, RelabelError>
+    where
+        I2: StringLabel,
+        O2: StringLabel,
+        SI: AsRef<str>,
+        SO: AsRef<str>,
+    {
+        self.relabel(
+            input_names.into_iter().map(|s| I2::from(s.as_ref())),
+            output_names.into_iter().map(|s| O2::from(s.as_ref())),
+        )
+    }
+
+    /// Give the **input** variables new string names, keeping the outputs as-is.
+    ///
+    /// A thin wrapper over [`relabel_inputs`](Self::relabel_inputs); see [`rename`](Self::rename).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name.
+    pub fn rename_inputs<I2, SI>(
+        self,
+        input_names: impl IntoIterator<Item = SI>,
+    ) -> Result<Cover<I2, O>, RelabelError>
+    where
+        I2: StringLabel,
+        SI: AsRef<str>,
+    {
+        self.relabel_inputs(input_names.into_iter().map(|s| I2::from(s.as_ref())))
+    }
+
+    /// Give the **output** variables new string names, keeping the inputs as-is.
+    ///
+    /// A thin wrapper over [`relabel_outputs`](Self::relabel_outputs); see [`rename`](Self::rename).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RelabelError`] on an arity mismatch or a repeated name.
+    pub fn rename_outputs<O2, SO>(
+        self,
+        output_names: impl IntoIterator<Item = SO>,
+    ) -> Result<Cover<I, O2>, RelabelError>
+    where
+        O2: StringLabel,
+        SO: AsRef<str>,
+    {
+        self.relabel_outputs(output_names.into_iter().map(|s| O2::from(s.as_ref())))
+    }
+
     /// Drop all labels, yielding a positional [`Cover<Anonymous, Anonymous>`](Cover) (explicit anonymisation).
     ///
     /// Infallible: the anonymous tables are built at this cover's own arities, so they always match.
     #[must_use = "anonymize returns a new cover; the original is consumed"]
     pub fn anonymize(self) -> Cover<Anonymous, Anonymous> {
         let (ni, no) = (self.num_inputs(), self.num_outputs());
-        self.relabel(
+        self.relabel_tables(
             Symbols::<Anonymous>::anonymous(ni),
             Symbols::<Anonymous>::anonymous(no),
         )
@@ -746,6 +1057,26 @@ impl<I, O> Cover<I, O> {
     /// The shared output symbol table.
     pub(crate) fn output_symbols(&self) -> &Arc<Symbols<O>> {
         &self.output_symbols
+    }
+
+    /// Get input variable labels.
+    ///
+    /// Returns the input labels (one per input position), in index order. Available for every label
+    /// type — for a positional ([`Anonymous`]) cover these are the zero-sized `Anonymous` placeholders,
+    /// not names.
+    #[must_use]
+    pub fn input_labels(&self) -> &[I] {
+        self.input_symbols.labels()
+    }
+
+    /// Get output variable labels.
+    ///
+    /// Returns the output labels (one per output position), in index order. Available for every label
+    /// type — for a positional ([`Anonymous`]) cover these are the zero-sized `Anonymous` placeholders,
+    /// not names.
+    #[must_use]
+    pub fn output_labels(&self) -> &[O] {
+        self.output_symbols.labels()
     }
 
     /// Iterate over cubes as `Cube` references
@@ -1141,28 +1472,6 @@ impl<I: Label, O: ReconcilableLabel> Cover<I, O> {
         let (new_output, a_map, b_map) =
             append_outputs(&self.output_symbols, &other.output_symbols);
         *self = assemble(self, other, new_output, a_map, b_map);
-    }
-}
-
-impl<I: AsRef<str>, O> Cover<I, O> {
-    /// Get input variable labels.
-    ///
-    /// Returns the input labels (one per input position). Available for any string-like input label
-    /// type whatever the output label type is; a positional `Cover<Anonymous, _>` has no such method.
-    #[must_use]
-    pub fn input_labels(&self) -> &[I] {
-        self.input_symbols.labels()
-    }
-}
-
-impl<I, O: AsRef<str>> Cover<I, O> {
-    /// Get output variable labels.
-    ///
-    /// Returns the output labels (one per output position). Available for any string-like output label
-    /// type whatever the input label type is; a positional `Cover<_, Anonymous>` has no such method.
-    #[must_use]
-    pub fn output_labels(&self) -> &[O] {
-        self.output_symbols.labels()
     }
 }
 

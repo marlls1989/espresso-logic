@@ -716,10 +716,14 @@ impl<S: StringLabel> PlaCover<S> {
         let arity = "label sections were validated against the cube width during parsing";
         Ok(match (p.input_labels, p.output_labels) {
             (Some(i), Some(o)) => {
-                Self::InputsOutputsNamed(base.relabel(to_syms(i), to_syms(o)).expect(arity))
+                Self::InputsOutputsNamed(base.relabel_tables(to_syms(i), to_syms(o)).expect(arity))
             }
-            (Some(i), None) => Self::InputsNamed(base.relabel_inputs(to_syms(i)).expect(arity)),
-            (None, Some(o)) => Self::OutputsNamed(base.relabel_outputs(to_syms(o)).expect(arity)),
+            (Some(i), None) => {
+                Self::InputsNamed(base.relabel_inputs_tables(to_syms(i)).expect(arity))
+            }
+            (None, Some(o)) => {
+                Self::OutputsNamed(base.relabel_outputs_tables(to_syms(o)).expect(arity))
+            }
             (None, None) => Self::Positional(base),
         })
     }

@@ -2,7 +2,7 @@
 //!
 //! A `Minterm` models one row of a Boolean cover — a value per variable, where each value is
 //! `Some(true)` (1), `Some(false)` (0), or `None` (don't-care). Unlike a bare positional slice, a
-//! `Minterm` **carries its variable labels** (via a shared [`Symbols`] table), so comparisons align
+//! `Minterm` **carries its variable labels** (via a shared `Symbols` table), so comparisons align
 //! by variable identity rather than by raw position. This makes it safe to compare minterms that
 //! came from different orderings, and lets the same type serve as both the input pattern and the
 //! (membership) output pattern of a cube.
@@ -14,7 +14,7 @@
 //!
 //! # Representation
 //!
-//! Labels live in a shared [`Symbols`] table (every cube of a cover shares one `Arc<Symbols<L>>`, so
+//! Labels live in a shared `Symbols` table (every cube of a cover shares one `Arc<Symbols<L>>`, so
 //! same-cover comparisons take a pointer-equality fast path and label lookup is O(log n)). Values are
 //! packed two bits per variable using Espresso's value-set encoding — for each variable, one bit
 //! means "0 is allowed" and one means "1 is allowed":
@@ -31,7 +31,7 @@
 //! boundary is close to a bit-repack.
 
 use super::error::DuplicateLabel;
-use super::label::{Anonymous, Label, StringLabel};
+use super::label::{Anonymous, Label, NamedLabel, StringLabel};
 use super::symbols::Symbols;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -207,12 +207,12 @@ impl<L> fmt::Display for Minterm<L> {
 }
 
 impl<L> Minterm<L> {
-    /// Build a minterm from values against a shared [`Symbols`] table.
+    /// Build a minterm from values against a shared `Symbols` table.
     ///
     /// `values` is read positionally against `symbols`; both describe the same number of variables.
     /// Minterms built from the *same* `Arc<Symbols>` compare via the pointer-equality fast path.
     #[must_use]
-    pub fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
+    pub(crate) fn from_symbols<I>(symbols: Arc<Symbols<L>>, values: I) -> Self
     where
         I: IntoIterator<Item = Option<bool>>,
     {
@@ -300,7 +300,7 @@ impl<L> Minterm<L> {
 
     /// The shared symbol table this minterm is defined over.
     #[must_use]
-    pub fn symbols(&self) -> &Arc<Symbols<L>> {
+    pub(crate) fn symbols(&self) -> &Arc<Symbols<L>> {
         &self.symbols
     }
 
@@ -382,8 +382,8 @@ impl Minterm<Anonymous> {
     /// Build a standalone **anonymous** (positional) minterm from a slice of values.
     ///
     /// Convenient for tests and ad-hoc use; the variables are positional ([`Anonymous`]), so two such
-    /// minterms align by position. For a named minterm build a [`Symbols`] table and use
-    /// [`from_symbols`](Minterm::from_symbols).
+    /// minterms align by position. For a named minterm use [`labeled`](Self::labeled) or
+    /// [`with_labels`](Self::with_labels).
     ///
     /// # Examples
     ///
@@ -399,6 +399,32 @@ impl Minterm<Anonymous> {
             Symbols::<Anonymous>::anonymous(values.len()),
             values.iter().copied(),
         )
+    }
+
+    /// Project this anonymous minterm onto a target of the given `arity`.
+    ///
+    /// Anonymous variables carry no labels, so alignment is by position ([`Anonymous`]'s identity is
+    /// its index): `arity > num_vars` widens with trailing don't-cares, `arity < num_vars` drops the
+    /// trailing positions, and `arity == num_vars` is a no-op. The named siblings
+    /// [`project_to`](Self::project_to) and [`project_to_labels`](Self::project_to_labels) re-home by
+    /// variable identity instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let m = Minterm::anonymous(&[Some(true), Some(false)]);
+    /// // Widen: position 2 becomes a trailing don't-care.
+    /// assert_eq!(m.project_to_arity(3).num_vars(), 3);
+    /// // Contract: only position 0 survives.
+    /// assert_eq!(m.project_to_arity(1).num_vars(), 1);
+    /// // Equal arity is a no-op.
+    /// assert_eq!(m.project_to_arity(2), m);
+    /// ```
+    #[must_use]
+    pub fn project_to_arity(&self, arity: usize) -> Minterm<Anonymous> {
+        self.project_onto(&Symbols::anonymous(arity))
     }
 }
 
@@ -476,6 +502,40 @@ impl<L: StringLabel> Minterm<L> {
             values.iter().map(|(_, v)| *v),
         )
     }
+
+    /// Project this minterm onto a target variable *set* given by name.
+    ///
+    /// A string-name convenience over [`project_to_labels`](Self::project_to_labels): each name is
+    /// built into a label via `From<&str>`, so no string type is privileged (`&str`, `String`,
+    /// `Arc<str>`, … all work). Structurally re-homes the minterm onto `vars`: variables shared by
+    /// `self` and the target keep their value, aligned by variable [`identity`](Label::identity) and
+    /// reordered as needed; target-only variables come in as don't-care; self-only variables are
+    /// dropped. Exactly one minterm out, defined over `vars`.
+    ///
+    /// `vars` names a set: repeats are deduplicated keeping the first occurrence (mirroring
+    /// [`Cover::over_vars`](crate::Cover::over_vars) and [`Cube::expand_to`](crate::Cube::expand_to)).
+    /// Anonymous covers carry no labels and project on arity via
+    /// [`project_to_arity`](Minterm::project_to_arity).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbol};
+    ///
+    /// let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
+    /// // Keep "b", widen with the target-only "c"; "a" is dropped.
+    /// let p = m.project_to(["b", "c"]);
+    /// assert_eq!(p.value_of("b"), Some(false));
+    /// assert_eq!(p.value_of("c"), None);
+    /// assert_eq!(p.vars(), &[Symbol::from("b"), Symbol::from("c")]);
+    /// assert_eq!(p.num_vars(), 2);
+    /// ```
+    #[must_use]
+    pub fn project_to<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Minterm<L> {
+        self.project_onto(&Symbols::deduped(
+            vars.into_iter().map(|s| L::from(s.as_ref())),
+        ))
+    }
 }
 
 impl<L: Label> Minterm<L> {
@@ -501,9 +561,11 @@ impl<L: Label> Minterm<L> {
     /// Variables of `target` absent from `self` become don't-care; variables of `self` absent from
     /// `target` are dropped. The result shares `target` as its symbol table. Alignment is by variable
     /// [`identity`](Label::identity): by name for labelled headers, by position for anonymous ones —
-    /// one path for every `L: Label`.
+    /// one path for every `L: Label`. The public, `Arc`-free faces of this primitive are
+    /// [`project_to`](Self::project_to), [`project_to_labels`](Self::project_to_labels) and
+    /// [`project_to_arity`](Minterm::project_to_arity).
     #[must_use]
-    pub fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
+    pub(crate) fn project_onto(&self, target: &Arc<Symbols<L>>) -> Minterm<L> {
         // Same index space (pointer-equal, or structurally-equal identities) → reuse values as-is.
         if &self.symbols == target {
             return Minterm {
@@ -535,6 +597,38 @@ impl<L: Label> Minterm<L> {
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
         words
+    }
+}
+
+impl<L: NamedLabel> Minterm<L> {
+    /// Project this minterm onto a target variable *set* given as label values.
+    ///
+    /// Structurally re-homes the minterm onto the named `vars`: variables shared by `self` and the
+    /// target keep their value, aligned by variable [`identity`](Label::identity) and reordered as
+    /// needed; target-only variables come in as don't-care; self-only variables are dropped. Exactly
+    /// one minterm out, defined over `vars`.
+    ///
+    /// `vars` names a set: repeats are deduplicated keeping the first occurrence (mirroring
+    /// [`Cover::over_vars`](crate::Cover::over_vars) and [`Cube::expand_to`](crate::Cube::expand_to)).
+    /// The [`NamedLabel`] bound keeps this off `Minterm<Anonymous>` — anonymous covers carry no
+    /// labels, so they project on arity via [`project_to_arity`](Minterm::project_to_arity). For
+    /// `&str`-named headers, [`project_to`](Self::project_to) avoids naming the label type at each
+    /// variable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let m = Minterm::<u32>::labeled(&[(1, Some(true)), (2, Some(false))]).unwrap();
+    /// // Keep variable 2, widen with the target-only variable 3; variable 1 is dropped.
+    /// let p = m.project_to_labels([2, 3]);
+    /// assert_eq!(p.value_of(&2), Some(false));
+    /// assert_eq!(p.value_of(&3), None);
+    /// ```
+    #[must_use]
+    pub fn project_to_labels(&self, vars: impl IntoIterator<Item = L>) -> Minterm<L> {
+        self.project_onto(&Symbols::deduped(vars))
     }
 }
 
@@ -647,8 +741,8 @@ impl<L: Label> Minterm<L> {
     /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
     /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
     /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
-    /// minterms (e.g. the output of [`expand_over`](Self::expand_over)), where this is exactly the
-    /// Hamming distance. `hamming_distance == disagreement().len()`.
+    /// minterms (e.g. the output of [`Cube::expand_to`](crate::Cube::expand_to)), where this is exactly
+    /// the Hamming distance. `hamming_distance == disagreement().len()`.
     ///
     /// # Examples
     ///
@@ -695,14 +789,18 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let a = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
-    ///     [Some(true), Some(false), Some(true)],
-    /// );
-    /// let b = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
-    ///     [Some(true), Some(true), Some(false)],
-    /// );
+    /// let a = Minterm::<String>::with_labels(&[
+    ///     ("a", Some(true)),
+    ///     ("b", Some(false)),
+    ///     ("c", Some(true)),
+    /// ])
+    /// .unwrap();
+    /// let b = Minterm::<String>::with_labels(&[
+    ///     ("a", Some(true)),
+    ///     ("b", Some(true)),
+    ///     ("c", Some(false)),
+    /// ])
+    /// .unwrap();
     /// let mut d: Vec<_> = a.disagreement(&b).collect();
     /// d.sort();
     /// assert_eq!(d, vec!["b".to_string(), "c".to_string()]);
@@ -725,35 +823,17 @@ impl<L: Label> Minterm<L> {
     ///
     /// This is the inverse of minimisation ("maximise"): `self` is first re-expressed over `target`
     /// (variables of `target` absent from `self` become don't-care, variables of `self` absent from
-    /// `target` are dropped — see [`project_onto`](Self::project_onto)), then every remaining don't-care
+    /// `target` are dropped — the structural re-homing behind `project_to`), then every remaining don't-care
     /// is split into both polarities. The result is the `2^k` concrete minterms (where `k` is the number
     /// of don't-cares after projection), each assigning **every** variable in `target`, all sharing
     /// `target` as their canonical header (so they stay on the fast-comparison path and are usable as
     /// `BTreeSet`/`HashSet` keys). Expanding an already-maximal minterm over its own header is a no-op.
     ///
     /// Returns a lazy [`ExpandedMinterms`] iterator that packs each of the `2^k` minterms on demand,
-    /// so a cube with many don't-cares costs O(1) memory rather than materialising the whole set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use espresso_logic::{Minterm, Symbols};
-    /// use std::collections::BTreeSet;
-    ///
-    /// let vars = Symbols::new(["a", "b"].iter().map(|s| s.to_string()).collect()).unwrap();
-    /// // a fixed true, b don't-care → both polarities of b.
-    /// let m = Minterm::from_symbols(vars.clone(), [Some(true), None]);
-    /// let got: BTreeSet<_> = m.expand_over(&vars).collect();
-    /// let want: BTreeSet<_> = [
-    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]),
-    ///     Minterm::from_symbols(vars.clone(), [Some(true), Some(true)]),
-    /// ]
-    /// .into_iter()
-    /// .collect();
-    /// assert_eq!(got, want);
-    /// ```
+    /// so a cube with many don't-cares costs O(1) memory rather than materialising the whole set. The
+    /// public entry point is [`Cube::expand_to`](crate::Cube::expand_to).
     #[must_use]
-    pub fn expand_over(&self, target: &Arc<Symbols<L>>) -> ExpandedMinterms<L> {
+    pub(crate) fn expand_over(&self, target: &Arc<Symbols<L>>) -> ExpandedMinterms<L> {
         // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm — a
         // vacuous (zero-length) expansion, short-circuited before the don't-care split rather than
         // copying the malformed field through. `base` is unread when `count == 0`.
@@ -791,7 +871,7 @@ impl<L: Label> Minterm<L> {
     }
 }
 
-/// Lazy iterator over the concrete minterms of an expansion, created by [`Minterm::expand_over`] and
+/// Lazy iterator over the concrete minterms of an expansion, created by
 /// [`Cube::expand_to`](crate::Cube::expand_to).
 ///
 /// Each `next()` packs one of the `2^k` minterms on demand (where `k` is the number of don't-care
@@ -1426,5 +1506,60 @@ mod tests {
         let values = vec![None; 64];
         let m = Minterm::anonymous(&values);
         let _ = m.expand_over(m.symbols());
+    }
+
+    // --- Arc-free projection faces ------------------------------------------------------------
+
+    /// Projecting onto a re-ordered variable set keeps each value aligned by name, not position.
+    #[test]
+    fn project_to_reorders_by_name() {
+        let m =
+            Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false)), ("c", None)])
+                .unwrap();
+        // Target names the same variables in a different order.
+        let p = m.project_to(["c", "b", "a"]);
+        assert_eq!(
+            p.vars(),
+            &[Symbol::from("c"), Symbol::from("b"), Symbol::from("a")]
+        );
+        assert_eq!(p.value_of("a"), Some(true));
+        assert_eq!(p.value_of("b"), Some(false));
+        assert_eq!(p.value_of("c"), None);
+    }
+
+    /// A repeated variable in the target set is deduplicated, keeping the first occurrence.
+    #[test]
+    fn project_to_deduplicates_target_set() {
+        let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
+        let p = m.project_to(["b", "b", "a"]);
+        assert_eq!(p.num_vars(), 2);
+        assert_eq!(p.vars(), &[Symbol::from("b"), Symbol::from("a")]);
+        assert_eq!(p.value_of("b"), Some(false));
+        assert_eq!(p.value_of("a"), Some(true));
+    }
+
+    /// An empty target set drops every variable, leaving a zero-width minterm.
+    #[test]
+    fn project_to_empty_set_yields_no_vars() {
+        let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
+        let p = m.project_to(std::iter::empty::<&str>());
+        assert_eq!(p.num_vars(), 0);
+    }
+
+    /// `project_to_arity` at the minterm's own arity yields an equal minterm.
+    #[test]
+    fn project_to_arity_equal_is_noop() {
+        let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_eq!(m.project_to_arity(3), m);
+    }
+
+    /// The public `project_to_labels` face is exactly the `project_onto` primitive over the same set.
+    #[test]
+    fn project_to_labels_equals_primitive() {
+        let m = Minterm::<u32>::labeled(&[(1, Some(true)), (2, Some(false)), (3, None)]).unwrap();
+        let vars = [2u32, 3, 4];
+        let via_face = m.project_to_labels(vars);
+        let via_primitive = m.project_onto(&Symbols::deduped(vars));
+        assert_eq!(via_face, via_primitive);
     }
 }

@@ -783,17 +783,13 @@ fn to_exprs_works_for_any_string_input_label() {
     let b = crate::BoolExpr::var("b");
     cover.add_expr(&expr!(a & b), "out").unwrap();
 
-    let in_syms = Symbols::new(
-        cover
-            .input_labels()
-            .iter()
-            .map(|s| Arc::<str>::from(s.as_ref()))
-            .collect::<Vec<_>>()
-            .into(),
-    )
-    .unwrap();
-    let out_syms = Symbols::new(vec![Arc::<str>::from("out")].into()).unwrap();
-    let arc_cover: Cover<Arc<str>, Arc<str>> = cover.relabel(in_syms, out_syms).unwrap();
+    let in_syms: Vec<Arc<str>> = cover
+        .input_labels()
+        .iter()
+        .map(|s| Arc::<str>::from(s.as_ref()))
+        .collect();
+    let arc_cover: Cover<Arc<str>, Arc<str>> =
+        cover.relabel(in_syms, [Arc::<str>::from("out")]).unwrap();
 
     // to_expr_by_index / to_exprs / to_expr all work on an `Arc<str>`-labelled cover.
     assert_eq!(
@@ -1087,7 +1083,8 @@ fn pla_cube_stream_chunks_by_char_count_like_c() {
 
 #[test]
 fn relabel_arity_mismatch_errors() {
-    use super::ArityMismatch;
+    use super::{ArityMismatch, RelabelError};
+    let sym = |s: &str| Symbol::from(s);
 
     let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
     cover.push(Cube::anonymous(
@@ -1099,31 +1096,77 @@ fn relabel_arity_mismatch_errors() {
     // Two inputs in the cover, three labels supplied -> input arity mismatch.
     let err = cover
         .clone()
-        .relabel(
-            Symbols::new(vec![Symbol::from("a"), Symbol::from("b"), Symbol::from("c")].into())
-                .unwrap(),
-            Symbols::new(vec![Symbol::from("o")].into()).unwrap(),
-        )
+        .relabel([sym("a"), sym("b"), sym("c")], [sym("o")])
         .unwrap_err();
     assert!(matches!(
         err,
-        ArityMismatch::Inputs {
+        RelabelError::Arity(ArityMismatch::Inputs {
             expected: 2,
             actual: 3
-        }
+        })
     ));
 
     // One output in the cover, two labels supplied -> output arity mismatch.
+    let err = cover.relabel_outputs([sym("x"), sym("y")]).unwrap_err();
+    assert!(matches!(
+        err,
+        RelabelError::Arity(ArityMismatch::Outputs {
+            expected: 1,
+            actual: 2
+        })
+    ));
+}
+
+#[test]
+fn relabel_duplicate_label_errors() {
+    use super::{DuplicateLabel, RelabelError};
+    let sym = |s: &str| Symbol::from(s);
+
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
+
+    // Repeated input label -> duplicate at the second occurrence.
     let err = cover
-        .relabel_outputs(Symbols::new(vec![Symbol::from("x"), Symbol::from("y")].into()).unwrap())
+        .clone()
+        .relabel([sym("a"), sym("a")], [sym("o")])
         .unwrap_err();
     assert!(matches!(
         err,
-        ArityMismatch::Outputs {
-            expected: 1,
-            actual: 2
-        }
+        RelabelError::Duplicate(DuplicateLabel::Input { index: 1 })
     ));
+
+    // Repeated output label (single-output cover can't collide; use a two-output cover).
+    let mut two_out = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    two_out.push(Cube::anonymous(&[Some(true)], &[true, false], CubeType::F));
+    let err = two_out.relabel_outputs([sym("o"), sym("o")]).unwrap_err();
+    assert!(matches!(
+        err,
+        RelabelError::Duplicate(DuplicateLabel::Output { index: 1 })
+    ));
+}
+
+#[test]
+fn rename_gives_string_names() {
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(
+        &[Some(true), Some(false)],
+        &[true],
+        CubeType::F,
+    ));
+
+    let named: Cover<Symbol, Symbol> = cover.rename(["x0", "x1"], ["y0"]).unwrap();
+    assert_eq!(
+        named.input_labels(),
+        &[Symbol::from("x0"), Symbol::from("x1")]
+    );
+    assert_eq!(named.output_labels(), &[Symbol::from("y0")]);
+    let cube = named.cubes().next().unwrap();
+    assert_eq!(cube.inputs().value_of(&Symbol::from("x0")), Some(true));
+    assert_eq!(cube.inputs().value_of(&Symbol::from("x1")), Some(false));
 }
 
 #[test]
@@ -2012,12 +2055,7 @@ fn custom_u32_labels_via_relabel() {
         CubeType::F,
     ));
     // Explicitly relabel to a u32-labelled cover, position-for-position.
-    let labeled: Cover<u32, u32> = cover
-        .relabel(
-            Symbols::new(vec![10u32, 20, 30].into()).unwrap(),
-            Symbols::new(vec![1u32].into()).unwrap(),
-        )
-        .unwrap();
+    let labeled: Cover<u32, u32> = cover.relabel([10u32, 20, 30], [1u32]).unwrap();
     assert_eq!(labeled.num_inputs(), 3);
     let first = labeled.cubes().next().unwrap();
     assert_eq!(first.inputs().value_of(&10u32), Some(true));
@@ -2036,12 +2074,7 @@ fn anonymize_drops_labels_preserving_values() {
         &[true],
         CubeType::F,
     ));
-    let labeled = anon
-        .relabel(
-            Symbols::new(vec![Symbol::from("a"), Symbol::from("b")].into()).unwrap(),
-            Symbols::new(vec![Symbol::from("out")].into()).unwrap(),
-        )
-        .unwrap();
+    let labeled: Cover<Symbol, Symbol> = anon.rename(["a", "b"], ["out"]).unwrap();
     assert_eq!(labeled.num_inputs(), 2);
 
     let back: Cover<Anonymous, Anonymous> = labeled.anonymize();
@@ -2130,13 +2163,13 @@ fn extend_aligns_named_inputs_anonymous_outputs() {
         CoverType::F,
         [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
     )
-    .relabel_inputs(Symbols::new(vec![sym("x")].into()).unwrap())
+    .relabel_inputs([sym("x")])
     .unwrap();
     let b = Cover::from_cubes(
         CoverType::F,
         [Cube::anonymous(&[Some(true)], &[true], CubeType::F)],
     )
-    .relabel_inputs(Symbols::new(vec![sym("y")].into()).unwrap())
+    .relabel_inputs([sym("y")])
     .unwrap();
 
     a.extend(&b);
@@ -2274,10 +2307,7 @@ fn relabel_outputs_keeps_inputs() {
     named.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
 
     // Drop only the output label, keeping the named inputs.
-    let anon_out: Cover<Symbol, Anonymous> = named
-        .clone()
-        .relabel_outputs(Symbols::<Anonymous>::anonymous(1))
-        .unwrap();
+    let anon_out: Cover<Symbol, Anonymous> = named.clone().relabel_outputs([Anonymous]).unwrap();
     assert_eq!(anon_out.input_labels(), named.input_labels());
     assert_eq!(anon_out.num_outputs(), 1);
     assert_eq!(io_rows(&anon_out), io_rows(&named));
@@ -2285,7 +2315,7 @@ fn relabel_outputs_keeps_inputs() {
     // Dual: relabel only the inputs, keeping the named output.
     let anon_in: Cover<Anonymous, Symbol> = named
         .clone()
-        .relabel_inputs(Symbols::<Anonymous>::anonymous(named.num_inputs()))
+        .relabel_inputs((0..named.num_inputs()).map(|_| Anonymous))
         .unwrap();
     assert_eq!(anon_in.output_labels(), named.output_labels());
     assert_eq!(anon_in.num_inputs(), named.num_inputs());
@@ -2693,6 +2723,20 @@ fn cover_with_labels_rejects_duplicate_output() {
     assert_eq!(err, DuplicateLabel::Output { index: 1 });
 }
 
+#[test]
+fn cover_labeled_rejects_duplicate_input() {
+    let err = Cover::<u32, u32>::labeled(CoverType::F, [1, 2, 1], [10]).unwrap_err();
+    assert_eq!(err, DuplicateLabel::Input { index: 2 });
+}
+
+/// `input_labels`/`output_labels` are available for every label type, not just string-like ones.
+#[test]
+fn input_output_labels_work_for_non_string_labels() {
+    let cover = Cover::<u32, u32>::labeled(CoverType::F, [1, 2, 3], [10]).unwrap();
+    assert_eq!(cover.input_labels(), &[1, 2, 3]);
+    assert_eq!(cover.output_labels(), &[10]);
+}
+
 /// `vars` names a variable *set*: a repeated name is deduplicated (first occurrence kept), so the
 /// projection is unaffected and the header only grows by the distinct names.
 #[test]
@@ -2753,4 +2797,60 @@ fn over_vars_and_with_labels_accept_owned_iterators() {
     .unwrap();
     assert_eq!(via_owned.num_inputs(), 2);
     assert_eq!(via_owned.num_outputs(), 1);
+}
+
+// --- Cover::over_labels --------------------------------------------------------------------------
+
+/// The `u32`-labelled counterpart of `over_vars_projection_keeps_dont_care_form`: `over_labels`
+/// drives the same universal projection from the input label *values* rather than strings. The sole
+/// prime never constrains the excluded column, so the projection keeps it in don't-care form.
+#[test]
+fn over_labels_projection_keeps_dont_care_form() {
+    let cover = Cover::<u32, u32>::from_cubes(
+        CoverType::F,
+        [Cube::labeled(
+            &[(0u32, Some(true)), (1u32, None), (2u32, None)],
+            &[(9u32, true)],
+            CubeType::F,
+        )
+        .unwrap()],
+    );
+    assert_eq!(cover.num_inputs(), 3);
+
+    // Project onto {0, 1}, dropping 2: a real projection (2 excluded), but the prime 0=1 constrains
+    // nothing outside {0, 1}, so it survives whole.
+    let projected = cover.over_labels([0u32, 1u32]);
+    assert_eq!(projected.num_cubes(), 1);
+    assert_eq!(projected.num_inputs(), 2);
+    assert_eq!(projected.cover_type(), CoverType::F);
+    let only_cube = projected.cubes().next().unwrap();
+    assert_eq!(only_cube.inputs().value_of(&0u32), Some(true));
+    assert!(only_cube.inputs().value_of(&1u32).is_none());
+}
+
+/// `over_labels` and `over_vars` are the same projection reached by different operand kinds: on a
+/// `Symbol`-labelled cover, naming the target set by label value and by string give an equal result.
+#[test]
+fn over_labels_matches_over_vars_on_symbol_cover() {
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::FR,
+        [
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(true)), ("q", None)],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(false)), ("b", Some(false)), ("q", None)],
+                &[("f", true)],
+                CubeType::R,
+            )
+            .unwrap(),
+        ],
+    );
+
+    let via_labels = cover.over_labels([Symbol::new("a"), Symbol::new("b")]);
+    let via_vars = cover.over_vars(["a", "b"]);
+    assert_eq!(via_labels, via_vars);
 }

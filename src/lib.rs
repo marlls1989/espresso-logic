@@ -384,7 +384,7 @@ pub use bdd::{
 pub use cover::pla::{PLAWriter, PlaCover, PlaLabel};
 pub use cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Disagreement, ExpandedMinterms, Label,
-    Minimizable, Minterm, MintermIter, OutputSet, ReconcilableLabel, StringLabel, Symbols,
+    Minimizable, Minterm, MintermIter, NamedLabel, OutputSet, ReconcilableLabel, StringLabel,
 };
 pub use espresso::{EspressoConfig, EspressoCubes};
 pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables};

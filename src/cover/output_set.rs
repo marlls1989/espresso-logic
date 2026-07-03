@@ -10,7 +10,7 @@
 //! arity.
 //!
 //! Output **labels** are still meaningful (named `.ob` outputs, relabelling), so `OutputSet` keeps a
-//! shared [`Symbols<O>`] handle — the same one the cover holds. The bit packing itself is independent of
+//! shared `Symbols<O>` handle — the same one the cover holds. The bit packing itself is independent of
 //! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is an `Arc` clone.
 
 use super::error::DuplicateLabel;
@@ -110,7 +110,7 @@ impl<O> OutputSet<O> {
 
     /// The shared symbol table these outputs are defined over.
     #[must_use]
-    pub fn symbols(&self) -> &Arc<Symbols<O>> {
+    pub(crate) fn symbols(&self) -> &Arc<Symbols<O>> {
         &self.symbols
     }
 

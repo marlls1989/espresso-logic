@@ -177,7 +177,7 @@ impl<I: Label, O> Cube<I, O> {
     /// of `vars` absent from the cube are split into both polarities, the cube's own don't-cares are
     /// expanded, and any input variable not in `vars` is dropped. Every returned minterm assigns every
     /// variable in `vars`, all sharing one canonical header. Returns a lazy [`ExpandedMinterms`]
-    /// iterator that packs each minterm on demand. See [`Minterm::expand_over`].
+    /// iterator that packs each minterm on demand.
     ///
     /// `vars` names a variable *set*: a repeated variable is deduplicated (the first occurrence is
     /// kept), so `[a, b, a]` and `[a, b]` expand over the same header.
