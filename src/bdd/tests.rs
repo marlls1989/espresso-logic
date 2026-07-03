@@ -1461,6 +1461,329 @@ fn minimize_reduces_redundancy() {
     assert!(rebuilt.equivalent_to(&a));
 }
 
+// ---- Composition (compose / compose_map) ----------------------------------------------------------
+
+/// The `f = (a & b) | (!a & c)` fixture and its five-candidate `g` battery — `d ^ a`, `!b`, the two
+/// constants, and `c | (a & e)` — shared by the compose/compose_map oracle tests below.
+fn compose_battery(
+    builder: &BddBuilder<BrandA, LocalCell>,
+) -> (
+    super::Bdd<BrandA, LocalCell>,
+    Vec<super::Bdd<BrandA, LocalCell>>,
+) {
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let d = builder.var("d");
+    let e = builder.var("e");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+    let g_candidates = vec![
+        d ^ a.clone(),
+        !b,
+        builder.constant(true),
+        builder.constant(false),
+        c | (a & e),
+    ];
+    (f, g_candidates)
+}
+
+#[test]
+fn compose_identity_projection() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = (a.clone() & b.clone()) | !a.clone();
+
+    // Substituting a variable with itself is the identity: the same canonical root.
+    assert_eq!(f.compose("a", &a), f);
+}
+
+#[test]
+fn compose_absent_var_is_noop() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let d = builder.var("d"); // present in the manager, but outside f's support
+    let f = a.clone() & b.clone();
+
+    // A name never created in this manager is absent from every function — a no-op.
+    assert_eq!(f.compose("zzz", &d), f);
+    // A name that exists in the manager's ordering but is not in f's support is likewise a no-op.
+    assert_eq!(f.compose("d", &d), f);
+}
+
+#[test]
+fn compose_matches_naive_ite_oracle() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let (f, g_candidates) = compose_battery(&builder);
+
+    // Oracle: compose(var, g) must equal g.ite(f|var=1, f|var=0) — canonicity makes this a root
+    // equality, not merely an equivalence.
+    for v in ["a", "b", "c"] {
+        for g in &g_candidates {
+            let composed = f.compose(v, g);
+            let oracle = g.ite(&f.restrict(v, true), &f.restrict(v, false));
+            assert_eq!(composed, oracle);
+        }
+    }
+
+    // One exhaustive semantic check over the union support {a, b, c, d, e}: compose(f, v, g)(σ) must
+    // equal f(σ[v := g(σ)]) for every assignment.
+    let v = "a";
+    let g = &g_candidates[4]; // c | (a & e)
+    let composed = f.compose(v, g);
+    let names = ["a", "b", "c", "d", "e"];
+    for mask in 0..(1u32 << names.len()) {
+        let vals: Vec<(&str, bool)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| (n, (mask >> i) & 1 == 1))
+            .collect();
+        let sigma = assign(&vals);
+        let g_val = g.evaluate(&sigma).unwrap();
+
+        let mut shifted = vals.clone();
+        shifted.iter_mut().find(|(n, _)| *n == v).unwrap().1 = g_val;
+
+        assert_eq!(
+            composed.evaluate(&sigma).unwrap(),
+            f.evaluate(&assign(&shifted)).unwrap()
+        );
+    }
+}
+
+#[test]
+fn compose_g_above_substituted_var() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // Mint order a, b, c: a sits above the substituted variable c in the diagram.
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = b.clone() & c.clone();
+
+    // g = a is entirely above var in the order — the substitution must still splice correctly.
+    assert_eq!(f.compose("c", &a), a.clone() & b.clone());
+
+    // g spans both sides of var: a is above c, d (minted after) is below it.
+    let d = builder.var("d");
+    let g = a.clone() ^ d;
+    let composed = f.compose("c", &g);
+    let oracle = g.ite(&f.restrict("c", true), &f.restrict("c", false));
+    assert_eq!(composed, oracle);
+}
+
+#[test]
+fn compose_g_may_test_var_itself() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a.clone() & b.clone();
+
+    // g = !b tests the very variable being substituted; the b inside g stays free rather than being
+    // grounded by the substitution point.
+    let g = !b.clone();
+    assert_eq!(f.compose("b", &g), a & !b);
+}
+
+#[test]
+fn compose_map_is_simultaneous() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a.clone() & !b.clone();
+
+    let swapped = f.compose_map([("a", &b), ("b", &a)]);
+    assert_eq!(swapped, b.clone() & !a.clone());
+
+    // A sequential chain substitutes a := b first, then b := a on the already-substituted result — the
+    // second substitution catches the b just introduced, collapsing to a contradiction.
+    let sequential = f.compose("a", &b).compose("b", &a);
+    assert!(sequential.is_contradiction());
+    assert_ne!(swapped, sequential);
+}
+
+#[test]
+fn compose_map_hoisted_substitution_canonical() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    // Mint order a, b, c: a sits above the substituted variable c.
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = b.clone() & c.clone();
+
+    let via_map = f.compose_map([("c", &a)]);
+    assert_eq!(via_map, a.clone() & b.clone());
+    // Agrees with single-variable `compose` — the unmapped `b` takes the fallback (unsubstituted) path.
+    assert_eq!(via_map, f.compose("c", &a));
+}
+
+#[test]
+fn compose_map_empty_and_absent() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = a.clone() & b.clone();
+
+    // An empty map is a no-op.
+    let empty: Vec<(&str, &super::Bdd<BrandA, LocalCell>)> = Vec::new();
+    assert_eq!(f.compose_map(empty), f);
+
+    // A map naming only absent variables is also a no-op.
+    assert_eq!(f.compose_map([("zzz", &c), ("yyy", &c)]), f);
+
+    // A repeated name takes its last entry.
+    assert_eq!(f.compose_map([("a", &b), ("a", &c)]), f.compose("a", &c));
+}
+
+#[test]
+fn compose_singleton_map_agrees_with_compose() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let (f, g_candidates) = compose_battery(&builder);
+
+    for v in ["a", "b", "c"] {
+        for g in &g_candidates {
+            assert_eq!(f.compose_map([(v, g)]), f.compose(v, g));
+        }
+    }
+}
+
+#[test]
+fn compose_deep_chain_no_overflow() {
+    // Mirrors `forall_over_deep_chain_no_overflow`: composing the *bottom* variable of a deep AND chain
+    // must walk the whole chain without overflowing the call stack.
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let n = 2000usize;
+    let names: Vec<String> = (0..n).map(|i| format!("v{i}")).collect();
+    let mut f = builder.var(&names[0]);
+    for name in &names[1..] {
+        f = f & builder.var(name);
+    }
+    let bottom = names[n - 1].as_str();
+    let ff = builder.constant(false);
+
+    // Substituting the bottom variable with the constant false collapses the whole conjunction.
+    assert!(f.compose(bottom, &ff).is_contradiction());
+    assert!(f.compose_map([(bottom, &ff)]).is_contradiction());
+}
+
+#[test]
+fn compose_cache_hit_same_root() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = a.clone() & b.clone();
+
+    // The same substitution computed twice reaches the same canonical root.
+    let once = f.compose("a", &c);
+    let twice = f.compose("a", &c);
+    assert_eq!(once, twice);
+}
+
+#[test]
+fn scoped_compose_agrees_with_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+
+    // f = a & b, then substitute b := c, composed entirely inside one scope.
+    let scoped = builder.scope(|s| s.var("a").and(s.var("b")).compose("b", s.var("c")));
+    let a = builder.var("a");
+    let c = builder.var("c");
+    assert!(scoped.equivalent_to(&(a.clone() & c.clone())));
+
+    // The `compose_map` simultaneous swap of `compose_map_is_simultaneous`, composed inside a scope.
+    let swapped_scoped = builder.scope(|s| {
+        let sa = s.var("a");
+        let sb = s.var("b");
+        (sa & !sb).compose_map([("a", sb), ("b", sa)])
+    });
+    let b = builder.var("b");
+    assert!(swapped_scoped.equivalent_to(&(b & !a)));
+}
+
+#[test]
+fn compose_on_sync_cell_agrees() {
+    // One combo from the §6.3 battery: f = (a & b) | (!a & c), compose("a", d ^ a).
+    let local: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let local_combo: BTreeSet<Minterm<Symbol>> = {
+        let a = local.var("a");
+        let b = local.var("b");
+        let c = local.var("c");
+        let d = local.var("d");
+        let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+        let g = d ^ a;
+        f.compose("a", &g)
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let sync_combo: BTreeSet<Minterm<Symbol>> = {
+        let a = sync.var("a");
+        let b = sync.var("b");
+        let c = sync.var("c");
+        let d = sync.var("d");
+        let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+        let g = d ^ a;
+        f.compose("a", &g)
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    assert_eq!(local_combo, sync_combo);
+
+    // `compose_map_is_simultaneous`'s swap.
+    let local_swapped: BTreeSet<Minterm<Symbol>> = {
+        let a = local.var("a");
+        let b = local.var("b");
+        let f = a.clone() & !b.clone();
+        f.compose_map([("a", &b), ("b", &a)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    let sync_swapped: BTreeSet<Minterm<Symbol>> = {
+        let a = sync.var("a");
+        let b = sync.var("b");
+        let f = a.clone() & !b.clone();
+        f.compose_map([("a", &b), ("b", &a)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    assert_eq!(local_swapped, sync_swapped);
+
+    // `compose_map_hoisted_substitution_canonical`'s hoist: e is minted after a, so a sits above the
+    // substituted variable e.
+    let local_hoisted: BTreeSet<Minterm<Symbol>> = {
+        let a = local.var("a");
+        let b = local.var("b");
+        let e = local.var("e");
+        let f = b.clone() & e.clone();
+        f.compose_map([("e", &a)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    let sync_hoisted: BTreeSet<Minterm<Symbol>> = {
+        let a = sync.var("a");
+        let b = sync.var("b");
+        let e = sync.var("e");
+        let f = b.clone() & e.clone();
+        f.compose_map([("e", &a)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    assert_eq!(local_hoisted, sync_hoisted);
+}
+
 // ---- Brand clash: the runtime same-manager backstop -----------------------------------------------
 //
 // `bdd_builder!` mints a brand per call *site*: the brand is a local `struct` defined once where the macro
@@ -1487,4 +1810,15 @@ fn lift_across_clashing_brands_panics() {
     let one = make();
     let foreign = make().var("x");
     let _ = one.scope(|s| s.lift(&foreign));
+}
+
+#[test]
+#[should_panic(expected = "different managers")]
+fn compose_across_clashing_brands_panics() {
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let two = make();
+    // Same brand clash as the other tests in this section, but through `compose`'s own
+    // `assert_same_manager` check on `g`.
+    let _ = one.var("x").compose("x", &two.var("y"));
 }
