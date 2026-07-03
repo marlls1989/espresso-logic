@@ -789,14 +789,18 @@ impl<L: Label> Minterm<L> {
     /// ```
     /// use espresso_logic::Minterm;
     ///
-    /// let a = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
-    ///     [Some(true), Some(false), Some(true)],
-    /// );
-    /// let b = Minterm::from_symbols(
-    ///     espresso_logic::Symbols::new(["a", "b", "c"].iter().map(|s| s.to_string()).collect()).unwrap(),
-    ///     [Some(true), Some(true), Some(false)],
-    /// );
+    /// let a = Minterm::<String>::with_labels(&[
+    ///     ("a", Some(true)),
+    ///     ("b", Some(false)),
+    ///     ("c", Some(true)),
+    /// ])
+    /// .unwrap();
+    /// let b = Minterm::<String>::with_labels(&[
+    ///     ("a", Some(true)),
+    ///     ("b", Some(true)),
+    ///     ("c", Some(false)),
+    /// ])
+    /// .unwrap();
     /// let mut d: Vec<_> = a.disagreement(&b).collect();
     /// d.sort();
     /// assert_eq!(d, vec!["b".to_string(), "c".to_string()]);

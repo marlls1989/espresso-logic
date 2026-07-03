@@ -341,23 +341,23 @@ fn bench_cube_iteration(c: &mut Criterion) {
     group.finish();
 }
 
-/// Isolate the eager identity-sort done by `Symbols::new` for **named** tables (anonymous tables skip
-/// it). Labels are built once; each iteration measures only the sort + table construction.
+/// Isolate the eager identity-sort done by `Minterm::labeled` for **named** tables (anonymous
+/// tables skip it), plus the value packing that goes with it. Pairs are built once; each iteration
+/// measures the sort + table construction + value packing.
 fn bench_symbols_construction(c: &mut Criterion) {
-    use espresso_logic::Symbols;
-    use std::sync::Arc;
+    use espresso_logic::Minterm;
 
-    let mut group = c.benchmark_group("symbols_new_named");
+    let mut group = c.benchmark_group("minterm_labeled_named");
     for &width in &[16usize, 64, 256] {
         // Reverse-ordered names, so the sort genuinely permutes (not an already-sorted fast path).
-        let labels: Arc<[Symbol]> = (0..width)
+        let pairs: Vec<(Symbol, Option<bool>)> = (0..width)
             .rev()
-            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
+            .map(|i| (Symbol::from(format!("v{i:04}").as_str()), Some(true)))
             .collect();
-        group.bench_with_input(BenchmarkId::from_parameter(width), &labels, |b, labels| {
+        group.bench_with_input(BenchmarkId::from_parameter(width), &pairs, |b, pairs| {
             b.iter(|| {
-                let syms = Symbols::new(Arc::clone(labels)).unwrap();
-                black_box(syms);
+                let minterm = Minterm::labeled(pairs).unwrap();
+                black_box(minterm);
             });
         });
     }
@@ -369,20 +369,23 @@ fn bench_symbols_construction(c: &mut Criterion) {
 /// lazy `Symbols` actually differ: lazy defers the sort to the first alignment and builds a HashMap on
 /// the first lookup, so a fair comparison must include the alignment/lookups, not just construction.
 fn bench_named_align(c: &mut Criterion) {
-    use espresso_logic::{Minterm, Symbols};
-    use std::sync::Arc;
+    use espresso_logic::Minterm;
 
     let mut group = c.benchmark_group("named_align");
     for &width in &[16usize, 64] {
-        let names_a: Arc<[Symbol]> = (0..width)
-            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
-            .collect();
-        let names_b: Arc<[Symbol]> = (0..width)
-            .rev()
-            .map(|i| Symbol::from(format!("v{i:04}").as_str()))
-            .collect();
         let vals: Vec<Option<bool>> = (0..width)
             .map(|i| if i % 2 == 0 { Some(true) } else { None })
+            .collect();
+        let pairs_a: Vec<(Symbol, Option<bool>)> = (0..width)
+            .map(|i| (Symbol::from(format!("v{i:04}").as_str()), vals[i]))
+            .collect();
+        // Values are assigned by *position* (matching the old `from_symbols(sb, vals.iter()...)`
+        // packing), not by the name embedded in the reversed label, so position `j` (not the name's
+        // index `i`) gets `vals[j]`.
+        let pairs_b: Vec<(Symbol, Option<bool>)> = (0..width)
+            .rev()
+            .zip(vals.iter().copied())
+            .map(|(i, v)| (Symbol::from(format!("v{i:04}").as_str()), v))
             .collect();
         let probes = [
             format!("v{:04}", 0),
@@ -391,11 +394,9 @@ fn bench_named_align(c: &mut Criterion) {
         ];
         group.bench_with_input(BenchmarkId::from_parameter(width), &width, |b, _| {
             b.iter(|| {
-                // Fresh tables each iter so construction is included alongside the use.
-                let sa = Symbols::new(Arc::clone(&names_a)).unwrap();
-                let sb = Symbols::new(Arc::clone(&names_b)).unwrap();
-                let ma = Minterm::from_symbols(sa, vals.iter().copied());
-                let mb = Minterm::from_symbols(sb, vals.iter().copied());
+                // Fresh minterms each iter so construction is included alongside the use.
+                let ma = Minterm::labeled(&pairs_a).unwrap();
+                let mb = Minterm::labeled(&pairs_b).unwrap();
                 black_box(ma.is_subset_of(&mb)); // merge-join => sorted_order on both
                 for p in &probes {
                     black_box(ma.value_of(p.as_str())); // => index_of

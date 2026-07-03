@@ -190,19 +190,19 @@ the fixed variables; [`Bdd::evaluate`] restricts the function by each fixed vari
 therefore always yields `Ok`:
 
 ```rust
-use espresso_logic::{bdd_builder, Minterm, Symbol, Symbols};
+use espresso_logic::{bdd_builder, Minterm, Symbol};
 
 let builder = bdd_builder!();
 // The expression is only needed as a function here, so build the BDD directly.
 let f = builder.parse("a & b | !a").unwrap();
 
-let vars = Symbols::new(["a", "b"].iter().map(Symbol::new).collect()).unwrap();
-
-let assignment = Minterm::from_symbols(vars.clone(), [Some(true), Some(false)]);
+let assignment =
+    Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false))]).unwrap();
 // (a & b) | !a  with a=true, b=false  =  false | false  =  false
 assert_eq!(f.evaluate(&assignment), Ok(false));
 
-let assignment = Minterm::from_symbols(vars, [Some(false), Some(false)]);
+let assignment =
+    Minterm::<Symbol>::with_labels(&[("a", Some(false)), ("b", Some(false))]).unwrap();
 // (a & b) | !a  with a=false  =  false | true  =  true
 assert_eq!(f.evaluate(&assignment), Ok(true));
 ```

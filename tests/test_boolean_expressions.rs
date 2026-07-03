@@ -2,13 +2,13 @@
 
 use espresso_logic::error::{ExpressionParseError, ParseBoolExprError};
 use espresso_logic::{
-    bdd_builder, expr, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol, Symbols,
+    bdd_builder, expr, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol,
 };
 
 /// Build a complete `Minterm<Symbol>` fixing each `(name, value)` pair, for `Bdd::evaluate`.
 fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
-    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect()).unwrap();
-    Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
+    let pairs: Vec<(&str, Option<bool>)> = pairs.iter().map(|&(n, v)| (n, Some(v))).collect();
+    Minterm::with_labels(&pairs).unwrap()
 }
 
 #[test]
