@@ -469,6 +469,242 @@ impl BddManager {
             .expect("root node restricted after the iterative walk")
     }
 
+    /// Functional substitution: `f[var := g]` — replace every test of `var` in `f` with the
+    /// function `g`, managing the cell's borrow itself.
+    ///
+    /// This is **not** `ite(g, restrict(f, var, true), restrict(f, var, false))` composed from
+    /// separate passes: it is a single fused traversal over the `(f, g)` node pair that computes
+    /// the same result in one walk, sharing its ITE-shaped merge step with [`ite`](Self::ite)
+    /// instead of calling it as a black box.
+    ///
+    /// Evaluated **iteratively** with an explicit work-stack, in the same style as the iterative
+    /// [`ite`](Self::ite) and [`restrict`](Self::restrict), so a tall BDD (deep variable ordering)
+    /// cannot overflow the call stack. Each step takes its own short-lived shared borrow to read
+    /// (resolve/expand a pair, or read a splice's resolved ITE triple) and, only when a result must
+    /// be committed, a separate short-lived exclusive borrow to intern the node and record its
+    /// cache entries — a shared borrow is never live when the exclusive borrow may be taken, the
+    /// discipline the [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires (panics on
+    /// overlap) and the [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires (deadlocks
+    /// on overlap).
+    ///
+    /// The walk co-cofactors `f` and `g` together, splitting on their global minimum tested
+    /// variable, until it reaches a node of `f` that tests `var` itself. At that point `var`'s
+    /// subtree needs no further composition (an ordered BDD cannot re-test a variable below where
+    /// it already appears), so the low/high children of that node are spliced in directly via
+    /// `ite(g, f_high, f_low)` — composing `f` at `var` with `g` is exactly selecting `f`'s `var =
+    /// true` branch where `g` holds and its `var = false` branch where `g` doesn't, which is what
+    /// `ite` computes. That inline ITE is driven by the very same `ite_solve_step` /
+    /// `ite_combine_step` helpers `ite` itself uses, scheduled as extra work items on this
+    /// traversal's stack rather than through a nested call to `ite`, so the whole computation stays
+    /// one iterative loop.
+    ///
+    /// **Ordering lemma:** splitting on `top = min(var(f), var(g))` and co-cofactoring both `f` and
+    /// `g` on `top` (a side that doesn't test `top` cofactors to itself) guarantees each child pair
+    /// still supports only variables strictly greater than `top` — including when `g` interleaves
+    /// with or sits above `var`, or itself tests `var`. So `insert_node`'s ordering precondition
+    /// holds at every `Combine`, and the splice's inline `ite(g, f_high, f_low)` is well founded
+    /// even though `g` is used whole (untouched by composition) at the splice point.
+    ///
+    /// **Canonicity:** every node produced here — by `Combine`'s `insert_node` call and by the
+    /// splice's inline `ite` — is minted through the same hash-consed `make_node`/`insert_node`
+    /// path every other operation uses, so results remain canonical and safely comparable /
+    /// cacheable by NodeId alone.
+    ///
+    /// **Memoisation** has three tiers: the persistent `compose_cache` (`(f, var, g) ->
+    /// f[var := g]`, shared across calls, checked first), a per-call `HashMap<(NodeId, NodeId),
+    /// NodeId>` pair memo keyed on `(f, g)` (`var` is constant for the whole traversal, so it is
+    /// omitted from the key) that collapses the shared sub-DAG within this walk, and the inline
+    /// ITE's own `ite_cache` (seeded at each splice so a later top-level `ite` call, or another
+    /// `compose` that reaches the same splice, hits the cache directly).
+    pub(crate) fn compose<C: ManagerCell>(cell: &C, f: NodeId, var: VarId, g: NodeId) -> NodeId {
+        /// One unit of work. `Solve` resolves a compose pair (expanding it, or scheduling a
+        /// splice, as needed); `Combine` runs after a pair's two structural children are resolved
+        /// and builds the result node for it; `Splice` runs after the inline ITE for a `var`-node's
+        /// children has resolved and write-through-caches the result; `IteSolve`/`IteCombine` are
+        /// the shared ITE machine's steps, driving the splice's `ite(g, f_high, f_low)` on this
+        /// same stack.
+        enum Work {
+            Solve(NodeId, NodeId),
+            Combine {
+                pair: (NodeId, NodeId),
+                top: VarId,
+                low: (NodeId, NodeId),
+                high: (NodeId, NodeId),
+            },
+            Splice {
+                pair: (NodeId, NodeId),
+                triple: (NodeId, NodeId, NodeId),
+            },
+            IteSolve(NodeId, NodeId, NodeId),
+            IteCombine {
+                triple: (NodeId, NodeId, NodeId),
+                top_var: VarId,
+                low: (NodeId, NodeId, NodeId),
+                high: (NodeId, NodeId, NodeId),
+            },
+        }
+
+        /// What a `Solve` step's single shared-borrow read block decided, to be acted on after the
+        /// borrow is dropped.
+        enum Action {
+            Done(NodeId),
+            Splice(NodeId, NodeId),
+            Expand(VarId, (NodeId, NodeId), (NodeId, NodeId)),
+        }
+
+        let mut memo: HashMap<(NodeId, NodeId), NodeId> = HashMap::new();
+        let mut stack = vec![Work::Solve(f, g)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Solve(f, g) => {
+                    if memo.contains_key(&(f, g)) {
+                        continue;
+                    }
+                    // Read this pair's shape under one short-lived shared borrow, dropped before
+                    // any push/write below.
+                    let action = {
+                        let manager = cell.read();
+                        if let Some(&r) = manager.compose_cache.get(&(f, var, g)) {
+                            Action::Done(r)
+                        } else {
+                            let f_node = manager.expect_node(f);
+                            let top_f = Self::node_var(f_node);
+                            if top_f > var {
+                                // `f` doesn't reach `var` on this branch (this also covers `f`
+                                // being a terminal, whose node_var is usize::MAX) — composition is
+                                // a no-op. Not written to compose_cache, matching how `ite` treats
+                                // its own terminal cases.
+                                Action::Done(f)
+                            } else if top_f == var {
+                                // `f` tests `var` here. An ordered BDD cannot re-test `var` below
+                                // this point, so the children need no further composition — splice
+                                // them in verbatim via an inline `ite(g, f_high, f_low)`. `g` is
+                                // used whole, even if it sits above `var` or tests `var` itself;
+                                // the ordering lemma on this doc covers both.
+                                match f_node {
+                                    BddNode::Decision { low, high, .. } => {
+                                        Action::Splice(*low, *high)
+                                    }
+                                    BddNode::Terminal(_) => unreachable!(
+                                        "terminal node cannot match a real substituted variable"
+                                    ),
+                                }
+                            } else {
+                                // Still above `var` on both sides: split on the global minimum and
+                                // co-cofactor both `f` and `g` (a side not testing `top` cofactors
+                                // to itself).
+                                let g_node = manager.expect_node(g);
+                                let top_g = Self::node_var(g_node);
+                                let top = top_f.min(top_g);
+                                let (f_low, f_high) = Self::cofactors(f_node, top_f, top, f);
+                                let (g_low, g_high) = Self::cofactors(g_node, top_g, top, g);
+                                Action::Expand(top, (f_low, g_low), (f_high, g_high))
+                            }
+                        }
+                    };
+                    match action {
+                        Action::Done(r) => {
+                            memo.insert((f, g), r);
+                        }
+                        Action::Splice(f_low, f_high) => {
+                            // Combine pushed first → pops last, after the inline ITE resolves it.
+                            stack.push(Work::Splice {
+                                pair: (f, g),
+                                triple: (g, f_high, f_low),
+                            });
+                            stack.push(Work::IteSolve(g, f_high, f_low));
+                        }
+                        Action::Expand(top, low, high) => {
+                            // Combine pushed first → pops last (LIFO).
+                            stack.push(Work::Combine {
+                                pair: (f, g),
+                                top,
+                                low,
+                                high,
+                            });
+                            stack.push(Work::Solve(high.0, high.1));
+                            stack.push(Work::Solve(low.0, low.1));
+                        }
+                    }
+                }
+                Work::Combine {
+                    pair,
+                    top,
+                    low,
+                    high,
+                } => {
+                    if memo.contains_key(&pair) {
+                        continue;
+                    }
+                    let low_id = *memo
+                        .get(&low)
+                        .expect("compose child resolved before combine - BDD scheduling bug");
+                    let high_id = *memo
+                        .get(&high)
+                        .expect("compose child resolved before combine - BDD scheduling bug");
+                    // Commit under one short-lived exclusive borrow: intern the node and record
+                    // its compose_cache entry as one transaction, re-checking in case another
+                    // thread committed it meanwhile.
+                    let key = (pair.0, var, pair.1);
+                    let result = {
+                        let mut mgr = cell.write();
+                        match mgr.compose_cache.get(&key) {
+                            Some(&r) => r,
+                            None => {
+                                let r = mgr.insert_node(top, low_id, high_id);
+                                mgr.compose_cache.insert(key, r);
+                                r
+                            }
+                        }
+                    };
+                    memo.insert(pair, result);
+                }
+                Work::Splice { pair, triple } => {
+                    if memo.contains_key(&pair) {
+                        continue;
+                    }
+                    // The inline ITE for this splice has already run to completion on the stack
+                    // (scheduled before this Splice item), so its triple is resolved.
+                    let r = cell
+                        .read()
+                        .ite_resolved(triple.0, triple.1, triple.2)
+                        .expect("splice ITE resolved before compose combine - BDD scheduling bug");
+                    // Write-through the compose_cache entry for this pair and seed the ite_cache
+                    // for the triple, as one exclusive transaction.
+                    {
+                        let mut mgr = cell.write();
+                        mgr.compose_cache.entry((pair.0, var, pair.1)).or_insert(r);
+                        mgr.ite_cache.entry(triple).or_insert(r);
+                    }
+                    memo.insert(pair, r);
+                }
+                Work::IteSolve(a, b, c) => {
+                    let Some((top_var, low, high)) = Self::ite_solve_step(cell, a, b, c) else {
+                        continue;
+                    };
+                    stack.push(Work::IteCombine {
+                        triple: (a, b, c),
+                        top_var,
+                        low,
+                        high,
+                    });
+                    stack.push(Work::IteSolve(high.0, high.1, high.2));
+                    stack.push(Work::IteSolve(low.0, low.1, low.2));
+                }
+                Work::IteCombine {
+                    triple,
+                    top_var,
+                    low,
+                    high,
+                } => Self::ite_combine_step(cell, triple, top_var, low, high),
+            }
+        }
+
+        *memo.get(&(f, g)).expect(
+            "top-level compose pair resolved after iterative evaluation - BDD scheduling bug",
+        )
+    }
+
     /// Resolve an ITE triple **without** Shannon expansion.
     ///
     /// Returns `Some(node)` when `(f, g, h)` is a terminal case or already lives in `ite_cache`,
