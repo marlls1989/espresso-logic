@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Minterm`'s three-valued (Kleene) bitwise operators `& | ^` and complement `!`, combining rows
+  element-wise where `None` is the unknown/don't-care value (`-`): AND shortcuts on `0`, OR on `1`,
+  XOR/complement propagate `-`. Operands are auto-aligned by variable identity — a variable present
+  in only one operand reads as `-` — so the operation is independent of header ordering
+  (`a op b == b op a`). This is truth-value logic, not cube/set intersection.
 - `Cover::over_labels`, the label-value counterpart of `Cover::over_vars`: it names the target
   variable set by input label value (any `NamedLabel`, e.g. `u32`) rather than by string, driving the
   same universal projection.

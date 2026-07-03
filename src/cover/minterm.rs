@@ -32,7 +32,8 @@
 
 use super::error::{DuplicateLabel, IndexOutOfRange, LabelNotFound};
 use super::label::{Anonymous, Label, NamedLabel, StringLabel};
-use super::symbols::Symbols;
+use super::symbols::{identity_union, Symbols};
+use crate::impl_binary_operator;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
@@ -156,6 +157,78 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
     } else {
         ALLOWS0_MASK & ((1u64 << (2 * count)) - 1)
     }
+}
+
+/// Both-bit mask covering exactly the valid fields of word `word_idx` — the `allows-0` *and*
+/// `allows-1` bit of every field below `num_vars`, and nothing above. Used by the element-wise
+/// operators to re-zero the padding past the arity after combining, so the word-wise `Eq`/`Hash`
+/// fast path stays canonical.
+#[inline]
+fn valid_field_mask(word_idx: usize, num_vars: usize) -> u64 {
+    let count = (num_vars - word_idx * VARS_PER_WORD).min(VARS_PER_WORD);
+    if count == VARS_PER_WORD {
+        u64::MAX
+    } else {
+        (1u64 << (2 * count)) - 1
+    }
+}
+
+/// Normalise every empty field (`00`, Espresso's `?`) in a packed word to don't-care (`11`), leaving
+/// `01`/`10`/`11` untouched. This matches the public `Option<bool>` view's fold of `?`→`None`, so the
+/// element-wise operators agree with it.
+///
+/// A field is empty exactly when neither of its bits is set. `is_empty` carries the per-field
+/// "empty" flag on the `allows-0` (even) bit; OR-ing both that bit and its `allows-1` neighbour in
+/// fills such fields to `11`. Padding past the arity (genuine `00`) is normalised too and must be
+/// re-zeroed by the caller with [`valid_field_mask`].
+#[inline]
+fn normalise_empty(word: u64) -> u64 {
+    let allows0 = word & ALLOWS0_MASK;
+    let allows1 = (word >> 1) & ALLOWS0_MASK;
+    let is_empty = !(allows0 | allows1) & ALLOWS0_MASK;
+    word | is_empty | (is_empty << 1)
+}
+
+/// Element-wise three-valued AND of two packed words (all 32 fields in parallel), reading each field
+/// as the value-set it allows. With `x0`/`y0` the `allows-0` bits and `x1`/`y1` the `allows-1` bits:
+/// the result allows `1` only where both do (`x1 & y1`) and allows `0` where either does (`x0 | y0`).
+#[inline]
+fn word_and(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let r0 = x0 | y0;
+    let r1 = x1 & y1;
+    (r1 << 1) | r0
+}
+
+/// Element-wise three-valued OR of two packed words (all 32 fields in parallel). The result allows
+/// `1` where either operand does (`x1 | y1`) and allows `0` only where both do (`x0 & y0`).
+#[inline]
+fn word_or(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let r0 = x0 & y0;
+    let r1 = x1 | y1;
+    (r1 << 1) | r0
+}
+
+/// Element-wise three-valued XOR of two packed words (all 32 fields in parallel). The result allows
+/// `1` where the operands can differ (`(x1 & y0) | (x0 & y1)`) and allows `0` where they can agree
+/// (`(x1 & y1) | (x0 & y0)`).
+#[inline]
+fn word_xor(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let r0 = (x1 & y1) | (x0 & y0);
+    let r1 = (x1 & y0) | (x0 & y1);
+    (r1 << 1) | r0
+}
+
+/// Element-wise three-valued complement of a packed word (all 32 fields in parallel): swap each
+/// field's `allows-0` and `allows-1` bits, so `{0}`↔`{1}` and `{0,1}` (don't-care) is fixed.
+#[inline]
+fn word_not(x: u64) -> u64 {
+    ((x & ALLOWS0_MASK) << 1) | ((x >> 1) & ALLOWS0_MASK)
 }
 
 /// A label-carrying row of tri-state values. See the module-level documentation for the representation.
@@ -1220,6 +1293,204 @@ impl<L: Label> Hash for Minterm<L> {
     }
 }
 
+impl<L: Label> Minterm<L> {
+    /// Combine `self` and `other` element-wise with `word_op`, a three-valued operation over one
+    /// packed word (all 32 fields in parallel).
+    ///
+    /// When both minterms share a header (pointer- or structurally-equal `Symbols`), the words are
+    /// combined directly and the result reuses `self`'s header. Otherwise both operands are re-homed
+    /// onto the [`identity_union`] of their headers — where a variable present in only one operand
+    /// reads as don't-care (`-`) — so the combination is well-defined regardless of header ordering;
+    /// this makes `a op b == b op a` under the crate's identity-based [`Eq`].
+    ///
+    /// Each operand word is [`normalise_empty`]d first (so an empty literal `?` behaves as `-`, matching
+    /// the public `Option<bool>` view), and each result word is masked back to its valid fields with
+    /// [`valid_field_mask`] so the padding past the arity stays zero.
+    fn combine(&self, other: &Self, word_op: impl Fn(u64, u64) -> u64) -> Self {
+        if self.symbols == other.symbols {
+            let n = self.num_vars();
+            let values: Arc<[u64]> = self
+                .values
+                .iter()
+                .zip(other.values.iter())
+                .enumerate()
+                .map(|(k, (&x, &y))| {
+                    word_op(normalise_empty(x), normalise_empty(y)) & valid_field_mask(k, n)
+                })
+                .collect();
+            Minterm::from_packed_words(Arc::clone(&self.symbols), values)
+        } else {
+            // Re-home both onto the union header; absent variables become don't-care, then the shared
+            // header hits the word-wise path above.
+            let (union, _, _) = identity_union(&self.symbols, &other.symbols);
+            let a = self.project_onto(&union);
+            let b = other.project_onto(&union);
+            a.combine(&b, word_op)
+        }
+    }
+
+    /// Element-wise three-valued (Kleene) **AND** of two rows, aligned by variable identity, where
+    /// `None` is the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  &  0 1 -
+    ///  0  0 0 0
+    ///  1  0 1 -
+    ///  -  0 - -
+    /// ```
+    ///
+    /// AND shortcuts on a `0` (`0 & anything = 0`, including `0 & - = 0`), while `1 & - = -` and
+    /// `- & - = -`. A variable present in only one operand reads as `-`, and the result is aligned by
+    /// identity, so `a.and(&b) == b.and(&a)` even when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(false), Some(true), None]);
+    /// let b = Minterm::anonymous(&[None, None, Some(true)]);
+    /// let r = a.and(&b);
+    /// assert_eq!(r.value_at(0), Some(false)); // 0 & - = 0
+    /// assert_eq!(r.value_at(1), None); //        1 & - = -
+    /// assert_eq!(r.value_at(2), None); //        - & 1 = -
+    /// ```
+    #[must_use]
+    pub fn and(&self, other: &Self) -> Self {
+        self.combine(other, word_and)
+    }
+
+    /// Element-wise three-valued (Kleene) **OR** of two rows, aligned by variable identity, where
+    /// `None` is the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  |  0 1 -
+    ///  0  0 1 -
+    ///  1  1 1 1
+    ///  -  - 1 -
+    /// ```
+    ///
+    /// OR shortcuts on a `1` (`1 | anything = 1`, including `1 | - = 1`), while `0 | - = -` and
+    /// `- | - = -`. A variable present in only one operand reads as `-`, and the result is aligned by
+    /// identity, so `a.or(&b) == b.or(&a)` even when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// let b = Minterm::anonymous(&[None, None, Some(false)]);
+    /// let r = a.or(&b);
+    /// assert_eq!(r.value_at(0), Some(true)); // 1 | - = 1
+    /// assert_eq!(r.value_at(1), None); //       0 | - = -
+    /// assert_eq!(r.value_at(2), None); //       - | 0 = -
+    /// ```
+    #[must_use]
+    pub fn or(&self, other: &Self) -> Self {
+        self.combine(other, word_or)
+    }
+
+    /// Element-wise three-valued (Kleene) **XOR** of two rows, aligned by variable identity, where
+    /// `None` is the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  ^  0 1 -
+    ///  0  0 1 -
+    ///  1  1 0 -
+    ///  -  - - -
+    /// ```
+    ///
+    /// XOR is unknown whenever either operand is unknown (`- ^ anything = -`, including `- ^ - = -`).
+    /// A variable present in only one operand reads as `-`, and the result is aligned by identity, so
+    /// `a.xor(&b) == b.xor(&a)` even when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(true), None]);
+    /// let b = Minterm::anonymous(&[Some(false), Some(true), Some(false)]);
+    /// let r = a.xor(&b);
+    /// assert_eq!(r.value_at(0), Some(true)); //  1 ^ 0 = 1
+    /// assert_eq!(r.value_at(1), Some(false)); // 1 ^ 1 = 0
+    /// assert_eq!(r.value_at(2), None); //        - ^ 0 = -
+    /// ```
+    #[must_use]
+    pub fn xor(&self, other: &Self) -> Self {
+        self.combine(other, word_xor)
+    }
+
+    /// Element-wise three-valued (Kleene) **complement** of a row, where `None` is the
+    /// unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  !  →
+    ///  0    1
+    ///  1    0
+    ///  -    -
+    /// ```
+    ///
+    /// A fixed value flips polarity; `-` is its own complement (`!- = -`), and an empty literal (`?`)
+    /// reads as `-`, so `!? = -`. Equivalent to the unary `!` operator. The header is preserved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let m = Minterm::anonymous(&[Some(false), Some(true), None]);
+    /// let r = m.not();
+    /// assert_eq!(r.value_at(0), Some(true)); //  !0 = 1
+    /// assert_eq!(r.value_at(1), Some(false)); // !1 = 0
+    /// assert_eq!(r.value_at(2), None); //        !- = -
+    /// ```
+    #[must_use]
+    pub fn not(&self) -> Self {
+        let n = self.num_vars();
+        let values: Arc<[u64]> = self
+            .values
+            .iter()
+            .enumerate()
+            .map(|(k, &x)| word_not(normalise_empty(x)) & valid_field_mask(k, n))
+            .collect();
+        Minterm::from_packed_words(Arc::clone(&self.symbols), values)
+    }
+}
+
+// The four owned/borrowed combinations of each three-valued bitwise operator, all delegating to the
+// named `&self, &Self` method above, via the shared `impl_binary_operator!` macro (generic over
+// `L: Label`).
+impl_binary_operator!({L: Label} Minterm<L>, BitAnd, bitand, and);
+impl_binary_operator!({L: Label} Minterm<L>, BitOr, bitor, or);
+impl_binary_operator!({L: Label} Minterm<L>, BitXor, bitxor, xor);
+
+// Unary complement, by value and by reference, both delegating to the inherent `not` method (the
+// binary macro does not cover the unary case).
+impl<L: Label> std::ops::Not for Minterm<L> {
+    type Output = Minterm<L>;
+    fn not(self) -> Minterm<L> {
+        Minterm::not(&self)
+    }
+}
+
+impl<L: Label> std::ops::Not for &Minterm<L> {
+    type Output = Minterm<L>;
+    fn not(self) -> Minterm<L> {
+        Minterm::not(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1651,7 +1922,7 @@ mod tests {
     /// correct word/shift maths across the 32-var word boundary.
     #[test]
     fn set_value_at_crosses_word_boundary() {
-        let mut m = Minterm::anonymous(&vec![None; 40]);
+        let mut m = Minterm::anonymous(&[None; 40]);
         m.set_value_at(35, Some(true)).unwrap();
         assert_eq!(m.value_at(35), Some(true));
         // Neighbouring fields, in particular the last one of the first word, are untouched.
@@ -1749,5 +2020,277 @@ mod tests {
 
         let short = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
         assert_eq!(m, short);
+    }
+
+    // --- Three-valued (Kleene) bitwise operators: & | ^ ---------------------------------------
+
+    /// Scalar reference for three-valued AND (see the truth table on `Minterm::and`).
+    fn ref_and(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        }
+    }
+
+    /// Scalar reference for three-valued OR (see the truth table on `Minterm::or`).
+    fn ref_or(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Scalar reference for three-valued XOR (see the truth table on `Minterm::xor`).
+    fn ref_xor(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x ^ y),
+            _ => None,
+        }
+    }
+
+    /// Exhaustive 3x3 check of every operator against its scalar reference, on 1-variable minterms.
+    /// This is the primary catch for any SWAR mistake.
+    #[test]
+    fn ops_match_scalar_reference_exhaustively() {
+        let opts = [None, Some(false), Some(true)];
+        for &a in &opts {
+            for &b in &opts {
+                let ma = Minterm::anonymous(&[a]);
+                let mb = Minterm::anonymous(&[b]);
+                assert_eq!(ma.and(&mb).value_at(0), ref_and(a, b), "AND {a:?} {b:?}");
+                assert_eq!(ma.or(&mb).value_at(0), ref_or(a, b), "OR {a:?} {b:?}");
+                assert_eq!(ma.xor(&mb).value_at(0), ref_xor(a, b), "XOR {a:?} {b:?}");
+            }
+        }
+    }
+
+    /// The by-value/by-ref operator forms all delegate to the named methods.
+    #[test]
+    fn operator_forms_agree_with_methods() {
+        let a = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let b = Minterm::anonymous(&[Some(false), Some(true), None]);
+        assert_eq!(a.clone() & b.clone(), a.and(&b));
+        assert_eq!(&a & b.clone(), a.and(&b));
+        assert_eq!(a.clone() & &b, a.and(&b));
+        assert_eq!(&a & &b, a.and(&b));
+        assert_eq!(&a | &b, a.or(&b));
+        assert_eq!(&a ^ &b, a.xor(&b));
+    }
+
+    /// An empty literal (`?`, from the PLA read path) behaves as `-` under every operator, matching
+    /// the public `Option<bool>` fold of `?`→`None`.
+    #[test]
+    fn empty_field_behaves_as_dont_care() {
+        let s = syms(&["a"]);
+        let empty = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
+        assert!(empty.has_empty_field());
+
+        let f = Minterm::from_symbols(Arc::clone(&s), [Some(false)]);
+        let t = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
+
+        assert_eq!(empty.and(&f).value_at(0), Some(false)); // - & 0 = 0
+        assert_eq!(empty.and(&t).value_at(0), None); //         - & 1 = -
+        assert_eq!(empty.or(&t).value_at(0), Some(true)); //    - | 1 = 1
+        assert_eq!(empty.or(&f).value_at(0), None); //          - | 0 = -
+        assert_eq!(empty.xor(&f).value_at(0), None); //         - ^ 0 = -
+        assert_eq!(empty.xor(&t).value_at(0), None); //         - ^ 1 = -
+    }
+
+    /// A reordered header (same variables, different order): the result aligns by identity.
+    #[test]
+    fn reordered_header_aligns_by_identity() {
+        let a = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), Some(false)]);
+        let b = Minterm::from_symbols(syms(&["b", "a"]), [Some(true), Some(false)]);
+        // a: {a:1, b:0}; b: {a:0, b:1}. AND ⇒ {a:0, b:0}.
+        let r = a.and(&b);
+        assert_eq!(r.value_of("a"), Some(false));
+        assert_eq!(r.value_of("b"), Some(false));
+    }
+
+    /// A subset header: a variable missing from one operand is treated as `-`.
+    #[test]
+    fn subset_header_missing_var_is_dont_care() {
+        let a = Minterm::from_symbols(syms(&["a", "b"]), [Some(false), Some(true)]);
+        let b = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
+        // b has no "b", so b reads {a:1, b:-}. AND ⇒ {a:0, b:-}; OR ⇒ {a:1, b:1}.
+        let and = a.and(&b);
+        assert_eq!(and.value_of("a"), Some(false));
+        assert_eq!(and.value_of("b"), None);
+        let or = a.or(&b);
+        assert_eq!(or.value_of("a"), Some(true));
+        assert_eq!(or.value_of("b"), Some(true));
+    }
+
+    /// Disjoint headers: the union widens both, each absent variable reading as `-`.
+    #[test]
+    fn disjoint_headers_widen_to_union() {
+        let a = Minterm::from_symbols(syms(&["a"]), [Some(false)]);
+        let b = Minterm::from_symbols(syms(&["b"]), [Some(true)]);
+        // Union {a, b}: a reads {a:0, b:-}; b reads {a:-, b:1}.
+        let and = a.and(&b);
+        assert_eq!(and.value_of("a"), Some(false)); // 0 & - = 0
+        assert_eq!(and.value_of("b"), None); //         - & 1 = -
+        let or = a.or(&b);
+        assert_eq!(or.value_of("a"), None); //          0 | - = -
+        assert_eq!(or.value_of("b"), Some(true)); //    - | 1 = 1
+    }
+
+    /// The same-header fast path and the differing-header merge/union path give identical results.
+    #[test]
+    fn same_header_and_union_paths_agree() {
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(true), None, Some(false)]);
+        let b_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(false), Some(true), None]);
+        // The same two functions over independent, differently-permuted headers.
+        let a_perm = Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(false), Some(true), None]);
+        let b_perm = Minterm::from_symbols(syms(&["b", "c", "a"]), [Some(true), None, Some(false)]);
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+
+        assert_eq!(a_shared.and(&b_shared), a_perm.and(&b_perm));
+        assert_eq!(a_shared.or(&b_shared), a_perm.or(&b_perm));
+        assert_eq!(a_shared.xor(&b_shared), a_perm.xor(&b_perm));
+    }
+
+    /// Operands wider than one 32-variable word: the operators combine across the word boundary.
+    #[test]
+    fn ops_cross_word_boundary() {
+        let mut va = vec![None; 40];
+        let mut vb = vec![None; 40];
+        va[5] = Some(true);
+        va[35] = Some(false);
+        vb[5] = Some(false);
+        vb[35] = Some(true);
+        let a = Minterm::anonymous(&va);
+        let b = Minterm::anonymous(&vb);
+
+        let and = a.and(&b);
+        assert_eq!(and.value_at(5), Some(false)); //  1 & 0 = 0
+        assert_eq!(and.value_at(35), Some(false)); // 0 & 1 = 0
+        assert_eq!(and.value_at(10), None); //        - & - = -
+        let xor = a.xor(&b);
+        assert_eq!(xor.value_at(5), Some(true)); //   1 ^ 0 = 1
+        assert_eq!(xor.value_at(35), Some(true)); //  0 ^ 1 = 1
+        assert_eq!(xor.value_at(36), None); //        - ^ - = -
+    }
+
+    /// Commutativity `a op b == b op a` for several nontrivial pairs, including differing headers.
+    #[test]
+    fn operators_are_commutative() {
+        let a = Minterm::from_symbols(syms(&["a", "b", "c"]), [Some(true), None, Some(false)]);
+        let b = Minterm::from_symbols(syms(&["a", "b", "c"]), [Some(false), Some(true), None]);
+        assert_eq!(a.and(&b), b.and(&a));
+        assert_eq!(a.or(&b), b.or(&a));
+        assert_eq!(a.xor(&b), b.xor(&a));
+
+        // Differing headers must still commute under identity-based equality.
+        let p = Minterm::from_symbols(syms(&["x", "y"]), [Some(true), Some(false)]);
+        let q = Minterm::from_symbols(syms(&["y", "z"]), [Some(true), None]);
+        assert_eq!(p.and(&q), q.and(&p));
+        assert_eq!(p.or(&q), q.or(&p));
+        assert_eq!(p.xor(&q), q.xor(&p));
+    }
+
+    /// An operator result is in canonical form: it equals — and hashes identically to — a freshly
+    /// built minterm of the expected pattern, so its padding past the arity is zero (a stray padding
+    /// bit would break the word-wise `Eq`/`Hash` fast path).
+    #[test]
+    fn result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, so the second word's padding (31 unused fields) is exercised.
+        let mut va = vec![None; 33];
+        let mut vb = vec![None; 33];
+        va[0] = Some(true);
+        vb[0] = Some(true);
+        va[32] = Some(false);
+        vb[32] = None;
+        let a = Minterm::anonymous(&va);
+        let b = Minterm::anonymous(&vb);
+        let got = a.and(&b);
+
+        let mut expected = vec![None; 33];
+        expected[0] = Some(true); //  1 & 1 = 1
+        expected[32] = Some(false); // 0 & - = 0
+        let fresh = Minterm::anonymous(&expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
+    }
+
+    /// The full complement truth table, including `!- = -` and the `?` empty literal reading as `-`.
+    #[test]
+    fn not_truth_table() {
+        assert_eq!(
+            Minterm::anonymous(&[Some(false)]).not().value_at(0),
+            Some(true)
+        );
+        assert_eq!(
+            Minterm::anonymous(&[Some(true)]).not().value_at(0),
+            Some(false)
+        );
+        assert_eq!(Minterm::anonymous(&[None]).not().value_at(0), None);
+
+        // An empty literal (`?`) reads as `-`, so its complement is `-`.
+        let empty = Minterm::from_symbols_input_fields(syms(&["a"]), [InputField::Empty]);
+        assert!(empty.has_empty_field());
+        assert_eq!(empty.not().value_at(0), None);
+    }
+
+    /// The by-value and by-reference `!` operator forms both delegate to the inherent `not`.
+    #[test]
+    fn not_operator_forms_agree_with_method() {
+        let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_eq!(!m.clone(), m.not());
+        assert_eq!(!&m, m.not());
+    }
+
+    /// Double complement is the identity for defined values, and `!!- == -`.
+    #[test]
+    fn not_is_self_inverse() {
+        let m = Minterm::anonymous(&[Some(false), Some(true), None]);
+        assert_eq!(m.not().not(), m);
+    }
+
+    /// Complement across the 32-variable word boundary.
+    #[test]
+    fn not_crosses_word_boundary() {
+        let mut v = vec![None; 40];
+        v[5] = Some(true);
+        v[35] = Some(false);
+        let m = Minterm::anonymous(&v);
+        let r = m.not();
+        assert_eq!(r.value_at(5), Some(false));
+        assert_eq!(r.value_at(35), Some(true));
+        assert_eq!(r.value_at(10), None);
+    }
+
+    /// A complement result is canonical: it equals — and hashes identically to — a freshly built
+    /// minterm of the complemented pattern, so the padding past the arity stays zero.
+    #[test]
+    fn not_result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, exercising the second word's padding.
+        let mut v = vec![None; 33];
+        v[0] = Some(true);
+        v[32] = Some(false);
+        let got = Minterm::anonymous(&v).not();
+
+        let mut expected = vec![None; 33];
+        expected[0] = Some(false);
+        expected[32] = Some(true);
+        let fresh = Minterm::anonymous(&expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
     }
 }
