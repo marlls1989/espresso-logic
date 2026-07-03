@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names a variable *set*, so `["a", "b", "a"]` and `["a", "b"]` behave identically. These remain
   infallible, and ordinary slice-reference call sites (e.g. `&["a", "b"]`) continue to compile
   unchanged.
+- `Cover::input_labels`/`output_labels` are now available for every label type, not just
+  string-labelled covers.
 
 ### Fixed
 
