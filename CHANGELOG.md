@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Minterm` now treats the empty literal `?` as the empty cube: equality, ordering and hashing
+  compare by denoted set, so all vacuous minterms are equal and sort after non-vacuous ones.
 - **Breaking:** `Symbols` and the `Arc<Symbols>`-taking methods are no longer part of the public API.
   `Symbols` itself, `Minterm::from_symbols`/`symbols`/`project_onto`/`expand_over`,
   `OutputSet::symbols`, and the `DuplicateSymbol` error are now crate-internal. Construct minterms and

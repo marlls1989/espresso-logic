@@ -72,7 +72,9 @@ impl<I, O> fmt::Display for Cube<I, O> {
 /// Two cubes are equal when they belong to the same set, their input patterns are equal, and their
 /// output bitmaps are equal. Both halves compare by identity-based equality (aligning by variable
 /// name, absent inputs as don't-cares and absent outputs as unasserted); within a cover all cubes
-/// share one header per side, so this reduces to the by-column comparison there.
+/// share one header per side, so this reduces to the by-column comparison there. The input half
+/// compares by denoted set, so cubes whose inputs are vacuous (any empty literal `?`) compare equal
+/// whenever they share a set tag and outputs, regardless of the rest of the input pattern.
 impl<I: Label, O: Label> PartialEq for Cube<I, O> {
     fn eq(&self, other: &Self) -> bool {
         self.set == other.set && self.inputs == other.inputs && self.outputs == other.outputs

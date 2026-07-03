@@ -1420,12 +1420,17 @@ fn rank(value: Option<bool>) -> u8 {
     }
 }
 
-/// Compare two minterms by value, aligned by variable identity over the sorted union of their
+/// Compare two minterms by denoted set, aligned by variable identity over the sorted union of their
 /// variables (an absent variable counts as don't-care; at each variable don't-care < false < true).
 ///
+/// A vacuous minterm — one carrying any empty literal `?`, so it denotes ∅ — sorts **after** every
+/// non-vacuous one: it is the smallest denoted set, extending the per-field rank `- < 0 < 1`
+/// monotonically by shrinking set size. Two vacuous minterms compare `Equal`, matching `Eq`.
+///
 /// The order is total and independent of header ordering, so `Minterm` can be used as a
-/// `BTreeSet`/`BTreeMap` key for deduplication. It is computed by a single O(n+m) merge of the two
-/// minterms' sorted label sequences — no per-comparison set or projection is allocated.
+/// `BTreeSet`/`BTreeMap` key for deduplication. Non-vacuous pairs are compared by a single O(n+m)
+/// merge of the two minterms' sorted label sequences — no per-comparison set or projection is
+/// allocated.
 ///
 /// # Examples
 ///
@@ -1440,13 +1445,23 @@ fn rank(value: Option<bool>) -> u8 {
 /// ```
 impl<L: Label> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
-        for (sf, of) in self.merged_fields(other) {
-            match rank(decode(sf)).cmp(&rank(decode(of))) {
-                Ordering::Equal => continue,
-                non_eq => return non_eq,
+        match (self.is_vacuous(), other.is_vacuous()) {
+            // Both denote ∅: the same (smallest) set.
+            (true, true) => Ordering::Equal,
+            // A vacuous minterm is the smallest denoted set, so it sorts after every non-vacuous one.
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            // Neither carries a `00` field, so the merge loop decodes only `-`/`0`/`1`.
+            (false, false) => {
+                for (sf, of) in self.merged_fields(other) {
+                    match rank(decode(sf)).cmp(&rank(decode(of))) {
+                        Ordering::Equal => continue,
+                        non_eq => return non_eq,
+                    }
+                }
+                Ordering::Equal
             }
         }
-        Ordering::Equal
     }
 }
 
@@ -1456,13 +1471,34 @@ impl<L: Label> PartialOrd for Minterm<L> {
     }
 }
 
+/// Compares two minterms by denoted set, not by structure: variables are aligned by
+/// [`identity`](Label::identity) (an absent variable reads as don't-care), so the comparison is
+/// independent of header ordering.
+///
+/// A minterm carrying any empty literal `?` is vacuous — it denotes ∅ — and all vacuous minterms
+/// are equal to each other and distinct from every non-vacuous one, regardless of their remaining
+/// fields. Non-vacuous pairs compare exactly by their aligned value-sets.
 impl<L: Label> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
-        if self.symbols == other.symbols {
-            // Same layout: equal value-sets pack to identical words.
-            self.values == other.values
-        } else {
-            self.merged_fields(other).all(|(sf, of)| sf == of)
+        // Fast positive path: same layout and identical words denote the same set.
+        if self.symbols == other.symbols && self.values == other.values {
+            return true;
+        }
+        // Triage on vacuousness before the structural comparison: all vacuous minterms are equal,
+        // and a vacuous minterm never equals a non-vacuous one.
+        match (self.is_vacuous(), other.is_vacuous()) {
+            (true, true) => true,
+            (true, false) | (false, true) => false,
+            // Neither carries a `00` field, so the merge-join reads only `-`/`0`/`1`. Same-header
+            // pairs would have been caught by the fast path if their words matched, so here they
+            // denote distinct sets.
+            (false, false) => {
+                if self.symbols == other.symbols {
+                    false
+                } else {
+                    self.merged_fields(other).all(|(sf, of)| sf == of)
+                }
+            }
         }
     }
 }
@@ -1471,6 +1507,10 @@ impl<L: Label> Eq for Minterm<L> {}
 
 /// Hashes the same identity-aligned canonical sequence that [`Eq`]/[`Ord`] compare over, so
 /// `a == b` always implies `hash(a) == hash(b)`.
+///
+/// A vacuous minterm — one carrying any empty literal `?`, denoting ∅ — hashes to a single fixed
+/// value (a `1` tag and nothing else), so all vacuous minterms hash alike as `Eq` requires. A
+/// non-vacuous minterm is prefixed with a `0` tag to keep its hashes disjoint from the vacuous one.
 ///
 /// Equality aligns variables by [`identity`](Label::identity), ignores don't-care (`None`) entries
 /// (an absent variable reads as don't-care, so a fixed variable and a missing one are
@@ -1481,6 +1521,12 @@ impl<L: Label> Eq for Minterm<L> {}
 /// ignores are deliberately left out, preserving the `Hash`/`Eq` contract.
 impl<L: Label> Hash for Minterm<L> {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.is_vacuous() {
+            // Every vacuous minterm denotes ∅ and compares equal, so they must all hash alike.
+            state.write_u8(1);
+            return;
+        }
+        state.write_u8(0);
         let labels = self.symbols.labels();
         let mut len = 0usize;
         for &pos in self.symbols.sorted_order() {
@@ -1894,6 +1940,90 @@ mod tests {
     fn is_vacuous_false_for_dont_care() {
         let m = Minterm::anonymous(&[None]);
         assert!(!m.is_vacuous());
+    }
+
+    // --- canonical-empty Eq/Ord/Hash -------------------------------------------------------------
+
+    /// Build the 3-variable vacuous minterm `1?0` (field 1 is the empty literal `?`).
+    fn vacuous_1q0() -> Minterm<Anonymous> {
+        let mut m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        m.set_field_at(1, InputField::Empty).unwrap();
+        m
+    }
+
+    /// Build the 3-variable vacuous minterm `0?1` (a different bit-pattern denoting the same ∅).
+    fn vacuous_0q1() -> Minterm<Anonymous> {
+        let mut m = Minterm::anonymous(&[Some(false), None, Some(true)]);
+        m.set_field_at(1, InputField::Empty).unwrap();
+        m
+    }
+
+    /// All vacuous minterms denote ∅, so they compare equal and must hash alike: two distinct
+    /// bit-patterns collapse to a single element in a `HashSet`.
+    #[test]
+    fn vacuous_minterms_are_equal_and_hash_alike() {
+        let a = vacuous_1q0();
+        let b = vacuous_0q1();
+        assert_eq!(a, b);
+        let set: std::collections::HashSet<_> = [a, b].into_iter().collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    /// A vacuous minterm (`1?0`) denotes ∅; a don't-care one (`1-0`) denotes a non-empty set, so
+    /// they are not equal.
+    #[test]
+    fn vacuous_differs_from_dont_care() {
+        let vac = vacuous_1q0();
+        let dc = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_ne!(vac, dc);
+    }
+
+    /// A vacuous minterm is the smallest denoted set, so it sorts after every non-vacuous one; two
+    /// vacuous minterms compare `Equal`.
+    #[test]
+    fn vacuous_sorts_after_non_vacuous() {
+        let vac = vacuous_1q0();
+        let non_vac = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_eq!(vac.cmp(&non_vac), Ordering::Greater);
+        assert_eq!(non_vac.cmp(&vac), Ordering::Less);
+        assert_eq!(vac.cmp(&vacuous_0q1()), Ordering::Equal);
+    }
+
+    /// `Ord::cmp == Equal` must agree with `PartialEq::eq` for every pair, verified exhaustively over
+    /// a 1-variable sweep across all four field states.
+    #[test]
+    fn cmp_equal_iff_eq_over_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x in &states {
+            for &y in &states {
+                let mut a = Minterm::anonymous(&[None]);
+                a.set_field_at(0, x).unwrap();
+                let mut b = Minterm::anonymous(&[None]);
+                b.set_field_at(0, y).unwrap();
+                assert_eq!(
+                    a.cmp(&b) == Ordering::Equal,
+                    a == b,
+                    "cmp/eq disagree for {x:?} vs {y:?}"
+                );
+            }
+        }
+    }
+
+    /// Several distinct vacuous bit-patterns (`1?0`, `0?1`, `??-`) collapse to one element in a
+    /// `BTreeSet`, exercising the ordering path as well as equality.
+    #[test]
+    fn set_collapses_distinct_vacuous_patterns() {
+        let mut qq_dc = Minterm::anonymous(&[None, None, None]);
+        qq_dc.set_field_at(0, InputField::Empty).unwrap();
+        qq_dc.set_field_at(1, InputField::Empty).unwrap();
+        let set: std::collections::BTreeSet<_> =
+            [vacuous_1q0(), vacuous_0q1(), qq_dc].into_iter().collect();
+        assert_eq!(set.len(), 1);
     }
 
     // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
