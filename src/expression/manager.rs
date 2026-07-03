@@ -66,6 +66,8 @@ pub struct BddManager {
     pub(super) id_to_var: Vec<Symbol>,
     /// Cache for ITE operations: (f, g, h) -> result
     pub(super) ite_cache: HashMap<(NodeId, NodeId, NodeId), NodeId>,
+    /// Cache for compose operations: (f, var, g) -> f[var := g]
+    pub(super) compose_cache: HashMap<(NodeId, VarId, NodeId), NodeId>,
 }
 
 impl BddManager {
@@ -83,6 +85,7 @@ impl BddManager {
             var_to_id: BTreeMap::new(),
             id_to_var: Vec::new(),
             ite_cache: HashMap::new(),
+            compose_cache: HashMap::new(),
         }
     }
 
