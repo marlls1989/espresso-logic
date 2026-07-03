@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Cover::over_labels`, the label-value counterpart of `Cover::over_vars`: it names the target
+  variable set by input label value (any `NamedLabel`, e.g. `u32`) rather than by string, driving the
+  same universal projection.
 - **`Cube` can now be assembled from separately-built halves.** `Cube::new` — pairing a pre-built
   input `Minterm` with a per-output `OutputSet` — is now public, and both halves gain the full
   constructor set: `Minterm::labeled`/`with_labels` and `OutputSet::labeled`/`with_labels` build a

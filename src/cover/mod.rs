@@ -464,46 +464,12 @@ impl<I: Label, O: Clone> Cover<I, O> {
             cover_type: self.cover_type,
         }
     }
-}
 
-impl<I: StringLabel, O: Clone> Cover<I, O> {
-    /// Re-base this cover onto exactly the variables named in `vars`, universally projecting away any
-    /// variable it drops.
-    ///
-    /// Two things happen, in one pass:
-    ///
-    /// - **Widen.** Every variable of `vars` absent from this cover is introduced as a don't-care
-    ///   column. This alone (when `vars` is a superset of the cover's inputs) re-homes each cube onto
-    ///   the `vars` header without changing the function.
-    /// - **Universally project.** Every input variable *not* in `vars` is eliminated by **universal**
-    ///   projection: the ON-set of the result holds exactly the `vars` assignments that force the
-    ///   output high for *every* value of the eliminated variables, and (for an
-    ///   [`FR`](CoverType::FR) cover) the OFF-set holds those that force it low for every value.
-    ///
-    /// Because each side is derived independently from its own cubes — via the complete prime set
-    /// (see [`primes`](Self::primes)), keeping only the primes that constrain nothing outside `vars` —
-    /// the ON- and OFF-sets are **orthogonal but not necessarily complementary**: where the output
-    /// still depends on an eliminated variable, that `vars` assignment lands in *neither* set, leaving
-    /// a genuine don't-care/undef gap. A Muller C-element `q⁺ = a·b + q·(a+b)` re-based onto `{a, b}`
-    /// gives on-set `a=b=1`, off-set `a=b=0`, and `a≠b` undefined.
-    ///
-    /// The result is returned in **don't-care form** (not minterm-expanded): compose
-    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
-    /// (F in → F out; FR in → FR out).
-    ///
-    /// `vars` names a variable *set*: a repeated name is deduplicated (the first occurrence is kept),
-    /// so `["a", "b", "a"]` and `["a", "b"]` re-base onto the same header.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
-    /// [`FDR`](CoverType::FDR) cover): universal projection is defined only for fully specified
-    /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
-    /// different dimensions on this thread) or a C fatal.
-    #[must_use]
-    pub fn over_vars<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Cover<I, O> {
-        let target = Symbols::deduped(vars.into_iter().map(|s| I::from(s.as_ref())));
-
+    /// Re-base this cover onto the pre-built `target` variable table, universally projecting away any
+    /// variable it drops. The label-generic core of [`over_vars`](Self::over_vars) /
+    /// [`over_labels`](Self::over_labels): both build `target` from their own operand kind, then defer
+    /// here.
+    fn over_symbols(&self, target: Arc<Symbols<I>>) -> Cover<I, O> {
         // Which of this cover's input columns are eliminated (identity absent from `target`)?
         let excluded_mask: Vec<bool> = self
             .input_symbols
@@ -533,15 +499,15 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
         // specified covers — a don't-care set has no well-defined universal projection here.
         assert!(
             !self.cover_type.has_d(),
-            "over_vars: universal projection is defined only for fully specified (F/FR) covers; \
+            "over_symbols: universal projection is defined only for fully specified (F/FR) covers; \
              this cover carries a don't-care set (FD/FDR)"
         );
 
         // Project one cube set (F or R) on its own: all primes of that set, then keep only the primes
-        // that constrain nothing outside `vars` (their eliminated columns are all don't-care), then
-        // drop those columns. Reading each set independently — never a complement — is what preserves
-        // the undef gap; output-assertion bits ride through `project_onto` untouched, so multi-output
-        // covers project per output in one pass.
+        // that constrain nothing outside the target set (their eliminated columns are all don't-care),
+        // then drop those columns. Reading each set independently — never a complement — is what
+        // preserves the undef gap; output-assertion bits ride through `project_onto` untouched, so
+        // multi-output covers project per output in one pass.
         let project_set = |set: CubeType| -> Vec<Cube<I, O>> {
             let members: Vec<&Cube<I, O>> = self.cubes.iter().filter(|c| c.set == set).collect();
             minimisation::primes_cubes(
@@ -572,6 +538,114 @@ impl<I: StringLabel, O: Clone> Cover<I, O> {
             cubes,
             self.cover_type,
         )
+    }
+}
+
+impl<I: StringLabel, O: Clone> Cover<I, O> {
+    /// Re-base this cover onto exactly the variables named in `vars`, universally projecting away any
+    /// variable it drops.
+    ///
+    /// Two things happen, in one pass:
+    ///
+    /// - **Widen.** Every variable of `vars` absent from this cover is introduced as a don't-care
+    ///   column. This alone (when `vars` is a superset of the cover's inputs) re-homes each cube onto
+    ///   the `vars` header without changing the function.
+    /// - **Universally project.** Every input variable *not* in `vars` is eliminated by **universal**
+    ///   projection: the ON-set of the result holds exactly the `vars` assignments that force the
+    ///   output high for *every* value of the eliminated variables, and (for an
+    ///   [`FR`](CoverType::FR) cover) the OFF-set holds those that force it low for every value.
+    ///
+    /// Because each side is derived independently from its own cubes — via the complete prime set
+    /// (see [`primes`](Self::primes)), keeping only the primes that constrain nothing outside `vars` —
+    /// the ON- and OFF-sets are **orthogonal but not necessarily complementary**: where the output
+    /// still depends on an eliminated variable, that `vars` assignment lands in *neither* set, leaving
+    /// a genuine don't-care/undef gap. A Muller C-element `q⁺ = a·b + q·(a+b)` re-based onto `{a, b}`
+    /// gives on-set `a=b=1`, off-set `a=b=0`, and `a≠b` undefined.
+    ///
+    /// The result is returned in **don't-care form** (not minterm-expanded): compose
+    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
+    /// (F in → F out; FR in → FR out).
+    ///
+    /// `vars` names a variable *set*: a repeated name is deduplicated (the first occurrence is kept),
+    /// so `["a", "b", "a"]` and `["a", "b"]` re-base onto the same header.
+    ///
+    /// For a cover whose input labels *are* the variable values (any [`NamedLabel`], e.g. `u32`),
+    /// [`over_labels`](Self::over_labels) is the same projection driven by the label values directly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
+    /// [`FDR`](CoverType::FDR) cover): universal projection is defined only for fully specified
+    /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
+    /// different dimensions on this thread) or a C fatal.
+    #[must_use]
+    pub fn over_vars<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Cover<I, O> {
+        self.over_symbols(Symbols::deduped(
+            vars.into_iter().map(|s| I::from(s.as_ref())),
+        ))
+    }
+}
+
+impl<I: NamedLabel, O: Clone> Cover<I, O> {
+    /// Re-base this cover onto exactly the variables in `vars` (given as label *values*), universally
+    /// projecting away any variable it drops.
+    ///
+    /// The label-value counterpart of [`over_vars`](Self::over_vars): where `over_vars` names the
+    /// target variables by string, this names them by the input label value itself (any
+    /// [`NamedLabel`], e.g. `u32`). The projection is identical — widen in every `vars` variable absent
+    /// from this cover as a don't-care column, then **universally** eliminate every input variable not
+    /// in `vars` (the ON-set of the result holds exactly the `vars` assignments that force the output
+    /// high for *every* value of the eliminated variables; for an [`FR`](CoverType::FR) cover the
+    /// OFF-set holds those that force it low for every value). ON- and OFF-sets are derived
+    /// independently from the complete prime set (see [`primes`](Self::primes)), so they are orthogonal
+    /// but not necessarily complementary: where the output still depends on an eliminated variable,
+    /// that assignment lands in neither set, leaving a genuine don't-care/undef gap.
+    ///
+    /// The result is returned in **don't-care form** (not minterm-expanded): compose
+    /// [`maximize`](Self::maximize) to enumerate the minterms. The [`CoverType`] is kept
+    /// (F in → F out; FR in → FR out).
+    ///
+    /// `vars` names a variable *set*: a repeated label is deduplicated (the first occurrence is kept),
+    /// so `[a, b, a]` and `[a, b]` re-base onto the same header.
+    ///
+    /// The [`NamedLabel`] bound excludes the positional [`Anonymous`] header at the type level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this cover carries a don't-care set (an [`FD`](CoverType::FD) or
+    /// [`FDR`](CoverType::FDR) cover): universal projection is defined only for fully specified
+    /// (`F`/`FR`) covers. Also panics on an Espresso instance conflict (a live low-level instance of
+    /// different dimensions on this thread) or a C fatal.
+    ///
+    /// # Examples
+    ///
+    /// Universally project a two-input AND (`u32`-labelled) onto just variable `0`: the output depends
+    /// on variable `1`, so no assignment of `0` forces it high for every value of `1`, and the ON-set
+    /// projects to empty.
+    ///
+    /// ```
+    /// use espresso_logic::{Cover, CoverType, Cube, CubeType};
+    ///
+    /// // f(v0, v1) = v0 & v1, as an F cover over the u32 labels 0 and 1.
+    /// let cover = Cover::<u32, u32>::from_cubes(
+    ///     CoverType::F,
+    ///     [Cube::labeled(
+    ///         &[(0u32, Some(true)), (1u32, Some(true))],
+    ///         &[(9u32, true)],
+    ///         CubeType::F,
+    ///     )
+    ///     .unwrap()],
+    /// );
+    ///
+    /// // Project onto {0}: the output still depends on variable 1, so no assignment of 0 forces it
+    /// // high for every value of 1 — the ON-set projects to empty.
+    /// let projected = cover.over_labels([0u32]);
+    /// assert_eq!(projected.num_inputs(), 1);
+    /// assert_eq!(projected.num_cubes(), 0);
+    /// ```
+    #[must_use]
+    pub fn over_labels(&self, vars: impl IntoIterator<Item = I>) -> Cover<I, O> {
+        self.over_symbols(Symbols::deduped(vars))
     }
 }
 
