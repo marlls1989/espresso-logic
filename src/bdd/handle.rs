@@ -264,6 +264,78 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         acc
     }
 
+    // ---- Composition ----------------------------------------------------------------------------
+
+    /// Substitutes the function `g` for the variable `var`: `self[var := g]`.
+    ///
+    /// A name that is **not** a variable of this function leaves it unchanged (a no-op). `g` may
+    /// mention any variable, including `var` itself or a variable ordered above `var` in the
+    /// diagram — substitution does not require `g` to sit "below" the point it is spliced into.
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b");
+    /// let c = builder.var("c");
+    ///
+    /// // f = a & !b; substitute b := (b | c).
+    /// let f = &a & !&b;
+    /// let g = &b | &c;
+    /// let result = f.compose("b", &g);
+    ///
+    /// let expected = &a & !(&b | &c);
+    /// assert!(result.equivalent_to(&expected));
+    /// ```
+    #[must_use]
+    pub fn compose<S: AsRef<str>>(&self, var: S, g: &Self) -> Self {
+        self.assert_same_manager(g);
+        let root = super::encoding::compose(&self.cell, self.root, var.as_ref(), g.root);
+        Self::from_root(&self.cell, root)
+    }
+
+    /// Simultaneous multi-variable substitution: `self[v1 := g1, v2 := g2, ...]` in a single pass.
+    ///
+    /// Every substitution reads `self` as it was **before** any substitution, not a
+    /// partially-substituted intermediate, so a swap map exchanging two variables needs no
+    /// temporary. A name repeated in `map` takes its **last** entry; a name absent from `map` (or
+    /// from `self`'s variables) is left alone; an empty `map` is a no-op.
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b");
+    ///
+    /// // f = a & !b; swapping a and b gives b & !a.
+    /// let f = &a & !&b;
+    /// let result = f.compose_map([("a", &b), ("b", &a)]);
+    ///
+    /// let expected = &b & !&a;
+    /// assert!(result.equivalent_to(&expected));
+    /// ```
+    #[must_use]
+    pub fn compose_map<'a, S: AsRef<str>>(
+        &self,
+        map: impl IntoIterator<Item = (S, &'a Self)>,
+    ) -> Self
+    where
+        B: 'a,
+        C: 'a,
+    {
+        let entries: Vec<(S, NodeId)> = map
+            .into_iter()
+            .map(|(name, g)| {
+                self.assert_same_manager(g);
+                (name, g.root)
+            })
+            .collect();
+        let root = super::encoding::compose_map(&self.cell, self.root, entries);
+        Self::from_root(&self.cell, root)
+    }
+
     // ---- Tautology / contradiction (requirement 4) --------------------------------------------
 
     /// Whether this function is the constant `true` (a tautology). O(1): the canonical root is the TRUE
