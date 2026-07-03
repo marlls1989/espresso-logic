@@ -1102,4 +1102,123 @@ mod tests {
         }
         assert_ne!(acc, FALSE_NODE);
     }
+
+    /// `compose` must implement functional substitution: composing `(a & b)` with `b := c` must equal
+    /// `ite(a, c, FALSE)` (the same result as building `a & c` directly). Composing with a variable
+    /// absent from the function is a no-op, and composing with the constant `TRUE` must degenerate to
+    /// `restrict(.., true)` (substituting a variable with the constant true is exactly setting it true).
+    #[test]
+    fn compose_substitutes_on_local_cell() {
+        let cell = LocalCell::new_empty();
+        let a = BddManager::make_var(&cell, "a");
+        let b = BddManager::make_var(&cell, "b");
+        let c = BddManager::make_var(&cell, "c");
+        let a_node = BddManager::make_node(&cell, a, FALSE_NODE, TRUE_NODE);
+        let b_node = BddManager::make_node(&cell, b, FALSE_NODE, TRUE_NODE);
+        let c_node = BddManager::make_node(&cell, c, FALSE_NODE, TRUE_NODE);
+        let f = BddManager::ite(&cell, a_node, b_node, FALSE_NODE); // a & b
+
+        // (a & b)[b := c] == a & c == ite(a, c, FALSE)
+        let composed = BddManager::compose(&cell, f, b, c_node);
+        let oracle = BddManager::ite(&cell, a_node, c_node, FALSE_NODE);
+        assert_eq!(composed, oracle);
+
+        // Composing a variable absent from f is a no-op.
+        let d = BddManager::make_var(&cell, "d");
+        assert_eq!(BddManager::compose(&cell, f, d, c_node), f);
+
+        // Composing with the constant TRUE degenerates to restrict(.., true).
+        assert_eq!(
+            BddManager::compose(&cell, f, b, TRUE_NODE),
+            BddManager::restrict(&cell, f, b, true)
+        );
+    }
+
+    /// The persistent `compose_cache` must actually be consulted: repeating an identical `compose`
+    /// call must return the same canonical id *and* must not allocate any new node — a genuine
+    /// cache-hit witness, not just an equal-by-canonicity coincidence.
+    #[test]
+    fn compose_cache_reuses_nodes() {
+        let cell = LocalCell::new_empty();
+        let a = BddManager::make_var(&cell, "a");
+        let b = BddManager::make_var(&cell, "b");
+        let c = BddManager::make_var(&cell, "c");
+        let a_node = BddManager::make_node(&cell, a, FALSE_NODE, TRUE_NODE);
+        let b_node = BddManager::make_node(&cell, b, FALSE_NODE, TRUE_NODE);
+        let c_node = BddManager::make_node(&cell, c, FALSE_NODE, TRUE_NODE);
+        let f = BddManager::ite(&cell, a_node, b_node, FALSE_NODE); // a & b
+
+        let first = BddManager::compose(&cell, f, b, c_node);
+        let nodes_after_first = cell.read().nodes.len();
+
+        let second = BddManager::compose(&cell, f, b, c_node);
+        assert_eq!(first, second);
+        assert_eq!(cell.read().nodes.len(), nodes_after_first);
+    }
+
+    /// `compose` and `compose_map` must both be iterative: substituting the *bottom* variable of a
+    /// very deep AND chain walks through every node above it, which a recursive implementation would
+    /// overflow on. Mirrors `restrict_deep_chain_no_overflow`'s chain construction.
+    #[test]
+    fn compose_deep_chain_no_overflow() {
+        let cell = LocalCell::new_empty();
+        let n = 50_000;
+        let ids: Vec<VarId> = (0..n)
+            .map(|i| BddManager::make_var(&cell, &format!("v{i}")))
+            .collect();
+        // f = v0 & v1 & ... & v(n-1), built bottom-up: each node's low = FALSE, high = the child.
+        let mut node = TRUE_NODE;
+        for &id in ids.iter().rev() {
+            node = BddManager::make_node(&cell, id, FALSE_NODE, node);
+        }
+        let fresh = BddManager::make_var(&cell, "fresh");
+        let fresh_node = BddManager::make_node(&cell, fresh, FALSE_NODE, TRUE_NODE);
+
+        // Substituting the bottom variable with FALSE collapses the whole conjunction to false; the
+        // walk descends through all n-1 nodes above it without overflowing the stack.
+        assert_eq!(
+            BddManager::compose(&cell, node, ids[n - 1], FALSE_NODE),
+            FALSE_NODE
+        );
+        // Substituting it with a fresh variable's node leaves a still-non-constant conjunction.
+        let substituted = BddManager::compose(&cell, node, ids[n - 1], fresh_node);
+        assert_ne!(substituted, FALSE_NODE);
+        assert_ne!(substituted, TRUE_NODE);
+
+        // Same two cases through compose_map with a singleton map.
+        let mut to_false = HashMap::new();
+        to_false.insert(ids[n - 1], FALSE_NODE);
+        assert_eq!(BddManager::compose_map(&cell, node, &to_false), FALSE_NODE);
+
+        let mut to_fresh = HashMap::new();
+        to_fresh.insert(ids[n - 1], fresh_node);
+        let mapped = BddManager::compose_map(&cell, node, &to_fresh);
+        assert_ne!(mapped, FALSE_NODE);
+        assert_ne!(mapped, TRUE_NODE);
+    }
+
+    /// `compose_map` must stay canonical even when a substitution hoists a variable above the node
+    /// being rebuilt. `f = b & c` with `map = {c := a}` hoists `a` (ordered before `b`) into `b`'s
+    /// subtree, so the guarded structural fast path must fall back to the ITE recombination — the
+    /// result must equal the canonical BDD for `a & b` built directly via `ite`, not some
+    /// non-canonical restructuring.
+    #[test]
+    fn compose_map_hoist_stays_canonical() {
+        let cell = LocalCell::new_empty();
+        let a = BddManager::make_var(&cell, "a"); // id 0
+        let b = BddManager::make_var(&cell, "b"); // id 1
+        let c = BddManager::make_var(&cell, "c"); // id 2
+        let a_node = BddManager::make_node(&cell, a, FALSE_NODE, TRUE_NODE);
+        let b_node = BddManager::make_node(&cell, b, FALSE_NODE, TRUE_NODE);
+        let c_node = BddManager::make_node(&cell, c, FALSE_NODE, TRUE_NODE);
+
+        let f = BddManager::make_node(&cell, b, FALSE_NODE, c_node); // b & c
+
+        let mut map = HashMap::new();
+        map.insert(c, a_node);
+        let result = BddManager::compose_map(&cell, f, &map);
+
+        let expected = BddManager::ite(&cell, a_node, b_node, FALSE_NODE); // a & b
+        assert_eq!(result, expected);
+    }
 }
