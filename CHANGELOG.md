@@ -42,7 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Minterm::set_value_at`/`set_value_of`, in-place counterparts to `value_at`/`value_of`: they mutate
   the packed word buffer copy-on-write (via `Arc::make_mut`, so a shared buffer is cloned first and a
   uniquely-held one is mutated directly), returning `IndexOutOfRange`/`LabelNotFound` respectively for
-  an out-of-range index or an absent label. `OutputSet` setters remain forthcoming.
+  an out-of-range index or an absent label.
+- `OutputSet::value_of`, the by-label counterpart of `value_at` (`false` if the label is absent),
+  and two copy-on-write in-place setters: `set_value_at` (positional, `Err(IndexOutOfRange)` past
+  the arity) and `set_value_of` (by-label, `Err(LabelNotFound)` if absent, even when clearing).
 
 ### Changed
 

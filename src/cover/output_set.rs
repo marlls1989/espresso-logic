@@ -13,9 +13,10 @@
 //! shared `Symbols<O>` handle — the same one the cover holds. The bit packing itself is independent of
 //! the label type `O`, so re-homing onto another `Symbols<O>` of the same arity is an `Arc` clone.
 
-use super::error::DuplicateLabel;
+use super::error::{DuplicateLabel, IndexOutOfRange, LabelNotFound};
 use super::label::{Anonymous, Label, StringLabel};
 use super::symbols::Symbols;
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -95,6 +96,46 @@ impl<O> OutputSet<O> {
     #[must_use]
     pub fn value_at(&self, i: usize) -> bool {
         i < self.num_vars() && (self.bits[i / OUTPUTS_PER_WORD] >> (i % OUTPUTS_PER_WORD)) & 1 != 0
+    }
+
+    /// Set whether output `i` is asserted, in place.
+    ///
+    /// The positional counterpart of [`value_at`](Self::value_at); [`set_value_of`](Self::set_value_of)
+    /// is the by-label form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexOutOfRange`] if `i` is at or past [`num_vars`](Self::num_vars) — rows are dense,
+    /// so there is no output to set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::OutputSet;
+    ///
+    /// let mut outputs = OutputSet::anonymous(&[false, false]);
+    /// outputs.set_value_at(1, true).unwrap();
+    /// assert!(!outputs.value_at(0) && outputs.value_at(1));
+    /// ```
+    pub fn set_value_at(&mut self, i: usize, asserted: bool) -> Result<(), IndexOutOfRange> {
+        if i >= self.num_vars() {
+            return Err(IndexOutOfRange {
+                index: i,
+                arity: self.num_vars(),
+            });
+        }
+        // Copy-on-write: clone the backing words only if another `OutputSet` shares them. Only the
+        // bit for a validated index `i < num_vars()` is ever touched, so padding bits past the arity
+        // stay zero (the invariant `from_packed_bits`/equality rely on).
+        let words = Arc::make_mut(&mut self.bits);
+        let word = i / OUTPUTS_PER_WORD;
+        let bit = i % OUTPUTS_PER_WORD;
+        if asserted {
+            words[word] |= 1u64 << bit;
+        } else {
+            words[word] &= !(1u64 << bit);
+        }
+        Ok(())
     }
 
     /// The number of output columns.
@@ -293,6 +334,67 @@ impl<O: StringLabel> OutputSet<O> {
     }
 }
 
+impl<O: Label> OutputSet<O> {
+    /// Whether the named output is asserted (`false` if the label is absent — an absent output is
+    /// unasserted).
+    ///
+    /// The by-label counterpart of [`value_at`](Self::value_at). Accepts any borrowed form of the
+    /// label (so an `OutputSet<Symbol>` can be queried with `&str`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{OutputSet, Symbol};
+    ///
+    /// let outputs = OutputSet::<Symbol>::with_labels(&[("f", true), ("g", false)]).unwrap();
+    /// assert!(outputs.value_of("f"));
+    /// assert!(!outputs.value_of("g"));
+    /// assert!(!outputs.value_of("missing"));
+    /// ```
+    #[must_use]
+    pub fn value_of<Q>(&self, label: &Q) -> bool
+    where
+        O: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        match self.symbols.index_of(label) {
+            Some(i) => self.value_at(i as usize),
+            None => false,
+        }
+    }
+
+    /// Set whether the named output is asserted, in place.
+    ///
+    /// The by-label counterpart of [`set_value_at`](Self::set_value_at). Accepts any borrowed form
+    /// of the label (so an `OutputSet<Symbol>` can be set with `&str`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelNotFound`] if `label` is not present — even when `asserted` is `false`, since
+    /// there is no output column to (not) set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{OutputSet, Symbol};
+    ///
+    /// let mut outputs = OutputSet::<Symbol>::with_labels(&[("f", false), ("g", false)]).unwrap();
+    /// outputs.set_value_of("f", true).unwrap();
+    /// assert!(outputs.value_of("f"));
+    /// assert!(outputs.set_value_of("missing", true).is_err());
+    /// ```
+    pub fn set_value_of<Q>(&mut self, label: &Q, asserted: bool) -> Result<(), LabelNotFound>
+    where
+        O: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let i = self.symbols.index_of(label).ok_or(LabelNotFound)?;
+        self.set_value_at(i as usize, asserted)
+            .expect("index_of only returns indices within the row's arity");
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +452,83 @@ mod tests {
         let bit1 = OutputSet::<Anonymous>::anonymous(&[false, true]);
         assert!(bit0 < bit1);
         assert_ne!(bit0, bit1);
+    }
+
+    #[test]
+    fn set_value_at_round_trips_through_value_at_and_value_of() {
+        use crate::Symbol;
+
+        let mut o = OutputSet::<Symbol>::with_labels(&[("f", false), ("g", false)]).unwrap();
+        assert!(!o.value_at(0) && !o.value_of("f"));
+
+        o.set_value_at(0, true).unwrap();
+        assert!(o.value_at(0) && o.value_of("f"));
+
+        o.set_value_at(0, false).unwrap();
+        assert!(!o.value_at(0) && !o.value_of("f"));
+    }
+
+    #[test]
+    fn set_value_at_crosses_the_word_boundary() {
+        // 80 outputs: index 70 lives in the second 64-bit word.
+        let mut o = OutputSet::<Anonymous>::anonymous(&vec![false; 80]);
+        o.set_value_at(70, true).unwrap();
+
+        assert!(o.value_at(70));
+        assert!(!o.value_at(69) && !o.value_at(71));
+        assert_eq!(o.packed().len(), 2);
+        assert_eq!(o.packed()[1], 1u64 << (70 - 64));
+    }
+
+    #[test]
+    fn set_value_at_is_copy_on_write() {
+        let original = OutputSet::<Anonymous>::anonymous(&[false, false]);
+        let mut mutated = original.clone();
+        mutated.set_value_at(1, true).unwrap();
+
+        // The clone diverges from the original: the original's bit is untouched.
+        assert!(!original.value_at(1));
+        assert!(mutated.value_at(1));
+        assert_ne!(original, mutated);
+        assert_eq!(original, OutputSet::<Anonymous>::anonymous(&[false, false]));
+    }
+
+    #[test]
+    fn set_value_at_out_of_range_reports_index_and_arity() {
+        let mut o = OutputSet::<Anonymous>::anonymous(&[false, false]);
+        let err = o.set_value_at(2, true).unwrap_err();
+        assert_eq!(err, IndexOutOfRange { index: 2, arity: 2 });
+    }
+
+    #[test]
+    fn set_value_of_absent_label_errors_even_when_clearing() {
+        use crate::Symbol;
+
+        let mut o = OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap();
+        assert_eq!(o.set_value_of("missing", false), Err(LabelNotFound));
+        assert_eq!(o.set_value_of("missing", true), Err(LabelNotFound));
+    }
+
+    #[test]
+    fn value_of_on_absent_label_is_false() {
+        use crate::Symbol;
+
+        let o = OutputSet::<Symbol>::with_labels(&[("f", true)]).unwrap();
+        assert!(!o.value_of("missing"));
+    }
+
+    #[test]
+    fn setting_then_clearing_the_highest_output_leaves_padding_zero() {
+        // 65 outputs: the highest valid index (64) is the sole occupant of the second word.
+        let mut o = OutputSet::<Anonymous>::anonymous(&vec![false; 65]);
+        o.set_value_at(64, true).unwrap();
+        o.set_value_at(64, false).unwrap();
+
+        // Must compare and hash equal to a fresh all-`false` build — a stray padding bit would break
+        // both, since `Eq`/`Hash` compare the packed words directly.
+        let fresh = OutputSet::<Anonymous>::anonymous(&vec![false; 65]);
+        assert_eq!(o, fresh);
+        assert_eq!(hash_of(&o), hash_of(&fresh));
+        assert_eq!(o.packed()[1], 0u64);
     }
 }
