@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Minterm::is_vacuous`, a public predicate reporting whether any variable in the row holds the
+  empty value set (`?`/`00`) — the lattice opposite of the don't-care `-`. A cube with even one such
+  field denotes the empty set (covers no assignment); such cubes are dropped before minimisation.
 - `Minterm`'s three-valued (Kleene) bitwise operators `& | ^` and complement `!`, combining rows
   element-wise where `None` is the unknown/don't-care value (`-`): AND shortcuts on `0`, OR on `1`,
   XOR/complement propagate `-`. Operands are auto-aligned by variable identity — a variable present

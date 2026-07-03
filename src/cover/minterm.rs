@@ -336,11 +336,17 @@ impl<L> Minterm<L> {
         Minterm { values, symbols }
     }
 
-    /// Whether any variable holds the empty literal (`00`) — i.e. the cube covers no minterm. Such a
-    /// cube is vacuous and is dropped before minimisation (see the cover minimisation pipeline).
+    /// Whether the cube is vacuous: true iff any variable's value set is empty (`?`/`00`), i.e. the
+    /// cube covers no assignment. `?` is the lattice opposite of the don't-care `-`, so a single
+    /// empty field is enough to make the whole cube denote the empty set — such a cube is dropped
+    /// before minimisation (see the cover minimisation pipeline).
     #[must_use]
-    pub(crate) fn has_empty_field(&self) -> bool {
-        (0..self.num_vars()).any(|i| field_at(&self.values, i) == FIELD_EMPTY)
+    pub fn is_vacuous(&self) -> bool {
+        self.values.iter().enumerate().any(|(k, &w)| {
+            let nonempty = (w | (w >> 1)) & ALLOWS0_MASK;
+            let valid = valid_even_mask(k, self.num_vars());
+            nonempty & valid != valid
+        })
     }
 
     /// Disjointness of two cubes defined over the **same header** (shared [`Symbols`]), computed purely
@@ -979,7 +985,7 @@ impl<L: Label> Minterm<L> {
         // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm — a
         // vacuous (zero-length) expansion, short-circuited before the don't-care split rather than
         // copying the malformed field through. `base` is unread when `count == 0`.
-        if self.has_empty_field() {
+        if self.is_vacuous() {
             return ExpandedMinterms {
                 base: Arc::clone(&self.values),
                 positions: Arc::from([]),
@@ -1656,6 +1662,40 @@ mod tests {
         assert!(dc < t);
     }
 
+    // --- is_vacuous ------------------------------------------------------------------------------
+
+    /// An empty field past the first 32-variable word (crossing the word boundary) still makes the
+    /// cube vacuous — the padding-exclusion mask must be computed per word, not just for the first.
+    #[test]
+    fn is_vacuous_detects_empty_field_across_word_boundary() {
+        let fields: Vec<InputField> = (0..40)
+            .map(|i| {
+                if i == 35 {
+                    InputField::Empty
+                } else {
+                    InputField::DontCare
+                }
+            })
+            .collect();
+        let m = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(40), fields);
+        assert!(m.is_vacuous());
+    }
+
+    /// A zero-arity minterm has no variable positions, so none can hold the empty literal: it is
+    /// never vacuous.
+    #[test]
+    fn is_vacuous_false_for_zero_arity() {
+        let m = Minterm::anonymous(&[]);
+        assert!(!m.is_vacuous());
+    }
+
+    /// A single don't-care (`-`) is not the empty literal (`?`): a don't-care minterm is not vacuous.
+    #[test]
+    fn is_vacuous_false_for_dont_care() {
+        let m = Minterm::anonymous(&[None]);
+        assert!(!m.is_vacuous());
+    }
+
     // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
 
     /// {a:1,b:0,c:1} vs {a:1,b:1,c:0} disagree on exactly {b, c}: distance 2.
@@ -1754,7 +1794,7 @@ mod tests {
             Arc::clone(&s),
             [InputField::One, InputField::Empty, InputField::Zero],
         );
-        assert!(x.has_empty_field());
+        assert!(x.is_vacuous());
         assert_eq!(x.hamming_distance(&x), 0);
         assert_eq!(x.disagreement(&x).count(), 0);
     }
@@ -1833,7 +1873,7 @@ mod tests {
             Arc::clone(&vars),
             [InputField::Empty, InputField::DontCare],
         );
-        assert!(m.has_empty_field());
+        assert!(m.is_vacuous());
         assert_eq!(m.expand_over(&vars).count(), 0);
     }
 
@@ -1957,9 +1997,9 @@ mod tests {
             Arc::clone(&s),
             [InputField::One, InputField::Empty, InputField::Zero],
         );
-        assert!(m.has_empty_field());
+        assert!(m.is_vacuous());
         m.set_value_at(1, Some(true)).unwrap();
-        assert!(!m.has_empty_field());
+        assert!(!m.is_vacuous());
         assert_eq!(m.value_at(1), Some(true));
     }
 
@@ -2085,7 +2125,7 @@ mod tests {
     fn empty_field_behaves_as_dont_care() {
         let s = syms(&["a"]);
         let empty = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
-        assert!(empty.has_empty_field());
+        assert!(empty.is_vacuous());
 
         let f = Minterm::from_symbols(Arc::clone(&s), [Some(false)]);
         let t = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
@@ -2238,7 +2278,7 @@ mod tests {
 
         // An empty literal (`?`) reads as `-`, so its complement is `-`.
         let empty = Minterm::from_symbols_input_fields(syms(&["a"]), [InputField::Empty]);
-        assert!(empty.has_empty_field());
+        assert!(empty.is_vacuous());
         assert_eq!(empty.not().value_at(0), None);
     }
 

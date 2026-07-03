@@ -249,15 +249,15 @@ where
     let no = cover.num_outputs();
     let ni = cover.num_inputs();
 
-    // Pre-minimisation normalise + partition: split cubes into F, D, R sets, dropping any cube with an
-    // empty (`00`) input field. An empty field means the cube covers no minterm, so removing it leaves
-    // the function unchanged — and keeps the vacuous cube away from Espresso's `expand`, which
-    // mishandles it (it is the very thing C's own verification flags).
+    // Pre-minimisation normalise + partition: split cubes into F, D, R sets, dropping any vacuous cube
+    // (one with an empty `00` input field). A vacuous cube covers no minterm, so removing it leaves
+    // the function unchanged — and keeps it away from Espresso's `expand`, which mishandles it (it is
+    // the very thing C's own verification flags).
     let mut f_cubes: Vec<&Cube<I, O>> = Vec::new();
     let mut d_cubes: Vec<&Cube<I, O>> = Vec::new();
     let mut r_cubes: Vec<&Cube<I, O>> = Vec::new();
     for cube in cover.cubes.iter() {
-        if cube.inputs().has_empty_field() {
+        if cube.inputs().is_vacuous() {
             continue;
         }
         match cube.cube_type() {
@@ -379,12 +379,12 @@ pub(crate) fn primes_cubes<I, O>(
     let f: Vec<&Cube<I, O>> = f_cubes
         .iter()
         .copied()
-        .filter(|c| !c.inputs().has_empty_field())
+        .filter(|c| !c.inputs().is_vacuous())
         .collect();
     let d: Vec<&Cube<I, O>> = d_cubes
         .iter()
         .copied()
-        .filter(|c| !c.inputs().has_empty_field())
+        .filter(|c| !c.inputs().is_vacuous())
         .collect();
 
     // Arity-0 fast path: with no inputs each output is a constant, and Espresso is not trusted with a
