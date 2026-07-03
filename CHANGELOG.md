@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-07-03
+
 ### Added
 
 - `Minterm::is_vacuous`, a public predicate reporting whether any variable in the row holds the
