@@ -2798,3 +2798,59 @@ fn over_vars_and_with_labels_accept_owned_iterators() {
     assert_eq!(via_owned.num_inputs(), 2);
     assert_eq!(via_owned.num_outputs(), 1);
 }
+
+// --- Cover::over_labels --------------------------------------------------------------------------
+
+/// The `u32`-labelled counterpart of `over_vars_projection_keeps_dont_care_form`: `over_labels`
+/// drives the same universal projection from the input label *values* rather than strings. The sole
+/// prime never constrains the excluded column, so the projection keeps it in don't-care form.
+#[test]
+fn over_labels_projection_keeps_dont_care_form() {
+    let cover = Cover::<u32, u32>::from_cubes(
+        CoverType::F,
+        [Cube::labeled(
+            &[(0u32, Some(true)), (1u32, None), (2u32, None)],
+            &[(9u32, true)],
+            CubeType::F,
+        )
+        .unwrap()],
+    );
+    assert_eq!(cover.num_inputs(), 3);
+
+    // Project onto {0, 1}, dropping 2: a real projection (2 excluded), but the prime 0=1 constrains
+    // nothing outside {0, 1}, so it survives whole.
+    let projected = cover.over_labels([0u32, 1u32]);
+    assert_eq!(projected.num_cubes(), 1);
+    assert_eq!(projected.num_inputs(), 2);
+    assert_eq!(projected.cover_type(), CoverType::F);
+    let only_cube = projected.cubes().next().unwrap();
+    assert_eq!(only_cube.inputs().value_of(&0u32), Some(true));
+    assert!(only_cube.inputs().value_of(&1u32).is_none());
+}
+
+/// `over_labels` and `over_vars` are the same projection reached by different operand kinds: on a
+/// `Symbol`-labelled cover, naming the target set by label value and by string give an equal result.
+#[test]
+fn over_labels_matches_over_vars_on_symbol_cover() {
+    let cover = Cover::<Symbol, Symbol>::from_cubes(
+        CoverType::FR,
+        [
+            Cube::with_labels(
+                &[("a", Some(true)), ("b", Some(true)), ("q", None)],
+                &[("f", true)],
+                CubeType::F,
+            )
+            .unwrap(),
+            Cube::with_labels(
+                &[("a", Some(false)), ("b", Some(false)), ("q", None)],
+                &[("f", true)],
+                CubeType::R,
+            )
+            .unwrap(),
+        ],
+    );
+
+    let via_labels = cover.over_labels([Symbol::new("a"), Symbol::new("b")]);
+    let via_vars = cover.over_vars(["a", "b"]);
+    assert_eq!(via_labels, via_vars);
+}
