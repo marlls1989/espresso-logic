@@ -115,7 +115,8 @@ impl Cover<Symbol, Symbol> {
     ///
     /// This is the bridge *from* the `Symbol`-based expression layer, so it produces the natural
     /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
-    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`).
+    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`); for `&str`-named
+    /// targets, [`rename`](Cover::rename) is the direct form.
     ///
     /// Each call builds and drops a throwaway BDD manager. Building many expressions into one cover goes
     /// through a single [`bdd_builder!`](crate::bdd_builder) plus [`add_bdd`](Self::add_bdd), which share

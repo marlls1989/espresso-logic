@@ -170,12 +170,12 @@ impl fmt::Display for ArityMismatch {
         match self {
             ArityMismatch::Inputs { expected, actual } => write!(
                 f,
-                "input arity mismatch: cover has {} input(s) but the new label table has {}",
+                "input arity mismatch: cover has {} input(s) but the new label list has {}",
                 expected, actual
             ),
             ArityMismatch::Outputs { expected, actual } => write!(
                 f,
-                "output arity mismatch: cover has {} output(s) but the new label table has {}",
+                "output arity mismatch: cover has {} output(s) but the new label list has {}",
                 expected, actual
             ),
         }

@@ -344,7 +344,7 @@ fn bench_cube_iteration(c: &mut Criterion) {
 /// Isolate the eager identity-sort done by `Minterm::labeled` for **named** tables (anonymous
 /// tables skip it), plus the value packing that goes with it. Pairs are built once; each iteration
 /// measures the sort + table construction + value packing.
-fn bench_symbols_construction(c: &mut Criterion) {
+fn bench_minterm_labeled_named(c: &mut Criterion) {
     use espresso_logic::Minterm;
 
     let mut group = c.benchmark_group("minterm_labeled_named");
@@ -628,7 +628,7 @@ criterion_group!(
     bench_full_pipeline,
     bench_by_category,
     bench_cube_iteration,
-    bench_symbols_construction,
+    bench_minterm_labeled_named,
     bench_named_align,
     bench_pla_expr_roundtrip,
     bench_api_overhead
