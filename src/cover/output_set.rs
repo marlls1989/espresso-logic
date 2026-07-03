@@ -531,6 +531,12 @@ impl<O> OutputSet<O> {
     /// bits past the arity are masked off, so they stay zero. Needs no label bound — the complement
     /// touches only the membership bits and reuses the shared header.
     ///
+    /// Because the complement is taken over the row's **own** arity, it does not respect the identity
+    /// equality that treats an absent output as unasserted: `{f: 1}` and `{f: 1, g: 0}` compare equal,
+    /// but their complements do not (`{f: 0}` vs `{f: 0, g: 1}`). The binary `&`/`|`/`^` operators align
+    /// operands by identity first and stay congruent with that equality; `!` has no second operand to
+    /// align against.
+    ///
     /// # Examples
     ///
     /// ```

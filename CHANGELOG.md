@@ -81,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 - `Cover::input_labels`/`output_labels` are now available for every label type, not just
   string-labelled covers.
+- `Cover::maximize` now requires the output label type to be `Label` (previously `Clone`), a
+  consequence of `OutputSet`/`Cube` equality now aligning by label identity: deduplicating expanded
+  cubes needs `Cube: Eq + Hash`, which now needs `O: Label`. This affects only generic code bounded
+  `O: Clone` — every concrete cover already satisfies `O: Label`, since building one requires it.
 
 ### Fixed
 
