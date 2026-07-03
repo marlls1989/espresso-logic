@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OutputSet::value_of`, the by-label counterpart of `value_at` (`false` if the label is absent),
   and two copy-on-write in-place setters: `set_value_at` (positional, `Err(IndexOutOfRange)` past
   the arity) and `set_value_of` (by-label, `Err(LabelNotFound)` if absent, even when clearing).
+- `OutputSet`'s binary bitwise operators `&`, `|`, `^`, and the unary complement `!` (with named
+  `and`/`or`/`xor`/`not` methods). Outputs are two-state, so these are plain bitwise operations on the
+  packed membership bitmap — **binary, not `None`-aware**, unlike the tri-state `Minterm` operators.
+  The binary operators align outputs by variable identity (widening onto the identity union of the two
+  headers, an output present in only one operand reading as unasserted on the absent side); the
+  complement flips every output over the row's own arity.
 
 ### Changed
 
