@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `value_*`/`iter` family, which folds the empty literal (`?`) down to don't-care because
   `Option<bool>` has no fourth state, this view reads and writes `?` verbatim — `set_field_at`/
   `set_field_of` can write `InputField::Empty`, making the containing cube vacuous. `Display`/`Debug`
-  now render the faithful view too, so `?` shows up rather than being folded to `-`.
+  now render the faithful view too, so `?` shows up rather than being folded to `-`. `InputField`
+  also carries its own four-state Boolean algebra: the bitwise operators `& | ^` and complement `!`,
+  the scalar form of the `Minterm` element-wise operators, computing the value-set image on each
+  field (`Empty`/`?` propagates as the empty set).
 - `Minterm`'s bitwise operators `& | ^` and complement `!`, combining rows element-wise as
   value-set image operations — each field is read as the values it allows (`0`={0}, `1`={1},
   `-`={0,1}, empty `?`={}) and the result is `{ a op b : a ∈ x, b ∈ y }`. On non-empty fields this

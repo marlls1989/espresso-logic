@@ -111,6 +111,81 @@ fn decode_field(field: u8) -> InputField {
     }
 }
 
+// The scalar four-state Boolean algebra on [`InputField`], the per-field form of the `Minterm`
+// element-wise operators. Each operator reuses the word-level SWAR worker (`word_and`/`word_or`/
+// `word_xor`/`word_not`) on a single 2-bit field packed into the low bits of a word, so the scalar
+// and element-wise results agree field-for-field by construction.
+
+impl std::ops::BitAnd for InputField {
+    type Output = InputField;
+
+    /// Value-set image AND `{ a & b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene AND; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `&` | `0` | `1` | `-` | `?` |
+    /// |-----|-----|-----|-----|-----|
+    /// | `0` | `0` | `0` | `0` | `?` |
+    /// | `1` | `0` | `1` | `-` | `?` |
+    /// | `-` | `0` | `-` | `-` | `?` |
+    /// | `?` | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitand(self, rhs: InputField) -> InputField {
+        decode_field(word_and(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::BitOr for InputField {
+    type Output = InputField;
+
+    /// Value-set image OR `{ a | b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene OR; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `\|` | `0` | `1` | `-` | `?` |
+    /// |------|-----|-----|-----|-----|
+    /// | `0`  | `0` | `1` | `-` | `?` |
+    /// | `1`  | `1` | `1` | `1` | `?` |
+    /// | `-`  | `-` | `1` | `-` | `?` |
+    /// | `?`  | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitor(self, rhs: InputField) -> InputField {
+        decode_field(word_or(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::BitXor for InputField {
+    type Output = InputField;
+
+    /// Value-set image XOR `{ a ^ b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene XOR; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `^` | `0` | `1` | `-` | `?` |
+    /// |-----|-----|-----|-----|-----|
+    /// | `0` | `0` | `1` | `-` | `?` |
+    /// | `1` | `1` | `0` | `-` | `?` |
+    /// | `-` | `-` | `-` | `-` | `?` |
+    /// | `?` | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitxor(self, rhs: InputField) -> InputField {
+        decode_field(word_xor(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::Not for InputField {
+    type Output = InputField;
+
+    /// Value-set image complement `{ !a : a ∈ self }`, reading the field as the value set it allows
+    /// (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On a non-empty operand this is the ordinary
+    /// three-valued Kleene complement (`0 → 1`, `1 → 0`, `- → -`); [`Empty`](Self::Empty) (`?`) is
+    /// fixed (`? → ?`).
+    #[inline]
+    fn not(self) -> InputField {
+        decode_field(word_not(encode_field(self) as u64) as u8)
+    }
+}
+
 #[inline]
 fn words_for(num_vars: usize) -> usize {
     num_vars.div_ceil(VARS_PER_WORD)
@@ -3168,5 +3243,111 @@ mod tests {
             [InputField::One, InputField::Empty, InputField::Zero],
         );
         assert_eq!(m.to_string(), "1?0");
+    }
+
+    // --- InputField boolean operators ---------------------------------------------------------
+
+    const FIELD_STATES: [InputField; 4] = [
+        InputField::Zero,
+        InputField::One,
+        InputField::DontCare,
+        InputField::Empty,
+    ];
+
+    /// The scalar `InputField` operators realise the value-set image, so every ordered pair over the
+    /// four states (for `&`/`|`/`^`) and every single state (for `!`) matches the reference image.
+    #[test]
+    fn input_field_operators_match_value_set_image() {
+        for &a in &FIELD_STATES {
+            assert_eq!(!a, ref_not_image(a), "NOT {a:?}");
+            for &b in &FIELD_STATES {
+                assert_eq!(a & b, ref_image(a, b, |x, y| x & y), "AND {a:?} {b:?}");
+                assert_eq!(a | b, ref_image(a, b, |x, y| x | y), "OR {a:?} {b:?}");
+                assert_eq!(a ^ b, ref_image(a, b, |x, y| x ^ y), "XOR {a:?} {b:?}");
+            }
+        }
+    }
+
+    /// Build a minterm of arity `fields.len()` by writing each state through `set_field_at`.
+    fn minterm_from_fields(fields: &[InputField]) -> Minterm<Anonymous> {
+        let mut m = Minterm::from_symbols_input_fields(
+            Symbols::<Anonymous>::anonymous(fields.len()),
+            (0..fields.len()).map(|_| InputField::Empty),
+        );
+        for (i, &f) in fields.iter().enumerate() {
+            m.set_field_at(i, f).unwrap();
+        }
+        m
+    }
+
+    /// Every arity-`n` four-state minterm, as its field rows (all `4^n` combinations).
+    fn all_field_rows(n: usize) -> Vec<Vec<InputField>> {
+        let mut rows = vec![vec![]];
+        for _ in 0..n {
+            rows = rows
+                .into_iter()
+                .flat_map(|row| {
+                    FIELD_STATES.iter().map(move |&f| {
+                        let mut next = row.clone();
+                        next.push(f);
+                        next
+                    })
+                })
+                .collect();
+        }
+        rows
+    }
+
+    /// The scalar operators and the element-wise `Minterm` operators agree field-for-field: over an
+    /// exhaustive sweep of all 1- and 2-variable four-state minterms, `(a op b).field_at(i)` equals
+    /// `a.field_at(i) op b.field_at(i)` for each `op` and index, and likewise for complement.
+    #[test]
+    fn input_field_operators_agree_with_minterm_operators() {
+        for n in 1..=2 {
+            let rows = all_field_rows(n);
+            for ra in &rows {
+                let a = minterm_from_fields(ra);
+                for i in 0..n {
+                    assert_eq!((!&a).field_at(i), !a.field_at(i), "NOT {ra:?} at {i}");
+                }
+                for rb in &rows {
+                    let b = minterm_from_fields(rb);
+                    let (and, or, xor) = (a.and(&b), a.or(&b), a.xor(&b));
+                    for i in 0..n {
+                        assert_eq!(
+                            and.field_at(i),
+                            a.field_at(i) & b.field_at(i),
+                            "AND {ra:?} {rb:?} at {i}"
+                        );
+                        assert_eq!(
+                            or.field_at(i),
+                            a.field_at(i) | b.field_at(i),
+                            "OR {ra:?} {rb:?} at {i}"
+                        );
+                        assert_eq!(
+                            xor.field_at(i),
+                            a.field_at(i) ^ b.field_at(i),
+                            "XOR {ra:?} {rb:?} at {i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Spot-checks of the natural identities: complement is an involution and self-XOR yields `0` on
+    /// the fixed values (but `-`/`?` on the imprecise ones, per the value-set image).
+    #[test]
+    fn input_field_operator_identities() {
+        for &x in &FIELD_STATES {
+            assert_eq!(!!x, x, "double negation of {x:?}");
+        }
+        assert_eq!(InputField::Zero ^ InputField::Zero, InputField::Zero);
+        assert_eq!(InputField::One ^ InputField::One, InputField::Zero);
+        assert_eq!(
+            InputField::DontCare ^ InputField::DontCare,
+            InputField::DontCare
+        );
+        assert_eq!(InputField::Empty ^ InputField::Empty, InputField::Empty);
     }
 }
