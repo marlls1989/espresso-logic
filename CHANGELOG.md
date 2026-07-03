@@ -36,9 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable is deduplicated, keeping the first occurrence.
 - `Cover::labeled`, the label-value dual of the string-name `Cover::with_labels`: builds a cover
   from label values directly, so it works for any `Label` type, not just `StringLabel`s.
-- `IndexOutOfRange` and `LabelNotFound`, error types backing the forthcoming in-place setter methods
-  on `Minterm`/`OutputSet`: `IndexOutOfRange` reports a positional setter given an index at or past
+- `IndexOutOfRange` and `LabelNotFound`, error types backing the in-place setter methods on
+  `Minterm`/`OutputSet`: `IndexOutOfRange` reports a positional setter given an index at or past
   the row's arity, `LabelNotFound` a by-label setter given a label absent from the row.
+- `Minterm::set_value_at`/`set_value_of`, in-place counterparts to `value_at`/`value_of`: they mutate
+  the packed word buffer copy-on-write (via `Arc::make_mut`, so a shared buffer is cloned first and a
+  uniquely-held one is mutated directly), returning `IndexOutOfRange`/`LabelNotFound` respectively for
+  an out-of-range index or an absent label. `OutputSet` setters remain forthcoming.
 
 ### Changed
 

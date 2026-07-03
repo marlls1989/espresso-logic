@@ -30,7 +30,7 @@
 //! C library's cube layout, so set operations reduce to word-wise bit ops and the Espresso
 //! boundary is close to a bit-repack.
 
-use super::error::DuplicateLabel;
+use super::error::{DuplicateLabel, IndexOutOfRange, LabelNotFound};
 use super::label::{Anonymous, Label, NamedLabel, StringLabel};
 use super::symbols::Symbols;
 use std::borrow::Borrow;
@@ -335,6 +335,41 @@ impl<L> Minterm<L> {
     pub fn iter(&self) -> MintermIter<'_, L> {
         self.into_iter()
     }
+
+    /// Set the value at positional index `i` in this minterm's own variable order, in place.
+    ///
+    /// The counterpart setter to [`value_at`](Self::value_at). Mutates the packed word buffer
+    /// copy-on-write (via [`Arc::make_mut`]), so a minterm sharing its buffer with clones is cloned
+    /// first and only the receiver is mutated; a uniquely-held buffer is mutated directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexOutOfRange`] if `i >= self.num_vars()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// m.set_value_at(1, Some(false)).unwrap();
+    /// assert_eq!(m.value_at(1), Some(false));
+    /// ```
+    pub fn set_value_at(&mut self, i: usize, value: Option<bool>) -> Result<(), IndexOutOfRange> {
+        let arity = self.num_vars();
+        if i >= arity {
+            return Err(IndexOutOfRange { index: i, arity });
+        }
+        let words = Arc::make_mut(&mut self.values);
+        let word = i / VARS_PER_WORD;
+        let shift = (i % VARS_PER_WORD) * 2;
+        // `encode` always yields one of `01`/`10`/`11` (never the empty `00`) and only ever touches
+        // this one field, so the canonical zero-padding past the arity that the word-wise `Eq`/`Hash`
+        // fast path relies on is left untouched.
+        words[word] &= !(0b11u64 << shift);
+        words[word] |= (encode(value) as u64) << shift;
+        Ok(())
+    }
 }
 
 /// Iterator over a minterm's tri-state values in index order, created by `(&minterm).into_iter()`
@@ -552,6 +587,40 @@ impl<L: Label> Minterm<L> {
             Some(i) => decode(field_at(&self.values, i as usize)),
             None => None,
         }
+    }
+
+    /// Set the value of a named variable, in place. The counterpart setter to
+    /// [`value_of`](Self::value_of).
+    ///
+    /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be set with `&str`). Unlike
+    /// `value_of`, an absent label is always an error — even when `value` is `None` — so a typo in
+    /// the label surfaces rather than silently doing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelNotFound`] if `label` is not present in this minterm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbol};
+    ///
+    /// let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+    /// m.set_value_of("b", Some(false)).unwrap();
+    /// assert_eq!(m.value_of("b"), Some(false));
+    /// assert!(m.set_value_of("c", Some(true)).is_err());
+    /// ```
+    pub fn set_value_of<Q>(&mut self, label: &Q, value: Option<bool>) -> Result<(), LabelNotFound>
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let i = self.symbols.index_of(label).ok_or(LabelNotFound)?;
+        // `i` came straight from this minterm's own symbol table, so it is in range by
+        // construction; `set_value_at` cannot fail here.
+        self.set_value_at(i as usize, value)
+            .expect("index from symbol table is in range");
+        Ok(())
     }
 }
 
@@ -1561,5 +1630,124 @@ mod tests {
         let via_face = m.project_to_labels(vars);
         let via_primitive = m.project_onto(&Symbols::deduped(vars));
         assert_eq!(via_face, via_primitive);
+    }
+
+    // --- In-place setters: set_value_at / set_value_of ----------------------------------------
+
+    /// Setting each of `Some(true)`, `Some(false)`, `None` at a position round-trips through
+    /// `value_at`.
+    #[test]
+    fn set_value_at_roundtrips() {
+        let mut m = Minterm::anonymous(&[Some(true), Some(false), None]);
+        m.set_value_at(0, Some(false)).unwrap();
+        assert_eq!(m.value_at(0), Some(false));
+        m.set_value_at(1, None).unwrap();
+        assert_eq!(m.value_at(1), None);
+        m.set_value_at(2, Some(true)).unwrap();
+        assert_eq!(m.value_at(2), Some(true));
+    }
+
+    /// A variable at index >= 32 lands in the second packed word; setting it must apply the
+    /// correct word/shift maths across the 32-var word boundary.
+    #[test]
+    fn set_value_at_crosses_word_boundary() {
+        let mut m = Minterm::anonymous(&vec![None; 40]);
+        m.set_value_at(35, Some(true)).unwrap();
+        assert_eq!(m.value_at(35), Some(true));
+        // Neighbouring fields, in particular the last one of the first word, are untouched.
+        assert_eq!(m.value_at(31), None);
+        assert_eq!(m.value_at(34), None);
+        assert_eq!(m.value_at(36), None);
+    }
+
+    /// Mutating one clone via `set_value_at` must not affect another clone sharing the same
+    /// packed buffer: `Arc::make_mut` has to detach (copy-on-write) rather than mutate in place.
+    #[test]
+    fn set_value_at_copy_on_write_isolates_clones() {
+        let original = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let mut mutated = original.clone();
+        mutated.set_value_at(1, Some(true)).unwrap();
+
+        assert_eq!(original.value_at(1), None);
+        assert_eq!(mutated.value_at(1), Some(true));
+        assert_ne!(original, mutated);
+        assert_eq!(
+            original,
+            Minterm::anonymous(&[Some(true), None, Some(false)])
+        );
+    }
+
+    /// Overwriting a position that carries the empty literal (`?`, from the PLA read path) with a
+    /// normal value must make it read back as that value, no longer as empty.
+    #[test]
+    fn set_value_at_overwrites_empty_field() {
+        let s = syms(&["a", "b", "c"]);
+        let mut m = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert!(m.has_empty_field());
+        m.set_value_at(1, Some(true)).unwrap();
+        assert!(!m.has_empty_field());
+        assert_eq!(m.value_at(1), Some(true));
+    }
+
+    /// An out-of-range index is rejected with `IndexOutOfRange`, reporting the requested index and
+    /// the row's actual arity.
+    #[test]
+    fn set_value_at_out_of_range_errors() {
+        let mut m = Minterm::anonymous(&[Some(true), None]);
+        let err = m.set_value_at(2, Some(false)).unwrap_err();
+        assert_eq!(err, IndexOutOfRange { index: 2, arity: 2 });
+    }
+
+    /// `set_value_of` writes by name and round-trips through `value_of`.
+    #[test]
+    fn set_value_of_roundtrips() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+        m.set_value_of("b", Some(false)).unwrap();
+        assert_eq!(m.value_of("b"), Some(false));
+        m.set_value_of("a", None).unwrap();
+        assert_eq!(m.value_of("a"), None);
+    }
+
+    /// `set_value_of` on a label absent from the row is an error, even when `value` is `None` — a
+    /// typo in the label must surface rather than silently succeed.
+    #[test]
+    fn set_value_of_absent_label_errors() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+        assert_eq!(m.set_value_of("missing", Some(true)), Err(LabelNotFound));
+        assert_eq!(m.set_value_of("missing", None), Err(LabelNotFound));
+    }
+
+    /// A minterm mutated into a given value pattern equals (and hashes the same as) a freshly-built
+    /// minterm of that pattern.
+    #[test]
+    fn set_value_at_matches_fresh_build_eq_and_hash() {
+        use std::collections::HashSet;
+
+        let s = syms(&["a", "b", "c"]);
+        let mut mutated = Minterm::from_symbols(Arc::clone(&s), [Some(false), Some(false), None]);
+        mutated.set_value_at(0, Some(true)).unwrap();
+        mutated.set_value_at(2, Some(true)).unwrap();
+
+        let fresh = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(true)]);
+        assert_eq!(mutated, fresh);
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&mutated));
+    }
+
+    /// Mutating a variable to `None` (don't-care) makes the minterm equal to one that simply omits
+    /// that variable — the crate treats an absent variable as don't-care (mirrors
+    /// `absent_variable_equals_dont_care`).
+    #[test]
+    fn set_value_at_to_dont_care_equals_omitted_variable() {
+        let mut m = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), Some(false)]);
+        m.set_value_at(1, None).unwrap();
+
+        let short = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
+        assert_eq!(m, short);
     }
 }
