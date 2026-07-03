@@ -92,16 +92,20 @@ Each product term is a single line describing when outputs should be active. The
 
 ### Input Pattern Encoding
 
-Each input position can have one of three values:
+Each input position can have one of four values:
 
 | Symbol | Meaning | Interpretation |
 |--------|---------|----------------|
 | `0` | Input must be 0 | Variable is complemented (NOT) |
 | `1` | Input must be 1 | Variable is true |
-| `-` | Don't care | Variable can be either 0 or 1 |
+| `-` (or `2`) | Don't care | Variable can be either 0 or 1 |
+| `?` | Empty | Variable can be neither 0 nor 1 — the cube covers no minterm |
 
-The reader also accepts `~`, `x`, and `X` as don't-care synonyms for `-`, and an optional `|` may
-separate the input and output fields (whitespace within a row is ignored).
+`?` (Espresso's empty literal) is not a don't-care: a single `?` field makes the whole cube vacuous
+(it denotes the empty set), whereas `-` widens the cube. A cube containing `?` still round-trips
+through read/write, but is dropped when the cover is minimised.
+
+An optional `|` may separate the input and output fields, and whitespace within a row is ignored.
 
 ### Output Pattern Encoding
 

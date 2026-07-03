@@ -2854,3 +2854,19 @@ fn over_labels_matches_over_vars_on_symbol_cover() {
     let via_vars = cover.over_vars(["a", "b"]);
     assert_eq!(via_labels, via_vars);
 }
+
+// --- InputField / field accessors -------------------------------------------------------------
+
+/// The PLA writer's switch from the crate-internal `input_fields()` to the public `fields()` must
+/// not change output for the common case with no empty literal (`?`): a `-`-only (don't-care) cube
+/// still renders as a plain PLA row, byte-identical to before.
+#[test]
+fn pla_writer_output_unchanged_for_dont_care_only_cover() {
+    let mut cover = Cover::<Anonymous, Anonymous>::anonymous(CoverType::F);
+    cover.push(Cube::anonymous(&[None, None], &[true], CubeType::F));
+
+    assert_eq!(
+        cover.to_pla_string(CoverType::F).unwrap(),
+        ".i 2\n.o 1\n.p 1\n-- 1\n.e\n"
+    );
+}

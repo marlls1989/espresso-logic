@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Minterm::is_vacuous`, a public predicate reporting whether any variable in the row holds the
+  empty value set (`?`/`00`) — the lattice opposite of the don't-care `-`. A cube with even one such
+  field denotes the empty set (covers no assignment); such cubes are dropped before minimisation.
+- `InputField`, the faithful, four-state value of a cube's input field (`Zero`/`One`/`DontCare`/
+  `Empty`), alongside a matching read/write surface on `Minterm`: `field_at`/`set_field_at` (by
+  position), `field_of`/`set_field_of` (by label), and `fields` (a `FieldsIter` iterator). Unlike the
+  existing `value_*`/`iter` family, which folds the empty literal (`?`) down to don't-care because
+  `Option<bool>` has no fourth state, this view reads and writes `?` verbatim — `set_field_at`/
+  `set_field_of` can write `InputField::Empty`, making the containing cube vacuous. `Display`/`Debug`
+  now render the faithful view too, so `?` shows up rather than being folded to `-`. `InputField`
+  also carries its own four-state Boolean algebra: the bitwise operators `& | ^` and complement `!`,
+  the scalar form of the `Minterm` element-wise operators, computing the value-set image on each
+  field (`Empty`/`?` propagates as the empty set).
+- `Minterm`'s bitwise operators `& | ^` and complement `!`, combining rows element-wise as
+  value-set image operations — each field is read as the values it allows (`0`={0}, `1`={1},
+  `-`={0,1}, empty `?`={}) and the result is `{ a op b : a ∈ x, b ∈ y }`. On non-empty fields this
+  restricts to three-valued (Kleene) logic where `None` is the don't-care value `-`: AND shortcuts on
+  `0`, OR on `1`, XOR/complement propagate `-`. The empty literal `?` denotes the empty set and
+  propagates — `? op x = ?` and `!? = ?` — making the containing cube vacuous. Operands are
+  auto-aligned by variable identity — a variable present in only one operand reads as `-` — so the
+  operation is independent of header ordering (`a op b == b op a`). This is truth-value logic, not
+  cube/set intersection.
 - `Cover::over_labels`, the label-value counterpart of `Cover::over_vars`: it names the target
   variable set by input label value (any `NamedLabel`, e.g. `u32`) rather than by string, driving the
   same universal projection.
@@ -36,9 +58,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable is deduplicated, keeping the first occurrence.
 - `Cover::labeled`, the label-value dual of the string-name `Cover::with_labels`: builds a cover
   from label values directly, so it works for any `Label` type, not just `StringLabel`s.
+- `IndexOutOfRange` and `LabelNotFound`, error types backing the in-place setter methods on
+  `Minterm`/`OutputSet`: `IndexOutOfRange` reports a positional setter given an index at or past
+  the row's arity, `LabelNotFound` a by-label setter given a label absent from the row.
+- `Minterm::set_value_at`/`set_value_of`, in-place counterparts to `value_at`/`value_of`: they mutate
+  the packed word buffer copy-on-write (via `Arc::make_mut`, so a shared buffer is cloned first and a
+  uniquely-held one is mutated directly), returning `IndexOutOfRange`/`LabelNotFound` respectively for
+  an out-of-range index or an absent label.
+- `OutputSet::value_of`, the by-label counterpart of `value_at` (`false` if the label is absent),
+  and two copy-on-write in-place setters: `set_value_at` (positional, `Err(IndexOutOfRange)` past
+  the arity) and `set_value_of` (by-label, `Err(LabelNotFound)` if absent, even when clearing).
+- `OutputSet`'s binary bitwise operators `&`, `|`, `^`, and the unary complement `!` (with named
+  `and`/`or`/`xor`/`not` methods). Outputs are two-state, so these are plain bitwise operations on the
+  packed membership bitmap — **binary, not `None`-aware**, unlike the tri-state `Minterm` operators.
+  The binary operators align outputs by variable identity (widening onto the identity union of the two
+  headers, an output present in only one operand reading as unasserted on the absent side); the
+  complement flips every output over the row's own arity.
 
 ### Changed
 
+- `Minterm` now treats the empty literal `?` as the empty cube: equality, ordering and hashing
+  compare by denoted set, so all vacuous minterms are equal and sort after non-vacuous ones.
+  `Minterm::hamming_distance`/`disagreement` follow the same reading, now using Espresso's cube
+  distance — a `?` field counts as a disagreement — restoring `is_disjoint_with ⟺ distance > 0`.
+  `Minterm::is_subset_of` follows it too: `∅ ⊆ X` for every `X`, and `X ⊆ ∅` only if `X` is itself
+  vacuous; `is_disjoint_with` already read this way unchanged — a vacuous cube is disjoint from
+  everything, including itself.
 - **Breaking:** `Symbols` and the `Arc<Symbols>`-taking methods are no longer part of the public API.
   `Symbols` itself, `Minterm::from_symbols`/`symbols`/`project_onto`/`expand_over`,
   `OutputSet::symbols`, and the `DuplicateSymbol` error are now crate-internal. Construct minterms and
@@ -60,9 +105,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 - `Cover::input_labels`/`output_labels` are now available for every label type, not just
   string-labelled covers.
+- `Cover::maximize` now requires the output label type to be `Label` (previously `Clone`), a
+  consequence of `OutputSet`/`Cube` equality now aligning by label identity: deduplicating expanded
+  cubes needs `Cube: Eq + Hash`, which now needs `O: Label`. This affects only generic code bounded
+  `O: Clone` — every concrete cover already satisfies `O: Label`, since building one requires it.
 
 ### Fixed
 
+- `OutputSet` equality, ordering, and hashing now align by output-label identity (like `Minterm`), so
+  output sets that assert the same labels compare equal regardless of column order; previously they
+  were compared positionally, which could report two logically-equal sets as unequal once their
+  headers differed.
 - User labels that repeat an identity no longer silently collapse two columns onto one and drop a
   value. The labelled cube/cover constructors reject a repeated label with `DuplicateLabel`, while the
   variable-set operations (`Cover::over_vars`, `Cube::expand_to`, `Bdd::cover_over`/`cover_over_fr`)

@@ -26,13 +26,26 @@
 //! | `None` (`-`)  | yes      | yes      | `11`        |
 //! | *empty*       | no       | no       | `00`        |
 //!
-//! The packing is private; the public API is expressed in `Option<bool>`. The encoding matches the
-//! C library's cube layout, so set operations reduce to word-wise bit ops and the Espresso
-//! boundary is close to a bit-repack.
+//! The *empty* field (`00`, [`InputField::Empty`]) is Espresso's `?`: the lattice opposite of the
+//! don't-care `-`, meaning the variable allows neither value. A single empty field makes the whole
+//! cube vacuous (denotes the empty set) — see [`Minterm::is_vacuous`].
+//!
+//! The row has two read/write views onto this packing:
+//!
+//! - The **faithful, four-state view** ([`InputField`] and the `field_at`/`field_of`/`set_field_at`/
+//!   `set_field_of`/`fields` family) reads and writes all four 2-bit states verbatim, including the
+//!   empty literal.
+//! - The **legacy, deliberately-lossy `Option<bool>` view** (`value_at`/`value_of`/`iter` and their
+//!   setters) folds the empty literal to `None` on read, since `Option<bool>` has no fourth state;
+//!   its setters privilege `None` as `-`, so they can never write the empty literal.
+//!
+//! The encoding matches the C library's cube layout, so set operations reduce to word-wise bit ops
+//! and the Espresso boundary is close to a bit-repack.
 
-use super::error::DuplicateLabel;
+use super::error::{DuplicateLabel, IndexOutOfRange, LabelNotFound};
 use super::label::{Anonymous, Label, NamedLabel, StringLabel};
-use super::symbols::Symbols;
+use super::symbols::{identity_union, Symbols};
+use crate::impl_binary_operator;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
@@ -52,14 +65,28 @@ const FIELD_DC: u8 = 0b11;
 /// minterm. `Option<bool>` cannot express it; the public value API folds it back to `None`.
 const FIELD_EMPTY: u8 = 0b00;
 
-/// A parsed input-field value. Carries the three logical states *plus* Espresso's empty literal, which
-/// `Option<bool>` cannot represent — used only on the PLA read path so a `?` survives into the
-/// minterm's packed bits (and on to the C backend) verbatim.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InputField {
+/// The faithful, four-state value of a cube's input field: Espresso's 2-bit value-set encoding,
+/// exposed verbatim rather than folded down to `Option<bool>`.
+///
+/// | variant             | 2-bit field | meaning                              |
+/// |---------------------|-------------|---------------------------------------|
+/// | [`Zero`](Self::Zero)         | `01` (`0`)  | fixed `0`                              |
+/// | [`One`](Self::One)           | `10` (`1`)  | fixed `1`                               |
+/// | [`DontCare`](Self::DontCare) | `11` (`-`)  | don't-care                             |
+/// | [`Empty`](Self::Empty)       | `00` (`?`)  | empty (Espresso's `?`)                 |
+///
+/// `Empty` is the lattice opposite of `DontCare`: the variable allows neither value, so a field of
+/// `Empty` makes the whole containing cube vacuous (denotes the empty set) — see
+/// [`Minterm::is_vacuous`].
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum InputField {
+    /// Fixed `0` (`01`).
     Zero,
+    /// Fixed `1` (`10`).
     One,
+    /// Don't-care `-` (`11`).
     DontCare,
+    /// Empty `?` (`00`) — makes the containing cube vacuous.
     Empty,
 }
 
@@ -81,6 +108,81 @@ fn decode_field(field: u8) -> InputField {
         FIELD_DC => InputField::DontCare,
         // The only remaining 2-bit value is `00`, the empty literal.
         _ => InputField::Empty,
+    }
+}
+
+// The scalar four-state Boolean algebra on [`InputField`], the per-field form of the `Minterm`
+// element-wise operators. Each operator reuses the word-level SWAR worker (`word_and`/`word_or`/
+// `word_xor`/`word_not`) on a single 2-bit field packed into the low bits of a word, so the scalar
+// and element-wise results agree field-for-field by construction.
+
+impl std::ops::BitAnd for InputField {
+    type Output = InputField;
+
+    /// Value-set image AND `{ a & b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene AND; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `&` | `0` | `1` | `-` | `?` |
+    /// |-----|-----|-----|-----|-----|
+    /// | `0` | `0` | `0` | `0` | `?` |
+    /// | `1` | `0` | `1` | `-` | `?` |
+    /// | `-` | `0` | `-` | `-` | `?` |
+    /// | `?` | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitand(self, rhs: InputField) -> InputField {
+        decode_field(word_and(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::BitOr for InputField {
+    type Output = InputField;
+
+    /// Value-set image OR `{ a | b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene OR; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `\|` | `0` | `1` | `-` | `?` |
+    /// |------|-----|-----|-----|-----|
+    /// | `0`  | `0` | `1` | `-` | `?` |
+    /// | `1`  | `1` | `1` | `1` | `?` |
+    /// | `-`  | `-` | `1` | `-` | `?` |
+    /// | `?`  | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitor(self, rhs: InputField) -> InputField {
+        decode_field(word_or(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::BitXor for InputField {
+    type Output = InputField;
+
+    /// Value-set image XOR `{ a ^ b : a ∈ self, b ∈ rhs }`, reading each field as the value set it
+    /// allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On non-empty operands this is the
+    /// ordinary three-valued Kleene XOR; an [`Empty`](Self::Empty) (`?`) operand yields `Empty`.
+    ///
+    /// | `^` | `0` | `1` | `-` | `?` |
+    /// |-----|-----|-----|-----|-----|
+    /// | `0` | `0` | `1` | `-` | `?` |
+    /// | `1` | `1` | `0` | `-` | `?` |
+    /// | `-` | `-` | `-` | `-` | `?` |
+    /// | `?` | `?` | `?` | `?` | `?` |
+    #[inline]
+    fn bitxor(self, rhs: InputField) -> InputField {
+        decode_field(word_xor(encode_field(self) as u64, encode_field(rhs) as u64) as u8)
+    }
+}
+
+impl std::ops::Not for InputField {
+    type Output = InputField;
+
+    /// Value-set image complement `{ !a : a ∈ self }`, reading the field as the value set it allows
+    /// (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`=`{}`). On a non-empty operand this is the ordinary
+    /// three-valued Kleene complement (`0 → 1`, `1 → 0`, `- → -`); [`Empty`](Self::Empty) (`?`) is
+    /// fixed (`? → ?`).
+    #[inline]
+    fn not(self) -> InputField {
+        decode_field(word_not(encode_field(self) as u64) as u8)
     }
 }
 
@@ -109,17 +211,17 @@ fn decode(field: u8) -> Option<bool> {
 }
 
 #[inline]
-fn field_at(words: &[u64], i: usize) -> u8 {
+fn raw_field(words: &[u64], i: usize) -> u8 {
     ((words[i / VARS_PER_WORD] >> ((i % VARS_PER_WORD) * 2)) & 0b11) as u8
 }
 
-/// Whether two value-set fields disagree: both must be non-empty and their value-sets must not
-/// intersect (one fixes the variable `true`, the other `false`). A don't-care intersects either
-/// polarity, and the empty literal (`00`) is never a disagreement — in particular a field never
-/// disagrees with itself, so the disagreement relation stays reflexive even for `?`.
+/// Whether two value-set fields disagree: their value sets are disjoint, i.e. the raw 2-bit AND is
+/// zero. A don't-care (`11`) intersects either polarity, so it never disagrees with anything. The
+/// empty field (`00`, Espresso's `?`) intersects nothing — not even itself — so it disagrees with
+/// every field, including another empty field. This is Espresso's cube-distance rule.
 #[inline]
 fn fields_disagree(a: u8, b: u8) -> bool {
-    a != FIELD_EMPTY && b != FIELD_EMPTY && a & b == 0
+    a & b == 0
 }
 
 fn pack<I>(values: I, num_vars: usize) -> Arc<[u64]>
@@ -158,6 +260,65 @@ fn valid_even_mask(word_idx: usize, num_vars: usize) -> u64 {
     }
 }
 
+/// Element-wise **value-set image** AND of two packed words (all 32 fields in parallel), reading each
+/// field as the value set it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, `?`/`00`=`{}`). The result
+/// field is `{ a & b : a ∈ x, b ∈ y }`, which is empty (`00`) whenever either operand is empty.
+///
+/// With `x0`/`y0` the `allows-0` bits and `x1`/`y1` the `allows-1` bits, `nx`/`ny` flag the non-empty
+/// fields (those allowing some value). The result allows `1` only where both operands do (`x1 & y1`),
+/// and allows `0` where either allows `0` *and the other operand is non-empty* — so an empty operand
+/// cannot manufacture a `0`, leaving `(00, y) → 00`. On non-empty fields this is bit-identical to the
+/// three-valued Kleene AND table.
+#[inline]
+fn word_and(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let (nx, ny) = (x0 | x1, y0 | y1);
+    let r0 = (x0 & ny) | (y0 & nx);
+    let r1 = x1 & y1;
+    (r1 << 1) | r0
+}
+
+/// Element-wise **value-set image** OR of two packed words (all 32 fields in parallel), dual to
+/// [`word_and`]: the result field is `{ a | b : a ∈ x, b ∈ y }`, empty (`00`) whenever either operand
+/// is empty. With `nx`/`ny` flagging the non-empty fields, the result allows `1` where either operand
+/// allows `1` *and the other is non-empty* (`(x1 & ny) | (y1 & nx)`) and allows `0` only where both
+/// operands do (`x0 & y0`), leaving `(00, y) → 00`. On non-empty fields this is bit-identical to the
+/// three-valued Kleene OR table.
+#[inline]
+fn word_or(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let (nx, ny) = (x0 | x1, y0 | y1);
+    let r1 = (x1 & ny) | (y1 & nx);
+    let r0 = x0 & y0;
+    (r1 << 1) | r0
+}
+
+/// Element-wise **value-set image** XOR of two packed words (all 32 fields in parallel): the result
+/// field is `{ a ^ b : a ∈ x, b ∈ y }`. It allows `1` where the operands can differ
+/// (`(x1 & y0) | (x0 & y1)`) and allows `0` where they can agree (`(x1 & y1) | (x0 & y0)`). Both
+/// terms take a bit from each operand, so an empty operand yields an empty result (`(00, y) → 00`),
+/// making the formula ∅-correct as written. On non-empty fields this is bit-identical to the
+/// three-valued Kleene XOR table.
+#[inline]
+fn word_xor(x: u64, y: u64) -> u64 {
+    let (x0, x1) = (x & ALLOWS0_MASK, (x >> 1) & ALLOWS0_MASK);
+    let (y0, y1) = (y & ALLOWS0_MASK, (y >> 1) & ALLOWS0_MASK);
+    let r0 = (x1 & y1) | (x0 & y0);
+    let r1 = (x1 & y0) | (x0 & y1);
+    (r1 << 1) | r0
+}
+
+/// Element-wise **value-set image** complement of a packed word (all 32 fields in parallel): swap
+/// each field's `allows-0` and `allows-1` bits, so `{0}`↔`{1}`, `{0,1}` (don't-care) is fixed, and
+/// the empty set is fixed (`00 → 00`, i.e. `!? = ?`) — making the bit-swap ∅-correct as written. On
+/// non-empty fields this is the three-valued Kleene complement.
+#[inline]
+fn word_not(x: u64) -> u64 {
+    ((x & ALLOWS0_MASK) << 1) | ((x >> 1) & ALLOWS0_MASK)
+}
+
 /// A label-carrying row of tri-state values. See the module-level documentation for the representation.
 #[derive(Clone)]
 pub struct Minterm<L> {
@@ -167,17 +328,18 @@ pub struct Minterm<L> {
 }
 
 impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
-    /// Renders values by variable — e.g. `Minterm { "a": 1, "b": - }` for named minterms, or
-    /// `Minterm { 0: 1, 1: - }` for anonymous (positional) ones — where `1`/`0`/`-` are
-    /// true/false/don't-care, rather than exposing the internal packed words.
+    /// Renders fields by variable — e.g. `Minterm { "a": 1, "b": - }` for named minterms, or
+    /// `Minterm { 0: 1, 1: - }` for anonymous (positional) ones — where `1`/`0`/`-`/`?` are
+    /// true/false/don't-care/empty, rather than exposing the internal packed words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Minterm {{")?;
         let labels = self.symbols.labels();
-        for (i, value) in self.iter().enumerate() {
-            let sym = match value {
-                Some(true) => '1',
-                Some(false) => '0',
-                None => '-',
+        for (i, field) in self.fields().enumerate() {
+            let sym = match field {
+                InputField::One => '1',
+                InputField::Zero => '0',
+                InputField::DontCare => '-',
+                InputField::Empty => '?',
             };
             let sep = if i == 0 { "" } else { "," };
             if L::NAMED {
@@ -190,16 +352,17 @@ impl<L: Label + fmt::Debug> fmt::Debug for Minterm<L> {
     }
 }
 
-/// Renders the tri-state values as a bare `1`/`0`/`-` row (true/false/don't-care), in index order —
-/// the cube body of a PLA line. Unlike the `Debug` form, no variable labels are shown, so this
-/// needs no bound on `L`.
+/// Renders the faithful, four-state fields as a bare `1`/`0`/`-`/`?` row (true/false/don't-care/empty),
+/// in index order — the cube body of a PLA line. Unlike the `Debug` form, no variable labels are
+/// shown, so this needs no bound on `L`.
 impl<L> fmt::Display for Minterm<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for value in self.iter() {
-            f.write_str(match value {
-                Some(true) => "1",
-                Some(false) => "0",
-                None => "-",
+        for field in self.fields() {
+            f.write_str(match field {
+                InputField::One => "1",
+                InputField::Zero => "0",
+                InputField::DontCare => "-",
+                InputField::Empty => "?",
             })?;
         }
         Ok(())
@@ -263,17 +426,25 @@ impl<L> Minterm<L> {
         Minterm { values, symbols }
     }
 
-    /// Whether any variable holds the empty literal (`00`) — i.e. the cube covers no minterm. Such a
-    /// cube is vacuous and is dropped before minimisation (see the cover minimisation pipeline).
+    /// Whether the cube is vacuous: true iff any variable's value set is empty (`?`/`00`), i.e. the
+    /// cube covers no assignment. `?` is the lattice opposite of the don't-care `-`, so a single
+    /// empty field is enough to make the whole cube denote the empty set — such a cube is dropped
+    /// before minimisation (see the cover minimisation pipeline).
     #[must_use]
-    pub(crate) fn has_empty_field(&self) -> bool {
-        (0..self.num_vars()).any(|i| field_at(&self.values, i) == FIELD_EMPTY)
+    pub fn is_vacuous(&self) -> bool {
+        self.values.iter().enumerate().any(|(k, &w)| {
+            let nonempty = (w | (w >> 1)) & ALLOWS0_MASK;
+            let valid = valid_even_mask(k, self.num_vars());
+            nonempty & valid != valid
+        })
     }
 
     /// Disjointness of two cubes defined over the **same header** (shared [`Symbols`]), computed purely
     /// on the packed words so it needs no [`Label`] bound. Two cubes are disjoint when some variable's
-    /// fields don't intersect (the intersection is the empty field `00`). Used by the orthogonality
-    /// check in the cover minimisation pipeline, where every cube shares the cover's header.
+    /// fields don't intersect (the intersection is the empty field `00`), i.e. their intersection as
+    /// sets is ∅. A vacuous cube (one already carrying an empty `?` field) is disjoint from everything,
+    /// including itself, since ∅ ∩ X = ∅ for every X. Used by the orthogonality check in the cover
+    /// minimisation pipeline, where every cube shares the cover's header.
     #[must_use]
     pub(crate) fn is_disjoint_same_header(&self, other: &Self) -> bool {
         debug_assert!(
@@ -289,13 +460,6 @@ impl<L> Minterm<L> {
             }
         }
         false
-    }
-
-    /// Iterate the raw input fields in index order, preserving the empty literal (`00`) that the
-    /// public `Option<bool>` view folds to `None`. Crate-internal; used by the PLA writer so a `?`
-    /// read into a cube is echoed back faithfully (matching C's `print_cube`).
-    pub(crate) fn input_fields(&self) -> impl Iterator<Item = InputField> + '_ {
-        (0..self.num_vars()).map(|i| decode_field(field_at(&self.values, i)))
     }
 
     /// The shared symbol table this minterm is defined over.
@@ -322,9 +486,33 @@ impl<L> Minterm<L> {
     #[must_use]
     pub fn value_at(&self, i: usize) -> Option<bool> {
         if i < self.num_vars() {
-            decode(field_at(&self.values, i))
+            decode(raw_field(&self.values, i))
         } else {
             None
+        }
+    }
+
+    /// The faithful, four-state field at positional index `i` in this minterm's own variable order.
+    ///
+    /// Unlike [`value_at`](Self::value_at), the empty literal (`?`) is not folded to don't-care.
+    /// Returns [`InputField::DontCare`] for indices beyond the minterm's width.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// assert_eq!(m.field_at(0), InputField::One);
+    /// assert_eq!(m.field_at(1), InputField::DontCare);
+    /// assert_eq!(m.field_at(2), InputField::DontCare); // beyond the minterm's width
+    /// ```
+    #[must_use]
+    pub fn field_at(&self, i: usize) -> InputField {
+        if i < self.num_vars() {
+            decode_field(raw_field(&self.values, i))
+        } else {
+            InputField::DontCare
         }
     }
 
@@ -334,6 +522,102 @@ impl<L> Minterm<L> {
     #[must_use]
     pub fn iter(&self) -> MintermIter<'_, L> {
         self.into_iter()
+    }
+
+    /// Iterate over the faithful, four-state fields in this minterm's own variable order.
+    ///
+    /// Unlike [`iter`](Self::iter), the empty literal (`?`) is yielded as [`InputField::Empty`]
+    /// rather than folded to don't-care.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+    /// let got: Vec<_> = m.fields().collect();
+    /// assert_eq!(
+    ///     got,
+    ///     vec![InputField::One, InputField::DontCare, InputField::Zero]
+    /// );
+    /// ```
+    #[must_use]
+    pub fn fields(&self) -> FieldsIter<'_, L> {
+        FieldsIter {
+            minterm: self,
+            pos: 0,
+        }
+    }
+
+    /// Set the value at positional index `i` in this minterm's own variable order, in place.
+    ///
+    /// The counterpart setter to [`value_at`](Self::value_at). Mutates the packed word buffer
+    /// copy-on-write (via [`Arc::make_mut`]), so a minterm sharing its buffer with clones is cloned
+    /// first and only the receiver is mutated; a uniquely-held buffer is mutated directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexOutOfRange`] if `i >= self.num_vars()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// m.set_value_at(1, Some(false)).unwrap();
+    /// assert_eq!(m.value_at(1), Some(false));
+    /// ```
+    pub fn set_value_at(&mut self, i: usize, value: Option<bool>) -> Result<(), IndexOutOfRange> {
+        let arity = self.num_vars();
+        if i >= arity {
+            return Err(IndexOutOfRange { index: i, arity });
+        }
+        let words = Arc::make_mut(&mut self.values);
+        let word = i / VARS_PER_WORD;
+        let shift = (i % VARS_PER_WORD) * 2;
+        // `encode` always yields one of `01`/`10`/`11` (never the empty `00`) and only ever touches
+        // this one field, so the canonical zero-padding past the arity that the word-wise `Eq`/`Hash`
+        // fast path relies on is left untouched.
+        words[word] &= !(0b11u64 << shift);
+        words[word] |= (encode(value) as u64) << shift;
+        Ok(())
+    }
+
+    /// Set the faithful, four-state field at positional index `i` in this minterm's own variable
+    /// order, in place. The counterpart setter to [`field_at`](Self::field_at).
+    ///
+    /// Unlike [`set_value_at`](Self::set_value_at), this may write [`InputField::Empty`] (`?`),
+    /// which makes the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). Mutates the
+    /// packed word buffer copy-on-write (via [`Arc::make_mut`]), so a minterm sharing its buffer
+    /// with clones is cloned first and only the receiver is mutated; a uniquely-held buffer is
+    /// mutated directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexOutOfRange`] if `i >= self.num_vars()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm};
+    ///
+    /// let mut m = Minterm::anonymous(&[Some(true), None]);
+    /// m.set_field_at(1, InputField::Empty).unwrap();
+    /// assert_eq!(m.field_at(1), InputField::Empty);
+    /// assert!(m.is_vacuous());
+    /// ```
+    pub fn set_field_at(&mut self, i: usize, field: InputField) -> Result<(), IndexOutOfRange> {
+        let arity = self.num_vars();
+        if i >= arity {
+            return Err(IndexOutOfRange { index: i, arity });
+        }
+        let words = Arc::make_mut(&mut self.values);
+        let word = i / VARS_PER_WORD;
+        let shift = (i % VARS_PER_WORD) * 2;
+        words[word] &= !(0b11u64 << shift);
+        words[word] |= (encode_field(field) as u64) << shift;
+        Ok(())
     }
 }
 
@@ -365,6 +649,36 @@ impl<L> Iterator for MintermIter<'_, L> {
 
 // The length is known exactly (and O(1)): it is the number of variables still to yield.
 impl<L> ExactSizeIterator for MintermIter<'_, L> {}
+
+/// Iterator over a minterm's faithful, four-state fields in index order, created by
+/// [`Minterm::fields`]. Unlike [`MintermIter`], the empty literal (`?`) is yielded as
+/// [`InputField::Empty`] rather than folded to don't-care.
+pub struct FieldsIter<'a, L> {
+    minterm: &'a Minterm<L>,
+    pos: usize,
+}
+
+impl<L> Iterator for FieldsIter<'_, L> {
+    type Item = InputField;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos < self.minterm.num_vars() {
+            let field = self.minterm.field_at(self.pos);
+            self.pos += 1;
+            Some(field)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.minterm.num_vars() - self.pos;
+        (remaining, Some(remaining))
+    }
+}
+
+// The length is known exactly (and O(1)): it is the number of variables still to yield.
+impl<L> ExactSizeIterator for FieldsIter<'_, L> {}
 
 impl<'a, L> IntoIterator for &'a Minterm<L> {
     type Item = Option<bool>;
@@ -549,9 +863,107 @@ impl<L: Label> Minterm<L> {
         Q: Ord + ?Sized,
     {
         match self.symbols.index_of(label) {
-            Some(i) => decode(field_at(&self.values, i as usize)),
+            Some(i) => decode(raw_field(&self.values, i as usize)),
             None => None,
         }
+    }
+
+    /// Set the value of a named variable, in place. The counterpart setter to
+    /// [`value_of`](Self::value_of).
+    ///
+    /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be set with `&str`). Unlike
+    /// `value_of`, an absent label is always an error — even when `value` is `None` — so a typo in
+    /// the label surfaces rather than silently doing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelNotFound`] if `label` is not present in this minterm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{Minterm, Symbol};
+    ///
+    /// let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+    /// m.set_value_of("b", Some(false)).unwrap();
+    /// assert_eq!(m.value_of("b"), Some(false));
+    /// assert!(m.set_value_of("c", Some(true)).is_err());
+    /// ```
+    pub fn set_value_of<Q>(&mut self, label: &Q, value: Option<bool>) -> Result<(), LabelNotFound>
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let i = self.symbols.index_of(label).ok_or(LabelNotFound)?;
+        // `i` came straight from this minterm's own symbol table, so it is in range by
+        // construction; `set_value_at` cannot fail here.
+        self.set_value_at(i as usize, value)
+            .expect("index from symbol table is in range");
+        Ok(())
+    }
+
+    /// The faithful, four-state field of a named variable ([`InputField::DontCare`] if the variable
+    /// is absent → implicitly don't-care).
+    ///
+    /// Unlike [`value_of`](Self::value_of), the empty literal (`?`) is not folded to don't-care.
+    /// Accepts any borrowed form of the label (so a `Minterm<Symbol>` can be queried with `&str`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm, Symbol};
+    ///
+    /// let m = Minterm::<Symbol>::labeled(&[(Symbol::new("a"), Some(true))]).unwrap();
+    /// assert_eq!(m.field_of("a"), InputField::One);
+    /// assert_eq!(m.field_of("b"), InputField::DontCare);
+    /// ```
+    #[must_use]
+    pub fn field_of<Q>(&self, label: &Q) -> InputField
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        match self.symbols.index_of(label) {
+            Some(i) => decode_field(raw_field(&self.values, i as usize)),
+            None => InputField::DontCare,
+        }
+    }
+
+    /// Set the faithful, four-state field of a named variable, in place. The counterpart setter to
+    /// [`field_of`](Self::field_of).
+    ///
+    /// Unlike [`set_value_of`](Self::set_value_of), this may write [`InputField::Empty`] (`?`), which
+    /// makes the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). Accepts any borrowed
+    /// form of the label (so a `Minterm<Symbol>` can be set with `&str`). An absent label is always
+    /// an error — even when `field` is [`InputField::DontCare`] — so a typo in the label surfaces
+    /// rather than silently doing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelNotFound`] if `label` is not present in this minterm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::{InputField, Minterm, Symbol};
+    ///
+    /// let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+    /// m.set_field_of("b", InputField::Empty).unwrap();
+    /// assert_eq!(m.field_of("b"), InputField::Empty);
+    /// assert!(m.is_vacuous());
+    /// assert!(m.set_field_of("c", InputField::One).is_err());
+    /// ```
+    pub fn set_field_of<Q>(&mut self, label: &Q, field: InputField) -> Result<(), LabelNotFound>
+    where
+        L: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let i = self.symbols.index_of(label).ok_or(LabelNotFound)?;
+        // `i` came straight from this minterm's own symbol table, so it is in range by
+        // construction; `set_field_at` cannot fail here.
+        self.set_field_at(i as usize, field)
+            .expect("index from symbol table is in range");
+        Ok(())
     }
 }
 
@@ -592,7 +1004,7 @@ impl<L: Label> Minterm<L> {
             let field = self
                 .symbols
                 .position_of_identity(&id)
-                .map(|j| field_at(&self.values, j as usize))
+                .map(|j| raw_field(&self.values, j as usize))
                 .unwrap_or(FIELD_DC);
             words[i / VARS_PER_WORD] |= (field as u64) << ((i % VARS_PER_WORD) * 2);
         }
@@ -649,26 +1061,40 @@ impl<L: Label> Minterm<L> {
         }
     }
 
-    /// Whether every variable's value-set in `self` is contained in `other`'s.
+    /// Whether every variable's value-set in `self` is contained in `other`'s, read as set
+    /// containment: `self` ⊆ `other`.
     ///
     /// `self` is a subset of `other` when `other` covers every position fixed in `self`; a
     /// don't-care in `other` covers any fixed value in `self`, but a fixed value in `other` cannot
-    /// cover a don't-care in `self`.
+    /// cover a don't-care in `self`. A vacuous `self` (an empty `?` field, denoting ∅) is a subset
+    /// of every `other`, since ∅ ⊆ X for all X; a vacuous `other` is only a superset of a `self`
+    /// that is itself vacuous, since X ⊆ ∅ only when X = ∅.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::Minterm;
+    /// use espresso_logic::{InputField, Minterm};
     ///
     /// let minterm1 = Minterm::anonymous(&[Some(true), Some(false), None]);
     /// let minterm2 = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
     ///
     /// assert!(!minterm1.is_subset_of(&minterm2));
     /// assert!(minterm2.is_subset_of(&minterm1));
+    ///
+    /// let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// empty.set_field_at(0, InputField::Empty).unwrap();
+    /// assert!(empty.is_subset_of(&minterm1)); // ∅ ⊆ X for every X
+    /// assert!(!minterm1.is_subset_of(&empty)); // X ⊆ ∅ only if X = ∅
     /// ```
     #[must_use]
     pub fn is_subset_of(&self, other: &Self) -> bool {
         // self ⊆ other  ⟺  every allowed bit of self is allowed in other  ⟺  self & !other == 0.
+        if self.is_vacuous() {
+            return true; // ∅ ⊆ X for all X
+        }
+        if other.is_vacuous() {
+            return false; // X ⊆ ∅ only if X = ∅, already handled by the guard above
+        }
         if self.symbols == other.symbols {
             self.values
                 .iter()
@@ -679,7 +1105,11 @@ impl<L: Label> Minterm<L> {
         }
     }
 
-    /// Whether `self` covers every position fixed in `other`. The dual of [`is_subset_of`](Self::is_subset_of).
+    /// Whether `self` covers every position fixed in `other`, read as set containment: `self` ⊇
+    /// `other`. The dual of [`is_subset_of`](Self::is_subset_of).
+    ///
+    /// A vacuous `other` is a subset of every `self` (∅ ⊆ X for all X), so `self` is always its
+    /// superset; a vacuous `self` is only a superset of an `other` that is itself vacuous.
     ///
     /// # Examples
     ///
@@ -697,14 +1127,17 @@ impl<L: Label> Minterm<L> {
         other.is_subset_of(self)
     }
 
-    /// Whether `self` and `other` share no common assignment (their intersection is empty).
+    /// Whether `self` and `other` share no common assignment, i.e. their intersection is the
+    /// empty set.
     ///
-    /// They are disjoint when some variable is fixed to opposite values in the two minterms.
+    /// They are disjoint when some variable is fixed to opposite values in the two minterms. A
+    /// vacuous minterm (an empty `?` field, denoting ∅) is disjoint from everything, including
+    /// itself: ∅ ∩ X = ∅ for every X, and in particular ∅ ∩ ∅ = ∅.
     ///
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::Minterm;
+    /// use espresso_logic::{InputField, Minterm};
     ///
     /// let minterm1 = Minterm::anonymous(&[Some(true),  Some(false), None]);
     /// let minterm2 = Minterm::anonymous(&[Some(false), Some(true),  Some(false)]);
@@ -712,6 +1145,10 @@ impl<L: Label> Minterm<L> {
     ///
     /// assert!(minterm1.is_disjoint_with(&minterm2));
     /// assert!(!minterm1.is_disjoint_with(&minterm3));
+    ///
+    /// let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// empty.set_field_at(0, InputField::Empty).unwrap();
+    /// assert!(empty.is_disjoint_with(&empty)); // ∅ is disjoint from itself
     /// ```
     #[must_use]
     pub fn is_disjoint_with(&self, other: &Self) -> bool {
@@ -736,13 +1173,21 @@ impl<L: Label> Minterm<L> {
 }
 
 impl<L: Label> Minterm<L> {
-    /// The number of variables on which `self` and `other` disagree, aligned by variable identity.
+    /// Espresso's input-part cube distance between `self` and `other`, aligned by variable identity:
+    /// the number of variables whose value-sets are disjoint (the field intersection is empty).
     ///
     /// Two minterms disagree on a variable when their value-sets do not intersect — i.e. one fixes it
-    /// `true` and the other `false`. A don't-care agrees with any value, and a variable present in only
-    /// one minterm reads as don't-care, so neither counts as a disagreement. Intended for fully-assigned
-    /// minterms (e.g. the output of [`Cube::expand_to`](crate::Cube::expand_to)), where this is exactly
-    /// the Hamming distance. `hamming_distance == disagreement().len()`.
+    /// `true` and the other `false`, or either field is the empty literal (`?`), which intersects
+    /// nothing, not even itself. A don't-care agrees with any value, and a variable present in only
+    /// one minterm reads as don't-care, so neither counts as a disagreement.
+    ///
+    /// Restricted to fully-assigned minterms (every field `0` or `1`, e.g. the output of
+    /// [`Cube::expand_to`](crate::Cube::expand_to)), this is exactly the ordinary Hamming distance, and
+    /// `hamming_distance == disagreement().len()` always. The family law
+    /// `is_disjoint_with(a, b)` iff `hamming_distance(a, b) > 0` holds unconditionally, including on
+    /// cubes carrying `?` fields — one consequence is that `x.hamming_distance(&x)` is not always `0`:
+    /// it equals the number of `?` fields in `x` (as in Espresso, this relation is not reflexive on
+    /// vacuous cubes).
     ///
     /// # Examples
     ///
@@ -761,16 +1206,10 @@ impl<L: Label> Minterm<L> {
             let n = self.num_vars();
             let mut count = 0usize;
             for (k, (&x, &y)) in self.values.iter().zip(other.values.iter()).enumerate() {
-                // Even bit set per variable whose field (on each side, and on the intersection) is
-                // non-empty.
-                let x_ne = (x & ALLOWS0_MASK) | ((x >> 1) & ALLOWS0_MASK);
-                let y_ne = (y & ALLOWS0_MASK) | ((y >> 1) & ALLOWS0_MASK);
                 let inter = x & y;
                 let inter_ne = (inter & ALLOWS0_MASK) | ((inter >> 1) & ALLOWS0_MASK);
                 let valid = valid_even_mask(k, n);
-                // A variable disagrees only when both sides are non-empty yet their value-sets do
-                // not intersect; an empty field (`?`) on either side is never a disagreement.
-                count += (x_ne & y_ne & !inter_ne & valid).count_ones() as usize;
+                count += (!inter_ne & valid).count_ones() as usize;
             }
             count
         } else {
@@ -781,8 +1220,9 @@ impl<L: Label> Minterm<L> {
     }
 
     /// The variables on which `self` and `other` disagree (see [`hamming_distance`](Self::hamming_distance)
-    /// for the disagreement rule), as a lazy [`Disagreement`] iterator that yields each disagreeing
-    /// label (cloned) on demand. Ordering is unspecified.
+    /// for the disagreement rule — including that a `?` field disagrees with everything, itself
+    /// included), as a lazy [`Disagreement`] iterator that yields each disagreeing label (cloned) on
+    /// demand. Ordering is unspecified.
     ///
     /// # Examples
     ///
@@ -837,7 +1277,7 @@ impl<L: Label> Minterm<L> {
         // A cube with any empty literal (`?`) denotes the empty set, so it covers no minterm — a
         // vacuous (zero-length) expansion, short-circuited before the don't-care split rather than
         // copying the malformed field through. `base` is unread when `count == 0`.
-        if self.has_empty_field() {
+        if self.is_vacuous() {
             return ExpandedMinterms {
                 base: Arc::clone(&self.values),
                 positions: Arc::from([]),
@@ -848,7 +1288,7 @@ impl<L: Label> Minterm<L> {
         }
         let base = self.project_onto(target);
         let positions: Arc<[usize]> = (0..base.num_vars())
-            .filter(|&i| field_at(&base.values, i) == FIELD_DC)
+            .filter(|&i| raw_field(&base.values, i) == FIELD_DC)
             .collect();
         let k = positions.len();
         // The expansion yields 2^k minterms. Guard `k` so the count neither overflows the `1 << k`
@@ -972,7 +1412,7 @@ impl<L: Label> Iterator for Disagreement<'_, L> {
                 while *pos < self.a.num_vars() {
                     let i = *pos;
                     *pos += 1;
-                    if fields_disagree(field_at(&self.a.values, i), field_at(&self.b.values, i)) {
+                    if fields_disagree(raw_field(&self.a.values, i), raw_field(&self.b.values, i)) {
                         return Some(labels[i].clone());
                     }
                 }
@@ -993,8 +1433,8 @@ impl<L: Label> Iterator for Disagreement<'_, L> {
                             *i += 1;
                             *j += 1;
                             if fields_disagree(
-                                field_at(&self.a.values, ia),
-                                field_at(&self.b.values, ib),
+                                raw_field(&self.a.values, ia),
+                                raw_field(&self.b.values, ib),
                             ) {
                                 return Some(la[ia].clone());
                             }
@@ -1034,28 +1474,28 @@ impl<L: Label> Iterator for MergedFields<'_, L> {
             {
                 Ordering::Less => {
                     self.i += 1;
-                    Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+                    Some((raw_field(&self.a.values, ia as usize), FIELD_DC))
                 }
                 Ordering::Greater => {
                     self.j += 1;
-                    Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+                    Some((FIELD_DC, raw_field(&self.b.values, ib as usize)))
                 }
                 Ordering::Equal => {
                     self.i += 1;
                     self.j += 1;
                     Some((
-                        field_at(&self.a.values, ia as usize),
-                        field_at(&self.b.values, ib as usize),
+                        raw_field(&self.a.values, ia as usize),
+                        raw_field(&self.b.values, ib as usize),
                     ))
                 }
             },
             (Some(&ia), None) => {
                 self.i += 1;
-                Some((field_at(&self.a.values, ia as usize), FIELD_DC))
+                Some((raw_field(&self.a.values, ia as usize), FIELD_DC))
             }
             (None, Some(&ib)) => {
                 self.j += 1;
-                Some((FIELD_DC, field_at(&self.b.values, ib as usize)))
+                Some((FIELD_DC, raw_field(&self.b.values, ib as usize)))
             }
             (None, None) => None,
         }
@@ -1072,12 +1512,17 @@ fn rank(value: Option<bool>) -> u8 {
     }
 }
 
-/// Compare two minterms by value, aligned by variable identity over the sorted union of their
+/// Compare two minterms by denoted set, aligned by variable identity over the sorted union of their
 /// variables (an absent variable counts as don't-care; at each variable don't-care < false < true).
 ///
+/// The per-field order is `- < 0 < 1`. A vacuous minterm — one carrying any empty literal `?`, so
+/// it denotes ∅ — sorts **after** every non-vacuous one, ∅ being the smallest denoted set. Two
+/// vacuous minterms compare `Equal`, matching `Eq`.
+///
 /// The order is total and independent of header ordering, so `Minterm` can be used as a
-/// `BTreeSet`/`BTreeMap` key for deduplication. It is computed by a single O(n+m) merge of the two
-/// minterms' sorted label sequences — no per-comparison set or projection is allocated.
+/// `BTreeSet`/`BTreeMap` key for deduplication. Non-vacuous pairs are compared by a single O(n+m)
+/// merge of the two minterms' sorted label sequences — no per-comparison set or projection is
+/// allocated.
 ///
 /// # Examples
 ///
@@ -1092,13 +1537,23 @@ fn rank(value: Option<bool>) -> u8 {
 /// ```
 impl<L: Label> Ord for Minterm<L> {
     fn cmp(&self, other: &Self) -> Ordering {
-        for (sf, of) in self.merged_fields(other) {
-            match rank(decode(sf)).cmp(&rank(decode(of))) {
-                Ordering::Equal => continue,
-                non_eq => return non_eq,
+        match (self.is_vacuous(), other.is_vacuous()) {
+            // Both denote ∅: the same (smallest) set.
+            (true, true) => Ordering::Equal,
+            // A vacuous minterm is the smallest denoted set, so it sorts after every non-vacuous one.
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            // Neither carries a `00` field, so the merge loop decodes only `-`/`0`/`1`.
+            (false, false) => {
+                for (sf, of) in self.merged_fields(other) {
+                    match rank(decode(sf)).cmp(&rank(decode(of))) {
+                        Ordering::Equal => continue,
+                        non_eq => return non_eq,
+                    }
+                }
+                Ordering::Equal
             }
         }
-        Ordering::Equal
     }
 }
 
@@ -1108,13 +1563,34 @@ impl<L: Label> PartialOrd for Minterm<L> {
     }
 }
 
+/// Compares two minterms by denoted set, not by structure: variables are aligned by
+/// [`identity`](Label::identity) (an absent variable reads as don't-care), so the comparison is
+/// independent of header ordering.
+///
+/// A minterm carrying any empty literal `?` is vacuous — it denotes ∅ — and all vacuous minterms
+/// are equal to each other and distinct from every non-vacuous one, regardless of their remaining
+/// fields. Non-vacuous pairs compare exactly by their aligned value-sets.
 impl<L: Label> PartialEq for Minterm<L> {
     fn eq(&self, other: &Self) -> bool {
-        if self.symbols == other.symbols {
-            // Same layout: equal value-sets pack to identical words.
-            self.values == other.values
-        } else {
-            self.merged_fields(other).all(|(sf, of)| sf == of)
+        // Fast positive path: same layout and identical words denote the same set.
+        if self.symbols == other.symbols && self.values == other.values {
+            return true;
+        }
+        // Triage on vacuousness before the structural comparison: all vacuous minterms are equal,
+        // and a vacuous minterm never equals a non-vacuous one.
+        match (self.is_vacuous(), other.is_vacuous()) {
+            (true, true) => true,
+            (true, false) | (false, true) => false,
+            // Neither carries a `00` field, so the merge-join reads only `-`/`0`/`1`. Same-header
+            // pairs would have been caught by the fast path if their words matched, so here they
+            // denote distinct sets.
+            (false, false) => {
+                if self.symbols == other.symbols {
+                    false
+                } else {
+                    self.merged_fields(other).all(|(sf, of)| sf == of)
+                }
+            }
         }
     }
 }
@@ -1123,6 +1599,10 @@ impl<L: Label> Eq for Minterm<L> {}
 
 /// Hashes the same identity-aligned canonical sequence that [`Eq`]/[`Ord`] compare over, so
 /// `a == b` always implies `hash(a) == hash(b)`.
+///
+/// A vacuous minterm — one carrying any empty literal `?`, denoting ∅ — hashes to a single fixed
+/// value (a `1` tag and nothing else), so all vacuous minterms hash alike as `Eq` requires. A
+/// non-vacuous minterm is prefixed with a `0` tag to keep its hashes disjoint from the vacuous one.
 ///
 /// Equality aligns variables by [`identity`](Label::identity), ignores don't-care (`None`) entries
 /// (an absent variable reads as don't-care, so a fixed variable and a missing one are
@@ -1133,11 +1613,17 @@ impl<L: Label> Eq for Minterm<L> {}
 /// ignores are deliberately left out, preserving the `Hash`/`Eq` contract.
 impl<L: Label> Hash for Minterm<L> {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.is_vacuous() {
+            // Every vacuous minterm denotes ∅ and compares equal, so they must all hash alike.
+            state.write_u8(1);
+            return;
+        }
+        state.write_u8(0);
         let labels = self.symbols.labels();
         let mut len = 0usize;
         for &pos in self.symbols.sorted_order() {
             let pos = pos as usize;
-            if let Some(value) = decode(field_at(&self.values, pos)) {
+            if let Some(value) = decode(raw_field(&self.values, pos)) {
                 // Walk sorted-identity order so the sequence is canonical regardless of header
                 // ordering; don't-cares are skipped to match `Eq`'s absent-equals-don't-care rule.
                 labels[pos].identity(pos).hash(state);
@@ -1148,6 +1634,213 @@ impl<L: Label> Hash for Minterm<L> {
         // Hash the trimmed length too, so the empty/all-don't-care prefix of a longer sequence
         // cannot collide with the same prefix followed by more fixed variables.
         len.hash(state);
+    }
+}
+
+impl<L: Label> Minterm<L> {
+    /// Combine `self` and `other` element-wise with `word_op`, a value-set image operation over one
+    /// packed word (all 32 fields in parallel).
+    ///
+    /// When both minterms share a header (pointer- or structurally-equal `Symbols`), the words are
+    /// combined directly and the result reuses `self`'s header. Otherwise both operands are re-homed
+    /// onto the [`identity_union`] of their headers — where a variable present in only one operand
+    /// reads as don't-care (`-`) — so the combination is well-defined regardless of header ordering;
+    /// this makes `a op b == b op a` under the crate's identity-based [`Eq`].
+    ///
+    /// The padding past the arity is genuine `00`, and every `word_op` maps `(00, 00) → 00`, so the
+    /// padding stays zero for free — no re-masking is needed to keep the word-wise `Eq`/`Hash` fast
+    /// path canonical.
+    fn combine(&self, other: &Self, word_op: impl Fn(u64, u64) -> u64) -> Self {
+        if self.symbols == other.symbols {
+            let values: Arc<[u64]> = self
+                .values
+                .iter()
+                .zip(other.values.iter())
+                .map(|(&x, &y)| word_op(x, y))
+                .collect();
+            Minterm::from_packed_words(Arc::clone(&self.symbols), values)
+        } else {
+            // Re-home both onto the union header; absent variables become don't-care, then the shared
+            // header hits the word-wise path above.
+            let (union, _, _) = identity_union(&self.symbols, &other.symbols);
+            let a = self.project_onto(&union);
+            let b = other.project_onto(&union);
+            a.combine(&b, word_op)
+        }
+    }
+
+    /// Element-wise **value-set image** **AND** of two rows, aligned by variable identity. Each field
+    /// is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and
+    /// the result field is `{ a & b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) AND table with `None` the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  &  0 1 - ?
+    ///  0  0 0 0 ?
+    ///  1  0 1 - ?
+    ///  -  0 - - ?
+    ///  ?  ? ? ? ?
+    /// ```
+    ///
+    /// AND shortcuts on a `0` (`0 & anything = 0`, including `0 & - = 0`), while `1 & - = -` and
+    /// `- & - = -`. An empty field (`?`) denotes the empty set and propagates (`? & anything = ?`),
+    /// making the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in
+    /// only one operand reads as `-`, and the result is aligned by identity, so `a.and(&b) ==
+    /// b.and(&a)` even when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(false), Some(true), None]);
+    /// let b = Minterm::anonymous(&[None, None, Some(true)]);
+    /// let r = a.and(&b);
+    /// assert_eq!(r.value_at(0), Some(false)); // 0 & - = 0
+    /// assert_eq!(r.value_at(1), None); //        1 & - = -
+    /// assert_eq!(r.value_at(2), None); //        - & 1 = -
+    /// ```
+    #[must_use]
+    pub fn and(&self, other: &Self) -> Self {
+        self.combine(other, word_and)
+    }
+
+    /// Element-wise **value-set image** **OR** of two rows, aligned by variable identity. Each field is
+    /// read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and the
+    /// result field is `{ a | b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) OR table with `None` the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  |  0 1 - ?
+    ///  0  0 1 - ?
+    ///  1  1 1 1 ?
+    ///  -  - 1 - ?
+    ///  ?  ? ? ? ?
+    /// ```
+    ///
+    /// OR shortcuts on a `1` (`1 | anything = 1`, including `1 | - = 1`), while `0 | - = -` and
+    /// `- | - = -`. An empty field (`?`) denotes the empty set and propagates (`? | anything = ?`),
+    /// making the containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in
+    /// only one operand reads as `-`, and the result is aligned by identity, so `a.or(&b) == b.or(&a)`
+    /// even when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(false), None]);
+    /// let b = Minterm::anonymous(&[None, None, Some(false)]);
+    /// let r = a.or(&b);
+    /// assert_eq!(r.value_at(0), Some(true)); // 1 | - = 1
+    /// assert_eq!(r.value_at(1), None); //       0 | - = -
+    /// assert_eq!(r.value_at(2), None); //       - | 0 = -
+    /// ```
+    #[must_use]
+    pub fn or(&self, other: &Self) -> Self {
+        self.combine(other, word_or)
+    }
+
+    /// Element-wise **value-set image** **XOR** of two rows, aligned by variable identity. Each field
+    /// is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`), and
+    /// the result field is `{ a ^ b : a ∈ x, b ∈ y }` — restricting, on non-empty fields, to the
+    /// three-valued (Kleene) XOR table with `None` the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  ^  0 1 - ?
+    ///  0  0 1 - ?
+    ///  1  1 0 - ?
+    ///  -  - - - ?
+    ///  ?  ? ? ? ?
+    /// ```
+    ///
+    /// XOR is unknown whenever either operand is unknown (`- ^ anything = -`, including `- ^ - = -`).
+    /// An empty field (`?`) denotes the empty set and propagates (`? ^ anything = ?`), making the
+    /// containing cube vacuous (see [`is_vacuous`](Self::is_vacuous)). A variable present in only one
+    /// operand reads as `-`, and the result is aligned by identity, so `a.xor(&b) == b.xor(&a)` even
+    /// when the two carry differently-ordered headers.
+    ///
+    /// This is truth-value logic, **not** cube/set intersection: plain `x & y` on the raw value-set
+    /// fields (what [`is_disjoint_with`](Self::is_disjoint_with) uses) is a different operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let a = Minterm::anonymous(&[Some(true), Some(true), None]);
+    /// let b = Minterm::anonymous(&[Some(false), Some(true), Some(false)]);
+    /// let r = a.xor(&b);
+    /// assert_eq!(r.value_at(0), Some(true)); //  1 ^ 0 = 1
+    /// assert_eq!(r.value_at(1), Some(false)); // 1 ^ 1 = 0
+    /// assert_eq!(r.value_at(2), None); //        - ^ 0 = -
+    /// ```
+    #[must_use]
+    pub fn xor(&self, other: &Self) -> Self {
+        self.combine(other, word_xor)
+    }
+
+    /// Element-wise **value-set image** **complement** of a row, aligned by variable identity. Each
+    /// field is read as the set of values it allows (`0`=`{0}`, `1`=`{1}`, `-`=`{0,1}`, empty `?`=`{}`)
+    /// and mapped to `{ !a : a ∈ x }` — restricting, on non-empty fields, to the three-valued (Kleene)
+    /// complement with `None` the unknown/don't-care value `-`:
+    ///
+    /// ```text
+    ///  !  →
+    ///  0    1
+    ///  1    0
+    ///  -    -
+    ///  ?    ?
+    /// ```
+    ///
+    /// A fixed value flips polarity; `-` is its own complement (`!- = -`), and an empty field (`?`)
+    /// denotes the empty set and is fixed, so `!? = ?`. Equivalent to the unary `!` operator. The
+    /// header is preserved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use espresso_logic::Minterm;
+    ///
+    /// let m = Minterm::anonymous(&[Some(false), Some(true), None]);
+    /// let r = m.not();
+    /// assert_eq!(r.value_at(0), Some(true)); //  !0 = 1
+    /// assert_eq!(r.value_at(1), Some(false)); // !1 = 0
+    /// assert_eq!(r.value_at(2), None); //        !- = -
+    /// ```
+    #[must_use]
+    pub fn not(&self) -> Self {
+        let values: Arc<[u64]> = self.values.iter().map(|&x| word_not(x)).collect();
+        Minterm::from_packed_words(Arc::clone(&self.symbols), values)
+    }
+}
+
+// The four owned/borrowed combinations of each three-valued bitwise operator, all delegating to the
+// named `&self, &Self` method above, via the shared `impl_binary_operator!` macro (generic over
+// `L: Label`).
+impl_binary_operator!({L: Label} Minterm<L>, BitAnd, bitand, and);
+impl_binary_operator!({L: Label} Minterm<L>, BitOr, bitor, or);
+impl_binary_operator!({L: Label} Minterm<L>, BitXor, bitxor, xor);
+
+// Unary complement, by value and by reference, both delegating to the inherent `not` method (the
+// binary macro does not cover the unary case).
+impl<L: Label> std::ops::Not for Minterm<L> {
+    type Output = Minterm<L>;
+    fn not(self) -> Minterm<L> {
+        Minterm::not(&self)
+    }
+}
+
+impl<L: Label> std::ops::Not for &Minterm<L> {
+    type Output = Minterm<L>;
+    fn not(self) -> Minterm<L> {
+        Minterm::not(self)
     }
 }
 
@@ -1316,6 +2009,264 @@ mod tests {
         assert!(dc < t);
     }
 
+    // --- is_vacuous ------------------------------------------------------------------------------
+
+    /// An empty field past the first 32-variable word (crossing the word boundary) still makes the
+    /// cube vacuous — the padding-exclusion mask must be computed per word, not just for the first.
+    #[test]
+    fn is_vacuous_detects_empty_field_across_word_boundary() {
+        let fields: Vec<InputField> = (0..40)
+            .map(|i| {
+                if i == 35 {
+                    InputField::Empty
+                } else {
+                    InputField::DontCare
+                }
+            })
+            .collect();
+        let m = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(40), fields);
+        assert!(m.is_vacuous());
+    }
+
+    /// A zero-arity minterm has no variable positions, so none can hold the empty literal: it is
+    /// never vacuous.
+    #[test]
+    fn is_vacuous_false_for_zero_arity() {
+        let m = Minterm::anonymous(&[]);
+        assert!(!m.is_vacuous());
+    }
+
+    /// A single don't-care (`-`) is not the empty literal (`?`): a don't-care minterm is not vacuous.
+    #[test]
+    fn is_vacuous_false_for_dont_care() {
+        let m = Minterm::anonymous(&[None]);
+        assert!(!m.is_vacuous());
+    }
+
+    // --- canonical-empty Eq/Ord/Hash -------------------------------------------------------------
+
+    /// Build the 3-variable vacuous minterm `1?0` (field 1 is the empty literal `?`).
+    fn vacuous_1q0() -> Minterm<Anonymous> {
+        let mut m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        m.set_field_at(1, InputField::Empty).unwrap();
+        m
+    }
+
+    /// Build the 3-variable vacuous minterm `0?1` (a different bit-pattern denoting the same ∅).
+    fn vacuous_0q1() -> Minterm<Anonymous> {
+        let mut m = Minterm::anonymous(&[Some(false), None, Some(true)]);
+        m.set_field_at(1, InputField::Empty).unwrap();
+        m
+    }
+
+    /// All vacuous minterms denote ∅, so they compare equal and must hash alike: two distinct
+    /// bit-patterns collapse to a single element in a `HashSet`.
+    #[test]
+    fn vacuous_minterms_are_equal_and_hash_alike() {
+        let a = vacuous_1q0();
+        let b = vacuous_0q1();
+        assert_eq!(a, b);
+        let set: std::collections::HashSet<_> = [a, b].into_iter().collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    /// A vacuous minterm (`1?0`) denotes ∅; a don't-care one (`1-0`) denotes a non-empty set, so
+    /// they are not equal.
+    #[test]
+    fn vacuous_differs_from_dont_care() {
+        let vac = vacuous_1q0();
+        let dc = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_ne!(vac, dc);
+    }
+
+    /// A vacuous minterm is the smallest denoted set, so it sorts after every non-vacuous one; two
+    /// vacuous minterms compare `Equal`.
+    #[test]
+    fn vacuous_sorts_after_non_vacuous() {
+        let vac = vacuous_1q0();
+        let non_vac = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_eq!(vac.cmp(&non_vac), Ordering::Greater);
+        assert_eq!(non_vac.cmp(&vac), Ordering::Less);
+        assert_eq!(vac.cmp(&vacuous_0q1()), Ordering::Equal);
+    }
+
+    /// `Ord::cmp == Equal` must agree with `PartialEq::eq` for every pair, verified exhaustively over
+    /// a 1-variable sweep across all four field states.
+    #[test]
+    fn cmp_equal_iff_eq_over_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x in &states {
+            for &y in &states {
+                let mut a = Minterm::anonymous(&[None]);
+                a.set_field_at(0, x).unwrap();
+                let mut b = Minterm::anonymous(&[None]);
+                b.set_field_at(0, y).unwrap();
+                assert_eq!(
+                    a.cmp(&b) == Ordering::Equal,
+                    a == b,
+                    "cmp/eq disagree for {x:?} vs {y:?}"
+                );
+            }
+        }
+    }
+
+    /// Several distinct vacuous bit-patterns (`1?0`, `0?1`, `??-`) collapse to one element in a
+    /// `BTreeSet`, exercising the ordering path as well as equality.
+    #[test]
+    fn set_collapses_distinct_vacuous_patterns() {
+        let mut qq_dc = Minterm::anonymous(&[None, None, None]);
+        qq_dc.set_field_at(0, InputField::Empty).unwrap();
+        qq_dc.set_field_at(1, InputField::Empty).unwrap();
+        let set: std::collections::BTreeSet<_> =
+            [vacuous_1q0(), vacuous_0q1(), qq_dc].into_iter().collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    // --- subset and disjointness with empty ----------------------------------------------------
+
+    /// ∅ ⊆ x for every x, but x ⊆ ∅ only if x = ∅: a vacuous minterm is a subset of a non-vacuous
+    /// one, never the other way round.
+    #[test]
+    fn vacuous_is_subset_of_everything_but_not_superset() {
+        let mut empty = Minterm::anonymous(&[Some(true), Some(false), None]);
+        empty.set_field_at(0, InputField::Empty).unwrap();
+        let x = Minterm::anonymous(&[Some(true), Some(false), Some(true)]);
+
+        assert!(empty.is_subset_of(&x));
+        assert!(!x.is_subset_of(&empty));
+    }
+
+    /// ∅ ⊆ ∅ holds — two different vacuous bit-patterns still satisfy the containment.
+    #[test]
+    fn vacuous_is_subset_of_itself() {
+        assert!(vacuous_1q0().is_subset_of(&vacuous_0q1()));
+        assert!(vacuous_0q1().is_subset_of(&vacuous_1q0()));
+    }
+
+    /// Multi-field check: `1?0 ⊆ 011` holds because the left side is vacuous (denotes ∅), not
+    /// because of any per-field containment (field 0 disagrees: `1` vs `0`).
+    #[test]
+    fn vacuous_multi_field_lhs_is_subset_regardless_of_fields() {
+        let lhs = vacuous_1q0(); // 1?0
+        let rhs = Minterm::anonymous(&[Some(false), Some(true), Some(true)]); // 011
+        assert!(lhs.is_subset_of(&rhs));
+    }
+
+    /// `?11 ⊆ 1?0` holds because the left side is vacuous, again despite disagreeing fields.
+    #[test]
+    fn vacuous_multi_field_lhs_qq11_is_subset_of_1q0() {
+        let mut lhs = Minterm::anonymous(&[None, Some(true), Some(true)]); // ?11
+        lhs.set_field_at(0, InputField::Empty).unwrap();
+        let rhs = vacuous_1q0(); // 1?0
+        assert!(lhs.is_subset_of(&rhs));
+    }
+
+    /// A vacuous minterm is disjoint from itself: ∅ ∩ ∅ = ∅.
+    #[test]
+    fn vacuous_is_disjoint_with_itself() {
+        let m = vacuous_1q0();
+        assert!(m.is_disjoint_with(&m));
+    }
+
+    /// The lattice law `a == b ⟺ a.is_subset_of(&b) && b.is_subset_of(&a)`, verified exhaustively
+    /// over a 1-variable sweep across all four field states — this exercises the canonical-∅ `Eq`
+    /// against the subset check built on top of it.
+    #[test]
+    fn subset_both_ways_iff_eq_over_one_variable_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x in &states {
+            for &y in &states {
+                let mut a = Minterm::anonymous(&[None]);
+                a.set_field_at(0, x).unwrap();
+                let mut b = Minterm::anonymous(&[None]);
+                b.set_field_at(0, y).unwrap();
+                assert_eq!(
+                    a.is_subset_of(&b) && b.is_subset_of(&a),
+                    a == b,
+                    "subset-both-ways/eq disagree for {x:?} vs {y:?}"
+                );
+            }
+        }
+    }
+
+    /// The same lattice law over a 2-variable sweep (16×16 pairs), so the check also exercises
+    /// multi-word containment across more than one field.
+    #[test]
+    fn subset_both_ways_iff_eq_over_two_variable_four_state_sweep() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        for &x0 in &states {
+            for &x1 in &states {
+                for &y0 in &states {
+                    for &y1 in &states {
+                        let mut a = Minterm::anonymous(&[None, None]);
+                        a.set_field_at(0, x0).unwrap();
+                        a.set_field_at(1, x1).unwrap();
+                        let mut b = Minterm::anonymous(&[None, None]);
+                        b.set_field_at(0, y0).unwrap();
+                        b.set_field_at(1, y1).unwrap();
+                        assert_eq!(
+                            a.is_subset_of(&b) && b.is_subset_of(&a),
+                            a == b,
+                            "subset-both-ways/eq disagree for ({x0:?},{x1:?}) vs ({y0:?},{y1:?})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Same-header (word-wise) and differing-header (merge-join) containment must agree when a `?`
+    /// operand is involved, on both sides of the comparison. Mirrors
+    /// [`merge_path_matches_shared_path`], but with variable `b` set to the empty literal on the
+    /// `a` side: `a_perm`/`b_perm` use *different* label orders from each other (not just from the
+    /// shared header) so the comparison genuinely exercises the merge-join path rather than
+    /// happening to hit the word-wise one via structurally-equal permuted headers.
+    #[test]
+    fn empty_subset_fast_path_matches_merge_join_path() {
+        let shared = syms(&["a", "b", "c"]);
+        let mut a_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), None, Some(false)]);
+        a_shared.set_field_at(1, InputField::Empty).unwrap();
+        let b_shared =
+            Minterm::from_symbols(Arc::clone(&shared), [Some(true), Some(false), Some(false)]);
+        // a = {a:1, b:?, c:0}; b = {a:1, b:0, c:0} expressed over permuted headers.
+        let mut a_perm =
+            Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(false), Some(true), None]);
+        a_perm.set_field_at(2, InputField::Empty).unwrap();
+        let b_perm = Minterm::from_symbols(
+            syms(&["b", "c", "a"]),
+            [Some(false), Some(false), Some(true)],
+        );
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+        assert_eq!(
+            a_shared.is_subset_of(&b_shared),
+            a_perm.is_subset_of(&b_perm)
+        );
+        assert_eq!(
+            b_shared.is_subset_of(&a_shared),
+            b_perm.is_subset_of(&a_perm)
+        );
+    }
+
+    // --- end subset and disjointness with empty ------------------------------------------------
+
     // --- Requirement 3: Hamming distance / disagreement set ------------------------------------
 
     /// {a:1,b:0,c:1} vs {a:1,b:1,c:0} disagree on exactly {b, c}: distance 2.
@@ -1405,18 +2356,104 @@ mod tests {
         assert_eq!(d_shared, vec![Symbol::from("b"), Symbol::from("c")]);
     }
 
-    /// A minterm carrying an empty literal (`?`) is at distance 0 from itself with an empty
-    /// disagreement set: an empty field is never counted as a disagreement, so reflexivity holds.
+    // --- cdist distance ---------------------------------------------------------------------------
+
+    /// A cube with one `?` field is at distance 1 from itself: the empty field intersects nothing —
+    /// not even itself — so it disagrees with itself while the two `0`/`1` fields still agree with
+    /// themselves. This is Espresso's cube distance, not the ordinary (reflexive) Hamming distance.
+    /// `disagreement` reports exactly that variable's label.
     #[test]
-    fn hamming_and_disagreement_reflexive_on_empty_literal() {
+    fn cdist_self_distance_counts_empty_fields() {
         let s = syms(&["a", "b", "c"]);
         let x = Minterm::from_symbols_input_fields(
             Arc::clone(&s),
             [InputField::One, InputField::Empty, InputField::Zero],
         );
-        assert!(x.has_empty_field());
-        assert_eq!(x.hamming_distance(&x), 0);
-        assert_eq!(x.disagreement(&x).count(), 0);
+        assert!(x.is_vacuous());
+        assert_eq!(x.hamming_distance(&x), 1);
+        assert_eq!(
+            x.disagreement(&x).collect::<Vec<_>>(),
+            vec![Symbol::from("b")]
+        );
+    }
+
+    /// The family law `is_disjoint_with(a, b)` iff `hamming_distance(a, b) > 0` holds unconditionally,
+    /// exhaustively over every four-state (`0`/`1`/`-`/`?`) combination on 1 and 2 variables.
+    #[test]
+    fn cdist_matches_disjointness_law() {
+        const FIELDS: [InputField; 4] = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+
+        let s1 = syms(&["a"]);
+        for &fa in &FIELDS {
+            for &fb in &FIELDS {
+                let a = Minterm::from_symbols_input_fields(Arc::clone(&s1), [fa]);
+                let b = Minterm::from_symbols_input_fields(Arc::clone(&s1), [fb]);
+                assert_eq!(
+                    a.is_disjoint_with(&b),
+                    a.hamming_distance(&b) > 0,
+                    "1-var {fa:?}/{fb:?}"
+                );
+            }
+        }
+
+        let s2 = syms(&["a", "b"]);
+        for &fa0 in &FIELDS {
+            for &fa1 in &FIELDS {
+                for &fb0 in &FIELDS {
+                    for &fb1 in &FIELDS {
+                        let a = Minterm::from_symbols_input_fields(Arc::clone(&s2), [fa0, fa1]);
+                        let b = Minterm::from_symbols_input_fields(Arc::clone(&s2), [fb0, fb1]);
+                        assert_eq!(
+                            a.is_disjoint_with(&b),
+                            a.hamming_distance(&b) > 0,
+                            "2-var {fa0:?}/{fa1:?} vs {fb0:?}/{fb1:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same-header word path and the differing-header merge-join path must agree on distance and
+    /// disagreement set even when an operand carries a `?` field.
+    #[test]
+    fn cdist_fast_path_matches_merge_path_with_empty() {
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared = Minterm::from_symbols_input_fields(
+            Arc::clone(&shared),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        let b_shared = Minterm::from_symbols_input_fields(
+            Arc::clone(&shared),
+            [InputField::One, InputField::One, InputField::DontCare],
+        );
+        // The same two cubes over independent, differently-permuted headers (merge-join path).
+        let a_perm = Minterm::from_symbols_input_fields(
+            syms(&["c", "a", "b"]),
+            [InputField::Zero, InputField::One, InputField::Empty],
+        );
+        let b_perm = Minterm::from_symbols_input_fields(
+            syms(&["b", "c", "a"]),
+            [InputField::One, InputField::DontCare, InputField::One],
+        );
+
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+        assert_eq!(
+            a_shared.hamming_distance(&b_shared),
+            a_perm.hamming_distance(&b_perm)
+        );
+
+        let mut d_shared: Vec<_> = a_shared.disagreement(&b_shared).collect();
+        d_shared.sort();
+        let mut d_perm: Vec<_> = a_perm.disagreement(&b_perm).collect();
+        d_perm.sort();
+        assert_eq!(d_shared, d_perm);
     }
 
     // --- Requirement 2: minterm expansion over an explicit variable set ------------------------
@@ -1493,7 +2530,7 @@ mod tests {
             Arc::clone(&vars),
             [InputField::Empty, InputField::DontCare],
         );
-        assert!(m.has_empty_field());
+        assert!(m.is_vacuous());
         assert_eq!(m.expand_over(&vars).count(), 0);
     }
 
@@ -1561,5 +2598,756 @@ mod tests {
         let via_face = m.project_to_labels(vars);
         let via_primitive = m.project_onto(&Symbols::deduped(vars));
         assert_eq!(via_face, via_primitive);
+    }
+
+    // --- In-place setters: set_value_at / set_value_of ----------------------------------------
+
+    /// Setting each of `Some(true)`, `Some(false)`, `None` at a position round-trips through
+    /// `value_at`.
+    #[test]
+    fn set_value_at_roundtrips() {
+        let mut m = Minterm::anonymous(&[Some(true), Some(false), None]);
+        m.set_value_at(0, Some(false)).unwrap();
+        assert_eq!(m.value_at(0), Some(false));
+        m.set_value_at(1, None).unwrap();
+        assert_eq!(m.value_at(1), None);
+        m.set_value_at(2, Some(true)).unwrap();
+        assert_eq!(m.value_at(2), Some(true));
+    }
+
+    /// A variable at index >= 32 lands in the second packed word; setting it must apply the
+    /// correct word/shift maths across the 32-var word boundary.
+    #[test]
+    fn set_value_at_crosses_word_boundary() {
+        let mut m = Minterm::anonymous(&[None; 40]);
+        m.set_value_at(35, Some(true)).unwrap();
+        assert_eq!(m.value_at(35), Some(true));
+        // Neighbouring fields, in particular the last one of the first word, are untouched.
+        assert_eq!(m.value_at(31), None);
+        assert_eq!(m.value_at(34), None);
+        assert_eq!(m.value_at(36), None);
+    }
+
+    /// Mutating one clone via `set_value_at` must not affect another clone sharing the same
+    /// packed buffer: `Arc::make_mut` has to detach (copy-on-write) rather than mutate in place.
+    #[test]
+    fn set_value_at_copy_on_write_isolates_clones() {
+        let original = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let mut mutated = original.clone();
+        mutated.set_value_at(1, Some(true)).unwrap();
+
+        assert_eq!(original.value_at(1), None);
+        assert_eq!(mutated.value_at(1), Some(true));
+        assert_ne!(original, mutated);
+        assert_eq!(
+            original,
+            Minterm::anonymous(&[Some(true), None, Some(false)])
+        );
+    }
+
+    /// Overwriting a position that carries the empty literal (`?`, from the PLA read path) with a
+    /// normal value must make it read back as that value, no longer as empty.
+    #[test]
+    fn set_value_at_overwrites_empty_field() {
+        let s = syms(&["a", "b", "c"]);
+        let mut m = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert!(m.is_vacuous());
+        m.set_value_at(1, Some(true)).unwrap();
+        assert!(!m.is_vacuous());
+        assert_eq!(m.value_at(1), Some(true));
+    }
+
+    /// An out-of-range index is rejected with `IndexOutOfRange`, reporting the requested index and
+    /// the row's actual arity.
+    #[test]
+    fn set_value_at_out_of_range_errors() {
+        let mut m = Minterm::anonymous(&[Some(true), None]);
+        let err = m.set_value_at(2, Some(false)).unwrap_err();
+        assert_eq!(err, IndexOutOfRange { index: 2, arity: 2 });
+    }
+
+    /// `set_value_of` writes by name and round-trips through `value_of`.
+    #[test]
+    fn set_value_of_roundtrips() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+        m.set_value_of("b", Some(false)).unwrap();
+        assert_eq!(m.value_of("b"), Some(false));
+        m.set_value_of("a", None).unwrap();
+        assert_eq!(m.value_of("a"), None);
+    }
+
+    /// `set_value_of` on a label absent from the row is an error, even when `value` is `None` — a
+    /// typo in the label must surface rather than silently succeed.
+    #[test]
+    fn set_value_of_absent_label_errors() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+        assert_eq!(m.set_value_of("missing", Some(true)), Err(LabelNotFound));
+        assert_eq!(m.set_value_of("missing", None), Err(LabelNotFound));
+    }
+
+    /// A minterm mutated into a given value pattern equals (and hashes the same as) a freshly-built
+    /// minterm of that pattern.
+    #[test]
+    fn set_value_at_matches_fresh_build_eq_and_hash() {
+        use std::collections::HashSet;
+
+        let s = syms(&["a", "b", "c"]);
+        let mut mutated = Minterm::from_symbols(Arc::clone(&s), [Some(false), Some(false), None]);
+        mutated.set_value_at(0, Some(true)).unwrap();
+        mutated.set_value_at(2, Some(true)).unwrap();
+
+        let fresh = Minterm::from_symbols(Arc::clone(&s), [Some(true), Some(false), Some(true)]);
+        assert_eq!(mutated, fresh);
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&mutated));
+    }
+
+    /// Mutating a variable to `None` (don't-care) makes the minterm equal to one that simply omits
+    /// that variable — the crate treats an absent variable as don't-care (mirrors
+    /// `absent_variable_equals_dont_care`).
+    #[test]
+    fn set_value_at_to_dont_care_equals_omitted_variable() {
+        let mut m = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), Some(false)]);
+        m.set_value_at(1, None).unwrap();
+
+        let short = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
+        assert_eq!(m, short);
+    }
+
+    // --- Three-valued (Kleene) bitwise operators: & | ^ ---------------------------------------
+
+    /// Scalar reference for three-valued AND (see the truth table on `Minterm::and`).
+    fn ref_and(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        }
+    }
+
+    /// Scalar reference for three-valued OR (see the truth table on `Minterm::or`).
+    fn ref_or(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Scalar reference for three-valued XOR (see the truth table on `Minterm::xor`).
+    fn ref_xor(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x ^ y),
+            _ => None,
+        }
+    }
+
+    /// Exhaustive 3x3 check of every operator against its scalar reference, on 1-variable minterms.
+    /// This is the primary catch for any SWAR mistake.
+    #[test]
+    fn ops_match_scalar_reference_exhaustively() {
+        let opts = [None, Some(false), Some(true)];
+        for &a in &opts {
+            for &b in &opts {
+                let ma = Minterm::anonymous(&[a]);
+                let mb = Minterm::anonymous(&[b]);
+                assert_eq!(ma.and(&mb).value_at(0), ref_and(a, b), "AND {a:?} {b:?}");
+                assert_eq!(ma.or(&mb).value_at(0), ref_or(a, b), "OR {a:?} {b:?}");
+                assert_eq!(ma.xor(&mb).value_at(0), ref_xor(a, b), "XOR {a:?} {b:?}");
+            }
+        }
+    }
+
+    /// The by-value/by-ref operator forms all delegate to the named methods.
+    #[test]
+    fn operator_forms_agree_with_methods() {
+        let a = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let b = Minterm::anonymous(&[Some(false), Some(true), None]);
+        assert_eq!(a.clone() & b.clone(), a.and(&b));
+        assert_eq!(&a & b.clone(), a.and(&b));
+        assert_eq!(a.clone() & &b, a.and(&b));
+        assert_eq!(&a & &b, a.and(&b));
+        assert_eq!(&a | &b, a.or(&b));
+        assert_eq!(&a ^ &b, a.xor(&b));
+    }
+
+    // --- operators propagate empty ------------------------------------------------------------
+
+    /// The four-state field as its value set, for the value-set image reference.
+    fn field_set(field: InputField) -> Vec<bool> {
+        match field {
+            InputField::Zero => vec![false],
+            InputField::One => vec![true],
+            InputField::DontCare => vec![false, true],
+            InputField::Empty => vec![],
+        }
+    }
+
+    /// Collapse a value set (which values it allows) back to the field that allows exactly it.
+    fn field_of_set(has_false: bool, has_true: bool) -> InputField {
+        match (has_false, has_true) {
+            (false, false) => InputField::Empty,
+            (true, false) => InputField::Zero,
+            (false, true) => InputField::One,
+            (true, true) => InputField::DontCare,
+        }
+    }
+
+    /// Reference value-set image of a binary Boolean op: `{ a op b : a ∈ x, b ∈ y }`.
+    fn ref_image(x: InputField, y: InputField, op: impl Fn(bool, bool) -> bool) -> InputField {
+        let (mut has_false, mut has_true) = (false, false);
+        for &a in &field_set(x) {
+            for &b in &field_set(y) {
+                if op(a, b) {
+                    has_true = true;
+                } else {
+                    has_false = true;
+                }
+            }
+        }
+        field_of_set(has_false, has_true)
+    }
+
+    /// Reference value-set image of complement: `{ !a : a ∈ x }`.
+    fn ref_not_image(x: InputField) -> InputField {
+        let (mut has_false, mut has_true) = (false, false);
+        for &a in &field_set(x) {
+            if !a {
+                has_true = true;
+            } else {
+                has_false = true;
+            }
+        }
+        field_of_set(has_false, has_true)
+    }
+
+    /// Exhaustive field-level check that `&`/`|`/`^` (4×4) and `!` (over the four states) realise the
+    /// value-set image, so the empty literal (`?`) propagates as the empty set.
+    #[test]
+    fn ops_realize_value_set_image_over_four_states() {
+        let states = [
+            InputField::Zero,
+            InputField::One,
+            InputField::DontCare,
+            InputField::Empty,
+        ];
+        let s = syms(&["a"]);
+        for &a in &states {
+            let ma = Minterm::from_symbols_input_fields(Arc::clone(&s), [a]);
+            assert_eq!(ma.not().field_at(0), ref_not_image(a), "NOT {a:?}");
+            for &b in &states {
+                let mb = Minterm::from_symbols_input_fields(Arc::clone(&s), [b]);
+                assert_eq!(
+                    ma.and(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x & y),
+                    "AND {a:?} {b:?}"
+                );
+                assert_eq!(
+                    ma.or(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x | y),
+                    "OR {a:?} {b:?}"
+                );
+                assert_eq!(
+                    ma.xor(&mb).field_at(0),
+                    ref_image(a, b, |x, y| x ^ y),
+                    "XOR {a:?} {b:?}"
+                );
+            }
+        }
+    }
+
+    /// An empty literal (`?`) denotes the empty set and propagates: `? op x` is vacuous for every
+    /// operator, whatever the other operand.
+    #[test]
+    fn empty_field_propagates() {
+        let s = syms(&["a"]);
+        let empty = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
+        assert!(empty.is_vacuous());
+
+        let f = Minterm::from_symbols(Arc::clone(&s), [Some(false)]);
+        let t = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
+        let dc = Minterm::from_symbols(Arc::clone(&s), [None]);
+
+        for other in [&f, &t, &dc, &empty] {
+            for result in [empty.and(other), empty.or(other), empty.xor(other)] {
+                assert_eq!(result.field_at(0), InputField::Empty);
+                assert!(result.is_vacuous());
+            }
+        }
+        assert_eq!(empty.not().field_at(0), InputField::Empty);
+        assert!(empty.not().is_vacuous());
+    }
+
+    /// A vacuous operand absorbs every binary operator from either side, and complement preserves
+    /// vacuity: the result is always vacuous.
+    #[test]
+    fn vacuous_operand_absorbs() {
+        let s = syms(&["a"]);
+        let vac = Minterm::from_symbols_input_fields(Arc::clone(&s), [InputField::Empty]);
+        let x = Minterm::from_symbols(Arc::clone(&s), [Some(true)]);
+        assert!(vac.and(&x).is_vacuous());
+        assert!(x.and(&vac).is_vacuous());
+        assert!(vac.or(&x).is_vacuous());
+        assert!(x.or(&vac).is_vacuous());
+        assert!(vac.xor(&x).is_vacuous());
+        assert!(x.xor(&vac).is_vacuous());
+        assert!(vac.not().is_vacuous());
+    }
+
+    /// A `?` at variable 32 (the second word) yields canonical padding: the result equals — and
+    /// hashes identically to — a freshly built minterm carrying the empty literal there, so the
+    /// second word's padding past the arity stays zero.
+    #[test]
+    fn empty_result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, so the second word's padding (31 unused fields) is exercised.
+        let mut fa = vec![InputField::DontCare; 33];
+        let mut fb = vec![InputField::DontCare; 33];
+        fa[0] = InputField::One;
+        fb[0] = InputField::One;
+        fa[32] = InputField::Empty; // ? & - = ?
+        let a = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), fa);
+        let b = Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), fb);
+        let got = a.and(&b);
+        assert!(got.is_vacuous());
+        assert_eq!(got.field_at(32), InputField::Empty);
+
+        let mut expected = vec![InputField::DontCare; 33];
+        expected[0] = InputField::One; // 1 & 1 = 1
+        expected[32] = InputField::Empty;
+        let fresh =
+            Minterm::from_symbols_input_fields(Symbols::<Anonymous>::anonymous(33), expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
+    }
+
+    // --- end operators propagate empty --------------------------------------------------------
+
+    /// A reordered header (same variables, different order): the result aligns by identity.
+    #[test]
+    fn reordered_header_aligns_by_identity() {
+        let a = Minterm::from_symbols(syms(&["a", "b"]), [Some(true), Some(false)]);
+        let b = Minterm::from_symbols(syms(&["b", "a"]), [Some(true), Some(false)]);
+        // a: {a:1, b:0}; b: {a:0, b:1}. AND ⇒ {a:0, b:0}.
+        let r = a.and(&b);
+        assert_eq!(r.value_of("a"), Some(false));
+        assert_eq!(r.value_of("b"), Some(false));
+    }
+
+    /// A subset header: a variable missing from one operand is treated as `-`.
+    #[test]
+    fn subset_header_missing_var_is_dont_care() {
+        let a = Minterm::from_symbols(syms(&["a", "b"]), [Some(false), Some(true)]);
+        let b = Minterm::from_symbols(syms(&["a"]), [Some(true)]);
+        // b has no "b", so b reads {a:1, b:-}. AND ⇒ {a:0, b:-}; OR ⇒ {a:1, b:1}.
+        let and = a.and(&b);
+        assert_eq!(and.value_of("a"), Some(false));
+        assert_eq!(and.value_of("b"), None);
+        let or = a.or(&b);
+        assert_eq!(or.value_of("a"), Some(true));
+        assert_eq!(or.value_of("b"), Some(true));
+    }
+
+    /// Disjoint headers: the union widens both, each absent variable reading as `-`.
+    #[test]
+    fn disjoint_headers_widen_to_union() {
+        let a = Minterm::from_symbols(syms(&["a"]), [Some(false)]);
+        let b = Minterm::from_symbols(syms(&["b"]), [Some(true)]);
+        // Union {a, b}: a reads {a:0, b:-}; b reads {a:-, b:1}.
+        let and = a.and(&b);
+        assert_eq!(and.value_of("a"), Some(false)); // 0 & - = 0
+        assert_eq!(and.value_of("b"), None); //         - & 1 = -
+        let or = a.or(&b);
+        assert_eq!(or.value_of("a"), None); //          0 | - = -
+        assert_eq!(or.value_of("b"), Some(true)); //    - | 1 = 1
+    }
+
+    /// The same-header fast path and the differing-header merge/union path give identical results.
+    #[test]
+    fn same_header_and_union_paths_agree() {
+        let shared = syms(&["a", "b", "c"]);
+        let a_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(true), None, Some(false)]);
+        let b_shared = Minterm::from_symbols(Arc::clone(&shared), [Some(false), Some(true), None]);
+        // The same two functions over independent, differently-permuted headers.
+        let a_perm = Minterm::from_symbols(syms(&["c", "a", "b"]), [Some(false), Some(true), None]);
+        let b_perm = Minterm::from_symbols(syms(&["b", "c", "a"]), [Some(true), None, Some(false)]);
+        assert_eq!(a_shared, a_perm);
+        assert_eq!(b_shared, b_perm);
+
+        assert_eq!(a_shared.and(&b_shared), a_perm.and(&b_perm));
+        assert_eq!(a_shared.or(&b_shared), a_perm.or(&b_perm));
+        assert_eq!(a_shared.xor(&b_shared), a_perm.xor(&b_perm));
+    }
+
+    /// Operands wider than one 32-variable word: the operators combine across the word boundary.
+    #[test]
+    fn ops_cross_word_boundary() {
+        let mut va = vec![None; 40];
+        let mut vb = vec![None; 40];
+        va[5] = Some(true);
+        va[35] = Some(false);
+        vb[5] = Some(false);
+        vb[35] = Some(true);
+        let a = Minterm::anonymous(&va);
+        let b = Minterm::anonymous(&vb);
+
+        let and = a.and(&b);
+        assert_eq!(and.value_at(5), Some(false)); //  1 & 0 = 0
+        assert_eq!(and.value_at(35), Some(false)); // 0 & 1 = 0
+        assert_eq!(and.value_at(10), None); //        - & - = -
+        let xor = a.xor(&b);
+        assert_eq!(xor.value_at(5), Some(true)); //   1 ^ 0 = 1
+        assert_eq!(xor.value_at(35), Some(true)); //  0 ^ 1 = 1
+        assert_eq!(xor.value_at(36), None); //        - ^ - = -
+    }
+
+    /// Commutativity `a op b == b op a` for several nontrivial pairs, including differing headers.
+    #[test]
+    fn operators_are_commutative() {
+        let a = Minterm::from_symbols(syms(&["a", "b", "c"]), [Some(true), None, Some(false)]);
+        let b = Minterm::from_symbols(syms(&["a", "b", "c"]), [Some(false), Some(true), None]);
+        assert_eq!(a.and(&b), b.and(&a));
+        assert_eq!(a.or(&b), b.or(&a));
+        assert_eq!(a.xor(&b), b.xor(&a));
+
+        // Differing headers must still commute under identity-based equality.
+        let p = Minterm::from_symbols(syms(&["x", "y"]), [Some(true), Some(false)]);
+        let q = Minterm::from_symbols(syms(&["y", "z"]), [Some(true), None]);
+        assert_eq!(p.and(&q), q.and(&p));
+        assert_eq!(p.or(&q), q.or(&p));
+        assert_eq!(p.xor(&q), q.xor(&p));
+    }
+
+    /// An operator result is in canonical form: it equals — and hashes identically to — a freshly
+    /// built minterm of the expected pattern, so its padding past the arity is zero (a stray padding
+    /// bit would break the word-wise `Eq`/`Hash` fast path).
+    #[test]
+    fn result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, so the second word's padding (31 unused fields) is exercised.
+        let mut va = vec![None; 33];
+        let mut vb = vec![None; 33];
+        va[0] = Some(true);
+        vb[0] = Some(true);
+        va[32] = Some(false);
+        vb[32] = None;
+        let a = Minterm::anonymous(&va);
+        let b = Minterm::anonymous(&vb);
+        let got = a.and(&b);
+
+        let mut expected = vec![None; 33];
+        expected[0] = Some(true); //  1 & 1 = 1
+        expected[32] = Some(false); // 0 & - = 0
+        let fresh = Minterm::anonymous(&expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
+    }
+
+    /// The full complement truth table, including `!- = -` and the empty literal fixed point `!? = ?`.
+    #[test]
+    fn not_truth_table() {
+        assert_eq!(
+            Minterm::anonymous(&[Some(false)]).not().value_at(0),
+            Some(true)
+        );
+        assert_eq!(
+            Minterm::anonymous(&[Some(true)]).not().value_at(0),
+            Some(false)
+        );
+        assert_eq!(Minterm::anonymous(&[None]).not().value_at(0), None);
+
+        // An empty literal (`?`) denotes the empty set and is its own complement, so `!? = ?`.
+        let empty = Minterm::from_symbols_input_fields(syms(&["a"]), [InputField::Empty]);
+        assert!(empty.is_vacuous());
+        let complemented = empty.not();
+        assert_eq!(complemented.field_at(0), InputField::Empty);
+        assert!(complemented.is_vacuous());
+    }
+
+    /// The by-value and by-reference `!` operator forms both delegate to the inherent `not`.
+    #[test]
+    fn not_operator_forms_agree_with_method() {
+        let m = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        assert_eq!(!m.clone(), m.not());
+        assert_eq!(!&m, m.not());
+    }
+
+    /// Double complement is the identity for defined values, and `!!- == -`.
+    #[test]
+    fn not_is_self_inverse() {
+        let m = Minterm::anonymous(&[Some(false), Some(true), None]);
+        assert_eq!(m.not().not(), m);
+    }
+
+    /// Complement across the 32-variable word boundary.
+    #[test]
+    fn not_crosses_word_boundary() {
+        let mut v = vec![None; 40];
+        v[5] = Some(true);
+        v[35] = Some(false);
+        let m = Minterm::anonymous(&v);
+        let r = m.not();
+        assert_eq!(r.value_at(5), Some(false));
+        assert_eq!(r.value_at(35), Some(true));
+        assert_eq!(r.value_at(10), None);
+    }
+
+    /// A complement result is canonical: it equals — and hashes identically to — a freshly built
+    /// minterm of the complemented pattern, so the padding past the arity stays zero.
+    #[test]
+    fn not_result_is_canonical_eq_and_hash() {
+        use std::collections::HashSet;
+
+        // 33 variables ⇒ two words, exercising the second word's padding.
+        let mut v = vec![None; 33];
+        v[0] = Some(true);
+        v[32] = Some(false);
+        let got = Minterm::anonymous(&v).not();
+
+        let mut expected = vec![None; 33];
+        expected[0] = Some(false);
+        expected[32] = Some(true);
+        let fresh = Minterm::anonymous(&expected);
+        assert_eq!(got, fresh);
+        assert_eq!(got.raw_words(), fresh.raw_words());
+
+        let mut set = HashSet::new();
+        set.insert(fresh);
+        assert!(set.contains(&got));
+    }
+
+    // --- InputField / field accessors ---------------------------------------------------------
+
+    /// Setting each of `InputField::One`, `InputField::Zero`, `InputField::DontCare`,
+    /// `InputField::Empty` at a position round-trips through `field_at`, including the empty
+    /// literal that `Option<bool>` cannot express.
+    #[test]
+    fn set_field_at_roundtrips_all_four_states() {
+        let mut m = Minterm::anonymous(&[Some(true), Some(false), None]);
+        m.set_field_at(0, InputField::Zero).unwrap();
+        assert_eq!(m.field_at(0), InputField::Zero);
+        m.set_field_at(1, InputField::DontCare).unwrap();
+        assert_eq!(m.field_at(1), InputField::DontCare);
+        m.set_field_at(2, InputField::One).unwrap();
+        assert_eq!(m.field_at(2), InputField::One);
+        m.set_field_at(2, InputField::Empty).unwrap();
+        assert_eq!(m.field_at(2), InputField::Empty);
+        assert!(m.is_vacuous());
+    }
+
+    /// `field_at` past the arity reads as `InputField::DontCare`, mirroring `value_at`.
+    #[test]
+    fn field_at_past_arity_is_dont_care() {
+        let m = Minterm::anonymous(&[Some(true)]);
+        assert_eq!(m.field_at(1), InputField::DontCare);
+        assert_eq!(m.field_at(100), InputField::DontCare);
+    }
+
+    /// `field_of`/`set_field_of` write and read by name, including the empty literal; an absent
+    /// label reads as `InputField::DontCare` and is always an error to set.
+    #[test]
+    fn field_of_and_set_field_of_roundtrip() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", None)]).unwrap();
+        assert_eq!(m.field_of("a"), InputField::One);
+        assert_eq!(m.field_of("missing"), InputField::DontCare);
+
+        m.set_field_of("b", InputField::Empty).unwrap();
+        assert_eq!(m.field_of("b"), InputField::Empty);
+        assert!(m.is_vacuous());
+        assert_eq!(
+            m.set_field_of("missing", InputField::One),
+            Err(LabelNotFound)
+        );
+    }
+
+    /// An out-of-range index is rejected with `IndexOutOfRange`, reporting the requested index and
+    /// the row's actual arity.
+    #[test]
+    fn set_field_at_out_of_range_errors() {
+        let mut m = Minterm::anonymous(&[Some(true), None]);
+        let err = m.set_field_at(2, InputField::Zero).unwrap_err();
+        assert_eq!(err, IndexOutOfRange { index: 2, arity: 2 });
+    }
+
+    /// `set_field_of` on a label absent from the row is an error, even when `field` is
+    /// `InputField::DontCare` — a typo in the label must surface rather than silently succeed.
+    #[test]
+    fn set_field_of_absent_label_errors() {
+        let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+        assert_eq!(
+            m.set_field_of("missing", InputField::One),
+            Err(LabelNotFound)
+        );
+        assert_eq!(
+            m.set_field_of("missing", InputField::DontCare),
+            Err(LabelNotFound)
+        );
+    }
+
+    /// Mutating one clone via `set_field_at` must not affect another clone sharing the same packed
+    /// buffer: `Arc::make_mut` has to detach (copy-on-write) rather than mutate in place.
+    #[test]
+    fn set_field_at_copy_on_write_isolates_clones() {
+        let original = Minterm::anonymous(&[Some(true), None, Some(false)]);
+        let mut mutated = original.clone();
+        mutated.set_field_at(1, InputField::Empty).unwrap();
+
+        assert_eq!(original.field_at(1), InputField::DontCare);
+        assert_eq!(mutated.field_at(1), InputField::Empty);
+        assert!(!original.is_vacuous());
+        assert!(mutated.is_vacuous());
+        assert_eq!(
+            original,
+            Minterm::anonymous(&[Some(true), None, Some(false)])
+        );
+    }
+
+    /// `fields()` yields the same four-state sequence as `field_at`, in index order, including a
+    /// leading empty literal.
+    #[test]
+    fn fields_iterator_matches_field_at() {
+        let s = syms(&["a", "b", "c"]);
+        let m = Minterm::from_symbols_input_fields(
+            Arc::clone(&s),
+            [InputField::Empty, InputField::One, InputField::DontCare],
+        );
+        let got: Vec<_> = m.fields().collect();
+        assert_eq!(
+            got,
+            vec![InputField::Empty, InputField::One, InputField::DontCare]
+        );
+        assert_eq!(m.fields().len(), 3);
+    }
+
+    /// `Display` renders the faithful four-state row, so a cube carrying the empty literal (`?`)
+    /// shows it verbatim rather than folding it to `-` (unlike the `Option<bool>` view).
+    #[test]
+    fn display_renders_empty_literal_as_question_mark() {
+        let m = Minterm::from_symbols_input_fields(
+            Symbols::<Anonymous>::anonymous(3),
+            [InputField::One, InputField::Empty, InputField::Zero],
+        );
+        assert_eq!(m.to_string(), "1?0");
+    }
+
+    // --- InputField boolean operators ---------------------------------------------------------
+
+    const FIELD_STATES: [InputField; 4] = [
+        InputField::Zero,
+        InputField::One,
+        InputField::DontCare,
+        InputField::Empty,
+    ];
+
+    /// The scalar `InputField` operators realise the value-set image, so every ordered pair over the
+    /// four states (for `&`/`|`/`^`) and every single state (for `!`) matches the reference image.
+    #[test]
+    fn input_field_operators_match_value_set_image() {
+        for &a in &FIELD_STATES {
+            assert_eq!(!a, ref_not_image(a), "NOT {a:?}");
+            for &b in &FIELD_STATES {
+                assert_eq!(a & b, ref_image(a, b, |x, y| x & y), "AND {a:?} {b:?}");
+                assert_eq!(a | b, ref_image(a, b, |x, y| x | y), "OR {a:?} {b:?}");
+                assert_eq!(a ^ b, ref_image(a, b, |x, y| x ^ y), "XOR {a:?} {b:?}");
+            }
+        }
+    }
+
+    /// Build a minterm of arity `fields.len()` by writing each state through `set_field_at`.
+    fn minterm_from_fields(fields: &[InputField]) -> Minterm<Anonymous> {
+        let mut m = Minterm::from_symbols_input_fields(
+            Symbols::<Anonymous>::anonymous(fields.len()),
+            (0..fields.len()).map(|_| InputField::Empty),
+        );
+        for (i, &f) in fields.iter().enumerate() {
+            m.set_field_at(i, f).unwrap();
+        }
+        m
+    }
+
+    /// Every arity-`n` four-state minterm, as its field rows (all `4^n` combinations).
+    fn all_field_rows(n: usize) -> Vec<Vec<InputField>> {
+        let mut rows = vec![vec![]];
+        for _ in 0..n {
+            rows = rows
+                .into_iter()
+                .flat_map(|row| {
+                    FIELD_STATES.iter().map(move |&f| {
+                        let mut next = row.clone();
+                        next.push(f);
+                        next
+                    })
+                })
+                .collect();
+        }
+        rows
+    }
+
+    /// The scalar operators and the element-wise `Minterm` operators agree field-for-field: over an
+    /// exhaustive sweep of all 1- and 2-variable four-state minterms, `(a op b).field_at(i)` equals
+    /// `a.field_at(i) op b.field_at(i)` for each `op` and index, and likewise for complement.
+    #[test]
+    fn input_field_operators_agree_with_minterm_operators() {
+        for n in 1..=2 {
+            let rows = all_field_rows(n);
+            for ra in &rows {
+                let a = minterm_from_fields(ra);
+                for i in 0..n {
+                    assert_eq!((!&a).field_at(i), !a.field_at(i), "NOT {ra:?} at {i}");
+                }
+                for rb in &rows {
+                    let b = minterm_from_fields(rb);
+                    let (and, or, xor) = (a.and(&b), a.or(&b), a.xor(&b));
+                    for i in 0..n {
+                        assert_eq!(
+                            and.field_at(i),
+                            a.field_at(i) & b.field_at(i),
+                            "AND {ra:?} {rb:?} at {i}"
+                        );
+                        assert_eq!(
+                            or.field_at(i),
+                            a.field_at(i) | b.field_at(i),
+                            "OR {ra:?} {rb:?} at {i}"
+                        );
+                        assert_eq!(
+                            xor.field_at(i),
+                            a.field_at(i) ^ b.field_at(i),
+                            "XOR {ra:?} {rb:?} at {i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Spot-checks of the natural identities: complement is an involution and self-XOR yields `0` on
+    /// the fixed values (but `-`/`?` on the imprecise ones, per the value-set image).
+    #[test]
+    fn input_field_operator_identities() {
+        for &x in &FIELD_STATES {
+            assert_eq!(!!x, x, "double negation of {x:?}");
+        }
+        assert_eq!(InputField::Zero ^ InputField::Zero, InputField::Zero);
+        assert_eq!(InputField::One ^ InputField::One, InputField::Zero);
+        assert_eq!(
+            InputField::DontCare ^ InputField::DontCare,
+            InputField::DontCare
+        );
+        assert_eq!(InputField::Empty ^ InputField::Empty, InputField::Empty);
     }
 }

@@ -26,6 +26,8 @@
 //! - [`AddExprError`] - Adding expressions to covers
 //! - [`ToExprError`] - Converting covers to expressions
 //! - [`DuplicateLabel`] - A labelled cube/cover constructor was handed a repeated input or output label
+//! - [`IndexOutOfRange`] - A positional `Minterm`/`OutputSet` setter was given an out-of-range index
+//! - [`LabelNotFound`] - A by-label `Minterm`/`OutputSet` setter was given a label absent from the row
 //!
 //! ## Expression Module Errors
 //!
@@ -40,7 +42,8 @@
 
 // Re-export error types from submodules for backward compatibility
 pub use crate::cover::error::{
-    AddExprError, ArityMismatch, CoverError, DuplicateLabel, RelabelError, ToExprError,
+    AddExprError, ArityMismatch, CoverError, DuplicateLabel, IndexOutOfRange, LabelNotFound,
+    RelabelError, ToExprError,
 };
 pub use crate::cover::pla::error::{PLAError, PLAReadError, PLAWriteError};
 pub use crate::espresso::error::{CubeError, InstanceError, MinimizationError};

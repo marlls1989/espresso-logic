@@ -70,19 +70,22 @@ impl<I, O> fmt::Display for Cube<I, O> {
 }
 
 /// Two cubes are equal when they belong to the same set, their input patterns are equal, and their
-/// output bitmaps are equal. Inputs compare by [`Minterm`]'s identity-based equality (aligning by
-/// variable name, absent variables as don't-cares); outputs compare positionally by [`OutputSet`].
-impl<I: Label, O> PartialEq for Cube<I, O> {
+/// output bitmaps are equal. Both halves compare by identity-based equality (aligning by variable
+/// name, absent inputs as don't-cares and absent outputs as unasserted); within a cover all cubes
+/// share one header per side, so this reduces to the by-column comparison there. The input half
+/// compares by denoted set, so cubes whose inputs are vacuous (any empty literal `?`) compare equal
+/// whenever they share a set tag and outputs, regardless of the rest of the input pattern.
+impl<I: Label, O: Label> PartialEq for Cube<I, O> {
     fn eq(&self, other: &Self) -> bool {
         self.set == other.set && self.inputs == other.inputs && self.outputs == other.outputs
     }
 }
 
-impl<I: Label, O> Eq for Cube<I, O> {}
+impl<I: Label, O: Label> Eq for Cube<I, O> {}
 
 /// Hashes the same fields the [`PartialEq`] impl compares (set tag + input minterm + output bitmap),
 /// keeping the `Hash`/`Eq` contract so a `Cube` can key a `HashMap`/`HashSet`.
-impl<I: Label, O> std::hash::Hash for Cube<I, O> {
+impl<I: Label, O: Label> std::hash::Hash for Cube<I, O> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.set.hash(state);
         self.inputs.hash(state);
