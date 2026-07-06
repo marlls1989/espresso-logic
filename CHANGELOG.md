@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Bdd::restrict_many` (mirrored on `ScopedBdd`): simultaneous multi-variable Shannon cofactor,
+  one iterative walk interning only residual nodes, equal to chaining restrict in any order;
+  absent names/empty assignment no-op; a repeated name takes its last entry.
+- `ScopedBdd::restrict`: the single-variable cofactor now mirrored on the scoped handle, closing a
+  parity gap with the owned `Bdd::restrict`.
+- `Bdd::evaluate_fast`: write-free probe deciding whether a possibly-partial assignment forces a
+  constant; folds over a read-only snapshot, no exclusive borrow, interns nothing.
+
+### Changed
+
+- `Bdd::evaluate` now layers on both — a determined assignment is decided without an exclusive
+  borrow, a partial one builds its residual in a single pass instead of one restrict per fixed
+  variable; public contract unchanged.
+
 ## [5.4.0] - 2026-07-03
 
 ### Added
