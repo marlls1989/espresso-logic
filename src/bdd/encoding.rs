@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use crate::expression::manager::{BddManager, NodeId, VarId, FALSE_NODE, TRUE_NODE};
-use crate::expression::manager_cell::ManagerCell;
+use crate::bdd::manager::{BddManager, NodeId, VarId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager_cell::ManagerCell;
 
 /// `f ∧ g`, encoded as `ite(f, g, 0)`.
 pub(super) fn and<C: ManagerCell>(cell: &C, f: NodeId, g: NodeId) -> NodeId {

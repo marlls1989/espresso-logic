@@ -2,15 +2,15 @@
 //!
 //! Two in-crate brand types are declared here, `BrandA` and `BrandB`. A brand marks one namespace for
 //! uniqueness only; it selects no storage backend, so each pairs freely with either
-//! [`LocalCell`](crate::expression::manager_cell::LocalCell) or
-//! [`SyncCell`](crate::expression::manager_cell::SyncCell). The sealed [`Brand`] trait permits these
+//! [`LocalCell`](crate::bdd::manager_cell::LocalCell) or
+//! [`SyncCell`](crate::bdd::manager_cell::SyncCell). The sealed [`Brand`] trait permits these
 //! in-crate impls; downstream code mints brands through the public `bdd_builder!` / `sync_bdd_builder!`
 //! macros.
 
 use super::brand::{brand_seal, Brand};
 use super::BddBuilder;
 use crate::cover::{Cover, CoverType, Cube, CubeType, InputField, Minterm, Symbols};
-use crate::expression::manager_cell::{LocalCell, SyncCell};
+use crate::bdd::manager_cell::{LocalCell, SyncCell};
 use crate::Symbol;
 use std::collections::BTreeSet;
 use std::sync::Arc;
