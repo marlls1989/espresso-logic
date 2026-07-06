@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "espresso-logic"
-version = "5.4.0"
+version = "5.5.0"
 dependencies = [
  "bindgen",
  "cc",
