@@ -9,8 +9,8 @@
 
 use super::brand::{brand_seal, Brand};
 use super::BddBuilder;
-use crate::cover::{Cover, CoverType, Cube, CubeType, InputField, Minterm, Symbols};
 use crate::bdd::manager_cell::{LocalCell, SyncCell};
+use crate::cover::{Cover, CoverType, Cube, CubeType, InputField, Minterm, Symbols};
 use crate::Symbol;
 use std::collections::BTreeSet;
 use std::sync::Arc;
