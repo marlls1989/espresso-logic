@@ -200,26 +200,53 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// restricting every support variable collapses the function to a constant.
     #[must_use]
     pub fn restrict<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
-        // Resolve the name without creating it: an absent variable yields `None` → no-op.
-        let var_id = self.cell.read().var_id(var.as_ref());
-        match var_id {
-            None => self.clone(),
-            Some(id) => {
-                let root = BddManager::restrict(&self.cell, self.root, id, value);
-                Self::from_root(&self.cell, root)
-            }
-        }
+        Self::from_root(
+            &self.cell,
+            super::encoding::restrict(&self.cell, self.root, var.as_ref(), value),
+        )
     }
 
     /// Shannon cofactor by assignment — an alias of [`restrict`](Self::restrict).
     ///
     /// In this BDD modelling the cofactor *by a single assignment* and `restrict` are the same operation,
     /// so `cofactor` is provided as the conventional name; both substitute `var := value` and reduce. For a
-    /// multi-variable cofactor, chain `restrict`/`cofactor` calls (or use [`forall`](Self::forall) /
-    /// [`exists`](Self::exists) to quantify).
+    /// multi-variable cofactor, use [`restrict_many`](Self::restrict_many) (or chain `restrict`/`cofactor`
+    /// calls; or use [`forall`](Self::forall) / [`exists`](Self::exists) to quantify).
     #[must_use]
     pub fn cofactor<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
         self.restrict(var, value)
+    }
+
+    /// Simultaneous multi-variable Shannon cofactor: `self|{v1=b1, v2=b2, …}` in a single pass.
+    ///
+    /// Fixes every named variable to its constant at once, equal to chaining
+    /// [`restrict`](Self::restrict) over the same assignments in **any order** but without re-walking
+    /// the diagram per variable. A name repeated in `assignment` takes its **last** entry; a name
+    /// absent from `assignment` (or from `self`'s variables) is left free; an empty `assignment` is a
+    /// no-op.
+    ///
+    /// ```
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b");
+    /// let c = builder.var("c");
+    ///
+    /// // f = a & b | !a & c; fixing a=1, b=0 leaves the a & b term false, so f reduces to false.
+    /// let f = (&a & &b) | (!&a & &c);
+    /// let result = f.restrict_many([("a", true), ("b", false)]);
+    /// assert!(result.is_contradiction());
+    /// ```
+    #[must_use]
+    pub fn restrict_many<S: AsRef<str>>(
+        &self,
+        assignment: impl IntoIterator<Item = (S, bool)>,
+    ) -> Self {
+        Self::from_root(
+            &self.cell,
+            super::encoding::restrict_many(&self.cell, self.root, assignment),
+        )
     }
 
     /// Universal quantification over `vars`: `∀v∈vars. self`.
@@ -367,13 +394,89 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 
     // ---- Evaluation ---------------------------------------------------------------------------
 
+    /// Probe whether the variables `assignment` **fixes** already determine this function, without
+    /// interning a single node.
+    ///
+    /// Returns `Some(b)` iff restricting `self` by the fixed variables yields the constant `b`, and
+    /// `None` iff the function still depends on a free variable. A complete assignment over the
+    /// support therefore always yields `Some`; a genuinely partial one that leaves a live dependence
+    /// yields `None`. Fields that are don't-care/empty — or names the function does not test — leave
+    /// their variable free.
+    ///
+    /// This is a **write-free** fast path: it [`fold`](Self::fold)s the diagram over the lattice
+    /// `Option<bool>`, snapshotting the structure under one read guard and walking it guard-free, so
+    /// it never takes the manager's write lock and interns nothing. Its result is exactly the
+    /// `Ok`-arm of [`evaluate`](Self::evaluate) (which falls back to building the residual only when
+    /// this returns `None`).
+    ///
+    /// The fold is correct by induction on the diagram: a terminal folds to its own constant; a node
+    /// testing a **fixed** variable inherits the folded result of the chosen child; a node testing a
+    /// **free** variable folds to a constant iff both children folded to the *same* `Some`, and to
+    /// `None` otherwise — a difference between the branches is a genuine dependence on that free
+    /// variable.
+    ///
+    /// The label type may be any [`StringLabel`](crate::StringLabel) (`String`,
+    /// [`Symbol`](crate::Symbol), `Arc<str>`, …).
+    ///
+    /// ```
+    /// use espresso_logic::{bdd_builder, Minterm, Symbol};
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b");
+    /// let c = builder.var("c");
+    /// let f = (&a & &b) | (!&a & &c); // a & b | !a & c
+    ///
+    /// // Complete over the support: determined.
+    /// let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("b", Some(false)), ("c", Some(true))]).unwrap();
+    /// assert_eq!(f.evaluate_fast(&m), Some(false));
+    ///
+    /// // Partial but still collapsing: a is free, but b=1 and c=1 make both branches true.
+    /// let m = Minterm::<Symbol>::with_labels(&[("b", Some(true)), ("c", Some(true))]).unwrap();
+    /// assert_eq!(f.evaluate_fast(&m), Some(true));
+    ///
+    /// // Genuinely partial: fixing only a leaves a live dependence (on b or c).
+    /// let m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+    /// assert_eq!(f.evaluate_fast(&m), None);
+    /// ```
+    #[must_use]
+    pub fn evaluate_fast<L: StringLabel>(&self, assignment: &Minterm<L>) -> Option<bool> {
+        // The four-state Empty field folds to don't-care via the value view, leaving that variable
+        // free — the same view the restrict-based `evaluate` uses.
+        let fixed: HashMap<&str, bool> = assignment
+            .vars()
+            .iter()
+            .zip(assignment.iter())
+            .filter_map(|(label, value)| value.map(|v| (label.as_ref(), v)))
+            .collect();
+        self.fold(|node| match node {
+            BddNode::Terminal(b) => Some(b),
+            BddNode::Decision {
+                variable,
+                low,
+                high,
+            } => match fixed.get(variable) {
+                Some(&true) => high,
+                Some(&false) => low,
+                None => {
+                    if low == high {
+                        low
+                    } else {
+                        None
+                    }
+                }
+            },
+        })
+    }
+
     /// Evaluate this function under a (possibly partial) variable `assignment`, given as a [`Minterm`].
     ///
-    /// Every variable the minterm **fixes** (a concrete `1`/`0` field) is substituted into the function
-    /// via the canonical [`restrict`](Self::restrict); a don't-care (`-`) field — or a variable the
-    /// minterm does not carry — leaves that variable **free**, and a name the function does not depend on
-    /// is ignored. There is no silent default: a variable absent from the assignment is treated as
-    /// *unassigned*, never as `false`.
+    /// A write-free [`evaluate_fast`](Self::evaluate_fast) probe decides the determined case; only when
+    /// free variables remain is the residual materialised via [`restrict_many`](Self::restrict_many).
+    /// Every variable the minterm **fixes** (a concrete `1`/`0` field) is fixed to its constant; a
+    /// don't-care (`-`) field — or a variable the minterm does not carry — leaves that variable **free**,
+    /// and a name the function does not depend on is ignored. There is no silent default: a variable
+    /// absent from the assignment is treated as *unassigned*, never as `false`.
     ///
     /// The result reflects whether the fixed variables already determine the function:
     ///
@@ -389,21 +492,25 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// [`BoolExpr`](crate::BoolExpr): build the expression into a builder with
     /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
     pub fn evaluate<L: StringLabel>(&self, assignment: &Minterm<L>) -> Result<bool, Bdd<B, C>> {
-        // Restrict by every variable the minterm fixes; don't-care/empty fields leave the variable
-        // free. Restricting a name absent from the function is a no-op.
-        let mut current = self.clone();
-        for (label, value) in assignment.vars().iter().zip(assignment.iter()) {
-            if let Some(v) = value {
-                current = current.restrict(label.as_ref(), v);
-            }
+        // Write-free fast path: if the fixed variables already determine the function, we're done
+        // without interning a single node.
+        if let Some(value) = self.evaluate_fast(assignment) {
+            return Ok(value);
         }
-        if current.is_tautology() {
-            Ok(true)
-        } else if current.is_contradiction() {
-            Ok(false)
-        } else {
-            Err(current)
-        }
+        // Otherwise materialise the residual over the still-free variables in one restrict pass.
+        // Restricting a name absent from the function is a no-op; don't-care/empty fields stay free.
+        let residual = self.restrict_many(
+            assignment
+                .vars()
+                .iter()
+                .zip(assignment.iter())
+                .filter_map(|(label, value)| value.map(|v| (label.as_ref(), v))),
+        );
+        debug_assert!(
+            !residual.is_tautology() && !residual.is_contradiction(),
+            "evaluate_fast returned None for a determined assignment - BDD evaluation bug"
+        );
+        Err(residual)
     }
 
     // ---- Introspection ------------------------------------------------------------------------
