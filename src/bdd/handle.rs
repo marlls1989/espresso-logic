@@ -21,13 +21,11 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use super::builder::BddBuilder;
+use crate::bdd::manager::{BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
 };
-use crate::bdd::manager::{
-    BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE,
-};
-use crate::bdd::manager_cell::ManagerCell;
 use crate::expression::BoolExpr;
 use crate::impl_binary_operator;
 use crate::Symbol;

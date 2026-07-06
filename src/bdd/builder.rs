@@ -22,10 +22,10 @@ use std::marker::PhantomData;
 use super::brand::Brand;
 use super::handle::Bdd;
 use super::scope::{Scope, ScopedBdd};
-use crate::cover::{Anonymous, Cover, StringLabel};
-use crate::error::MinimizationError;
 use crate::bdd::manager::{BddManager, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
+use crate::cover::{Anonymous, Cover, StringLabel};
+use crate::error::MinimizationError;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 use crate::Symbol;
 
