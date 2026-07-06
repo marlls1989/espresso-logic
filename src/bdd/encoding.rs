@@ -58,3 +58,33 @@ pub(super) fn compose_map<C: ManagerCell, S: AsRef<str>>(
     }
     BddManager::compose_map(cell, f, &map)
 }
+
+/// `f|var=value` — resolve the name (absent ⇒ no-op) and run the restrict engine.
+pub(super) fn restrict<C: ManagerCell>(cell: &C, f: NodeId, var: &str, value: bool) -> NodeId {
+    let var_id = cell.read().var_id(var);
+    match var_id {
+        None => f,
+        Some(v) => BddManager::restrict(cell, f, v, value),
+    }
+}
+
+/// Simultaneous `f|{v=value}` over name-keyed entries; absent names dropped, a repeated
+/// name takes its LAST entry; empty (post-resolution) map ⇒ no-op.
+pub(super) fn restrict_many<C: ManagerCell, S: AsRef<str>>(
+    cell: &C,
+    f: NodeId,
+    entries: impl IntoIterator<Item = (S, bool)>,
+) -> NodeId {
+    let entries: Vec<(S, bool)> = entries.into_iter().collect();
+    let map: HashMap<VarId, bool> = {
+        let mgr = cell.read();
+        entries
+            .iter()
+            .filter_map(|(name, value)| mgr.var_id(name.as_ref()).map(|v| (v, *value)))
+            .collect()
+    };
+    if map.is_empty() {
+        return f;
+    }
+    BddManager::restrict_many(cell, f, &map)
+}

@@ -9,7 +9,7 @@
 
 use super::brand::{brand_seal, Brand};
 use super::BddBuilder;
-use crate::cover::{Cover, CoverType, Cube, CubeType, Minterm, Symbols};
+use crate::cover::{Cover, CoverType, Cube, CubeType, InputField, Minterm, Symbols};
 use crate::expression::manager_cell::{LocalCell, SyncCell};
 use crate::Symbol;
 use std::collections::BTreeSet;
@@ -94,6 +94,13 @@ fn context_send_asymmetry() {
 fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
     let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect()).unwrap();
     Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| Some(*v)))
+}
+
+/// Build a `Minterm<Symbol>` from `(name, value)` pairs where `value` may be `None` — a variable
+/// present in the header but left free — rather than always fixed like [`assign`].
+fn assign_partial(pairs: &[(&str, Option<bool>)]) -> Minterm<Symbol> {
+    let syms = Symbols::new(pairs.iter().map(|(n, _)| Symbol::from(*n)).collect()).unwrap();
+    Minterm::from_symbols(syms, pairs.iter().map(|(_, v)| *v))
 }
 
 // ---- Requirement 1: Shannon cofactor / quantification ---------------------------------------------
@@ -312,6 +319,54 @@ fn evaluate_complete_minterm_matches_truth_table() {
 }
 
 #[test]
+fn evaluate_fast_collapsing_partial() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = (a.clone() & b.clone()) | (!a.clone() & b.clone());
+
+    // f is semantically just `b`; fixing b alone determines the result even though a is left free
+    // (absent from the assignment).
+    assert_eq!(f.evaluate_fast(&assign(&[("b", true)])), Some(true));
+    assert_eq!(f.evaluate_fast(&assign(&[("b", false)])), Some(false));
+}
+
+#[test]
+fn evaluate_fast_empty_assignment() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a & b;
+    let empty = assign(&[]);
+
+    // A non-constant function under an empty assignment is undetermined.
+    assert_eq!(f.evaluate_fast(&empty), None);
+
+    // A constant ignores the (empty) assignment and is always determined.
+    assert_eq!(builder.constant(true).evaluate_fast(&empty), Some(true));
+    assert_eq!(builder.constant(false).evaluate_fast(&empty), Some(false));
+}
+
+#[test]
+fn evaluate_treats_empty_field_as_free() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let x = builder.var("x");
+    let f = a.clone() & x.clone();
+
+    let mut m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("x", Some(true))]).unwrap();
+    assert_eq!(f.evaluate_fast(&m), Some(true));
+    assert_eq!(f.evaluate(&m), Ok(true));
+
+    // Blanking x to the empty literal (`?`) folds to don't-care via the value view (`iter`), leaving
+    // x free — the same as if x were absent from the assignment.
+    m.set_field_of("x", InputField::Empty).unwrap();
+    assert_eq!(f.evaluate_fast(&m), None);
+    let residual = f.evaluate(&m).unwrap_err();
+    assert!(residual.equivalent_to(&x));
+}
+
+#[test]
 fn restrict_absent_variable_is_noop() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
@@ -355,6 +410,116 @@ fn cofactor_is_restrict() {
     assert!(f
         .cofactor("a", false)
         .equivalent_to(&f.restrict("a", false)));
+}
+
+#[test]
+fn restrict_many_agrees_with_restrict_chain_exhaustive() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let d = builder.var("d");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone() & d.clone());
+
+    let names = ["a", "b", "c", "d"];
+    let states = [None, Some(true), Some(false)];
+    // All 3^4 = 81 partial assignments over a, b, c, d (each variable unset / true / false).
+    for &s0 in &states {
+        for &s1 in &states {
+            for &s2 in &states {
+                for &s3 in &states {
+                    let pairs: Vec<(&str, Option<bool>)> =
+                        names.into_iter().zip([s0, s1, s2, s3]).collect();
+
+                    // Oracle: chain single restricts over the fixed variables, in any order — restrict
+                    // is commutative across distinct variables.
+                    let mut expected = f.clone();
+                    for (name, value) in pairs.iter().copied() {
+                        if let Some(v) = value {
+                            expected = expected.restrict(name, v);
+                        }
+                    }
+
+                    let fixed: Vec<(&str, bool)> = pairs
+                        .iter()
+                        .copied()
+                        .filter_map(|(name, value)| value.map(|v| (name, v)))
+                        .collect();
+                    assert_eq!(f.restrict_many(fixed), expected);
+
+                    let m = assign_partial(&pairs);
+                    let oracle = if expected.is_tautology() {
+                        Some(true)
+                    } else if expected.is_contradiction() {
+                        Some(false)
+                    } else {
+                        None
+                    };
+                    assert_eq!(f.evaluate_fast(&m), oracle);
+
+                    match f.evaluate(&m) {
+                        Ok(b) => assert_eq!(Some(b), oracle),
+                        Err(residual) => {
+                            assert_eq!(oracle, None);
+                            assert_eq!(residual, expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn restrict_many_empty_and_absent() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f = a.clone() & b.clone();
+
+    // An empty assignment is a no-op.
+    let empty: Vec<(&str, bool)> = Vec::new();
+    assert_eq!(f.restrict_many(empty), f);
+
+    // An assignment naming only absent variables is also a no-op.
+    assert_eq!(f.restrict_many([("zzz", true), ("yyy", false)]), f);
+
+    // A repeated name takes its last entry.
+    assert_eq!(
+        f.restrict_many([("a", true), ("a", false)]),
+        f.restrict("a", false)
+    );
+}
+
+#[test]
+fn restrict_many_on_sync_cell_agrees() {
+    let local: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let local_combo: BTreeSet<Minterm<Symbol>> = {
+        let a = local.var("a");
+        let b = local.var("b");
+        let c = local.var("c");
+        let d = local.var("d");
+        let f = (a.clone() & b.clone()) | (!a.clone() & c.clone() & d.clone());
+        f.restrict_many([("a", true), ("c", false)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let sync_combo: BTreeSet<Minterm<Symbol>> = {
+        let a = sync.var("a");
+        let b = sync.var("b");
+        let c = sync.var("c");
+        let d = sync.var("d");
+        let f = (a.clone() & b.clone()) | (!a.clone() & c.clone() & d.clone());
+        f.restrict_many([("a", true), ("c", false)])
+            .maximize()
+            .cubes()
+            .map(|cube| cube.inputs().clone())
+            .collect()
+    };
+    assert_eq!(local_combo, sync_combo);
 }
 
 // See the comment on `restrict_acceptance_table` above: `vars` is a `&[&str]` binding, kept
@@ -1782,6 +1947,36 @@ fn compose_on_sync_cell_agrees() {
             .collect()
     };
     assert_eq!(local_hoisted, sync_hoisted);
+}
+
+#[test]
+fn scoped_restrict_agrees_with_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+
+    // f = a & b, restricted b := true, entirely inside one scope.
+    let scoped = builder.scope(|s| (s.var("a") & s.var("b")).restrict("b", true));
+    let a = builder.var("a");
+    assert!(scoped.equivalent_to(&a));
+
+    // A scoped restrict of an absent name is a no-op.
+    let scoped_noop = builder.scope(|s| s.var("a").restrict("zzz", true));
+    assert!(scoped_noop.equivalent_to(&a));
+}
+
+#[test]
+fn scoped_restrict_many_agrees_with_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+
+    let scoped = builder.scope(|s| s.lift(&f).restrict_many([("a", true), ("c", false)]));
+    assert!(scoped.equivalent_to(&f.restrict_many([("a", true), ("c", false)])));
+
+    // A repeated name inside the scoped call takes its last entry, same as the owned call.
+    let scoped_repeated = builder.scope(|s| s.lift(&f).restrict_many([("a", true), ("a", false)]));
+    assert!(scoped_repeated.equivalent_to(&f.restrict_many([("a", true), ("a", false)])));
 }
 
 // ---- Brand clash: the runtime same-manager backstop -----------------------------------------------

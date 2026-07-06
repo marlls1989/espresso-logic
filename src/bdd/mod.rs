@@ -28,10 +28,12 @@
 //!
 //! - Boolean operators by value and by reference: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT) — the
 //!   last also available as the named [`Bdd::complement`] / [`Bdd::not`] aliases — plus [`Bdd::ite`].
-//! - Shannon cofactor / quantification: [`Bdd::restrict`] / [`Bdd::cofactor`], [`Bdd::forall`],
-//!   [`Bdd::exists`].
+//! - Shannon cofactor / quantification: [`Bdd::restrict`] / [`Bdd::cofactor`],
+//!   [`Bdd::restrict_many`] (simultaneous multi-variable cofactor), [`Bdd::forall`], [`Bdd::exists`]
+//!   (restrict/restrict_many are mirrored on [`ScopedBdd`]).
 //! - Composition: [`Bdd::compose`] (substitute a function for a variable) and
-//!   [`Bdd::compose_map`] (simultaneous multi-variable substitution).
+//!   [`Bdd::compose_map`] (simultaneous multi-variable substitution) — both mirrored on
+//!   [`ScopedBdd`].
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].
 //! - Materialisation: [`Bdd::to_cubes`] (a single-output sum-of-products cover), [`Bdd::maximize`]
 //!   (the fully-expanded maximal cover over an explicit, widenable variable set), and

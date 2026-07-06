@@ -177,6 +177,31 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
             ),
         )
     }
+
+    /// Shannon cofactor by assignment: `self|var=value`. A name that is **not** a variable of this
+    /// function leaves it unchanged (a no-op); restricting every support variable collapses the
+    /// function to a constant.
+    #[must_use]
+    pub fn restrict<S: AsRef<str>>(self, var: S, value: bool) -> Self {
+        Self::from_root(
+            self.cell,
+            super::encoding::restrict(self.cell, self.root, var.as_ref(), value),
+        )
+    }
+
+    /// Simultaneous multi-variable Shannon cofactor: `self|{v1=b1, v2=b2, …}` for each `(name, value)`
+    /// entry, equal to chaining `restrict` in any order. Names not found among `self`'s variables are
+    /// dropped; a repeated name takes its last entry; an empty (or absent-only) assignment is a no-op.
+    #[must_use]
+    pub fn restrict_many<S: AsRef<str>>(
+        self,
+        assignment: impl IntoIterator<Item = (S, bool)>,
+    ) -> Self {
+        Self::from_root(
+            self.cell,
+            super::encoding::restrict_many(self.cell, self.root, assignment),
+        )
+    }
 }
 
 impl<B: Brand, C: ManagerCell> BitAnd for ScopedBdd<'_, B, C> {
