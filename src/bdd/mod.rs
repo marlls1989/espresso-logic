@@ -56,9 +56,11 @@ mod brand;
 mod builder;
 mod encoding;
 mod handle;
+pub(crate) mod manager;
+pub(crate) mod manager_cell;
 mod scope;
 
-pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
+pub use crate::bdd::manager_cell::{LocalCell, ManagerCell, SyncCell};
 pub use brand::Brand;
 pub use builder::BddBuilder;
 pub use handle::{Bdd, BddNode, BddVariables};
@@ -69,7 +71,7 @@ pub use scope::{Scope, ScopedBdd};
 #[doc(hidden)]
 pub mod __macro_support {
     pub use super::brand::brand_seal::Sealed;
-    pub use crate::expression::manager_cell::{LocalCell, ManagerCell, SyncCell};
+    pub use crate::bdd::manager_cell::{LocalCell, ManagerCell, SyncCell};
 }
 
 #[cfg(test)]

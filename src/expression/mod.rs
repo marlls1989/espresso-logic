@@ -35,8 +35,6 @@ mod builder;
 mod display;
 pub mod error;
 pub(crate) mod factorization;
-pub(crate) mod manager;
-pub(crate) mod manager_cell;
 mod operators;
 mod parser;
 pub(crate) mod rpn;
