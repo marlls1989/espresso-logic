@@ -349,8 +349,7 @@ impl BddManager {
     ///
     /// Built from [`ite`](Self::ite) (so it inherits the same hash-consing and memoisation and stays
     /// canonical): `¬g = ite(g, FALSE, TRUE)`, then select `¬g` when `f` is true and `g` when `f` is
-    /// false. Each sub-`ite` does its own read-mostly borrowing. Shared by
-    /// [`BoolExpr::xor`](crate::BoolExpr::xor) and the public BDD builder.
+    /// false. Each sub-`ite` does its own read-mostly borrowing. Used by the public BDD builder.
     pub(crate) fn xor<C: ManagerCell>(cell: &C, f: NodeId, g: NodeId) -> NodeId {
         let not_g = Self::ite(cell, g, FALSE_NODE, TRUE_NODE);
         Self::ite(cell, f, not_g, g)
@@ -1128,7 +1127,7 @@ impl BddManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expression::manager_cell::{LocalCell, SyncCell};
+    use crate::bdd::manager_cell::{LocalCell, SyncCell};
 
     /// Build `(a & b) | (a ^ c)` over an arbitrary cell, exercising `make_var`, `make_node`, `ite`, and
     /// `xor` and returning the root and the variable arity. Used to assert both cells produce the same
