@@ -4,17 +4,17 @@
 //! [`Bdd`] handles branded to it. [`BddBuilder`] is parameterised by two orthogonal type parameters:
 //!
 //! - a [`Brand`] `B`, a sealed marker that names this builder's namespace for uniqueness;
-//! - a [`ManagerCell`] `C`, the storage backend — [`LocalCell`](crate::expression::manager_cell::LocalCell)
+//! - a [`ManagerCell`] `C`, the storage backend — [`LocalCell`](crate::bdd::manager_cell::LocalCell)
 //!   for a single-threaded builder (`!Send`/`!Sync`), or
-//!   [`SyncCell`](crate::expression::manager_cell::SyncCell) for a thread-safe one (`Send + Sync`).
+//!   [`SyncCell`](crate::bdd::manager_cell::SyncCell) for a thread-safe one (`Send + Sync`).
 //!
 //! The brand and the cell are independent: any brand pairs with either cell, and the body of every method
 //! is written once over `<B, C>`. There is no process-global manager and no default brand; each builder is
 //! independent.
 //!
 //! The ergonomic `bdd_builder!` / `sync_bdd_builder!` macros mint a fresh brand per call paired with the
-//! [`LocalCell`](crate::expression::manager_cell::LocalCell) or
-//! [`SyncCell`](crate::expression::manager_cell::SyncCell) backend respectively; in-crate tests declare
+//! [`LocalCell`](crate::bdd::manager_cell::LocalCell) or
+//! [`SyncCell`](crate::bdd::manager_cell::SyncCell) backend respectively; in-crate tests declare
 //! their own brand types (the brand seal permits in-crate impls).
 
 use std::marker::PhantomData;
@@ -24,17 +24,17 @@ use super::handle::Bdd;
 use super::scope::{Scope, ScopedBdd};
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
-use crate::expression::manager::{BddManager, FALSE_NODE, TRUE_NODE};
-use crate::expression::manager_cell::ManagerCell;
+use crate::bdd::manager::{BddManager, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager_cell::ManagerCell;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 use crate::Symbol;
 
 /// An owned BDD namespace over a brand `B` and a storage backend `C`.
 ///
 /// Owns a fresh `C`-backed manager and hands out [`Bdd`] handles branded to it. The storage backend
-/// determines thread-safety: a [`LocalCell`](crate::expression::manager_cell::LocalCell)-backed builder is
+/// determines thread-safety: a [`LocalCell`](crate::bdd::manager_cell::LocalCell)-backed builder is
 /// single-threaded (`!Send`/`!Sync`) and pays no synchronisation cost, while a
-/// [`SyncCell`](crate::expression::manager_cell::SyncCell)-backed one is `Send + Sync` and can be moved to,
+/// [`SyncCell`](crate::bdd::manager_cell::SyncCell)-backed one is `Send + Sync` and can be moved to,
 /// or shared by reference across, threads (lock poisoning propagates).
 ///
 /// A handle holds its own refcounted clone of the manager, so it can outlive the builder.
@@ -42,8 +42,8 @@ use crate::Symbol;
 /// # Send/Sync follows the cell, not the brand
 ///
 /// The brand selects no behaviour; thread-safety follows the storage cell alone. A builder over
-/// [`LocalCell`](crate::expression::manager_cell::LocalCell) is `!Send` whatever its brand, and one over
-/// [`SyncCell`](crate::expression::manager_cell::SyncCell) is `Send + Sync` whatever its brand. This is
+/// [`LocalCell`](crate::bdd::manager_cell::LocalCell) is `!Send` whatever its brand, and one over
+/// [`SyncCell`](crate::bdd::manager_cell::SyncCell) is `Send + Sync` whatever its brand. This is
 /// asserted at compile time in this module's tests.
 pub struct BddBuilder<B: Brand, C: ManagerCell> {
     cell: C,

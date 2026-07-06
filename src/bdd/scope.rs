@@ -22,8 +22,8 @@ use std::ops::{BitAnd, BitOr, BitXor, Not};
 use super::brand::Brand;
 use super::builder::BddBuilder;
 use super::handle::Bdd;
-use crate::expression::manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
-use crate::expression::manager_cell::ManagerCell;
+use crate::bdd::manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager_cell::ManagerCell;
 use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 

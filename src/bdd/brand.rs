@@ -7,7 +7,7 @@
 //! mismatch is a compile error rather than a runtime check.
 //!
 //! The orthogonal choice of storage backend (single-threaded versus thread-safe) is the separate
-//! [`ManagerCell`](crate::expression::manager_cell::ManagerCell) parameter, not the brand.
+//! [`ManagerCell`](crate::bdd::manager_cell::ManagerCell) parameter, not the brand.
 //!
 //! The trait is **sealed**: it cannot be implemented outside this crate. There is deliberately **no
 //! global / default brand** — the canonical layer has no process-global manager; every builder owns an
