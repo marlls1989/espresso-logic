@@ -28,7 +28,7 @@ get_sigma(pset_family R, register pset c)
 	register pcube r,b;
 	register int i;
     	register int w, last;
-	register unsigned int x;
+	register espresso_word x;
 
 	out_part_r = new_cube();
 	s = new_cube();

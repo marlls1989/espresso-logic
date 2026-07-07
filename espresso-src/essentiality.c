@@ -139,8 +139,8 @@ etr_order(pset_family F, pset_family E, pset_family R, pset c, pset d)
 		odd_count = 0;
 		free_count = 0;
 		foreach_set(R,lastr,r){
-			odd = is_in_set(r,e0);
-			even = is_in_set(r,e1);
+			odd = (is_in_set(r,e0) != 0);
+			even = (is_in_set(r,e1) != 0);
 			if(odd && even){
 				free_count++;
 			}

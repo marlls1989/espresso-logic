@@ -173,7 +173,7 @@ void setup_bw(pset_family R, pset c)
   register int i;
   pcube b,r;
       register int w, last;
-  register unsigned int x;
+  register espresso_word x;
 
   /* Allocate memory */
   alloc_list(size);

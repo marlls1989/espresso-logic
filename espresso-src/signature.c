@@ -82,7 +82,7 @@ generate_primes(pset_family F, pset_family R)
   pcube odd,even,out_part_r;
   register int i;
       register int w, last;
-  register unsigned int x;
+  register espresso_word x;
   int count;
 
   out_part_r = new_cube();
