@@ -51,7 +51,7 @@ pcube *cofactor(pset *T, register pset c)
 #ifdef NO_INLINE
 	if (! cdist0(p, c)) goto false;
 #else
-    {register int w,last;register unsigned int x;if((last=cube.inword)!=-1)
+    {register int w,last;register espresso_word x;if((last=cube.inword)!=-1)
     {x=p[last]&c[last];if(~(x|x>>1)&cube.inmask)goto false;for(w=1;w<last;w++)
     {x=p[w]&c[w];if(~(x|x>>1)&DISJOINT)goto false;}}}{register int w,var,last;
     register pcube mask;for(var=cube.num_binary_vars;var<cube.num_vars;var++){
@@ -125,13 +125,55 @@ void massive_count(pset *T)
 
     /* Count the number of zeros in each column */
  {  register int i, *cnt;
-    register unsigned int val;
+    register espresso_word val;
     register pcube p, cof = T[0], full = cube.fullset;
     for(T1 = T+2; (p = *T1++) != NULL; )
 	for(i = LOOP(p); i > 0; i--)
 	    if ((val = full[i] & ~ (p[i] | cof[i]))) {
 		cnt = count + ((i-1) << LOGBPI);
-#if BPI == 32
+#if BPI == 64
+	    if (val & 0xFF00000000000000uLL) {
+		if (val & 0x8000000000000000uLL) cnt[63]++;
+		if (val & 0x4000000000000000uLL) cnt[62]++;
+		if (val & 0x2000000000000000uLL) cnt[61]++;
+		if (val & 0x1000000000000000uLL) cnt[60]++;
+		if (val & 0x0800000000000000uLL) cnt[59]++;
+		if (val & 0x0400000000000000uLL) cnt[58]++;
+		if (val & 0x0200000000000000uLL) cnt[57]++;
+		if (val & 0x0100000000000000uLL) cnt[56]++;
+	    }
+	    if (val & 0x00FF000000000000uLL) {
+		if (val & 0x0080000000000000uLL) cnt[55]++;
+		if (val & 0x0040000000000000uLL) cnt[54]++;
+		if (val & 0x0020000000000000uLL) cnt[53]++;
+		if (val & 0x0010000000000000uLL) cnt[52]++;
+		if (val & 0x0008000000000000uLL) cnt[51]++;
+		if (val & 0x0004000000000000uLL) cnt[50]++;
+		if (val & 0x0002000000000000uLL) cnt[49]++;
+		if (val & 0x0001000000000000uLL) cnt[48]++;
+	    }
+	    if (val & 0x0000FF0000000000uLL) {
+		if (val & 0x0000800000000000uLL) cnt[47]++;
+		if (val & 0x0000400000000000uLL) cnt[46]++;
+		if (val & 0x0000200000000000uLL) cnt[45]++;
+		if (val & 0x0000100000000000uLL) cnt[44]++;
+		if (val & 0x0000080000000000uLL) cnt[43]++;
+		if (val & 0x0000040000000000uLL) cnt[42]++;
+		if (val & 0x0000020000000000uLL) cnt[41]++;
+		if (val & 0x0000010000000000uLL) cnt[40]++;
+	    }
+	    if (val & 0x000000FF00000000uLL) {
+		if (val & 0x0000008000000000uLL) cnt[39]++;
+		if (val & 0x0000004000000000uLL) cnt[38]++;
+		if (val & 0x0000002000000000uLL) cnt[37]++;
+		if (val & 0x0000001000000000uLL) cnt[36]++;
+		if (val & 0x0000000800000000uLL) cnt[35]++;
+		if (val & 0x0000000400000000uLL) cnt[34]++;
+		if (val & 0x0000000200000000uLL) cnt[33]++;
+		if (val & 0x0000000100000000uLL) cnt[32]++;
+	    }
+#endif
+#if BPI >= 32
 	    if (val & 0xFF000000) {
 		if (val & 0x80000000) cnt[31]++;
 		if (val & 0x40000000) cnt[30]++;
