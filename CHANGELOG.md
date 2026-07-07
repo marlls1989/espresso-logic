@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-identical across widths; cross-width regression coverage (ESPRESSO_REF_BPI=32
   ./tests/regression_test.sh) runs in CI.
 
+### Fixed
+
+- `wasm32-unknown-emscripten` now links and runs, not just compiles. The vendored C is built with
+  `-fwasm-exceptions` so its `setjmp`/`longjmp` fatal-error trampoline uses the same wasm
+  exception-handling model rust's target links with; previously the mismatched model left the
+  `invoke_` trampolines unresolved at link. The bench-only `criterion` dev-dependency is now scoped
+  to non-wasm targets (its default `rayon` feature does not compile for wasm/wasi), so the crate's
+  own test suite builds on the target. Verified under Node: the word width self-detects to 32-bit and
+  minimisation (including fatal-error recovery through the guard) runs.
+
 ## [5.5.0] - 2026-07-06
 
 ### Added

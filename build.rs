@@ -160,6 +160,14 @@ fn main() {
         // linked yet). The actual link happens later, when cargo links the final artefact, so the
         // setting must be forwarded to *that* link line instead.
         println!("cargo:rustc-link-arg=-sERROR_ON_UNDEFINED_SYMBOLS=0");
+
+        // Compile the vendored C with the same wasm exception-handling model rust's
+        // `wasm32-unknown-emscripten` target links with. The C uses setjmp/longjmp (the recoverable
+        // fatal-error trampoline in thread_local_accessors.c); without `-fwasm-exceptions` emcc emits
+        // the legacy JS-based `invoke_` SjLj, which the wasm-EH link then rejects ("invoke_ functions
+        // exported but exceptions and longjmp are both disabled"). Matching the model routes
+        // setjmp/longjmp through wasm exception handling so the crate links and runs on wasm.
+        build.flag("-fwasm-exceptions");
     }
 
     // Compile
