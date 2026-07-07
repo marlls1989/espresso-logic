@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-variable restrict engines are unified into one minterm-keyed operation, so the two can no
   longer drift.
 
+### Changed
+
+- `compose` and `compose_map` (on both `Bdd` and `ScopedBdd`) now share one engine: single-variable
+  `compose` routes through `compose_map` instead of a separate fused pair-walk, so the two can no
+  longer drift. This drops the persistent per-manager compose cache added in 5.4.0 — repeated
+  identical compositions now re-walk the function rather than returning a cached result. Results and
+  the public API are unchanged (hash-consing still prevents duplicate nodes, and the ITE cache still
+  carries cross-operation reuse); only a workload composing the same substitution repeatedly loses
+  that saved re-walk.
+
 ## [5.5.0] - 2026-07-06
 
 ### Added

@@ -1861,7 +1861,7 @@ fn compose_deep_chain_no_overflow() {
 }
 
 #[test]
-fn compose_cache_hit_same_root() {
+fn compose_twice_yields_same_root() {
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     let a = builder.var("a");
     let b = builder.var("b");
