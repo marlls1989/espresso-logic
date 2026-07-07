@@ -80,6 +80,7 @@ pub(super) fn restrict_many<C: ManagerCell, S: AsRef<str>>(
     f: NodeId,
     entries: impl IntoIterator<Item = (S, bool)>,
 ) -> NodeId {
+    let entries: Vec<(S, bool)> = entries.into_iter().collect();
     let values = {
         let mgr = cell.read();
         let mut vals = vec![None; mgr.id_to_var.len()];

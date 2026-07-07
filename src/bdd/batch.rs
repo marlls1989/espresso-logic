@@ -20,42 +20,50 @@ use super::manager::{BddOps, NodeId, VarId};
 use super::{Bdd, Brand, ManagerCell, ScopedBdd};
 
 mod sealed {
-    pub trait Sealed {}
+    use super::{ManagerCell, NodeId};
+
+    /// The callable, unimplementable core of [`BatchHandle`](super::BatchHandle): the handle-shaped
+    /// operations the batch machinery needs, so the iterator and the [`Composer`](super::Composer)
+    /// methods can be written once for both owned [`Bdd`](super::Bdd) and borrowed
+    /// [`ScopedBdd`](super::ScopedBdd) handles.
+    ///
+    /// Kept in a private module so its name is unreachable downstream: safe code outside the crate can
+    /// therefore neither call `hold`/`mint` nor implement it, so it cannot fabricate a handle with a
+    /// chosen root and break the mint invariant.
+    pub trait Sealed: Sized {
+        /// The storage cell backing this handle's manager.
+        type Cell: ManagerCell;
+        /// How the batch iterator keeps the manager alive between pulls: an owned refcount clone for
+        /// [`Bdd`](super::Bdd), a borrow for [`ScopedBdd`](super::ScopedBdd).
+        type Held;
+        fn root(&self) -> NodeId;
+        /// Capture the manager from a handle into the iterator-held form.
+        fn hold(&self) -> Self::Held;
+        /// Borrow the manager back out to run the walk and mint results.
+        fn cell(held: &Self::Held) -> &Self::Cell;
+        /// Mint a result handle for `root` on the held manager.
+        fn mint(held: &Self::Held, root: NodeId) -> Self;
+        /// Backstop that a handle shares the held manager (a real assertion for the owned handle; a
+        /// no-op for the scoped handle, whose invariant lifetime already guarantees it).
+        fn check(held: &Self::Held, handle: &Self);
+    }
 }
 
-/// The handle-shaped operations the batch machinery needs, so the iterator and the
-/// [`Composer`] methods can be written once for both owned [`Bdd`] and borrowed [`ScopedBdd`]
-/// handles. Two `IntoIterator`-bound blanket impls (one per handle type) would clash under coherence;
-/// routing through this single trait avoids that.
+use sealed::Sealed;
+
+/// Marker for the handle types the batch machinery accepts, so [`Composer`] and [`ComposeMany`] can be
+/// written once for both owned [`Bdd`] and borrowed [`ScopedBdd`] handles. Two `IntoIterator`-bound
+/// blanket impls (one per handle type) would clash under coherence; routing through this single trait
+/// avoids that.
 ///
-/// Sealed — implemented only for [`Bdd`] and [`ScopedBdd`], and not nameable-to-implement downstream.
-pub trait BatchHandle: sealed::Sealed + Sized {
-    /// The storage cell backing this handle's manager.
-    #[doc(hidden)]
-    type Cell: ManagerCell;
-    /// How the batch iterator keeps the manager alive between pulls: an owned refcount clone for
-    /// [`Bdd`], a borrow for [`ScopedBdd`].
-    #[doc(hidden)]
-    type Held;
-    #[doc(hidden)]
-    fn root(&self) -> NodeId;
-    /// Capture the manager from a handle into the iterator-held form.
-    #[doc(hidden)]
-    fn hold(&self) -> Self::Held;
-    /// Borrow the manager back out to run the walk and mint results.
-    #[doc(hidden)]
-    fn cell(held: &Self::Held) -> &Self::Cell;
-    /// Mint a result handle for `root` on the held manager.
-    #[doc(hidden)]
-    fn mint(held: &Self::Held, root: NodeId) -> Self;
-    /// Backstop that every function in the stream shares the held manager (a real assertion for the
-    /// owned handle; a no-op for the scoped handle, whose invariant lifetime already guarantees it).
-    #[doc(hidden)]
-    fn check(held: &Self::Held, handle: &Self);
-}
+/// Sealed and method-less: implemented only for [`Bdd`] and [`ScopedBdd`], neither nameable-to-implement
+/// nor callable downstream. The handle-shaped operations live on a private supertrait so safe downstream
+/// code cannot mint a handle with an arbitrary root.
+pub trait BatchHandle: Sealed {}
 
-impl<B: Brand, C: ManagerCell> sealed::Sealed for Bdd<B, C> {}
-impl<B: Brand, C: ManagerCell> BatchHandle for Bdd<B, C> {
+impl<T: Sealed> BatchHandle for T {}
+
+impl<B: Brand, C: ManagerCell> Sealed for Bdd<B, C> {
     type Cell = C;
     type Held = C;
     fn root(&self) -> NodeId {
@@ -78,8 +86,7 @@ impl<B: Brand, C: ManagerCell> BatchHandle for Bdd<B, C> {
     }
 }
 
-impl<B: Brand, C: ManagerCell> sealed::Sealed for ScopedBdd<'_, B, C> {}
-impl<'s, B: Brand, C: ManagerCell> BatchHandle for ScopedBdd<'s, B, C> {
+impl<'s, B: Brand, C: ManagerCell> Sealed for ScopedBdd<'s, B, C> {
     type Cell = C;
     type Held = &'s C;
     fn root(&self) -> NodeId {
@@ -126,6 +133,13 @@ where
         }
         let held = self.held.as_ref().expect("held seeded above");
         H::check(held, &f);
+        // An empty substitution is the identity: yield the pulled function unchanged rather than
+        // re-walking its graph to rebuild an identical result (mirrors the non-batch short-circuit in
+        // `encoding`). The stream-function manager check above still runs, so a cross-manager stream is
+        // caught either way.
+        if self.map.is_empty() {
+            return Some(f);
+        }
         let root = H::cell(held).compose_into(f.root(), &self.map, &mut self.memo);
         Some(H::mint(held, root))
     }
@@ -220,10 +234,19 @@ where
         // from the first function on the first pull.
         let held = entries.first().map(|(_, g)| g.hold());
         let map = match &held {
-            Some(h) => encoding::resolve_substitution(
-                H::cell(h),
-                entries.iter().map(|(name, g)| (name.as_ref(), g.root())),
-            ),
+            Some(h) => {
+                // Every substitute's root is resolved against this one held manager, so assert each
+                // belongs to it first — otherwise a foreign `g` is read in the wrong NodeId space,
+                // surfacing as the internal "invalid node id" panic or a silent wrong result. Mirrors
+                // the per-substitute `assert_same_manager` of the single-function `Bdd::compose_map`.
+                for (_, g) in &entries {
+                    H::check(h, g);
+                }
+                encoding::resolve_substitution(
+                    H::cell(h),
+                    entries.iter().map(|(name, g)| (name.as_ref(), g.root())),
+                )
+            }
             None => HashMap::new(),
         };
         ComposeMany {

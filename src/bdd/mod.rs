@@ -64,7 +64,7 @@ pub(crate) mod manager_cell;
 mod scope;
 
 pub use crate::bdd::manager_cell::{LocalCell, ManagerCell, SyncCell};
-pub use batch::{BatchHandle, ComposeMany, Composer};
+pub use batch::{ComposeMany, Composer};
 pub use brand::Brand;
 pub use builder::BddBuilder;
 pub use handle::{Bdd, BddNode, BddVariables};
