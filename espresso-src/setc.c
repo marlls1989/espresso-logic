@@ -55,7 +55,7 @@ bool full_row(register pset p, register pset cof)
 bool cdist0(register pset a, register pset b)
 {
  {  /* Check binary variables */
-    register int w, last; register unsigned int x;
+    register int w, last; register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -97,7 +97,7 @@ int cdist01(register pset a, register pset b)
     int dist = 0;
 
  {  /* Check binary variables */
-    register int w, last; register unsigned int x;
+    register int w, last; register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -141,7 +141,7 @@ int cdist(register pset a, register pset b)
     int dist = 0;
 
  {  /* Check binary variables */
-    register int w, last; register unsigned int x;
+    register int w, last; register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -180,7 +180,7 @@ pset force_lower(pset xlower, register pset a, register pset b)
 {
 
  {  /* Check binary variables (if any) */
-    register int w, last; register unsigned int x;
+    register int w, last; register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -230,7 +230,7 @@ void consensus(pset r, register pset a, register pset b)
     INLINEset_clear(r, cube.size);
 
  {  /* Check binary variables (if any) */
-    register int w, last; register unsigned int x;
+    register int w, last; register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -249,7 +249,7 @@ void consensus(pset r, register pset a, register pset b)
 
 
  {  /* Check the multiple-valued variables */
-    bool empty; int var; unsigned int x;
+    bool empty; int var; espresso_word x;
     register int w, last; register pcube mask;
     for(var = cube.num_binary_vars; var < cube.num_vars; var++) {
 	mask = cube.var_mask[var];
@@ -272,11 +272,11 @@ void consensus(pset r, register pset a, register pset b)
 
 int cactive(register pset a)
 {
-    int active = -1, dist = 0, bit_index(register unsigned int a);
+    int active = -1, dist = 0, bit_index(register espresso_word a);
 
  {  /* Check binary variables */
     register int w, last;
-    register unsigned int x;
+    register espresso_word x;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -327,7 +327,7 @@ bool ccommon(register pset a, register pset b, register pset cof)
  {  /* Check binary variables */
     int last;
     register int w;
-    register unsigned int x, y;
+    register espresso_word x, y;
     if ((last = cube.inword) != -1) {
 
 	/* Check the partial word of binary variables */
@@ -429,7 +429,7 @@ int d1_order(pset *a, pset *b)
 {
     register pset a1 = *a, b1 = *b, c1 = cube.temp[0];
     register int i = LOOP(a1);
-    register unsigned int x1, x2;
+    register espresso_word x1, x2;
     do
 	if ((x1 = a1[i] | c1[i]) > (x2 = b1[i] | c1[i])) return -1;
 	else if (x1 < x2) return 1;
