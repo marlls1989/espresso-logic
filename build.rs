@@ -26,6 +26,18 @@ fn main() {
     let target = env::var("TARGET").unwrap();
     let is_emscripten = target == "wasm32-unknown-emscripten";
 
+    // Opt-in override of the packed-set word width (BPI), for testing both widths on a single
+    // host. Unset (the default) leaves espresso.h's UINTPTR_MAX self-detection alone; cc and
+    // bindgen then agree on the native width solely via the target triple (bindgen derives
+    // --target from cargo's TARGET env; the emscripten path pins its own triple below).
+    println!("cargo:rerun-if-env-changed=ESPRESSO_BPI");
+    let bpi_override = env::var("ESPRESSO_BPI").ok();
+    if let Some(bpi) = &bpi_override {
+        if bpi != "32" && bpi != "64" {
+            panic!("ESPRESSO_BPI must be 32 or 64");
+        }
+    }
+
     println!("cargo:rerun-if-changed=espresso-src");
     // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
     // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
@@ -151,12 +163,19 @@ fn main() {
     }
 
     // Compile
+    if let Some(bpi) = &bpi_override {
+        build.flag(&format!("-DBPI={bpi}"));
+    }
     build.compile("espresso");
 
     // Generate bindings
     let mut builder = bindgen::Builder::default()
         .header("espresso-src/thread_local_accessors.h")
         .clang_arg(format!("-I{}", espresso_src.display()));
+
+    if let Some(bpi) = &bpi_override {
+        builder = builder.clang_arg(format!("-DBPI={bpi}"));
+    }
 
     // Configure bindgen for Emscripten target
     if is_emscripten {
@@ -214,6 +233,11 @@ fn main() {
         .allowlist_function("set_clear")
         .allowlist_type("set_family_t")
         .allowlist_type("pset_family")
+        // `espresso_word` is the width source of truth for the Rust side (native machine word,
+        // widened from the historical hardcoded `unsigned int`); `get_bpi` lets Rust confirm cc
+        // and bindgen agreed on that width at build time.
+        .allowlist_type("espresso_word")
+        .allowlist_function("get_bpi")
         // Thread-local accessors (replacing direct global variable access)
         .allowlist_function("get_cube")
         .allowlist_function("get_cdata")
