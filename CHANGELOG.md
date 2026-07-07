@@ -31,10 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries cross-operation reuse); only a workload composing the same substitution repeatedly loses
   that saved re-walk — recovered within a batch by the new `bdd::Composer`.
 - Vendored Espresso packed-cube machine word now follows the native word width: 64-bit words on
-  64-bit targets (including wasm32-unknown-emscripten after cross-compilation); 32-bit on 32-bit
-  hosts. Derived at compile time from pointer width in `espresso.h` rather than a hardcoded 32-bit
-  BPI. Performance change only — no public API surface. Minimised covers are byte-identical across
-  widths; cross-width regression coverage (ESPRESSO_REF_BPI=32 ./tests/regression_test.sh) runs in CI.
+  64-bit targets; 32-bit words on 32-bit targets (including wasm32-unknown-emscripten after
+  cross-compilation). Derived at compile time from pointer width in `espresso.h` rather than a
+  hardcoded 32-bit BPI. Performance change only — no public API surface. Minimised covers are
+  byte-identical across widths; cross-width regression coverage (ESPRESSO_REF_BPI=32
+  ./tests/regression_test.sh) runs in CI.
 
 ## [5.5.0] - 2026-07-06
 
