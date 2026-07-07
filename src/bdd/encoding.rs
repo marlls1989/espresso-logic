@@ -13,13 +13,11 @@ use crate::bdd::manager::{BddOps, NodeId, VarId};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Minterm, StringLabel};
 
-/// `f[var := g]` — resolve the name (absent ⇒ no-op) and run the fused compose engine.
+/// `f[var := g]` — a single-entry [`compose_map`]: the sole substitution routes through the same
+/// simultaneous-substitution engine, so an absent name resolves to an empty map (a no-op) exactly as
+/// it does for `compose_map`.
 pub(super) fn compose<C: ManagerCell>(cell: &C, f: NodeId, var: &str, g: NodeId) -> NodeId {
-    let var_id = cell.read().var_id(var);
-    match var_id {
-        None => f,
-        Some(v) => cell.compose(f, v, g),
-    }
+    compose_map(cell, f, std::iter::once((var, g)))
 }
 
 /// Simultaneous `f[v := g_v]` over name-keyed entries; absent names dropped, a repeated

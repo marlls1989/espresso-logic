@@ -19,8 +19,8 @@ pub(crate) type NodeId = usize;
 pub(crate) type VarId = usize;
 
 /// An ITE cofactor triple `(f, g, h)` — the operand node ids of one `if f then g else h`
-/// subproblem (or, inside the `compose`/`compose_map` engines' embedded ITE machinery, a
-/// splice/recombination triple such as `(g, f_high, f_low)`).
+/// subproblem (or, inside the `compose_map` engine's embedded ITE machinery, a
+/// recombination triple such as `(selector, high, low)`).
 pub(crate) type NodeTriple = (NodeId, NodeId, NodeId);
 
 /// A Shannon expansion of an ITE triple: the split variable plus its low (false-cofactor) and
@@ -76,8 +76,6 @@ pub struct BddManager {
     pub(super) id_to_var: Vec<Symbol>,
     /// Cache for ITE operations: (f, g, h) -> result
     pub(super) ite_cache: HashMap<NodeTriple, NodeId>,
-    /// Cache for compose operations: (f, var, g) -> f[var := g]
-    pub(super) compose_cache: HashMap<(NodeId, VarId, NodeId), NodeId>,
 }
 
 impl BddManager {
@@ -138,7 +136,6 @@ impl BddManager {
             var_to_id: BTreeMap::new(),
             id_to_var: Vec::new(),
             ite_cache: HashMap::new(),
-            compose_cache: HashMap::new(),
         }
     }
 
@@ -503,246 +500,10 @@ pub(crate) trait BddOps: ManagerCell {
             .expect("root node restricted after the iterative walk")
     }
 
-    /// Functional substitution: `f[var := g]` — replace every test of `var` in `f` with the
-    /// function `g`, managing the cell's borrow itself.
-    ///
-    /// This is **not** `ite(g, restrict(f, var, true), restrict(f, var, false))` composed from
-    /// separate passes: it is a single fused traversal over the `(f, g)` node pair that computes
-    /// the same result in one walk, sharing its ITE-shaped merge step with [`ite`](Self::ite)
-    /// instead of calling it as a black box.
-    ///
-    /// Evaluated **iteratively** with an explicit work-stack, in the same style as the iterative
-    /// [`ite`](Self::ite) and [`restrict_to`](Self::restrict_to), so a tall BDD (deep variable ordering)
-    /// cannot overflow the call stack. Each step takes its own short-lived shared borrow to read
-    /// (resolve/expand a pair, or read a splice's resolved ITE triple) and, only when a result must
-    /// be committed, a separate short-lived exclusive borrow to intern the node and record its
-    /// cache entries — a shared borrow is never live when the exclusive borrow may be taken, the
-    /// discipline the [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires (panics on
-    /// overlap) and the [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires (deadlocks
-    /// on overlap).
-    ///
-    /// The walk co-cofactors `f` and `g` together, splitting on their global minimum tested
-    /// variable, until it reaches a node of `f` that tests `var` itself. At that point `var`'s
-    /// subtree needs no further composition (an ordered BDD cannot re-test a variable below where
-    /// it already appears), so the low/high children of that node are spliced in directly via
-    /// `ite(g, f_high, f_low)` — composing `f` at `var` with `g` is exactly selecting `f`'s `var =
-    /// true` branch where `g` holds and its `var = false` branch where `g` doesn't, which is what
-    /// `ite` computes. That inline ITE is driven by the very same `ite_solve_step` /
-    /// `ite_combine_step` helpers `ite` itself uses, scheduled as extra work items on this
-    /// traversal's stack rather than through a nested call to `ite`, so the whole computation stays
-    /// one iterative loop.
-    ///
-    /// **Ordering lemma:** splitting on `top = min(var(f), var(g))` and co-cofactoring both `f` and
-    /// `g` on `top` (a side that doesn't test `top` cofactors to itself) guarantees each child pair
-    /// still supports only variables strictly greater than `top` — including when `g` interleaves
-    /// with or sits above `var`, or itself tests `var`. So `insert_node`'s ordering precondition
-    /// holds at every `Combine`, and the splice's inline `ite(g, f_high, f_low)` is well founded
-    /// even though `g` is used whole (untouched by composition) at the splice point.
-    ///
-    /// **Canonicity:** every node produced here — by `Combine`'s `insert_node` call and by the
-    /// splice's inline `ite` — is minted through the same hash-consed `make_node`/`insert_node`
-    /// path every other operation uses, so results remain canonical and safely comparable /
-    /// cacheable by NodeId alone.
-    ///
-    /// **Memoisation** has three tiers: the persistent `compose_cache` (`(f, var, g) ->
-    /// f[var := g]`, shared across calls, checked first), a per-call `HashMap<(NodeId, NodeId),
-    /// NodeId>` pair memo keyed on `(f, g)` (`var` is constant for the whole traversal, so it is
-    /// omitted from the key) that collapses the shared sub-DAG within this walk, and the inline
-    /// ITE's own `ite_cache` (seeded at each splice so a later top-level `ite` call, or another
-    /// `compose` that reaches the same splice, hits the cache directly).
-    fn compose(&self, f: NodeId, var: VarId, g: NodeId) -> NodeId {
-        /// One unit of work. `Solve` resolves a compose pair (expanding it, or scheduling a
-        /// splice, as needed); `Combine` runs after a pair's two structural children are resolved
-        /// and builds the result node for it; `Splice` runs after the inline ITE for a `var`-node's
-        /// children has resolved and write-through-caches the result; `IteSolve`/`IteCombine` are
-        /// the shared ITE machine's steps, driving the splice's `ite(g, f_high, f_low)` on this
-        /// same stack.
-        enum Work {
-            Solve(NodeId, NodeId),
-            Combine {
-                pair: (NodeId, NodeId),
-                top: VarId,
-                low: (NodeId, NodeId),
-                high: (NodeId, NodeId),
-            },
-            Splice {
-                pair: (NodeId, NodeId),
-                triple: NodeTriple,
-            },
-            IteSolve(NodeId, NodeId, NodeId),
-            IteCombine {
-                triple: NodeTriple,
-                top_var: VarId,
-                low: NodeTriple,
-                high: NodeTriple,
-            },
-        }
-
-        /// What a `Solve` step's single shared-borrow read block decided, to be acted on after the
-        /// borrow is dropped.
-        enum Action {
-            Done(NodeId),
-            Splice(NodeId, NodeId),
-            Expand(VarId, (NodeId, NodeId), (NodeId, NodeId)),
-        }
-
-        let mut memo: HashMap<(NodeId, NodeId), NodeId> = HashMap::new();
-        let mut stack = vec![Work::Solve(f, g)];
-        while let Some(work) = stack.pop() {
-            match work {
-                Work::Solve(f, g) => {
-                    if memo.contains_key(&(f, g)) {
-                        continue;
-                    }
-                    // Read this pair's shape under one short-lived shared borrow, dropped before
-                    // any push/write below.
-                    let action = {
-                        let manager = self.read();
-                        if let Some(&r) = manager.compose_cache.get(&(f, var, g)) {
-                            Action::Done(r)
-                        } else {
-                            let f_node = manager.expect_node(f);
-                            let top_f = node_var(f_node);
-                            if top_f > var {
-                                // `f` doesn't reach `var` on this branch (this also covers `f`
-                                // being a terminal, whose node_var is usize::MAX) — composition is
-                                // a no-op. Not written to compose_cache, matching how `ite` treats
-                                // its own terminal cases.
-                                Action::Done(f)
-                            } else if top_f == var {
-                                // `f` tests `var` here. An ordered BDD cannot re-test `var` below
-                                // this point, so the children need no further composition — splice
-                                // them in verbatim via an inline `ite(g, f_high, f_low)`. `g` is
-                                // used whole, even if it sits above `var` or tests `var` itself;
-                                // the ordering lemma on this doc covers both.
-                                match f_node {
-                                    BddNode::Decision { low, high, .. } => {
-                                        Action::Splice(*low, *high)
-                                    }
-                                    BddNode::Terminal(_) => unreachable!(
-                                        "terminal node cannot match a real substituted variable"
-                                    ),
-                                }
-                            } else {
-                                // Still above `var` on both sides: split on the global minimum and
-                                // co-cofactor both `f` and `g` (a side not testing `top` cofactors
-                                // to itself).
-                                let g_node = manager.expect_node(g);
-                                let top_g = node_var(g_node);
-                                let top = top_f.min(top_g);
-                                let (f_low, f_high) = cofactors(f_node, top_f, top, f);
-                                let (g_low, g_high) = cofactors(g_node, top_g, top, g);
-                                Action::Expand(top, (f_low, g_low), (f_high, g_high))
-                            }
-                        }
-                    };
-                    match action {
-                        Action::Done(r) => {
-                            memo.insert((f, g), r);
-                        }
-                        Action::Splice(f_low, f_high) => {
-                            // Combine pushed first → pops last, after the inline ITE resolves it.
-                            stack.push(Work::Splice {
-                                pair: (f, g),
-                                triple: (g, f_high, f_low),
-                            });
-                            stack.push(Work::IteSolve(g, f_high, f_low));
-                        }
-                        Action::Expand(top, low, high) => {
-                            // Combine pushed first → pops last (LIFO).
-                            stack.push(Work::Combine {
-                                pair: (f, g),
-                                top,
-                                low,
-                                high,
-                            });
-                            stack.push(Work::Solve(high.0, high.1));
-                            stack.push(Work::Solve(low.0, low.1));
-                        }
-                    }
-                }
-                Work::Combine {
-                    pair,
-                    top,
-                    low,
-                    high,
-                } => {
-                    if memo.contains_key(&pair) {
-                        continue;
-                    }
-                    let low_id = *memo
-                        .get(&low)
-                        .expect("compose child resolved before combine - BDD scheduling bug");
-                    let high_id = *memo
-                        .get(&high)
-                        .expect("compose child resolved before combine - BDD scheduling bug");
-                    // Commit under one short-lived exclusive borrow: intern the node and record
-                    // its compose_cache entry as one transaction, re-checking in case another
-                    // thread committed it meanwhile.
-                    let key = (pair.0, var, pair.1);
-                    let result = {
-                        let mut mgr = self.write();
-                        match mgr.compose_cache.get(&key) {
-                            Some(&r) => r,
-                            None => {
-                                let r = mgr.insert_node(top, low_id, high_id);
-                                mgr.compose_cache.insert(key, r);
-                                r
-                            }
-                        }
-                    };
-                    memo.insert(pair, result);
-                }
-                Work::Splice { pair, triple } => {
-                    if memo.contains_key(&pair) {
-                        continue;
-                    }
-                    // The inline ITE for this splice has already run to completion on the stack
-                    // (scheduled before this Splice item), so its triple is resolved.
-                    let r = self
-                        .read()
-                        .ite_resolved(triple.0, triple.1, triple.2)
-                        .expect("splice ITE resolved before compose combine - BDD scheduling bug");
-                    // Write-through the compose_cache entry for this pair and seed the ite_cache
-                    // for the triple, as one exclusive transaction.
-                    {
-                        let mut mgr = self.write();
-                        mgr.compose_cache.entry((pair.0, var, pair.1)).or_insert(r);
-                        mgr.ite_cache.entry(triple).or_insert(r);
-                    }
-                    memo.insert(pair, r);
-                }
-                Work::IteSolve(a, b, c) => {
-                    let Some((top_var, low, high)) = ite_solve_step(self, a, b, c) else {
-                        continue;
-                    };
-                    stack.push(Work::IteCombine {
-                        triple: (a, b, c),
-                        top_var,
-                        low,
-                        high,
-                    });
-                    stack.push(Work::IteSolve(high.0, high.1, high.2));
-                    stack.push(Work::IteSolve(low.0, low.1, low.2));
-                }
-                Work::IteCombine {
-                    triple,
-                    top_var,
-                    low,
-                    high,
-                } => ite_combine_step(self, triple, top_var, low, high),
-            }
-        }
-
-        *memo.get(&(f, g)).expect(
-            "top-level compose pair resolved after iterative evaluation - BDD scheduling bug",
-        )
-    }
-
     /// Simultaneous multi-variable substitution: `f[v1 := g1, v2 := g2, ...]` for every `(v,
     /// g)` in `map`, managing the cell's borrow itself.
     ///
-    /// This is **not** repeated single-variable [`compose`](Self::compose) calls: it walks `f`'s
+    /// This is **not** a sequence of single-variable substitutions: it walks `f`'s
     /// original graph exactly once. Each original node's variable is substituted exactly once, at
     /// its own level; the substituting functions `g_v` never get traversed themselves — they enter
     /// the computation only as ITE selectors at the level of the variable they replace. That is
@@ -752,7 +513,7 @@ pub(crate) trait BddOps: ManagerCell {
     /// original `x`-tests that the second step needs to swap in).
     ///
     /// Evaluated **iteratively** with an explicit work-stack, in the same style as
-    /// [`ite`](Self::ite), [`restrict_to`](Self::restrict_to), and [`compose`](Self::compose), so a tall
+    /// [`ite`](Self::ite) and [`restrict_to`](Self::restrict_to), so a tall
     /// BDD cannot overflow the call stack. Each step takes its own short-lived shared borrow to
     /// read (a node's shape, or a resolved ITE triple) and, only when a result must be committed, a
     /// separate short-lived exclusive borrow to intern the node — a shared borrow is never live
@@ -770,8 +531,8 @@ pub(crate) trait BddOps: ManagerCell {
     /// through `ite(v_projection, high, low)`, where `v_projection = make_node(v, FALSE, TRUE)` is
     /// `v` reintroduced as its own two-valued selector — correct regardless of where the composed
     /// children's variables now sit, at the cost of running the shared inline ITE machine
-    /// (`ite_solve_step`/`ite_combine_step`, the same steps [`ite`](Self::ite) and
-    /// [`compose`](Self::compose) use) instead of a single `make_node` call. A node testing a
+    /// (`ite_solve_step`/`ite_combine_step`, the same steps [`ite`](Self::ite) uses)
+    /// instead of a single `make_node` call. A node testing a
     /// *mapped* variable `v` always takes this ITE recombination path, with the substituting
     /// function `g_v` itself as the selector: `ite(g_v, high, low)`.
     ///
@@ -780,12 +541,12 @@ pub(crate) trait BddOps: ManagerCell {
     /// `make_node`/`insert_node` path every other operation uses, so results remain canonical and
     /// safely comparable by NodeId alone.
     ///
-    /// **Memoisation** is a per-call `HashMap<NodeId, NodeId>` keyed on `f`'s original node id only
-    /// (there is no persistent cache analogous to `compose_cache`: `map` is not a stable,
-    /// hashable, reusable key the way a single `(var, g)` pair is). The per-call memo still
+    /// **Memoisation** is a per-call `HashMap<NodeId, NodeId>` keyed on `f`'s original node id: it
     /// collapses `f`'s shared sub-DAG so the walk stays linear in the number of `f`'s distinct
-    /// reachable nodes, and the inline ITE recombinations still hit the persistent `ite_cache`
-    /// across calls.
+    /// reachable nodes. There is no persistent per-substitution cache — like
+    /// [`restrict_to`](Self::restrict_to), each call re-walks `f`, and hash-consing keeps repeated
+    /// calls from minting duplicate nodes — while the inline ITE recombinations still hit the
+    /// persistent `ite_cache` across calls.
     fn compose_map(&self, f: NodeId, map: &HashMap<VarId, NodeId>) -> NodeId {
         /// One unit of work. `Solve` reads an original `f`-node's shape and schedules its
         /// children; `Combine` runs after a node's two original children are resolved (composed)
@@ -1087,6 +848,12 @@ mod tests {
         Minterm::anonymous(&vals)
     }
 
+    /// A substitution `{v := g, …}` as the engine's [`BddOps::compose_map`] map, from
+    /// `(VarId, NodeId)` pairs.
+    fn subst(pairs: &[(VarId, NodeId)]) -> HashMap<VarId, NodeId> {
+        pairs.iter().copied().collect()
+    }
+
     /// `restrict_to` must implement Shannon cofactor by assignment over the engine: `(a & b)|a=1 == b`,
     /// `(a & b)|a=0 == FALSE`, and restricting an absent variable is a no-op. Driven over the
     /// `RefCell`-backed [`LocalCell`] to exercise the borrow discipline of the iterative walk.
@@ -1239,10 +1006,11 @@ mod tests {
         assert_ne!(acc, FALSE_NODE);
     }
 
-    /// `compose` must implement functional substitution: composing `(a & b)` with `b := c` must equal
-    /// `ite(a, c, FALSE)` (the same result as building `a & c` directly). Composing with a variable
-    /// absent from the function is a no-op, and composing with the constant `TRUE` must degenerate to
-    /// `restrict(.., true)` (substituting a variable with the constant true is exactly setting it true).
+    /// `compose_map` must implement functional substitution: composing `(a & b)` with `b := c` must
+    /// equal `ite(a, c, FALSE)` (the same result as building `a & c` directly). A single-variable
+    /// substitution is just a one-entry map (the shape public `compose` routes through). Substituting a
+    /// variable absent from the function is a no-op, and substituting the constant `TRUE` must
+    /// degenerate to `restrict_to(.., true)` (setting the variable true).
     #[test]
     fn compose_substitutes_on_local_cell() {
         let cell = LocalCell::new_empty();
@@ -1255,27 +1023,27 @@ mod tests {
         let f = cell.ite(a_node, b_node, FALSE_NODE); // a & b
 
         // (a & b)[b := c] == a & c == ite(a, c, FALSE)
-        let composed = cell.compose(f, b, c_node);
+        let composed = cell.compose_map(f, &subst(&[(b, c_node)]));
         let oracle = cell.ite(a_node, c_node, FALSE_NODE);
         assert_eq!(composed, oracle);
 
         // Composing a variable absent from f is a no-op.
         let d = cell.make_var("d");
-        assert_eq!(cell.compose(f, d, c_node), f);
+        assert_eq!(cell.compose_map(f, &subst(&[(d, c_node)])), f);
 
         // Composing with the constant TRUE degenerates to restricting `b` to true.
         let n = cell.read().id_to_var.len();
         assert_eq!(
-            cell.compose(f, b, TRUE_NODE),
+            cell.compose_map(f, &subst(&[(b, TRUE_NODE)])),
             cell.restrict_to(f, &assign(n, &[(b, true)]))
         );
     }
 
-    /// The persistent `compose_cache` must actually be consulted: repeating an identical `compose`
-    /// call must return the same canonical id *and* must not allocate any new node — a genuine
-    /// cache-hit witness, not just an equal-by-canonicity coincidence.
+    /// Repeating an identical substitution must return the same canonical id *and* allocate no new
+    /// node. There is no persistent compose cache: this is hash-consing at work — re-walking `f`
+    /// under the same substitution re-derives the same canonical nodes and mints none.
     #[test]
-    fn compose_cache_reuses_nodes() {
+    fn repeated_compose_reuses_canonical_nodes() {
         let cell = LocalCell::new_empty();
         let a = cell.make_var("a");
         let b = cell.make_var("b");
@@ -1285,17 +1053,17 @@ mod tests {
         let c_node = cell.make_node(c, FALSE_NODE, TRUE_NODE);
         let f = cell.ite(a_node, b_node, FALSE_NODE); // a & b
 
-        let first = cell.compose(f, b, c_node);
+        let first = cell.compose_map(f, &subst(&[(b, c_node)]));
         let nodes_after_first = cell.read().nodes.len();
 
-        let second = cell.compose(f, b, c_node);
+        let second = cell.compose_map(f, &subst(&[(b, c_node)]));
         assert_eq!(first, second);
         assert_eq!(cell.read().nodes.len(), nodes_after_first);
     }
 
-    /// `compose` and `compose_map` must both be iterative: substituting the *bottom* variable of a
-    /// very deep AND chain walks through every node above it, which a recursive implementation would
-    /// overflow on. Mirrors `restrict_deep_chain_no_overflow`'s chain construction.
+    /// `compose_map` must be iterative (single-variable `compose` now routes through it): substituting
+    /// the *bottom* variable of a very deep AND chain walks through every node above it, which a
+    /// recursive implementation would overflow on. Mirrors `restrict_deep_chain_no_overflow`.
     #[test]
     fn compose_deep_chain_no_overflow() {
         let cell = LocalCell::new_empty();
@@ -1311,22 +1079,14 @@ mod tests {
 
         // Substituting the bottom variable with FALSE collapses the whole conjunction to false; the
         // walk descends through all n-1 nodes above it without overflowing the stack.
-        assert_eq!(cell.compose(node, ids[n - 1], FALSE_NODE), FALSE_NODE);
+        assert_eq!(
+            cell.compose_map(node, &subst(&[(ids[n - 1], FALSE_NODE)])),
+            FALSE_NODE
+        );
         // Substituting it with a fresh variable's node leaves a still-non-constant conjunction.
-        let substituted = cell.compose(node, ids[n - 1], fresh_node);
+        let substituted = cell.compose_map(node, &subst(&[(ids[n - 1], fresh_node)]));
         assert_ne!(substituted, FALSE_NODE);
         assert_ne!(substituted, TRUE_NODE);
-
-        // Same two cases through compose_map with a singleton map.
-        let mut to_false = HashMap::new();
-        to_false.insert(ids[n - 1], FALSE_NODE);
-        assert_eq!(cell.compose_map(node, &to_false), FALSE_NODE);
-
-        let mut to_fresh = HashMap::new();
-        to_fresh.insert(ids[n - 1], fresh_node);
-        let mapped = cell.compose_map(node, &to_fresh);
-        assert_ne!(mapped, FALSE_NODE);
-        assert_ne!(mapped, TRUE_NODE);
     }
 
     /// `compose_map` must stay canonical even when a substitution hoists a variable above the node
@@ -1346,9 +1106,7 @@ mod tests {
 
         let f = cell.make_node(b, FALSE_NODE, c_node); // b & c
 
-        let mut map = HashMap::new();
-        map.insert(c, a_node);
-        let result = cell.compose_map(f, &map);
+        let result = cell.compose_map(f, &subst(&[(c, a_node)]));
 
         let expected = cell.ite(a_node, b_node, FALSE_NODE); // a & b
         assert_eq!(result, expected);
