@@ -206,7 +206,7 @@ void essen_parts(pset_family BB, pset_family CC, pset RAISE, pset FREESET)
 #ifdef NO_INLINE
 	if ((dist = cdist01(p, r)) > 1) goto exit_if;
 #else
- {register int w,last;register unsigned int x;dist=0;if((last=cube.inword)!=-1)
+ {register int w,last;register espresso_word x;dist=0;if((last=cube.inword)!=-1)
 {x=p[last]&r[last];if((x=~(x|x>>1)&cube.inmask))if((dist=count_ones(x))>1)goto
 exit_if;for(w=1;w<last;w++){x=p[w]&r[w];if((x=~(x|x>>1)&DISJOINT))if(dist==1||(
 dist+=count_ones(x))>1)goto exit_if;}}}{register int w,var,last;register pcube
@@ -280,7 +280,7 @@ void elim_lowering(pset_family BB, pset_family CC, pset RAISE, pset FREESET)
 #ifdef NO_INLINE
 	if (! cdist0(p, r))
 #else
- {register int w,lastw;register unsigned int x;if((lastw=cube.inword)!=-1){x=p[
+ {register int w,lastw;register espresso_word x;if((lastw=cube.inword)!=-1){x=p[
 lastw]&r[lastw];if(~(x|x>>1)&cube.inmask)goto false;for(w=1;w<lastw;w++){x=p[w]
 &r[w];if(~(x|x>>1)&DISJOINT)goto false;}}}{register int w,var,lastw;register
 pcube mask;for(var=cube.num_binary_vars;var<cube.num_vars;var++){mask=cube.
@@ -502,7 +502,7 @@ bool feasibly_covered(pset_family BB, pset c, pset RAISE, pset new_lower)
 #ifdef NO_INLINE
 	if ((dist = cdist01(p, r)) > 1) goto exit_if;
 #else
- {register int w,last;register unsigned int x;dist=0;if((last=cube.inword)!=-1)
+ {register int w,last;register espresso_word x;dist=0;if((last=cube.inword)!=-1)
 {x=p[last]&r[last];if((x=~(x|x>>1)&cube.inmask))if((dist=count_ones(x))>1)goto
 exit_if;for(w=1;w<last;w++){x=p[w]&r[w];if((x=~(x|x>>1)&DISJOINT))if(dist==1||(
 dist+=count_ones(x))>1)goto exit_if;}}}{register int w,var,last;register pcube

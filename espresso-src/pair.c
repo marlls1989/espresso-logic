@@ -125,8 +125,8 @@ pcover pairvar(pset_family A, ppair pair)
   for(pairnum = 0; pairnum < pair->cnt; pairnum++) {
       p1 = cube.first_part[pair->var1[pairnum] - 1];
       p2 = cube.first_part[pair->var2[pairnum] - 1];
-      b1 = is_in_set(p, p2+1);
-      b0 = is_in_set(p, p2);
+      b1 = (is_in_set(p, p2+1) != 0);
+      b0 = (is_in_set(p, p2) != 0);
       val = insert_col + pairnum * 4;
       if (/* a0 */ is_in_set(p, p1)) {
     if (b0)

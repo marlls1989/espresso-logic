@@ -10,7 +10,8 @@ static int abs_select_restricted(pset_family A, pset restrict);
 
 pcover map_cover_to_unate(pset *T)
 {
-    register unsigned int word_test, word_set, bit_test, bit_set;
+    register int word_test, word_set;
+    register espresso_word bit_test, bit_set;
     register pcube p, pA;
     pset_family A;
     pcube *T1;
@@ -29,9 +30,9 @@ pcover map_cover_to_unate(pset *T)
 
       /* Copy a column from T to A */
       word_test = WHICH_WORD(i);
-      bit_test = 1 << WHICH_BIT(i);
+      bit_test = (espresso_word)1 << WHICH_BIT(i);
       word_set = WHICH_WORD(ncol);
-      bit_set = 1 << WHICH_BIT(ncol);
+      bit_set = (espresso_word)1 << WHICH_BIT(ncol);
 
       pA = A->data;
       for(T1 = T+2; (p = *T1++) != 0; ) {

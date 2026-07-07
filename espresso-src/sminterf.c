@@ -9,7 +9,7 @@ do_sm_minimum_cover(pset_family A)
     sm_element *pe;
     pset cover;
     register int i, base, rownum;
-    register unsigned val;
+    register espresso_word val;
     register pset last, p;
 
     M = sm_alloc();
