@@ -381,22 +381,31 @@ pub use crate::cover::{Cube, CubeType};
 use crate::sys;
 pub use error::{CubeError, InstanceError, MinimizationError};
 use std::marker::PhantomData;
-use std::os::raw::{c_char, c_int, c_uint};
+use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// Bits per Espresso cube word, mirroring `BPI` in `espresso.h` (the vendored C is built with the
-/// default `BPI == 32`). The cube bit-layout is fixed at this width *independent of*
-/// `sizeof(unsigned int)`: a variable bit `b` lives in cube word `(b >> LOGBPI) + 1` (word 0 is the
-/// set header) at bit `b & (BPI - 1)`, exactly as the C `WHICH_WORD`/`WHICH_BIT` macros define. Words
-/// are stored as `c_uint` (`unsigned int`), which the C — and therefore this crate — assumes holds at
-/// least `BPI` bits.
-const BPI: usize = 32;
+/// A single Espresso cube word, matching `espresso_word` in the generated bindings.
+/// `espresso.h` derives the word width from the native machine word via `UINTPTR_MAX`, so this
+/// alias auto-follows: `u64` on 64-bit targets, `u32` on 32-bit targets (including
+/// `wasm32-unknown-emscripten`).
+type CubeWord = sys::espresso_word;
+
+/// Bits per Espresso cube word, mirroring `BPI` in `espresso.h`. The cube bit-layout is fixed at
+/// this width: a variable bit `b` lives in cube word `(b >> LOGBPI) + 1` (word 0 is the set
+/// header) at bit `b & (BPI - 1)`, exactly as the C `WHICH_WORD`/`WHICH_BIT` macros define.
+const BPI: usize = CubeWord::BITS as usize;
 /// `log2(BPI)` — `espresso.h`'s `LOGBPI`, used for the word index `b >> LOGBPI`.
-const LOGBPI: usize = 5;
-/// Mask of the low `BPI` bits, applied when narrowing a packed word to one cube word.
-const BPI_MASK: u64 = (1u64 << BPI) - 1;
+const LOGBPI: usize = BPI.trailing_zeros() as usize;
+/// Mask of the low `BPI` bits, applied when narrowing a packed word to one cube word. Computed as
+/// `u64::MAX >> (64 - BPI)` rather than `(1u64 << BPI) - 1`, which would overflow the shift when
+/// `BPI == 64`.
+const BPI_MASK: u64 = u64::MAX >> (64 - BPI);
+/// `BPI` is only ever 32 or 64 (see `CubeWord`'s doc comment); this also guarantees
+/// `64 % BPI == 0`, which `cube_words_per_u64` below relies on when reinterpreting cube words as
+/// packed `u64` minterm words.
+const _: () = assert!(BPI == 32 || BPI == 64);
 
 // Re-export for convenience when using the espresso module directly
 
@@ -501,10 +510,10 @@ impl EspressoCubes<'_> {
         let cube_ptr = (*self.cover.ptr).data.add(i * wsize);
 
         // Read a single bit from the cube's word array (out-of-range words read as 0), via the C
-        // WHICH_WORD/WHICH_BIT layout. Words are `c_uint`, matching Espresso's `unsigned int*`.
+        // WHICH_WORD/WHICH_BIT layout. Words are `CubeWord`, matching Espresso's `espresso_word*`.
         let bit_at = |bit: usize| -> bool {
             let word = (bit >> LOGBPI) + 1;
-            word < wsize && (*cube_ptr.add(word) & ((1 as c_uint) << (bit & (BPI - 1)))) != 0
+            word < wsize && (*cube_ptr.add(word) & ((1 as CubeWord) << (bit & (BPI - 1)))) != 0
         };
 
         // The input region packs the same 2-bit fields as a minterm, so decode it by a direct
@@ -764,7 +773,7 @@ impl EspressoCover {
                 // Set the bit at `bit_pos` via the C WHICH_WORD/WHICH_BIT layout (word
                 // `(bit_pos >> LOGBPI) + 1`, bit `bit_pos & (BPI - 1)`); mirrors `bit_at` in `to_cubes`.
                 let set_bit = |bit_pos: usize| {
-                    *cf.add((bit_pos >> LOGBPI) + 1) |= (1 as c_uint) << (bit_pos & (BPI - 1));
+                    *cf.add((bit_pos >> LOGBPI) + 1) |= (1 as CubeWord) << (bit_pos & (BPI - 1));
                 };
 
                 // Set input values. Each binary variable occupies two bits at `var * 2` (value 0) and
@@ -862,12 +871,13 @@ impl EspressoCover {
 
                 // Copy the input region one cube word at a time — the minterm uses the same 2-bit
                 // encoding as a C cube, so no recoding. Each `u64` is sliced into `cube_words_per_u64`
-                // BPI-wide chunks; masking to BPI bits keeps it correct even if `c_uint` is wider than
+                // BPI-wide chunks; masking to BPI bits keeps it correct even if `CubeWord` is wider than
                 // BPI. `set_clear` zeroed the cube, so `|=` is a copy that leaves the (possibly shared)
                 // boundary word's output bits untouched — they are set below.
                 for w in 0..input_cube_words {
                     let mword = input_words[w / cube_words_per_u64];
-                    let chunk = ((mword >> ((w % cube_words_per_u64) * BPI)) & BPI_MASK) as c_uint;
+                    let chunk =
+                        ((mword >> ((w % cube_words_per_u64) * BPI)) & BPI_MASK) as CubeWord;
                     *cf.add(w + 1) |= chunk;
                 }
 
@@ -877,7 +887,8 @@ impl EspressoCover {
                 for (i, &asserted) in outputs.iter().enumerate() {
                     if asserted {
                         let bit_pos = output_first + i;
-                        *cf.add((bit_pos >> LOGBPI) + 1) |= (1 as c_uint) << (bit_pos & (BPI - 1));
+                        *cf.add((bit_pos >> LOGBPI) + 1) |=
+                            (1 as CubeWord) << (bit_pos & (BPI - 1));
                     }
                 }
 
@@ -2174,6 +2185,12 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
+
+    #[test]
+    fn c_and_bindgen_agree_on_bpi() {
+        // Turns any cc/bindgen width disagreement into a test failure instead of memory corruption.
+        assert_eq!(unsafe { sys::get_bpi() } as usize, BPI);
+    }
 
     #[test]
     fn from_cubes_rejects_invalid_value() {

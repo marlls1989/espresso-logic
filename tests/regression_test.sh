@@ -27,10 +27,17 @@ SKIPPED_TESTS=0
 
 # Always build C binary to ensure it's up to date
 echo -e "${YELLOW}Building C binary...${NC}"
-(cd espresso-src && make clean && make) || {
-	echo -e "${RED}Failed to build C binary${NC}"
-	exit 1
-}
+if [ -n "${ESPRESSO_REF_BPI:-}" ]; then
+	(cd espresso-src && make clean && make CFLAGS="-DBPI=${ESPRESSO_REF_BPI}") || {
+		echo -e "${RED}Failed to build C binary${NC}"
+		exit 1
+	}
+else
+	(cd espresso-src && make clean && make) || {
+		echo -e "${RED}Failed to build C binary${NC}"
+		exit 1
+	}
+fi
 echo ""
 
 # Always build Rust binary to ensure it's up to date
@@ -50,6 +57,11 @@ echo "╚═══════════════════════�
 echo ""
 echo "C Binary:    $C_BINARY"
 echo "Rust Binary: $RUST_BINARY"
+if [ -n "${ESPRESSO_REF_BPI:-}" ]; then
+	echo "Reference width: forced BPI=$ESPRESSO_REF_BPI"
+else
+	echo "Reference width: native"
+fi
 echo ""
 
 # Test a single file with given options

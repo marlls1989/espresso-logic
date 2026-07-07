@@ -393,16 +393,20 @@ pset_family sf_read(FILE *fp)
   int i, j;
   register pset p, last;
   pset_family A;
+  unsigned long long word;
 
   (void)fscanf(fp, "%d %d\n", &i, &j);
   A = sf_new(i, j);
   A->count = i;
 
   foreach_set(A, last, p) {
-    (void)fscanf(fp, "%x", p);
+    (void)fscanf(fp, "%llx", &word);
+    p[0] = (espresso_word)word;
 
-    for(j = 1; j <= (int)LOOP(p); j++)
-      (void)fscanf(fp, "%x", p+j);
+    for(j = 1; j <= (int)LOOP(p); j++) {
+      (void)fscanf(fp, "%llx", &word);
+      p[j] = (espresso_word)word;
+    }
   }
 
   return A;
@@ -415,7 +419,7 @@ void set_write(register FILE *fp, register pset a)
     register int n = LOOP(a), j;
 
     for(j = 0; j <= n; j++) {
-  fprintf(fp, "%x ", a[j]);
+  fprintf(fp, "%llx ", (unsigned long long)a[j]);
   if ((j+1) % 8 == 0 && j != n)
       fprintf(fp, "\n\t");
     }
