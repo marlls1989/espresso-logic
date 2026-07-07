@@ -8,6 +8,7 @@
 //! - Variable ordering (first-seen / insertion order)
 
 use super::manager_cell::ManagerCell;
+use crate::cover::{Anonymous, Minterm};
 use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 
@@ -364,133 +365,21 @@ pub(crate) trait BddOps: ManagerCell {
         self.ite(f, not_g, g)
     }
 
-    /// Shannon cofactor by assignment: substitute `var := value` throughout `node` and reduce.
+    /// Simultaneous Shannon cofactor by a partial assignment: `node|{v=value, …}` — fix every
+    /// variable the `assignment` pins (a `Some` field) to that constant in **one pass**, restricting
+    /// the function to the subspace the minterm denotes. Equal to chaining a single-variable cofactor
+    /// over the same fixed variables in any order, but without re-walking `node` per variable. A
+    /// variable the assignment leaves free (a `None` field, or an index at or past its length) stays
+    /// free; an all-free assignment is a no-op.
     ///
-    /// Returns the canonical root of `node|var=value` — the function obtained by fixing variable `var`
-    /// to `value` (a.k.a. *restrict*). Restricting a node that never tests `var` is a no-op and returns
-    /// `node` unchanged.
+    /// `assignment` is **positional over `VarId`**: index `v` is the value forced on the variable with
+    /// id `v`. A caller holding a label-keyed [`Minterm`] aligns it onto this manager's variable order
+    /// first (see `encoding::restrict_to`).
     ///
-    /// Iterative substitute-and-reduce: at each decision node testing `var`, the matching child replaces
-    /// the node; at a node testing another variable, both children are restricted and re-interned with
-    /// [`make_node`](Self::make_node) (which preserves canonicity and applies the reduction rule).
-    /// Evaluated with an explicit work-stack rather than recursion — in the same style as the iterative
-    /// [`ite`](Self::ite) and the BDD-layer fold — so a tall BDD (deep variable ordering) cannot overflow
-    /// the call stack. Each node's `(var, low, high)` is read under a **single short-lived shared
-    /// borrow** that is dropped before the rebuilt node is interned via `make_node` — so no shared borrow
-    /// is ever live when the exclusive borrow `make_node` may take is taken (the borrow discipline the
-    /// [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell` requires and the
-    /// [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires). A per-call memo collapses the
-    /// shared sub-DAG so the walk stays linear in the number of distinct reachable nodes.
-    fn restrict(&self, node: NodeId, var: VarId, value: bool) -> NodeId {
-        /// One unit of work. `Visit` reads a node's shape and schedules its restriction; `Forward`
-        /// copies the matching cofactor's result onto a node that tests `var`; `Build` re-interns a
-        /// node that tests another variable once both restricted children are resolved.
-        enum Work {
-            Visit(NodeId),
-            Forward {
-                node: NodeId,
-                child: NodeId,
-            },
-            Build {
-                node: NodeId,
-                var: VarId,
-                low: NodeId,
-                high: NodeId,
-            },
-        }
-
-        let mut memo: HashMap<NodeId, NodeId> = HashMap::new();
-        let mut stack = vec![Work::Visit(node)];
-        while let Some(work) = stack.pop() {
-            match work {
-                Work::Visit(n) => {
-                    if memo.contains_key(&n) {
-                        continue;
-                    }
-                    // Read this node's shape under one short-lived shared borrow, dropped before any
-                    // make_node may take the exclusive borrow.
-                    let shape = {
-                        let manager = self.read();
-                        match manager.expect_node(n) {
-                            // Terminals carry no variable: restricting cannot change a constant.
-                            BddNode::Terminal(_) => None,
-                            BddNode::Decision { var: v, low, high } => Some((*v, *low, *high)),
-                        }
-                    };
-                    match shape {
-                        None => {
-                            memo.insert(n, n);
-                        }
-                        Some((v, low, high)) if v == var => {
-                            // This node tests `var`: collapse to the matching cofactor and continue
-                            // restricting it (a deeper node could test `var` again only on a non-reduced
-                            // order; visiting the child handles that and the memo keeps it cheap).
-                            let chosen = if value { high } else { low };
-                            stack.push(Work::Forward {
-                                node: n,
-                                child: chosen,
-                            });
-                            stack.push(Work::Visit(chosen));
-                        }
-                        Some((v, low, high)) => {
-                            // `var` is not tested here: restrict both children, then re-intern.
-                            stack.push(Work::Build {
-                                node: n,
-                                var: v,
-                                low,
-                                high,
-                            });
-                            stack.push(Work::Visit(high));
-                            stack.push(Work::Visit(low));
-                        }
-                    }
-                }
-                Work::Forward { node: n, child } => {
-                    // A shared node can be scheduled more than once; the first result wins.
-                    if memo.contains_key(&n) {
-                        continue;
-                    }
-                    let result = *memo
-                        .get(&child)
-                        .expect("forwarded cofactor restricted before combine");
-                    memo.insert(n, result);
-                }
-                Work::Build {
-                    node: n,
-                    var: v,
-                    low,
-                    high,
-                } => {
-                    if memo.contains_key(&n) {
-                        continue;
-                    }
-                    // If neither child changed, `make_node` returns the canonical id for the same
-                    // triple, so an unaffected subgraph rebuilds to itself (the no-op guarantee).
-                    let new_low = *memo.get(&low).expect("low child restricted before combine");
-                    let new_high = *memo
-                        .get(&high)
-                        .expect("high child restricted before combine");
-                    let result = self.make_node(v, new_low, new_high);
-                    memo.insert(n, result);
-                }
-            }
-        }
-
-        *memo
-            .get(&node)
-            .expect("root node restricted after the iterative walk")
-    }
-
-    /// Simultaneous Shannon cofactor by a set of assignments: `node|{v=value, …}` — fix every
-    /// mapped variable to its constant in **one pass**, equal to chaining [`restrict`](Self::restrict)
-    /// over the same assignments in any order but without re-walking `node` per variable. A variable
-    /// absent from `map` stays free; an empty `map` is a no-op.
-    ///
-    /// Structured exactly like [`restrict`](Self::restrict): a per-call `memo` keyed on the
-    /// **original** node id collapses the shared sub-DAG so the walk stays linear in the number of
-    /// distinct reachable nodes, and each node's `(var, low, high)` is read under a **single
-    /// short-lived shared borrow** dropped before the rebuilt node is interned via
-    /// [`make_node`](Self::make_node) — no shared borrow is ever live when `make_node` may take its
+    /// A per-call `memo` keyed on the **original** node id collapses the shared sub-DAG so the walk
+    /// stays linear in the number of distinct reachable nodes, and each node's `(var, low, high)` is
+    /// read under a **single short-lived shared borrow** dropped before the rebuilt node is interned
+    /// via [`make_node`](Self::make_node) — no shared borrow is ever live when `make_node` may take its
     /// exclusive borrow (the discipline the [`LocalCell`](super::manager_cell::LocalCell)'s `RefCell`
     /// requires and the [`SyncCell`](super::manager_cell::SyncCell)'s `RwLock` requires). Evaluated
     /// with an explicit work-stack rather than recursion, so a tall BDD cannot overflow the call
@@ -502,12 +391,7 @@ pub(crate) trait BddOps: ManagerCell {
     /// greater than `v` and the bare `make_node` preserves ordering and canonicity. (compose_map's
     /// guard exists only because substituted *functions* can hoist a variable to or above the node
     /// being rebuilt.)
-    ///
-    /// **Memoisation** is a per-call `HashMap<NodeId, NodeId>` keyed on `node`'s original ids only:
-    /// `map` is not a stable, hashable, reusable key (same rationale as
-    /// [`compose_map`](Self::compose_map)), but it is constant across the pass so the per-call memo is
-    /// sound and keeps the walk linear.
-    fn restrict_many(&self, node: NodeId, map: &HashMap<VarId, bool>) -> NodeId {
+    fn restrict_to(&self, node: NodeId, assignment: &Minterm<Anonymous>) -> NodeId {
         /// One unit of work. `Visit` reads a node's shape and schedules its restriction; `Forward`
         /// copies a mapped variable's chosen cofactor result onto the node that tested it; `Build`
         /// re-interns a node that tests an unmapped variable once both restricted children are
@@ -548,30 +432,39 @@ pub(crate) trait BddOps: ManagerCell {
                         None => {
                             memo.insert(n, n);
                         }
-                        Some((v, low, high)) => match map.get(&v) {
-                            Some(&value) => {
-                                // This node tests a fixed variable: collapse to the matching
-                                // cofactor and *continue* restricting it — deeper nodes may test
-                                // OTHER mapped variables, so the chosen child must still be walked.
-                                let chosen = if value { high } else { low };
-                                stack.push(Work::Forward {
-                                    node: n,
-                                    child: chosen,
-                                });
-                                stack.push(Work::Visit(chosen));
+                        Some((v, low, high)) => {
+                            // `assignment` is positional over VarId; a variable past its length or with
+                            // a `None` field is left free.
+                            let fixed = if v < assignment.num_vars() {
+                                assignment.value_at(v)
+                            } else {
+                                None
+                            };
+                            match fixed {
+                                Some(value) => {
+                                    // This node tests a fixed variable: collapse to the matching
+                                    // cofactor and *continue* restricting it — deeper nodes may test
+                                    // OTHER fixed variables, so the chosen child must still be walked.
+                                    let chosen = if value { high } else { low };
+                                    stack.push(Work::Forward {
+                                        node: n,
+                                        child: chosen,
+                                    });
+                                    stack.push(Work::Visit(chosen));
+                                }
+                                None => {
+                                    // `v` is not fixed: restrict both children, then re-intern.
+                                    stack.push(Work::Build {
+                                        node: n,
+                                        var: v,
+                                        low,
+                                        high,
+                                    });
+                                    stack.push(Work::Visit(high));
+                                    stack.push(Work::Visit(low));
+                                }
                             }
-                            None => {
-                                // `v` is not fixed: restrict both children, then re-intern.
-                                stack.push(Work::Build {
-                                    node: n,
-                                    var: v,
-                                    low,
-                                    high,
-                                });
-                                stack.push(Work::Visit(high));
-                                stack.push(Work::Visit(low));
-                            }
-                        },
+                        }
                     }
                 }
                 Work::Forward { node: n, child } => {
@@ -619,7 +512,7 @@ pub(crate) trait BddOps: ManagerCell {
     /// instead of calling it as a black box.
     ///
     /// Evaluated **iteratively** with an explicit work-stack, in the same style as the iterative
-    /// [`ite`](Self::ite) and [`restrict`](Self::restrict), so a tall BDD (deep variable ordering)
+    /// [`ite`](Self::ite) and [`restrict_to`](Self::restrict_to), so a tall BDD (deep variable ordering)
     /// cannot overflow the call stack. Each step takes its own short-lived shared borrow to read
     /// (resolve/expand a pair, or read a splice's resolved ITE triple) and, only when a result must
     /// be committed, a separate short-lived exclusive borrow to intern the node and record its
@@ -859,7 +752,7 @@ pub(crate) trait BddOps: ManagerCell {
     /// original `x`-tests that the second step needs to swap in).
     ///
     /// Evaluated **iteratively** with an explicit work-stack, in the same style as
-    /// [`ite`](Self::ite), [`restrict`](Self::restrict), and [`compose`](Self::compose), so a tall
+    /// [`ite`](Self::ite), [`restrict_to`](Self::restrict_to), and [`compose`](Self::compose), so a tall
     /// BDD cannot overflow the call stack. Each step takes its own short-lived shared borrow to
     /// read (a node's shape, or a resolved ITE triple) and, only when a result must be committed, a
     /// separate short-lived exclusive borrow to intern the node — a shared borrow is never live
@@ -1184,9 +1077,19 @@ mod tests {
         assert_eq!(local_arity, sync_arity);
     }
 
-    /// `restrict` must implement Shannon cofactor by assignment over the engine: `(a & b)|a=1 == b`,
+    /// Build a positional assignment over `n` VarIds for [`BddOps::restrict_to`]: each `(v, b)` in
+    /// `fixed` pins VarId `v` to `b`; every other position is left free (`None`).
+    fn assign(n: usize, fixed: &[(VarId, bool)]) -> Minterm<Anonymous> {
+        let mut vals = vec![None; n];
+        for &(v, b) in fixed {
+            vals[v] = Some(b);
+        }
+        Minterm::anonymous(&vals)
+    }
+
+    /// `restrict_to` must implement Shannon cofactor by assignment over the engine: `(a & b)|a=1 == b`,
     /// `(a & b)|a=0 == FALSE`, and restricting an absent variable is a no-op. Driven over the
-    /// `RefCell`-backed [`LocalCell`] to exercise the borrow discipline of the recursive walk.
+    /// `RefCell`-backed [`LocalCell`] to exercise the borrow discipline of the iterative walk.
     #[test]
     fn restrict_cofactors_on_local_cell() {
         let cell = LocalCell::new_empty();
@@ -1197,13 +1100,13 @@ mod tests {
         let and = cell.ite(a_node, b_node, FALSE_NODE); // a & b
 
         // (a & b)|a=true == b
-        assert_eq!(cell.restrict(and, a, true), b_node);
+        assert_eq!(cell.restrict_to(and, &assign(2, &[(a, true)])), b_node);
         // (a & b)|a=false == FALSE
-        assert_eq!(cell.restrict(and, a, false), FALSE_NODE);
+        assert_eq!(cell.restrict_to(and, &assign(2, &[(a, false)])), FALSE_NODE);
 
         // Restricting a variable absent from the function is a no-op.
         let c = cell.make_var("c");
-        assert_eq!(cell.restrict(and, c, true), and);
+        assert_eq!(cell.restrict_to(and, &assign(3, &[(c, true)])), and);
     }
 
     /// `restrict_many` must agree with chaining single-variable `restrict` over the same
@@ -1223,24 +1126,26 @@ mod tests {
         for &sa in &states {
             for &sb in &states {
                 for &sc in &states {
-                    let mut map: HashMap<VarId, bool> = HashMap::new();
-                    for &(id, state) in &[(a, sa), (b, sb), (c, sc)] {
-                        if let Some(value) = state {
-                            map.insert(id, value);
-                        }
-                    }
-                    let many = cell.restrict_many(f, &map);
+                    let fixed: Vec<(VarId, bool)> = [(a, sa), (b, sb), (c, sc)]
+                        .into_iter()
+                        .filter_map(|(id, s)| s.map(|v| (id, v)))
+                        .collect();
+                    let many = cell.restrict_to(f, &assign(3, &fixed));
 
-                    // Chain restrict in a→b→c order, skipping free variables.
+                    // Chain single-variable restricts in a→b→c order, skipping free variables.
                     let chained_abc = [(a, sa), (b, sb), (c, sc)]
                         .into_iter()
                         .filter_map(|(id, s)| s.map(|v| (id, v)))
-                        .fold(f, |acc, (id, v)| cell.restrict(acc, id, v));
+                        .fold(f, |acc, (id, v)| {
+                            cell.restrict_to(acc, &assign(3, &[(id, v)]))
+                        });
                     // ...and in the reverse c→b→a order: order must not matter.
                     let chained_cba = [(c, sc), (b, sb), (a, sa)]
                         .into_iter()
                         .filter_map(|(id, s)| s.map(|v| (id, v)))
-                        .fold(f, |acc, (id, v)| cell.restrict(acc, id, v));
+                        .fold(f, |acc, (id, v)| {
+                            cell.restrict_to(acc, &assign(3, &[(id, v)]))
+                        });
 
                     assert_eq!(many, chained_abc);
                     assert_eq!(many, chained_cba);
@@ -1264,13 +1169,10 @@ mod tests {
             for bv in [false, true] {
                 for cv in [false, true] {
                     let expected = (av && bv) || (av ^ cv);
-                    let mut map: HashMap<VarId, bool> = HashMap::new();
-                    map.insert(a, av);
-                    map.insert(b, bv);
-                    map.insert(c, cv);
+                    let assignment = assign(3, &[(a, av), (b, bv), (c, cv)]);
 
                     let nodes_before = cell.read().nodes.len();
-                    let result = cell.restrict_many(f, &map);
+                    let result = cell.restrict_to(f, &assignment);
                     assert_eq!(cell.read().nodes.len(), nodes_before);
                     assert_eq!(result, if expected { TRUE_NODE } else { FALSE_NODE });
                 }
@@ -1278,54 +1180,10 @@ mod tests {
         }
     }
 
-    /// `restrict_many` must be iterative: fixing the *bottom* variable of a very deep AND chain walks
-    /// through every node above it, which a recursive implementation would overflow on. Mirrors
-    /// `restrict_deep_chain_no_overflow`'s chain construction.
-    #[test]
-    fn restrict_many_deep_chain_no_overflow() {
-        let cell = LocalCell::new_empty();
-        let n = 50_000;
-        let ids: Vec<VarId> = (0..n).map(|i| cell.make_var(&format!("v{i}"))).collect();
-        // f = v0 & v1 & ... & v(n-1), built bottom-up: each node's low = FALSE, high = the child.
-        let mut node = TRUE_NODE;
-        for &id in ids.iter().rev() {
-            node = cell.make_node(id, FALSE_NODE, node);
-        }
-        // Fixing the bottom variable to false collapses the whole conjunction to false; the walk
-        // descends through all n-1 nodes above it without overflowing the stack.
-        let mut to_false: HashMap<VarId, bool> = HashMap::new();
-        to_false.insert(ids[n - 1], false);
-        assert_eq!(cell.restrict_many(node, &to_false), FALSE_NODE);
-        // Fixing it to true drops just that variable, leaving a still-non-constant conjunction.
-        let mut to_true: HashMap<VarId, bool> = HashMap::new();
-        to_true.insert(ids[n - 1], true);
-        let dropped = cell.restrict_many(node, &to_true);
-        assert_ne!(dropped, FALSE_NODE);
-        assert_ne!(dropped, TRUE_NODE);
-    }
-
-    /// An empty map is a no-op, and a map whose only keys are variables absent from the function is
-    /// likewise a no-op — restricting nothing that the function tests leaves it unchanged.
-    #[test]
-    fn restrict_many_empty_and_absent() {
-        let cell = LocalCell::new_empty();
-        let (f, _) = build_sample(&cell);
-
-        // Empty map: no-op.
-        let empty: HashMap<VarId, bool> = HashMap::new();
-        assert_eq!(cell.restrict_many(f, &empty), f);
-
-        // Map keyed only on a fresh variable the function never tests: no-op.
-        let d = cell.make_var("d");
-        let mut absent: HashMap<VarId, bool> = HashMap::new();
-        absent.insert(d, true);
-        assert_eq!(cell.restrict_many(f, &absent), f);
-    }
-
-    /// `restrict` must be iterative: restricting the *bottom* variable of a very deep AND chain walks
+    /// `restrict_to` must be iterative: fixing the *bottom* variable of a very deep AND chain walks
     /// through every node above it, which a recursive implementation would overflow on. The chain is
-    /// built directly with `make_node` bottom-up (O(n)) so it is deep without the O(n^2) cost of folding
-    /// it with `ite`.
+    /// built directly with `make_node` bottom-up (O(n)) so it is deep without the O(n^2) cost of
+    /// folding it with `ite`.
     #[test]
     fn restrict_deep_chain_no_overflow() {
         let cell = LocalCell::new_empty();
@@ -1336,13 +1194,31 @@ mod tests {
         for &id in ids.iter().rev() {
             node = cell.make_node(id, FALSE_NODE, node);
         }
-        // Restricting the bottom variable to false collapses the whole conjunction to false; the walk
+        // Fixing the bottom variable to false collapses the whole conjunction to false; the walk
         // descends through all n-1 nodes above it without overflowing the stack.
-        assert_eq!(cell.restrict(node, ids[n - 1], false), FALSE_NODE);
-        // Restricting it to true drops just that variable, leaving a still-non-constant conjunction.
-        let dropped = cell.restrict(node, ids[n - 1], true);
+        assert_eq!(
+            cell.restrict_to(node, &assign(n, &[(ids[n - 1], false)])),
+            FALSE_NODE
+        );
+        // Fixing it to true drops just that variable, leaving a still-non-constant conjunction.
+        let dropped = cell.restrict_to(node, &assign(n, &[(ids[n - 1], true)]));
         assert_ne!(dropped, FALSE_NODE);
         assert_ne!(dropped, TRUE_NODE);
+    }
+
+    /// An all-free assignment is a no-op, and an assignment pinning only variables absent from the
+    /// function is likewise a no-op — restricting nothing the function tests leaves it unchanged.
+    #[test]
+    fn restrict_empty_and_absent() {
+        let cell = LocalCell::new_empty();
+        let (f, _) = build_sample(&cell);
+
+        // All-free assignment: no-op.
+        assert_eq!(cell.restrict_to(f, &assign(3, &[])), f);
+
+        // Assignment pinning only a fresh variable the function never tests: no-op.
+        let d = cell.make_var("d");
+        assert_eq!(cell.restrict_to(f, &assign(4, &[(d, true)])), f);
     }
 
     /// A deeply nested chain must not overflow the stack on either cell (the engine is iterative) and
@@ -1387,8 +1263,12 @@ mod tests {
         let d = cell.make_var("d");
         assert_eq!(cell.compose(f, d, c_node), f);
 
-        // Composing with the constant TRUE degenerates to restrict(.., true).
-        assert_eq!(cell.compose(f, b, TRUE_NODE), cell.restrict(f, b, true));
+        // Composing with the constant TRUE degenerates to restricting `b` to true.
+        let n = cell.read().id_to_var.len();
+        assert_eq!(
+            cell.compose(f, b, TRUE_NODE),
+            cell.restrict_to(f, &assign(n, &[(b, true)]))
+        );
     }
 
     /// The persistent `compose_cache` must actually be consulted: repeating an identical `compose`

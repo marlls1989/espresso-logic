@@ -247,6 +247,35 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         )
     }
 
+    /// Restrict this function to the subspace pinned by a [`Minterm`]: fix every variable the minterm
+    /// **pins** (a concrete `1`/`0` field) to that constant, restricting `self` to a subspace of itself.
+    ///
+    /// A don't-care (`-`) field — or a variable the minterm does not carry — leaves that variable free,
+    /// and a name this function does not depend on is ignored. This is the minterm-keyed sibling of
+    /// [`restrict_many`](Self::restrict_many): `f.restrict_to(&m)` equals `f.restrict_many(pairs)` for
+    /// the `(name, value)` pairs `m` fixes. The label type may be any
+    /// [`StringLabel`](crate::StringLabel) (`String`, [`Symbol`](crate::Symbol), `Arc<str>`, …).
+    ///
+    /// ```
+    /// use espresso_logic::{bdd_builder, Minterm, Symbol};
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b");
+    ///
+    /// // f = a & b; fixing a=1 (b left free) reduces it to b.
+    /// let f = &a & &b;
+    /// let m = Minterm::<Symbol>::with_labels(&[("a", Some(true))]).unwrap();
+    /// assert!(f.restrict_to(&m).equivalent_to(&b));
+    /// ```
+    #[must_use]
+    pub fn restrict_to<L: StringLabel>(&self, assignment: &Minterm<L>) -> Self {
+        Self::from_root(
+            &self.cell,
+            super::encoding::restrict_to(&self.cell, self.root, assignment),
+        )
+    }
+
     /// Universal quantification over `vars`: `∀v∈vars. self`.
     ///
     /// Folds `restrict(v, true) & restrict(v, false)` across each variable in `vars`. A name absent from
@@ -497,13 +526,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         }
         // Otherwise materialise the residual over the still-free variables in one restrict pass.
         // Restricting a name absent from the function is a no-op; don't-care/empty fields stay free.
-        let residual = self.restrict_many(
-            assignment
-                .vars()
-                .iter()
-                .zip(assignment.iter())
-                .filter_map(|(label, value)| value.map(|v| (label.as_ref(), v))),
-        );
+        let residual = self.restrict_to(assignment);
         debug_assert!(
             !residual.is_tautology() && !residual.is_contradiction(),
             "evaluate_fast returned None for a determined assignment - BDD evaluation bug"
