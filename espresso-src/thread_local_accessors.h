@@ -15,6 +15,9 @@
 struct cube_struct* get_cube(void);
 struct cdata_struct* get_cdata(void);
 
+/* Compiled architecture width — returns BPI (bits per integer) to verify host machine word width */
+int get_bpi(void);
+
 /* Configuration flags - getters return pointers for backwards compatibility */
 unsigned int* get_debug_ptr(void);
 void set_debug(unsigned int value);

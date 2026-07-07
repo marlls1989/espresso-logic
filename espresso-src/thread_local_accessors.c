@@ -21,6 +21,10 @@ struct cdata_struct* get_cdata(void) {
     return &cdata;
 }
 
+int get_bpi(void) {
+    return BPI;
+}
+
 /* Configuration flags accessors */
 unsigned int* get_debug_ptr(void) {
     return &debug;
