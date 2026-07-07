@@ -20,6 +20,8 @@ cargo bench                      # criterion benchmarks (benches/pla_benchmarks.
 
 ./tests/quick_regression.sh      # 4 cases, ~1s: Rust CLI vs C CLI
 ./tests/regression_test.sh       # ~363 cases, ~45s; builds C binary via espresso-src/Makefile
+ESPRESSO_REF_BPI=32 ./tests/regression_test.sh   # cross-width: native-width Rust CLI vs 32-bit C reference
+ESPRESSO_BPI=32 cargo test                       # build crate C+bindings at 32-bit on a 64-bit host
 ./scripts/check_leaks_macos.sh   # leak checks
 ```
 

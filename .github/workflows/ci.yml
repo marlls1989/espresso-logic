@@ -58,3 +58,10 @@ jobs:
       # CLI's PLA output is byte-identical to C across every -o {f,fd,fr,fdr} variant.
       - name: Regression (Rust CLI vs C reference)
         run: ./tests/regression_test.sh
+
+      # Proves the Rust CLI at the native width (64-bit on this runner) reproduces the 32-bit C
+      # reference's minimised covers byte-identically — the permanent cross-width oracle. The
+      # default run above only proves same-width parity; on a 32-bit host this leg degenerates
+      # to 32-vs-32.
+      - name: Regression (native-width Rust vs 32-bit C reference)
+        run: ESPRESSO_REF_BPI=32 ./tests/regression_test.sh
