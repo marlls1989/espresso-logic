@@ -833,8 +833,9 @@ impl EspressoCover {
     ///
     /// A [`Minterm`](crate::Minterm)'s input packing uses the *same* 2-bit-per-variable encoding as an
     /// Espresso cube (value 0 = even bit, value 1 = odd bit, don't-care = both, empty = neither), so a
-    /// `Minterm` `u64` word `k` maps onto Espresso's `u32` cube words `2k+1` / `2k+2` (the `+1` skips
-    /// Espresso's reserved header word). Each cube is `(input_words, output_assertions)`:
+    /// `Minterm` `u64` word `k` maps onto the `64 / BPI` Espresso cube words beginning at index
+    /// `k * (64 / BPI) + 1` — two 32-bit words at `BPI == 32`, a single 64-bit word at `BPI == 64`
+    /// (the `+ 1` skips Espresso's reserved header word). Each cube is `(input_words, output_assertions)`:
     /// `input_words` is the input minterm's [`raw_words`](crate::Minterm::raw_words) (length
     /// `ceil(num_inputs / 32)`), `output_assertions[i]` is whether output `i` is asserted. Empty (`?`,
     /// `00`) input fields are copied verbatim, so they reach C as the empty literal with no recoding.
