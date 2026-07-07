@@ -7,7 +7,7 @@
 #include "espresso.h"
 static _Thread_local pset_family set_family_garbage = NULL;
 
-static void intcpy(register unsigned int *d, register unsigned int *s, register long int n)
+static void intcpy(register espresso_word *d, register espresso_word *s, register long int n)
 {
     register int i;
     for(i = 0; i < n; i++) {
@@ -17,7 +17,7 @@ static void intcpy(register unsigned int *d, register unsigned int *s, register 
 
 
 /* bit_index -- find first bit (from LSB) in a word (MSB=bit n, LSB=bit 0) */
-int bit_index(register unsigned int a)
+int bit_index(register espresso_word a)
 {
     register int i;
     if (a == 0)
@@ -32,7 +32,7 @@ int bit_index(register unsigned int a)
 int set_ord(register pset a)
 {
     register int i, sum = 0;
-    register unsigned int val;
+    register espresso_word val;
     for(i = LOOP(a); i > 0; i--)
   if ((val = a[i]) != 0)
       sum += count_ones(val);
@@ -43,7 +43,7 @@ int set_ord(register pset a)
 int set_dist(register pset a, register pset b)
 {
     register int i, sum = 0;
-    register unsigned int val;
+    register espresso_word val;
     for(i = LOOP(a); i > 0; i--)
   if ((val = a[i] & b[i]) != 0)
       sum += count_ones(val);
@@ -63,10 +63,10 @@ pset set_fill(register pset r, register int size)
 {
     register int i = LOOPINIT(size);
     *r = i;
-    r[i] = ~ (unsigned) 0;
+    r[i] = ~ (espresso_word) 0;
     r[i] >>= i * BPI - size;
     while (--i > 0)
-  r[i] = ~ (unsigned) 0;
+  r[i] = ~ (espresso_word) 0;
     return r;
 }
 
@@ -126,7 +126,7 @@ pset set_merge(register pset r, register pset a, register pset b, register pset 
 bool set_andp(register pset r, register pset a, register pset b)
 {
     register int i = LOOP(a);
-    register unsigned int x = 0;
+    register espresso_word x = 0;
     PUTLOOP(r,i); do {r[i] = a[i] & b[i]; x |= r[i];} while (--i > 0);
     return x != 0;
 }
@@ -135,7 +135,7 @@ bool set_andp(register pset r, register pset a, register pset b)
 bool set_orp(register pset r, register pset a, register pset b)
 {
     register int i = LOOP(a);
-    register unsigned int x = 0;
+    register espresso_word x = 0;
     PUTLOOP(r,i); do {r[i] = a[i] | b[i]; x |= r[i];} while (--i > 0);
     return x != 0;
 }
@@ -152,13 +152,13 @@ bool setp_empty(register pset a)
 bool setp_full(register pset a, register int size)
 {
     register int i = LOOP(a);
-    register unsigned int test;
-    test = ~ (unsigned) 0;
+    register espresso_word test;
+    test = ~ (espresso_word) 0;
     test >>= i * BPI - size;
     if (a[i] != test)
   return FALSE;
     while (--i > 0)
-  if (a[i] != (~(unsigned) 0))
+  if (a[i] != (~(espresso_word) 0))
       return FALSE;
     return TRUE;
 }
@@ -247,7 +247,7 @@ pset_family sf_copy(pset_family R, pset_family A)
     R->sf_size = A->sf_size;
     R->wsize = A->wsize;
 /*R->capacity = A->count;*/
-/*R->data = REALLOC(unsigned int, R->data, (long) R->capacity * R->wsize);*/
+/*R->data = REALLOC(espresso_word, R->data, (long) R->capacity * R->wsize);*/
     R->count = A->count;
     R->active_count = A->active_count;
     intcpy(R->data, A->data, (long) A->wsize * A->count);
@@ -280,7 +280,7 @@ pset_family sf_append(pset_family A, pset_family B)
 
     if (A->sf_size != B->sf_size) fatal("sf_append: sf_size mismatch");
     A->capacity = A->count + B->count;
-    A->data = REALLOC(unsigned int, A->data, (long) A->capacity * A->wsize);
+    A->data = REALLOC(espresso_word, A->data, (long) A->capacity * A->wsize);
     intcpy(A->data + asize, B->data, bsize);
     A->count += B->count;
     A->active_count += B->active_count;
@@ -302,7 +302,7 @@ pset_family sf_new(int num, int size)
     A->sf_size = size;
     A->wsize = SET_SIZE(size);
     A->capacity = num;
-    A->data = ALLOC(unsigned int, (long) A->capacity * A->wsize);
+    A->data = ALLOC(espresso_word, (long) A->capacity * A->wsize);
     A->count = 0;
     A->active_count = 0;
     return A;
@@ -344,7 +344,7 @@ pset_family sf_addset(pset_family A, pset s)
 
     if (A->count >= A->capacity) {
   A->capacity = A->capacity + A->capacity/2 + 1;
-  A->data = REALLOC(unsigned int, A->data, (long) A->capacity * A->wsize);
+  A->data = REALLOC(espresso_word, A->data, (long) A->capacity * A->wsize);
     }
     p = GETSET(A, A->count++);
     INLINEset_copy(p, s);
@@ -501,7 +501,7 @@ void
 set_adjcnt(register pset a, register int *count, register int weight)
 {
     register int i, base;
-    register unsigned int val;
+    register espresso_word val;
 
     for(i = LOOP(a); i > 0; ) {
   for(val = a[i], base = --i << LOGBPI; val != 0; base++, val >>= 1) {
@@ -519,7 +519,7 @@ int *sf_count(pset_family A)
 {
     register pset p, last;
     register int i, base, *count;
-    register unsigned int val;
+    register espresso_word val;
 
     count = ALLOC(int, A->sf_size);
     for(i = A->sf_size - 1; i >= 0; i--) {
@@ -547,7 +547,7 @@ int *sf_count_restricted(pset_family A, register pset r)
 {
     register pset p;
     register int i, base, *count;
-    register unsigned int val;
+    register espresso_word val;
     int weight;
     pset last;
 
@@ -639,13 +639,13 @@ pset_family sf_copy_col(pset_family dst, int dstcol, pset_family src, int srccol
 {
     register pset last, p, pdest;
     register int word_test, word_set;
-    unsigned int bit_set, bit_test;
+    espresso_word bit_set, bit_test;
 
     /* CHEAT! form these constants outside the loop */
     word_test = WHICH_WORD(srccol);
-    bit_test = 1 << WHICH_BIT(srccol);
+    bit_test = (espresso_word)1 << WHICH_BIT(srccol);
     word_set = WHICH_WORD(dstcol);
-    bit_set = 1 << WHICH_BIT(dstcol);
+    bit_set = (espresso_word)1 << WHICH_BIT(dstcol);
 
     pdest = dst->data;
     foreach_set(src, last, p) {
