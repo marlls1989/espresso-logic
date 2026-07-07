@@ -407,6 +407,17 @@ const BPI_MASK: u64 = u64::MAX >> (64 - BPI);
 /// packed `u64` minterm words.
 const _: () = assert!(BPI == 32 || BPI == 64);
 
+/// Widen a packed C cube word to `u64`. On a 64-bit build `CubeWord` is `u64`
+/// and this is a no-op; on a 32-bit build (`CubeWord` = `u32`, e.g. wasm32 or
+/// `ESPRESSO_BPI=32`) it is a genuine widening needed to combine the word with
+/// `BPI_MASK` and the `u64` minterm accumulator. The `allow` is load-bearing:
+/// the cast is redundant only on the 64-bit arm.
+#[inline]
+#[allow(clippy::unnecessary_cast)]
+fn word_to_u64(w: CubeWord) -> u64 {
+    w as u64
+}
+
 // Re-export for convenience when using the espresso module directly
 
 /// Cover with direct access to C library representation
@@ -528,7 +539,7 @@ impl EspressoCubes<'_> {
             for c in 0..cube_words_per_u64 {
                 let cw = k * cube_words_per_u64 + c;
                 if cw < self.input_cube_words {
-                    let cval = (*cube_ptr.add(cw + 1) as u64) & BPI_MASK;
+                    let cval = word_to_u64(*cube_ptr.add(cw + 1)) & BPI_MASK;
                     word |= cval << (c * BPI);
                 }
             }

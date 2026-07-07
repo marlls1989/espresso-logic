@@ -164,7 +164,7 @@ fn main() {
 
     // Compile
     if let Some(bpi) = &bpi_override {
-        build.flag(&format!("-DBPI={bpi}"));
+        build.flag(format!("-DBPI={bpi}"));
     }
     build.compile("espresso");
 
