@@ -35,23 +35,44 @@
  *   A family of sets is a two-dimensional matrix of bits and is
  *   implemented with the data type "set_family".
  *
- *   BPI == 32 and BPI == 16 have been tested and work.
+ *   BPI == 32 and BPI == 64 are supported; the default follows the native
+ *   machine word.
  */
 
 
-/* Define host machine characteristics of "unsigned int" */
-#ifndef BPI
-#define BPI             32              /* # bits per integer */
+#include <stdint.h>
+
+/*
+ * The packed-set word follows the native machine word via the pointer width:
+ * 64-bit targets get 64-bit words, 32-bit targets (including wasm32) keep
+ * 32-bit words.  Override with -DBPI=32 or -DBPI=64.
+ */
+#ifndef UINTPTR_MAX
+#error "espresso: UINTPTR_MAX not defined; define BPI (32 or 64) manually"
 #endif
 
-#if BPI == 32
-#define LOGBPI          5               /* log(BPI)/log(2) */
+#ifndef BPI
+#if UINTPTR_MAX == 0xffffffffffffffffu
+#define BPI             64
+#elif UINTPTR_MAX == 0xffffffffu
+#define BPI             32
 #else
-#define LOGBPI          4               /* log(BPI)/log(2) */
+#error "espresso: unsupported uintptr_t width (need 32 or 64 bits)"
+#endif
+#endif
+
+#if BPI == 64
+#define LOGBPI          6               /* log(BPI)/log(2) */
+typedef uint64_t espresso_word;
+#elif BPI == 32
+#define LOGBPI          5               /* log(BPI)/log(2) */
+typedef uint32_t espresso_word;
+#else
+#error "espresso: BPI must be 32 or 64"
 #endif
 
 /* Define the set type */
-typedef unsigned int *pset;
+typedef espresso_word *pset;
 
 /* Define the set family type -- an array of sets */
 typedef struct set_family {
@@ -69,11 +90,7 @@ typedef struct set_family {
 #define WHICH_BIT(element)      ((element) & (BPI-1))
 
 /* # of ints needed to allocate a set with "size" elements */
-#if BPI == 32
 #define SET_SIZE(size)          ((size) <= BPI ? 2 : (WHICH_WORD((size)-1) + 1))
-#else
-#define SET_SIZE(size)          ((size) <= BPI ? 3 : (WHICH_WORD((size)-1) + 2))
-#endif
 
 /*
  *  Three fields are maintained in the first word of the set
@@ -88,10 +105,12 @@ typedef struct set_family {
 #define LOOPCOPY(set)           LOOP(set)
 #define SIZE(set)               (set[0] >> 16)
 #define PUTSIZE(set, size)      (set[0] &= 0xffff, set[0] |= ((size) << 16))
+#elif BPI == 64
+#define LOOPCOPY(set)           LOOP(set)
+#define SIZE(set)               (set[0] >> 32)
+#define PUTSIZE(set, size)      (set[0] &= 0xffffffffu, set[0] |= ((espresso_word)(size) << 32))
 #else
-#define LOOPCOPY(set)           (LOOP(set) + 1)
-#define SIZE(set)               (set[LOOP(set)+1])
-#define PUTSIZE(set, size)      ((set[LOOP(set)+1]) = (size))
+#error "espresso: BPI must be 32 or 64"
 #endif
 
 #define NELEM(set)		(BPI * LOOP(set))
@@ -127,7 +146,7 @@ typedef struct set_family {
     foreachi_set(R,i,p) if (TESTP(p, ACTIVE))
 
 /* Looping over all elements in a set:
- *      foreach_set_element(pset p, int i, unsigned val, int base) {
+ *      foreach_set_element(pset p, int i, espresso_word val, int base) {
  *		.
  *		.
  *		.
@@ -142,15 +161,15 @@ typedef struct set_family {
 #define GETSET(family, index)   ((family)->data + (family)->wsize * (index))
 
 /* Allocate and deallocate sets */
-#define set_new(size)	set_clear(ALLOC(unsigned int, SET_SIZE(size)), size)
-#define set_full(size)	set_fill(ALLOC(unsigned int, SET_SIZE(size)), size)
-#define set_save(r)	set_copy(ALLOC(unsigned int, SET_SIZE(NELEM(r))), r)
+#define set_new(size)	set_clear(ALLOC(espresso_word, SET_SIZE(size)), size)
+#define set_full(size)	set_fill(ALLOC(espresso_word, SET_SIZE(size)), size)
+#define set_save(r)	set_copy(ALLOC(espresso_word, SET_SIZE(NELEM(r))), r)
 #define set_free(r)	FREE(r)
 
 /* Check for set membership, remove set element and insert set element */
-#define is_in_set(set, e)       (set[WHICH_WORD(e)] & (1 << WHICH_BIT(e)))
-#define set_remove(set, e)      (set[WHICH_WORD(e)] &= ~ (1 << WHICH_BIT(e)))
-#define set_insert(set, e)      (set[WHICH_WORD(e)] |= 1 << WHICH_BIT(e))
+#define is_in_set(set, e)       (set[WHICH_WORD(e)] & ((espresso_word)1 << WHICH_BIT(e)))
+#define set_remove(set, e)      (set[WHICH_WORD(e)] &= ~ ((espresso_word)1 << WHICH_BIT(e)))
+#define set_insert(set, e)      (set[WHICH_WORD(e)] |= (espresso_word)1 << WHICH_BIT(e))
 
 /* Inline code substitution for those places that REALLY need it on a VAX */
 #ifdef NO_INLINE
@@ -179,7 +198,7 @@ typedef struct set_family {
     {register int i_=LOOPINIT(size); *r=i_; do r[i_] = 0; while (--i_ > 0);}
 #define INLINEset_fill(r, size)\
     {register int i_=LOOPINIT(size); *r=i_; \
-    r[i_]=((unsigned int)(~0))>>(i_*BPI-size); while(--i_>0) r[i_]=~0;}
+    r[i_]=((~(espresso_word)0))>>(i_*BPI-size); while(--i_>0) r[i_]= ~(espresso_word)0;}
 #define INLINEset_and(r, a, b)\
     {register int i_=LOOP(a); PUTLOOP(r,i_);\
     do r[i_] = a[i_] & b[i_]; while (--i_>0);}
@@ -218,12 +237,16 @@ typedef struct set_family {
 
 #endif
 
-#if BPI == 32
+#if BPI == 64
+#define count_ones(v)\
+    (bit_count[v & 255] + bit_count[(v >> 8) & 255]\
+    + bit_count[(v >> 16) & 255] + bit_count[(v >> 24) & 255]\
+    + bit_count[(v >> 32) & 255] + bit_count[(v >> 40) & 255]\
+    + bit_count[(v >> 48) & 255] + bit_count[(v >> 56) & 255])
+#else
 #define count_ones(v)\
     (bit_count[v & 255] + bit_count[(v >> 8) & 255]\
     + bit_count[(v >> 16) & 255] + bit_count[(v >> 24) & 255])
-#else
-#define count_ones(v)   (bit_count[v & 255] + bit_count[(v >> 8) & 255])
 #endif
 
 /* Table for efficient bit counting */
@@ -388,11 +411,11 @@ typedef struct {
     (is_in_set(c, cube.first_part[cube.output] + pos) != 0)
 
 #define PUTINPUT(c, pos, value)\
-    c[WHICH_WORD(2*pos)] = (c[WHICH_WORD(2*pos)] & ~(3 << WHICH_BIT(2*pos)))\
-		| (value << WHICH_BIT(2*pos))
+    c[WHICH_WORD(2*pos)] = (c[WHICH_WORD(2*pos)] & ~((espresso_word)3 << WHICH_BIT(2*pos)))\
+		| ((espresso_word)(value) << WHICH_BIT(2*pos))
 #define PUTOUTPUT(c, pos, value)\
-    c[WHICH_WORD(pos)] = (c[WHICH_WORD(pos)] & (1 << WHICH_BIT(pos)))\
-		| (value << WHICH_BIT(pos))
+    c[WHICH_WORD(pos)] = (c[WHICH_WORD(pos)] & ((espresso_word)1 << WHICH_BIT(pos)))\
+		| ((espresso_word)(value) << WHICH_BIT(pos))
 
 #define TWO     3
 #define DASH    3
@@ -471,7 +494,7 @@ struct cube_struct {
     pset *temp;                 /* an array of temporary sets */
     pset fullset;               /* a full cube */
     pset emptyset;              /* an empty cube */
-    unsigned int inmask;        /* mask to get odd word of binary part */
+    espresso_word inmask;        /* mask to get odd word of binary part */
     int inword;                 /* which word number for above */
     int *sparse;                /* should this variable be sparse? */
     int num_mv_vars;            /* number of multiple-valued variables */
@@ -493,10 +516,10 @@ extern struct pla_types_struct pla_types[];
 extern _Thread_local struct cube_struct cube, temp_cube_save;
 extern _Thread_local struct cdata_struct cdata, temp_cdata_save;
 
-#if BPI == 32
-#define DISJOINT 0x55555555
+#if BPI == 64
+#define DISJOINT ((espresso_word)0x5555555555555555uLL)
 #else
-#define DISJOINT 0x5555
+#define DISJOINT 0x55555555
 #endif
 
 
@@ -679,7 +702,7 @@ extern _Thread_local struct cdata_struct cdata, temp_cdata_save;
 /* set.c */ extern char * ps1 (register pset a);
 /* set.c */ extern int * sf_count (pset_family A);
 /* set.c */ extern int * sf_count_restricted (pset_family A, register pset r);
-/* set.c */ extern int bit_index (register unsigned int a);
+/* set.c */ extern int bit_index (register espresso_word a);
 /* set.c */ extern int set_dist (register pset a, register pset b);
 /* set.c */ extern int set_ord (register pset a);
 /* set.c */ extern void set_adjcnt (register pset a, register int *count, register int weight);
