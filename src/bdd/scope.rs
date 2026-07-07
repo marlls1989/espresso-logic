@@ -98,8 +98,9 @@ impl<B: Brand, C: ManagerCell> std::fmt::Debug for ScopedBdd<'_, B, C> {
 }
 
 impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
-    /// Wrap a raw root node into a scoped handle borrowing `cell`.
-    fn from_root(cell: &'s C, root: NodeId) -> Self {
+    /// Wrap a raw root node into a scoped handle borrowing `cell`. Crate-internal: the streaming
+    /// batch compose ([`super::batch`]) mints scoped results this way.
+    pub(super) fn from_root(cell: &'s C, root: NodeId) -> Self {
         ScopedBdd {
             root,
             cell,
@@ -111,6 +112,12 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     /// materialise the owned [`Bdd`].
     pub(super) fn root(self) -> NodeId {
         self.root
+    }
+
+    /// The scope's borrowed manager cell. Crate-internal: the streaming batch compose captures it to
+    /// run the shared walk and mint scoped results.
+    pub(super) fn cell(self) -> &'s C {
+        self.cell
     }
 
     // The owned [`Bdd`] operators assert at runtime that two operands share a manager, a backstop against a

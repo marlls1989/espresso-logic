@@ -34,7 +34,8 @@
 //!   (restrict/restrict_many/restrict_to are mirrored on [`ScopedBdd`]).
 //! - Composition: [`Bdd::compose`] (substitute a function for a variable) and
 //!   [`Bdd::compose_map`] (simultaneous multi-variable substitution) — both mirrored on
-//!   [`ScopedBdd`].
+//!   [`ScopedBdd`] — plus [`Composer`], which streams one substitution across a whole iterator of
+//!   handles, sharing a single short-lived cache so overlapping functions are composed once.
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].
 //! - Materialisation: [`Bdd::to_cubes`] (a single-output sum-of-products cover), [`Bdd::maximize`]
 //!   (the fully-expanded maximal cover over an explicit, widenable variable set), and
@@ -53,6 +54,7 @@
 //!
 //! [`BoolExpr`]: crate::BoolExpr
 
+mod batch;
 mod brand;
 mod builder;
 mod encoding;
@@ -62,6 +64,7 @@ pub(crate) mod manager_cell;
 mod scope;
 
 pub use crate::bdd::manager_cell::{LocalCell, ManagerCell, SyncCell};
+pub use batch::{BatchHandle, ComposeMany, Composer};
 pub use brand::Brand;
 pub use builder::BddBuilder;
 pub use handle::{Bdd, BddNode, BddVariables};

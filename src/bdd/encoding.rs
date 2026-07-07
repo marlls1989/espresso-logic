@@ -20,6 +20,21 @@ pub(super) fn compose<C: ManagerCell>(cell: &C, f: NodeId, var: &str, g: NodeId)
     compose_map(cell, f, std::iter::once((var, g)))
 }
 
+/// Resolve a name-keyed substitution to VarId-keyed node ids under one read borrow: an unknown name
+/// is dropped, a repeated name takes its LAST entry. Shared by the single-function `compose_map` and
+/// the streaming batch surface, so a substitution reused across many functions is resolved once.
+pub(super) fn resolve_substitution<C: ManagerCell, S: AsRef<str>>(
+    cell: &C,
+    entries: impl IntoIterator<Item = (S, NodeId)>,
+) -> HashMap<VarId, NodeId> {
+    let entries: Vec<(S, NodeId)> = entries.into_iter().collect();
+    let mgr = cell.read();
+    entries
+        .iter()
+        .filter_map(|(name, g)| mgr.var_id(name.as_ref()).map(|v| (v, *g)))
+        .collect()
+}
+
 /// Simultaneous `f[v := g_v]` over name-keyed entries; absent names dropped, a repeated
 /// name takes its LAST entry; empty (post-resolution) map ⇒ no-op.
 pub(super) fn compose_map<C: ManagerCell, S: AsRef<str>>(
@@ -27,14 +42,7 @@ pub(super) fn compose_map<C: ManagerCell, S: AsRef<str>>(
     f: NodeId,
     entries: impl IntoIterator<Item = (S, NodeId)>,
 ) -> NodeId {
-    let entries: Vec<(S, NodeId)> = entries.into_iter().collect();
-    let map: HashMap<VarId, NodeId> = {
-        let mgr = cell.read();
-        entries
-            .iter()
-            .filter_map(|(name, g)| mgr.var_id(name.as_ref()).map(|v| (v, *g)))
-            .collect()
-    };
+    let map = resolve_substitution(cell, entries);
     if map.is_empty() {
         return f;
     }

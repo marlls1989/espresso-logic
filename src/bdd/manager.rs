@@ -500,6 +500,16 @@ pub(crate) trait BddOps: ManagerCell {
             .expect("root node restricted after the iterative walk")
     }
 
+    /// Simultaneous multi-variable substitution over one function: `f[v1 := g1, v2 := g2, ...]` for
+    /// every `(v, g)` in `map`. Allocates a fresh per-call memo and runs the shared
+    /// [`compose_into`](Self::compose_into) walk; behaviour and signature are unchanged. To reuse a
+    /// memo across several functions under one substitution, drive [`compose_into`](Self::compose_into)
+    /// directly with a shared `memo`.
+    fn compose_map(&self, f: NodeId, map: &HashMap<VarId, NodeId>) -> NodeId {
+        let mut memo = HashMap::new();
+        self.compose_into(f, map, &mut memo)
+    }
+
     /// Simultaneous multi-variable substitution: `f[v1 := g1, v2 := g2, ...]` for every `(v,
     /// g)` in `map`, managing the cell's borrow itself.
     ///
@@ -541,13 +551,20 @@ pub(crate) trait BddOps: ManagerCell {
     /// `make_node`/`insert_node` path every other operation uses, so results remain canonical and
     /// safely comparable by NodeId alone.
     ///
-    /// **Memoisation** is a per-call `HashMap<NodeId, NodeId>` keyed on `f`'s original node id: it
-    /// collapses `f`'s shared sub-DAG so the walk stays linear in the number of `f`'s distinct
-    /// reachable nodes. There is no persistent per-substitution cache — like
-    /// [`restrict_to`](Self::restrict_to), each call re-walks `f`, and hash-consing keeps repeated
-    /// calls from minting duplicate nodes — while the inline ITE recombinations still hit the
+    /// **Memoisation** uses the caller-owned `memo` (`HashMap<NodeId, NodeId>`, `f`'s original node
+    /// id → composed result), so it collapses `f`'s shared sub-DAG and — when a batch passes the
+    /// *same* memo for several functions under one `map` — reuses sub-graphs shared between them (a
+    /// node composes identically under a fixed `map`, so a prior function's entries are valid here).
+    /// The single-function [`compose_map`](Self::compose_map) wrapper passes a fresh memo, so each of
+    /// its calls re-walks `f`; there is no persistent per-substitution cache — hash-consing keeps
+    /// repeated calls from minting duplicate nodes, and the inline ITE recombinations still hit the
     /// persistent `ite_cache` across calls.
-    fn compose_map(&self, f: NodeId, map: &HashMap<VarId, NodeId>) -> NodeId {
+    fn compose_into(
+        &self,
+        f: NodeId,
+        map: &HashMap<VarId, NodeId>,
+        memo: &mut HashMap<NodeId, NodeId>,
+    ) -> NodeId {
         /// One unit of work. `Solve` reads an original `f`-node's shape and schedules its
         /// children; `Combine` runs after a node's two original children are resolved (composed)
         /// and either rebuilds the node directly (guarded fast path) or schedules the ITE
@@ -575,7 +592,6 @@ pub(crate) trait BddOps: ManagerCell {
             },
         }
 
-        let mut memo: HashMap<NodeId, NodeId> = HashMap::new();
         let mut stack = vec![Work::Solve(f)];
         while let Some(work) = stack.pop() {
             match work {
@@ -1110,5 +1126,32 @@ mod tests {
 
         let expected = cell.ite(a_node, b_node, FALSE_NODE); // a & b
         assert_eq!(result, expected);
+    }
+
+    /// `compose_into` must let a batch of functions share one memo under a fixed substitution: the
+    /// results match composing each function on its own, and a node shared between two functions is
+    /// recorded once in the shared memo. This is the mechanism the streaming batch compose relies on.
+    #[test]
+    fn compose_into_shares_memo_across_functions() {
+        let cell = LocalCell::new_empty();
+        let a = cell.make_var("a");
+        let b = cell.make_var("b");
+        let c = cell.make_var("c");
+        let a_node = cell.make_node(a, FALSE_NODE, TRUE_NODE);
+        let b_node = cell.make_node(b, FALSE_NODE, TRUE_NODE);
+        let c_node = cell.make_node(c, FALSE_NODE, TRUE_NODE);
+        let f1 = cell.ite(a_node, b_node, FALSE_NODE); // a & b
+        let f2 = cell.ite(a_node, c_node, b_node); // shares the a-test subgraph with f1
+        let map = subst(&[(b, c_node)]);
+
+        let mut memo = HashMap::new();
+        let r1 = cell.compose_into(f1, &map, &mut memo);
+        let r2 = cell.compose_into(f2, &map, &mut memo);
+
+        // The shared memo changes nothing versus composing each function on its own.
+        assert_eq!(r1, cell.compose_map(f1, &map));
+        assert_eq!(r2, cell.compose_map(f2, &map));
+        // Both roots were composed through the one shared memo.
+        assert!(memo.contains_key(&f1) && memo.contains_key(&f2));
     }
 }
