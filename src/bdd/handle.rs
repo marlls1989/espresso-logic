@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use super::builder::BddBuilder;
-use crate::bdd::manager::{BddManager, BddNode as ManagerNode, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager::{BddNode as ManagerNode, BddOps, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
@@ -142,7 +142,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn and(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = super::encoding::and(&self.cell, self.root, other.root);
+        let root = self.cell.and(self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -150,7 +150,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn or(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = super::encoding::or(&self.cell, self.root, other.root);
+        let root = self.cell.or(self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -158,7 +158,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
         self.assert_same_manager(other);
-        let root = super::encoding::xor(&self.cell, self.root, other.root);
+        let root = self.cell.xor(self.root, other.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -169,7 +169,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// method chain while `!` reads naturally in an expression.
     #[must_use]
     pub fn complement(&self) -> Self {
-        let root = super::encoding::not(&self.cell, self.root);
+        let root = self.cell.not(self.root);
         Self::from_root(&self.cell, root)
     }
 
@@ -185,7 +185,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     pub fn ite(&self, g: &Self, h: &Self) -> Self {
         self.assert_same_manager(g);
         self.assert_same_manager(h);
-        let root = BddManager::ite(&self.cell, self.root, g.root, h.root);
+        let root = self.cell.ite(self.root, g.root, h.root);
         Self::from_root(&self.cell, root)
     }
 

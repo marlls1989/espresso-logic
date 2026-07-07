@@ -22,7 +22,7 @@ use std::ops::{BitAnd, BitOr, BitXor, Not};
 use super::brand::Brand;
 use super::builder::BddBuilder;
 use super::handle::Bdd;
-use crate::bdd::manager::{BddManager, NodeId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager::{BddOps, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
@@ -123,34 +123,25 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
     /// Logical AND: `self ∧ other`. Equivalent to the `&` operator.
     #[must_use]
     pub fn and(self, other: Self) -> Self {
-        Self::from_root(
-            self.cell,
-            super::encoding::and(self.cell, self.root, other.root),
-        )
+        Self::from_root(self.cell, self.cell.and(self.root, other.root))
     }
 
     /// Logical OR: `self ∨ other`. Equivalent to the `|` operator.
     #[must_use]
     pub fn or(self, other: Self) -> Self {
-        Self::from_root(
-            self.cell,
-            super::encoding::or(self.cell, self.root, other.root),
-        )
+        Self::from_root(self.cell, self.cell.or(self.root, other.root))
     }
 
     /// Logical XOR: `self ⊕ other`. Equivalent to the `^` operator.
     #[must_use]
     pub fn xor(self, other: Self) -> Self {
-        Self::from_root(
-            self.cell,
-            super::encoding::xor(self.cell, self.root, other.root),
-        )
+        Self::from_root(self.cell, self.cell.xor(self.root, other.root))
     }
 
     /// Logical NOT: `¬self`. Equivalent to the unary `!` operator.
     #[must_use]
     pub fn complement(self) -> Self {
-        Self::from_root(self.cell, super::encoding::not(self.cell, self.root))
+        Self::from_root(self.cell, self.cell.not(self.root))
     }
 
     /// Substitute `g` for the variable `var` in `self`: `self[var := g]`. A name that is **not** a
@@ -264,8 +255,8 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     #[must_use]
     pub fn var<S: AsRef<str>>(&self, name: S) -> ScopedBdd<'s, B, C> {
         let cell = self.builder.cell();
-        let id = BddManager::make_var(cell, name.as_ref());
-        let root = BddManager::make_node(cell, id, FALSE_NODE, TRUE_NODE);
+        let id = cell.make_var(name.as_ref());
+        let root = cell.make_node(id, FALSE_NODE, TRUE_NODE);
         ScopedBdd::from_root(cell, root)
     }
 

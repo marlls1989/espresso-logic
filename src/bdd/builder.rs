@@ -22,7 +22,7 @@ use std::marker::PhantomData;
 use super::brand::Brand;
 use super::handle::Bdd;
 use super::scope::{Scope, ScopedBdd};
-use crate::bdd::manager::{BddManager, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager::{BddOps, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
@@ -81,8 +81,8 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// use.
     #[must_use]
     pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<B, C> {
-        let id = BddManager::make_var(&self.cell, name.as_ref());
-        let root = BddManager::make_node(&self.cell, id, FALSE_NODE, TRUE_NODE);
+        let id = self.cell.make_var(name.as_ref());
+        let root = self.cell.make_node(id, FALSE_NODE, TRUE_NODE);
         Bdd::from_root(&self.cell, root)
     }
 
