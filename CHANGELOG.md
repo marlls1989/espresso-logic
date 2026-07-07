@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Bdd::evaluate` now builds its residual through this path. Internally the single- and
   multi-variable restrict engines are unified into one minterm-keyed operation, so the two can no
   longer drift.
+- `bdd::Composer::compose` / `compose_map` — apply one substitution across an iterator of handles
+  (`Bdd` or `ScopedBdd`) as a lazy iterator that shares a single short-lived memo, so functions
+  overlapping in structure are composed once. This is the efficient path for substituting a variable
+  across many related functions; it recovers the cross-function reuse the removed per-manager compose
+  cache used to give, without that cache's manager-lifetime growth.
 
 ### Changed
 
@@ -24,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identical compositions now re-walk the function rather than returning a cached result. Results and
   the public API are unchanged (hash-consing still prevents duplicate nodes, and the ITE cache still
   carries cross-operation reuse); only a workload composing the same substitution repeatedly loses
-  that saved re-walk.
+  that saved re-walk — recovered within a batch by the new `bdd::Composer`.
 
 ## [5.5.0] - 2026-07-06
 

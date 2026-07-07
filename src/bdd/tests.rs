@@ -1895,6 +1895,151 @@ fn scoped_compose_agrees_with_owned() {
 }
 
 #[test]
+fn batch_compose_map_matches_single() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f1 = &a & &b;
+    let f2 = &a ^ &c;
+
+    // One substitution across two functions in a single shared-cache pass.
+    let batched: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose_map([("a", c.clone())])
+        .collect();
+
+    assert!(batched[0].equivalent_to(&f1.compose_map([("a", &c)])));
+    assert!(batched[1].equivalent_to(&f2.compose_map([("a", &c)])));
+}
+
+#[test]
+fn batch_compose_preserves_order() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f1 = &a & &b;
+    let f2 = &a | &b;
+    let f3 = !&a;
+
+    let out: Vec<_> = vec![f1.clone(), f2.clone(), f3.clone()]
+        .compose("a", c.clone())
+        .collect();
+    assert_eq!(out.len(), 3);
+    assert!(out[0].equivalent_to(&f1.compose("a", &c)));
+    assert!(out[1].equivalent_to(&f2.compose("a", &c)));
+    assert!(out[2].equivalent_to(&f3.compose("a", &c)));
+}
+
+#[test]
+fn batch_compose_single_var_matches_compose_map() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f1 = &a & &b;
+    let f2 = &a ^ &c;
+
+    // `.compose("a", g)` is exactly `.compose_map([("a", g)])` over the same stream.
+    let via_compose: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose("a", c.clone())
+        .collect();
+    let via_map: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose_map([("a", c.clone())])
+        .collect();
+    assert_eq!(via_compose[0], via_map[0]);
+    assert_eq!(via_compose[1], via_map[1]);
+}
+
+#[test]
+fn batch_compose_identity_leaves_functions_unchanged() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f1 = &a & &b;
+    let f2 = &a | &c;
+
+    // A name no function tests resolves to an empty substitution: each function is returned as-is.
+    let unknown: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose_map([("zzz", c.clone())])
+        .collect();
+    assert!(unknown[0].equivalent_to(&f1));
+    assert!(unknown[1].equivalent_to(&f2));
+
+    // A genuinely empty substitution (no manager to seed from up front) is likewise identity.
+    let empty: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose_map(Vec::<(&str, crate::bdd::Bdd<BrandA, LocalCell>)>::new())
+        .collect();
+    assert!(empty[0].equivalent_to(&f1));
+    assert!(empty[1].equivalent_to(&f2));
+}
+
+#[test]
+fn batch_compose_repeat_reuses_nodes() {
+    use crate::bdd::{Composer, ManagerCell};
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = &a & &b;
+
+    // Warm up so every node the composition needs is already interned.
+    let _ = vec![f.clone()].compose("b", c.clone()).collect::<Vec<_>>();
+    let nodes_before = builder.cell().read().nodes.len();
+
+    // Composing the same function twice in one batch: the second pull hits the shared memo and the
+    // first re-derives already-interned nodes — no new nodes either way.
+    let out: Vec<_> = vec![f.clone(), f.clone()].compose("b", c.clone()).collect();
+    assert_eq!(out[0], out[1]);
+    assert_eq!(builder.cell().read().nodes.len(), nodes_before);
+}
+
+#[test]
+fn batch_compose_scoped_matches_owned() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f1 = &a & &b;
+    let f2 = &a ^ &c;
+    let e1 = f1.compose_map([("a", &c)]);
+    let e2 = f2.compose_map([("a", &c)]);
+
+    // The scoped batch borrows the scope lifetime, so collect and compare inside the closure.
+    let _ = builder.scope(|s| {
+        let sf1 = s.lift(&f1);
+        let sf2 = s.lift(&f2);
+        let sc = s.lift(&c);
+        let out: Vec<_> = vec![sf1, sf2].compose_map([("a", sc)]).collect();
+        // Canonical roots on the shared manager: equal iff the functions are equivalent.
+        assert_eq!(out[0].root(), e1.root());
+        assert_eq!(out[1].root(), e2.root());
+        sf1
+    });
+}
+
+#[test]
+#[should_panic(expected = "different manager")]
+fn batch_compose_cross_manager_panics() {
+    use crate::bdd::Composer;
+    let one: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let two: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let f_one = one.var("a") & one.var("b");
+    let g_one = one.var("c");
+    let f_two = two.var("a");
+
+    // The substitution and the first function share `one`'s manager; the second function is from
+    // `two`. Mixing managers in one batch is a bug and must panic.
+    let _: Vec<_> = vec![f_one, f_two].compose("a", g_one).collect();
+}
+
+#[test]
 fn compose_on_sync_cell_agrees() {
     // One combo from the §6.3 battery: f = (a & b) | (!a & c), compose("a", d ^ a).
     let local: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
