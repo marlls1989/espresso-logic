@@ -550,6 +550,42 @@ fn restrict_many_on_sync_cell_agrees() {
     assert_eq!(local_combo, sync_combo);
 }
 
+/// Regression cover for the `restrict_many` re-entrancy bug: the pre-fix engine consumed the caller's
+/// iterator *while* holding the manager guard, so a lazy adaptor that touched the manager mid-iteration
+/// re-borrowed it — a `RefCell` "already borrowed" panic on [`LocalCell`] and a deadlock on
+/// [`SyncCell`]. The fix drains the iterator before taking the guard. Parameterised over the cell so both
+/// backends are exercised.
+fn lazy_reentrant_restrict_many_body<B: Brand, C: crate::bdd::ManagerCell>(
+    builder: BddBuilder<B, C>,
+) {
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+
+    // The `.map` closure interns a fresh variable on the first pull, so the manager is borrowed *while*
+    // `restrict_many` is consuming the iterator. Pre-fix this reborrowed the held guard.
+    let restricted = f.restrict_many([("a", true), ("c", false)].into_iter().map(
+        |(name, value)| {
+            let _ = builder.var("scratch");
+            (name, value)
+        },
+    ));
+
+    // Reaching here at all proves no panic / deadlock; the result matches the eager slice call.
+    assert!(restricted.equivalent_to(&f.restrict_many([("a", true), ("c", false)])));
+}
+
+#[test]
+fn restrict_many_lazy_reentrant_iterator_local_cell() {
+    lazy_reentrant_restrict_many_body(BddBuilder::<BrandA, LocalCell>::new());
+}
+
+#[test]
+fn restrict_many_lazy_reentrant_iterator_sync_cell() {
+    lazy_reentrant_restrict_many_body(BddBuilder::<BrandB, SyncCell>::new());
+}
+
 // See the comment on `restrict_acceptance_table` above: `vars` is a `&[&str]` binding, kept
 // deliberately unchanged (not inlined) to prove the widened `impl IntoIterator` bound still accepts a
 // borrowed slice.
@@ -2039,6 +2075,94 @@ fn batch_compose_cross_manager_panics() {
     let _: Vec<_> = vec![f_one, f_two].compose("a", g_one).collect();
 }
 
+// The batch path resolves *every* substitute against the one manager held from the first entry, so a
+// foreign substitute in a multi-entry `compose_map` reads roots in the wrong NodeId space. This is a
+// distinct gap from `batch_compose_cross_manager_panics` (a foreign *stream* function through single-var
+// `.compose`): here the stream and first substitute are consistent, and it is the second *substitute* that
+// clashes. The batch check fires with its own message, worded differently from `assert_same_manager`.
+#[test]
+#[should_panic(expected = "batch compose: a function came from a different manager")]
+fn batch_compose_map_foreign_substitute_panics() {
+    use crate::bdd::Composer;
+    let make = || crate::bdd_builder!();
+    let one = make();
+    let two = make();
+    // One call site, so `one` and `two` share a brand type but own different managers: this type-checks.
+    let f = one.var("a") & one.var("b");
+    let g1 = one.var("c"); // seeds the held manager
+    let g2 = two.var("c"); // foreign substitute in the same map
+    let _: Vec<_> = vec![f].compose_map([("a", g1), ("b", g2)]).collect();
+}
+
+#[test]
+fn batch_compose_on_sync_cell_matches_single() {
+    use crate::bdd::Composer;
+    let sync: BddBuilder<BrandB, SyncCell> = BddBuilder::new();
+    let a = sync.var("a");
+    let b = sync.var("b");
+    let c = sync.var("c");
+    let f1 = &a & &b;
+    let f2 = &a ^ &c;
+
+    // The batch path over a SyncCell-backed builder (the other batch tests are LocalCell-only), matched
+    // against the equivalent single-function compose.
+    let batched: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose_map([("a", c.clone())])
+        .collect();
+    assert!(batched[0].equivalent_to(&f1.compose_map([("a", &c)])));
+    assert!(batched[1].equivalent_to(&f2.compose_map([("a", &c)])));
+
+    // And the single-variable `compose` shorthand.
+    let via_compose: Vec<_> = vec![f1.clone(), f2.clone()]
+        .compose("a", c.clone())
+        .collect();
+    assert!(via_compose[0].equivalent_to(&f1.compose("a", &c)));
+    assert!(via_compose[1].equivalent_to(&f2.compose("a", &c)));
+}
+
+#[test]
+fn batch_compose_empty_stream_yields_empty() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let c = builder.var("c");
+    let empty: Vec<crate::bdd::Bdd<BrandA, LocalCell>> = Vec::new();
+
+    // No functions to compose: the iterator is empty, reports length 0 up front (ExactSizeIterator), and
+    // stays exhausted across repeated pulls (FusedIterator).
+    let mut single = empty.clone().into_iter().compose("a", c.clone());
+    assert_eq!(single.len(), 0);
+    assert!(single.next().is_none());
+    assert!(single.next().is_none());
+
+    // Same over `compose_map`, with a non-empty substitution …
+    let mut mapped = empty.clone().into_iter().compose_map([("a", c.clone())]);
+    assert_eq!(mapped.len(), 0);
+    assert!(mapped.next().is_none());
+
+    // … and with an empty substitution (the identity path never even seeds a manager).
+    let no_sub = Vec::<(&str, crate::bdd::Bdd<BrandA, LocalCell>)>::new();
+    let mut both_empty = empty.into_iter().compose_map(no_sub);
+    assert_eq!(both_empty.len(), 0);
+    assert!(both_empty.next().is_none());
+}
+
+#[test]
+fn batch_compose_empty_substitution_returns_same_handle() {
+    use crate::bdd::Composer;
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let f1 = &a & &b;
+    let f2 = &a ^ &b;
+
+    // An empty substitution short-circuits (bug ④): each function is yielded unchanged rather than
+    // re-walked, so the result is the *same* canonical root, not merely an equivalent rebuild.
+    let no_sub = Vec::<(&str, crate::bdd::Bdd<BrandA, LocalCell>)>::new();
+    let out: Vec<_> = vec![f1.clone(), f2.clone()].compose_map(no_sub).collect();
+    assert_eq!(out[0].root(), f1.root());
+    assert_eq!(out[1].root(), f2.root());
+}
+
 #[test]
 fn compose_on_sync_cell_agrees() {
     // One combo from the §6.3 battery: f = (a & b) | (!a & c), compose("a", d ^ a).
@@ -2150,6 +2274,30 @@ fn scoped_restrict_many_agrees_with_owned() {
     // A repeated name inside the scoped call takes its last entry, same as the owned call.
     let scoped_repeated = builder.scope(|s| s.lift(&f).restrict_many([("a", true), ("a", false)]));
     assert!(scoped_repeated.equivalent_to(&f.restrict_many([("a", true), ("a", false)])));
+}
+
+/// The scoped path shares `encoding::restrict_many`, so it has the same re-entrancy exposure: a lazy
+/// adaptor minting a fresh scoped variable mid-iteration must not reborrow the manager guard. Companion to
+/// `restrict_many_lazy_reentrant_iterator_local_cell` on the owned handle.
+#[test]
+fn scoped_restrict_many_lazy_reentrant_iterator() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+
+    let scoped = builder.scope(|s| {
+        s.lift(&f).restrict_many(
+            [("a", true), ("c", false)]
+                .into_iter()
+                .map(|(name, value)| {
+                    let _ = s.var("scratch");
+                    (name, value)
+                }),
+        )
+    });
+    assert!(scoped.equivalent_to(&f.restrict_many([("a", true), ("c", false)])));
 }
 
 #[test]
