@@ -24,6 +24,7 @@ use super::builder::BddBuilder;
 use super::handle::Bdd;
 use crate::bdd::manager::{BddOps, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
+use crate::cover::{Minterm, StringLabel};
 use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
 
@@ -191,6 +192,17 @@ impl<'s, B: Brand, C: ManagerCell> ScopedBdd<'s, B, C> {
         Self::from_root(
             self.cell,
             super::encoding::restrict_many(self.cell, self.root, assignment),
+        )
+    }
+
+    /// Restrict this function to the subspace pinned by a [`Minterm`]. See
+    /// [`Bdd::restrict_to`](super::handle::Bdd::restrict_to) — this is the by-reference equivalent,
+    /// composed in place on the borrowed cell.
+    #[must_use]
+    pub fn restrict_to<L: StringLabel>(self, assignment: &Minterm<L>) -> Self {
+        Self::from_root(
+            self.cell,
+            super::encoding::restrict_to(self.cell, self.root, assignment),
         )
     }
 }

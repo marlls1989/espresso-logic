@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Bdd::restrict_to` (mirrored on `ScopedBdd`): restrict a function to the subspace pinned by a
+  `Minterm` — every field the minterm fixes is applied, a don't-care (or a variable the minterm does
+  not carry) leaves that variable free, and an unknown name is ignored. Accepts any `StringLabel`.
+  `Bdd::evaluate` now builds its residual through this path. Internally the single- and
+  multi-variable restrict engines are unified into one minterm-keyed operation, so the two can no
+  longer drift.
+
 ## [5.5.0] - 2026-07-06
 
 ### Added

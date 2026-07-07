@@ -29,8 +29,9 @@
 //! - Boolean operators by value and by reference: `&` (AND), `|` (OR), `^` (XOR), `!` (NOT) — the
 //!   last also available as the named [`Bdd::complement`] / [`Bdd::not`] aliases — plus [`Bdd::ite`].
 //! - Shannon cofactor / quantification: [`Bdd::restrict`] / [`Bdd::cofactor`],
-//!   [`Bdd::restrict_many`] (simultaneous multi-variable cofactor), [`Bdd::forall`], [`Bdd::exists`]
-//!   (restrict/restrict_many are mirrored on [`ScopedBdd`]).
+//!   [`Bdd::restrict_many`] (simultaneous multi-variable cofactor), [`Bdd::restrict_to`] (restrict to
+//!   the subspace pinned by a [`Minterm`](crate::Minterm)), [`Bdd::forall`], [`Bdd::exists`]
+//!   (restrict/restrict_many/restrict_to are mirrored on [`ScopedBdd`]).
 //! - Composition: [`Bdd::compose`] (substitute a function for a variable) and
 //!   [`Bdd::compose_map`] (simultaneous multi-variable substitution) — both mirrored on
 //!   [`ScopedBdd`].

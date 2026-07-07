@@ -448,6 +448,8 @@ fn restrict_many_agrees_with_restrict_chain_exhaustive() {
                     assert_eq!(f.restrict_many(fixed), expected);
 
                     let m = assign_partial(&pairs);
+                    // The minterm-keyed entry point must agree with the same oracle.
+                    assert_eq!(f.restrict_to(&m), expected);
                     let oracle = if expected.is_tautology() {
                         Some(true)
                     } else if expected.is_contradiction() {
@@ -489,6 +491,32 @@ fn restrict_many_empty_and_absent() {
         f.restrict_many([("a", true), ("a", false)]),
         f.restrict("a", false)
     );
+}
+
+#[test]
+fn restrict_to_normalises_minterm_by_name() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (a.clone() ^ c.clone());
+
+    // A minterm carrying an unknown name ("zzz"), a don't-care ("b"), and its fixed vars in an order
+    // different from the manager's VarId order: alignment is by name (unknown dropped, don't-care free).
+    let m = Minterm::<Symbol>::with_labels(&[
+        ("c", Some(false)),
+        ("zzz", Some(true)),
+        ("a", Some(true)),
+        ("b", None),
+    ])
+    .unwrap();
+    assert!(f
+        .restrict_to(&m)
+        .equivalent_to(&f.restrict_many([("a", true), ("c", false)])));
+
+    // An all-don't-care / all-unknown minterm is a whole no-op.
+    let free = Minterm::<Symbol>::with_labels(&[("b", None), ("zzz", Some(true))]).unwrap();
+    assert!(f.restrict_to(&free).equivalent_to(&f));
 }
 
 #[test]
@@ -1977,6 +2005,19 @@ fn scoped_restrict_many_agrees_with_owned() {
     // A repeated name inside the scoped call takes its last entry, same as the owned call.
     let scoped_repeated = builder.scope(|s| s.lift(&f).restrict_many([("a", true), ("a", false)]));
     assert!(scoped_repeated.equivalent_to(&f.restrict_many([("a", true), ("a", false)])));
+}
+
+#[test]
+fn scoped_restrict_to_agrees_with_owned() {
+    let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
+    let a = builder.var("a");
+    let b = builder.var("b");
+    let c = builder.var("c");
+    let f = (a.clone() & b.clone()) | (!a.clone() & c.clone());
+
+    let m = Minterm::<Symbol>::with_labels(&[("a", Some(true)), ("c", Some(false))]).unwrap();
+    let scoped = builder.scope(|s| s.lift(&f).restrict_to(&m));
+    assert!(scoped.equivalent_to(&f.restrict_to(&m)));
 }
 
 // ---- Brand clash: the runtime same-manager backstop -----------------------------------------------
