@@ -97,6 +97,15 @@ impl Label for Anonymous {
 ///
 /// Sealed via its [`Label`] supertrait and provided by a single blanket impl, so it is an alias
 /// callers name but never implement.
+///
+/// # Round-trip contract
+///
+/// An implementor's `From<&str>` must be **distinctness-preserving** with respect to its `AsRef<str>`:
+/// converting two distinct `&str` values must yield two labels that remain distinct — the
+/// `From<&str>` → `AsRef<str>` round-trip must never collapse two different names into one. Layers
+/// that intern variable names as [`Symbol`](crate::Symbol) internally and realise them as `S` only at
+/// output boundaries (the BDD `cover`/`variables`/`to_expr` surface) rely on this: a lossy `From` (e.g.
+/// one that case-folds) would silently collapse distinct variable columns into one.
 pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
 
 impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}

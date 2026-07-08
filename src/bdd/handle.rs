@@ -132,6 +132,19 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> Bdd<B, C, S> {
     /// this changes only the type-level marker `S -> T`: it clones the storage cell and re-wraps the same
     /// root, interning nothing. It is the cross-`S` interop primitive — bring two handles of different
     /// stored label types to a common `S` before combining, comparing, or extracting from them.
+    ///
+    /// The binary operators (`&`, `|`, `^`, [`ite`](Bdd::ite)) require both operands to share the same
+    /// stored label type `S`; two handles that differ only in `S` do not type-check against each other —
+    /// call `relabel` on one of them first to bring both to a common `S`:
+    ///
+    /// ```compile_fail
+    /// use espresso_logic::bdd_builder;
+    ///
+    /// let builder = bdd_builder!();
+    /// let a = builder.var("a");
+    /// let b = builder.var("b").relabel::<String>();
+    /// let _ = &a & &b; // error: `S` differs (`Symbol` vs `String`), operands do not unify
+    /// ```
     #[must_use]
     pub fn relabel<T: StringLabel>(&self) -> Bdd<B, C, T> {
         Bdd::from_root(&self.cell, self.root)
@@ -678,8 +691,13 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> Bdd<B, C, S> {
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
-        // A BDD's support variables are distinct, so the header cannot carry a duplicate.
-        let symbols = Symbols::new(vars).expect("BDD support variables are distinct");
+        // A BDD's support variables are distinct, so the header cannot carry a duplicate — unless `S`'s
+        // `From<&str>` is not distinctness-preserving (see the `StringLabel` round-trip contract), in
+        // which case two distinct `Symbol` names collapse to the same `S` here.
+        let symbols = Symbols::new(vars).expect(
+            "label type S collapsed distinct BDD variable names: its From<&str> conversion is not \
+             distinctness-preserving (see StringLabel)",
+        );
         // One asserted Anonymous output column, shared by every cube.
         let output_symbols = Symbols::<Anonymous>::anonymous(1);
 
