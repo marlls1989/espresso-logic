@@ -136,10 +136,10 @@ impl Cover<Symbol, Symbol> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, CoverType, expr};
+    /// use espresso_logic::{BoolExpr, Cover, CoverType, expr};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let expr = expr!("a" & "b");
+    /// let expr: BoolExpr = expr!("a" & "b");
     ///
     /// // Add expression to cover
     /// cover.add_expr(&expr, "output1").unwrap();
@@ -147,7 +147,7 @@ impl Cover<Symbol, Symbol> {
     /// assert_eq!(cover.num_outputs(), 1);
     ///
     /// // Add another expression as a second output
-    /// let expr2 = expr!("b" | "a");
+    /// let expr2: BoolExpr = expr!("b" | "a");
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
     pub fn add_expr<N: AsRef<str>, L: StringLabel>(
@@ -178,7 +178,7 @@ impl<I: AsRef<str>, O> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::var("a");
+    /// let a: BoolExpr = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "out").unwrap();
     /// let expr = cover.to_expr_by_index(0).unwrap();
@@ -214,8 +214,8 @@ impl<I: AsRef<str>, O> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::var("a");
-    /// let b = BoolExpr::var("b");
+    /// let a: BoolExpr = BoolExpr::var("a");
+    /// let b: BoolExpr = BoolExpr::var("b");
     ///
     /// cover.add_expr(&a, "out1").unwrap();
     /// cover.add_expr(&b, "out2").unwrap();
@@ -244,7 +244,7 @@ impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
     /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
     /// let mut cover = Cover::new(CoverType::F);
-    /// let a = BoolExpr::var("a");
+    /// let a: BoolExpr = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "result").unwrap();
     /// let expr = cover.to_expr("result").unwrap();

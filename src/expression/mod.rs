@@ -23,7 +23,7 @@
 //! ```
 //! use espresso_logic::{expr, BoolExpr};
 //!
-//! let f = expr!("a" & "b" | !"c");
+//! let f: BoolExpr = expr!("a" & "b" | !"c");
 //! let g = BoolExpr::parse("a & b | !c").unwrap();
 //! // Structural equality: the same syntactic tree.
 //! assert_eq!(f, g);
@@ -75,8 +75,8 @@ use std::sync::Arc;
 /// ```
 /// use espresso_logic::BoolExpr;
 ///
-/// let a = BoolExpr::var("a");
-/// let b = BoolExpr::var("b");
+/// let a: BoolExpr = BoolExpr::var("a");
+/// let b: BoolExpr = BoolExpr::var("b");
 /// assert_eq!(a.clone() & b.clone(), a.clone() & b.clone()); // same structure
 /// assert_ne!(a.clone() & b.clone(), b.clone() & a.clone()); // a & b is NOT b & a syntactically
 /// assert_ne!(a.clone() & b.clone(), a.clone() | b.clone()); // different operator

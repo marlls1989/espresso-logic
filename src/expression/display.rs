@@ -110,9 +110,9 @@ fn render<S: StringLabel>(tokens: &[Token<S>]) -> String {
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::expr;
+/// use espresso_logic::{expr, BoolExpr};
 ///
-/// let expr = expr!("a" & "b" | "c");
+/// let expr: BoolExpr = expr!("a" & "b" | "c");
 /// assert_eq!(format!("{:?}", expr), "a & b | c"); // no unnecessary parentheses
 /// ```
 impl<S: StringLabel> fmt::Debug for BoolExpr<S> {
@@ -127,9 +127,9 @@ impl<S: StringLabel> fmt::Debug for BoolExpr<S> {
 /// # Examples
 ///
 /// ```
-/// use espresso_logic::expr;
+/// use espresso_logic::{expr, BoolExpr};
 ///
-/// let expr = expr!("a" & "b");
+/// let expr: BoolExpr = expr!("a" & "b");
 /// assert_eq!(format!("{}", expr), "a & b");
 /// ```
 impl<S: StringLabel> fmt::Display for BoolExpr<S> {

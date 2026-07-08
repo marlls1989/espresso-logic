@@ -73,10 +73,10 @@
 //! `*`/`&` AND, `^` XOR, `+`/`|` OR:
 //!
 //! ```
-//! use espresso_logic::expr;
+//! use espresso_logic::{expr, BoolExpr};
 //!
 //! // XOR.
-//! let xor = expr!("a" & !"b" | !"a" & "b");
+//! let xor: BoolExpr = expr!("a" & !"b" | !"a" & "b");
 //! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
 //! ```
 //!
@@ -88,7 +88,8 @@
 //! use espresso_logic::BoolExpr;
 //!
 //! let names = ["a", "b", "c"];
-//! let conj = BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
+//! let conj: BoolExpr =
+//!     BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
 //! println!("{conj}");  // a & b & c
 //! ```
 //!
@@ -102,7 +103,7 @@
 //! use espresso_logic::BoolExpr;
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let expr = BoolExpr::parse("a & b | !a & !b")?;
+//! let expr: BoolExpr = BoolExpr::parse("a & b | !a & !b")?;
 //! println!("{expr}");
 //! # Ok(())
 //! # }
@@ -142,10 +143,10 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{expr, Cover, CoverType, Minimizable};
+//! use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let expr = expr!("a" & "b" | "a" & !"b");
+//! let expr: BoolExpr = expr!("a" & "b" | "a" & !"b");
 //!
 //! // Create cover and add expression
 //! let mut cover = Cover::new(CoverType::F);
@@ -414,12 +415,12 @@ pub use symbol::Symbol;
 /// `( )` > `!` / `~` (NOT) > `*` / `&` (AND) > `^` (XOR) > `+` / `|` (OR).
 ///
 /// ```
-/// use espresso_logic::{expr, BoolExpr};
+/// use espresso_logic::{expr, BoolExpr, Symbol};
 ///
-/// let a = BoolExpr::var("a");
-/// let b = BoolExpr::var("b");
+/// let a: BoolExpr = BoolExpr::var("a");
+/// let b: BoolExpr = BoolExpr::var("b");
 /// assert_eq!(expr!(a & !b), a.clone() & !b.clone());          // splice existing expressions
-/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y")); // fresh variables
+/// assert_eq!(expr!("x" + "y"), BoolExpr::<Symbol>::var("x") | BoolExpr::var("y")); // fresh variables
 ///
 /// // Graft operands may be paths, field accesses, or calls — any postfix expression.
 /// struct Gates { reset: BoolExpr }

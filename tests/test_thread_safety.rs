@@ -247,7 +247,7 @@ fn concurrent_symbol_covers() {
     let handles: Vec<_> = (0..8)
         .map(|t| {
             thread::spawn(move || {
-                let a = BoolExpr::var(format!("t{t}_a"));
+                let a: BoolExpr = BoolExpr::var(format!("t{t}_a"));
                 let b = BoolExpr::var(format!("t{t}_b"));
                 let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
                 // a*b + a*~b  ==  a  (so b drops out under minimisation)
@@ -293,7 +293,7 @@ fn concurrent_shared_manager_building_stays_canonical() {
             // Same function as the parsed entry above, but constructed via owned `BoolExpr` operators
             // and fed through `builder.build`; canonicity means it must reduce to the same root.
             builder.build(
-                &((BoolExpr::var("share_a") & BoolExpr::var("share_b"))
+                &((BoolExpr::<espresso_logic::Symbol>::var("share_a") & BoolExpr::var("share_b"))
                     | !BoolExpr::var("share_c")),
             ),
             a.ite(&b, &c),

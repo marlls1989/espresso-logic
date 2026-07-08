@@ -134,9 +134,9 @@ impl<S: StringLabel> BoolExpr<S> {
     /// Count the number of operations in an expression:
     ///
     /// ```
-    /// use espresso_logic::{expr, ExprNode};
+    /// use espresso_logic::{expr, BoolExpr, ExprNode};
     ///
-    /// let expr = expr!("a" & "b");
+    /// let expr: BoolExpr = expr!("a" & "b");
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
@@ -185,9 +185,9 @@ impl<S: StringLabel> BoolExpr<S> {
     /// Track depth top-down and take the maximum bottom-up:
     ///
     /// ```
-    /// use espresso_logic::{expr, ExprNode};
+    /// use espresso_logic::{expr, BoolExpr, ExprNode};
     ///
-    /// let expr = expr!(!("a" & "b"));
+    /// let expr: BoolExpr = expr!(!("a" & "b"));
     ///
     /// let max_depth = expr.fold_with_context(
     ///     0,

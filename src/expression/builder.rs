@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn build_is_token_identical_to_operator_composition() {
-        let built = BoolExpr::build(|b| {
+        let built: BoolExpr = BoolExpr::build(|b| {
             let a = b.var("a");
             let c = b.var("c");
             (a ^ b.var("b")) & !c
@@ -296,13 +296,13 @@ mod tests {
 
     #[test]
     fn constant_leaves_build() {
-        let f = BoolExpr::build(|b| b.var("a") | b.constant(true));
+        let f: BoolExpr = BoolExpr::build(|b| b.var("a") | b.constant(true));
         assert_eq!(f, BoolExpr::var("a") | BoolExpr::constant(true));
     }
 
     #[test]
     fn graft_splices_an_existing_expression_verbatim() {
-        let sub = BoolExpr::parse("a & b").unwrap();
+        let sub: BoolExpr = BoolExpr::parse("a & b").unwrap();
         let built = BoolExpr::build(|b| b.graft(&sub) | b.var("c"));
         assert_eq!(built, sub.clone() | BoolExpr::var("c"));
     }
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn a_handle_may_be_reused_without_cloning() {
         // `a` is `Copy`, so naming it twice needs no `.clone()`; the token stream is still a tree.
-        let built = BoolExpr::build(|b| {
+        let built: BoolExpr = BoolExpr::build(|b| {
             let a = b.var("a");
             a & a
         });
@@ -319,12 +319,12 @@ mod tests {
 
     #[test]
     fn built_expression_is_equivalent_to_operator_form_as_a_bdd() {
-        let built = BoolExpr::build(|b| {
+        let built: BoolExpr = BoolExpr::build(|b| {
             let a = b.var("a");
             let c = b.var("c");
             (a ^ b.var("b")) & !c
         });
-        let composed = (BoolExpr::var("a") ^ BoolExpr::var("b")) & !BoolExpr::var("c");
+        let composed: BoolExpr = (BoolExpr::var("a") ^ BoolExpr::var("b")) & !BoolExpr::var("c");
 
         let builder = crate::bdd_builder!();
         assert!(builder
@@ -338,7 +338,7 @@ mod tests {
         // with the operators would copy a growing token stream on every combine.
         const N: usize = 50_000;
         let names: Vec<String> = (0..N).map(|i| format!("v{i}")).collect();
-        let built = BoolExpr::build(|b| {
+        let built: BoolExpr = BoolExpr::build(|b| {
             let mut acc = b.var(&names[0]);
             for name in &names[1..] {
                 acc = acc & b.var(name);
