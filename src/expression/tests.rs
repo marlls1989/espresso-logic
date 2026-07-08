@@ -385,16 +385,19 @@ fn sync_context_build_works() {
 // ---- Generic label parameter S ---------------------------------------------------------------------
 
 #[test]
-fn parse_generic_label_displays_and_matches_relabelled_symbol_parse() {
+fn parse_generic_label_displays_and_matches_symbol_parse() {
     let text = "a & (b | !c)";
     let string_parsed: BoolExpr<String> = text.parse().unwrap();
-    let symbol_parsed = BoolExpr::parse(text).unwrap();
+    let symbol_parsed: BoolExpr = BoolExpr::parse(text).unwrap();
 
     // Display round-trips to the original text under a non-Symbol stored label.
     assert_eq!(string_parsed.to_string(), text);
 
-    // Structurally equal to the Symbol parse's relabel::<String>() (same variables, same tree).
-    assert_eq!(string_parsed, symbol_parsed.relabel::<String>());
+    // Same syntactic tree as the Symbol parse, only the stored label type differs.
+    assert_eq!(string_parsed.to_string(), symbol_parsed.to_string());
+
+    // The turbofish constructor selects the same stored label type as the annotated binding.
+    assert_eq!(string_parsed, BoolExpr::<String>::parse(text).unwrap());
 }
 
 #[test]
@@ -409,8 +412,21 @@ fn variables_generic_label_yields_stored_type() {
 }
 
 #[test]
-fn relabel_to_arc_str_preserves_display() {
-    let f = BoolExpr::parse("a & (b | !c)").unwrap();
-    let arc: BoolExpr<std::sync::Arc<str>> = f.relabel();
-    assert_eq!(arc.to_string(), f.to_string());
+fn arc_str_label_preserves_display() {
+    let text = "a & (b | !c)";
+    let symbol_parsed: BoolExpr = BoolExpr::parse(text).unwrap();
+    let arc: BoolExpr<std::sync::Arc<str>> = text.parse().unwrap();
+    assert_eq!(arc.to_string(), symbol_parsed.to_string());
+}
+
+#[test]
+fn cast_reinterns_labels_into_target_type() {
+    let text = "a & (b | !c)";
+    let symbol_parsed: BoolExpr = BoolExpr::parse(text).unwrap();
+
+    // The crate-internal `cast` re-keys every variable name into the target label type while keeping
+    // the same syntactic tree, so it matches a direct parse into that label type.
+    let as_string: BoolExpr<String> = symbol_parsed.cast::<String>();
+    assert_eq!(as_string, BoolExpr::<String>::parse(text).unwrap());
+    assert_eq!(as_string.to_string(), text);
 }

@@ -348,6 +348,6 @@ impl<'s, B: Brand, C: ManagerCell, S: StringLabel> Scope<'s, B, C, S> {
         &self,
         input: N,
     ) -> Result<ScopedBdd<'s, B, C>, ParseBoolExprError> {
-        Ok(self.build(&BoolExpr::parse(input)?))
+        Ok(self.build(&BoolExpr::<S>::parse(input)?))
     }
 }

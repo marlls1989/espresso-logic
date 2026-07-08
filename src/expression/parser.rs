@@ -6,7 +6,7 @@
 use super::error::{ExpressionParseError, ParseBoolExprError};
 use super::rpn::Token;
 use super::BoolExpr;
-use crate::{StringLabel, Symbol};
+use crate::StringLabel;
 use lalrpop_util::ParseError;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ fn parse_program(input: &str) -> Result<Vec<Token<&str>>, ParseBoolExprError> {
 
 /// Intern a borrowed-name [`Token`] program into an owned [`BoolExpr<S>`], re-interning each variable
 /// name into the target label type `S`. This is the shared body behind both the inherent
-/// [`BoolExpr::parse`] (fixed to `Symbol`) and the generic [`FromStr`](std::str::FromStr) path.
+/// [`BoolExpr::parse`] and the generic [`FromStr`](std::str::FromStr) path.
 fn program_into_expr<S: StringLabel>(program: Vec<Token<&str>>) -> BoolExpr<S> {
     let program: Vec<Token<S>> = program
         .into_iter()
@@ -61,7 +61,7 @@ fn program_into_expr<S: StringLabel>(program: Vec<Token<&str>>) -> BoolExpr<S> {
     BoolExpr::from_tokens(Arc::from(program))
 }
 
-impl BoolExpr {
+impl<S: StringLabel> BoolExpr<S> {
     /// Parse a boolean expression from a string.
     ///
     /// Supports standard boolean operators, in precedence order (lowest to highest):
@@ -72,13 +72,13 @@ impl BoolExpr {
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
     ///
-    /// All binary operators are left-associative. The result is the owned, syntactic `BoolExpr<Symbol>`
-    /// of the parsed text (both the `*`/`+`/`~` and `&`/`|`/`!` spellings lower to the same canonical
-    /// operator set). To parse into a `BoolExpr<S>` with a different stored label type, use the
-    /// annotation-driven [`str::parse`], e.g. `"a & b".parse::<BoolExpr<String>>()`.
-    pub fn parse<S: AsRef<str>>(input: S) -> Result<Self, ParseBoolExprError> {
+    /// All binary operators are left-associative (both the `*`/`+`/`~` and `&`/`|`/`!` spellings lower
+    /// to the same canonical operator set). The stored label type `S` follows the binding or turbofish,
+    /// falling back to [`Symbol`](crate::Symbol) where an annotation pins it there; the equivalent annotation-driven
+    /// [`str::parse`] path is `"a & b".parse::<BoolExpr<String>>()`.
+    pub fn parse<N: AsRef<str>>(input: N) -> Result<Self, ParseBoolExprError> {
         let program = parse_program(input.as_ref())?;
-        Ok(program_into_expr::<Symbol>(program))
+        Ok(program_into_expr::<S>(program))
     }
 }
 
