@@ -287,8 +287,10 @@ detailed next.
 Both layers are generic over the type variable names are stored as: [`BoolExpr<S>`][`BoolExpr`],
 [`Bdd<B, C, S>`][`Bdd`] and [`BddBuilder<B, C, S>`][`BddBuilder`] take a stored label type `S`,
 bounded by [`StringLabel`], defaulting to [`Symbol`]. Every example above uses the default — the
-bare-path constructors (`var`/`constant`/`build`/`expr!`/`bdd_builder!`) always produce `Symbol`, so
-none of them needed an annotation. Reach for a different `S` by parsing under a turbofish:
+bare-path constructors (`var`/`constant`/`build`/`expr!`/`bdd_builder!`) are generic over `S`; they
+produced `Symbol` above only because nothing pinned `S` to anything else, so each binding fell through
+to that type-level default. Reach for a different `S` by parsing under a turbofish, an annotated
+binding, or letting downstream consumption fix the type:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -297,9 +299,10 @@ let f: BoolExpr<String> = "a & (b | !c)".parse().unwrap();
 assert_eq!(f.to_string(), "a & (b | !c)");
 ```
 
-or by re-labelling a value already built under `Symbol`. On `BoolExpr` this re-interns every
-variable name into the target type ([`BoolExpr::relabel`]); on `Bdd`/`BddBuilder` it is a free cell
-rewrap ([`Bdd::relabel`] / [`BddBuilder::relabel`]) — variable names live in the manager as `Symbol`
+`BoolExpr` has no relabelling method — get an expression under a different label type by constructing
+or parsing it there directly, as above, rather than building under `Symbol` first and converting.
+`Bdd`/`BddBuilder` differ: re-labelling a handle already built under `Symbol` is a free cell rewrap
+([`Bdd::relabel`] / [`BddBuilder::relabel`]) — variable names live in the manager as `Symbol`
 regardless of `S`, so no re-interning happens:
 
 ```rust
@@ -735,7 +738,6 @@ match cover.minimize() {
 [`BoolExpr::build`]: crate::BoolExpr::build
 [`BoolExpr::parse`]: crate::BoolExpr::parse
 [`BoolExpr::variables`]: crate::BoolExpr::variables
-[`BoolExpr::relabel`]: crate::BoolExpr::relabel
 [`StringLabel`]: crate::StringLabel
 [`Symbol`]: crate::Symbol
 [`Bdd`]: crate::bdd::Bdd
