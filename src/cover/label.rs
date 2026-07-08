@@ -100,12 +100,13 @@ impl Label for Anonymous {
 ///
 /// # Round-trip contract
 ///
-/// An implementor's `From<&str>` must be **distinctness-preserving** with respect to its `AsRef<str>`:
-/// converting two distinct `&str` values must yield two labels that remain distinct — the
-/// `From<&str>` → `AsRef<str>` round-trip must never collapse two different names into one. Layers
-/// that intern variable names as [`Symbol`](crate::Symbol) internally and realise them as `S` only at
-/// output boundaries (the BDD `cover`/`variables`/`to_expr` surface) rely on this: a lossy `From` (e.g.
-/// one that case-folds) would silently collapse distinct variable columns into one.
+/// An implementor's `From<&str>` must be **content-preserving** with respect to its `AsRef<str>`:
+/// converting a `&str` and reading the label back must yield the same string (`S::from(name).as_ref()
+/// == name`), so in particular two distinct names never collapse into one label. The BDD manager stores
+/// variable names genuinely as its label type `S` and enforces this contract at variable **insertion**:
+/// `BddManager::get_or_create_var` mints `S::from(name)` and panics if the round-trip alters the name,
+/// so a lossy `From` (e.g. one that case-folds) fails deterministically at the first insertion rather
+/// than silently keying two distinct variable columns to the same label.
 pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
 
 impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}
