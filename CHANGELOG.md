@@ -24,6 +24,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Size/performance change only — no public API surface (`INLINE_CAP` is crate-private). One residual
   effect: variable names of 8..=22 bytes that were stored inline under 5.6.0 now intern to the heap
   instead — the content is identical, only the storage location changes.
+- **Corrective redesign of the stored-label type parameter (5.6.0 yanked).** 5.6.0 shipped the label
+  type `S` as a phantom marker over a `Symbol`-keyed manager; this release reverts that and stores the
+  label genuinely. `Bdd`, `BddBuilder` and `Scope` collapse back to **two** type parameters (`Brand`,
+  `ManagerCell`): the stored label now lives on the storage cell — `LocalCell<S>` / `SyncCell<S>`,
+  surfaced as the `ManagerCell::Label` associated type — so the manager keys variable names by that type
+  directly, and every label-producing output (`variables`, the `cover`/`primes`/`maximize`/`minimize`
+  families, `to_expr`) comes back as `ManagerCell::Label` with no relabelling step. The `relabel` methods
+  are removed from `Bdd`, `BddBuilder` and `BoolExpr`; build under the target label type directly (an
+  annotated binding, a turbofish, or `parse`). See also the `Symbol` reshape above.
+
+  Only 5.5.x backward-compatibility is a goal here (5.6.0 was withdrawn). The residual 5.5 → this-release
+  breaks, all logged and none silently accepted:
+
+  - **Label-agnostic builder and cover/expression bindings need a one-time type annotation.** A binding
+    that neither pins the label nor consumes a labelled output can no longer fall through to `Symbol`,
+    because the cell's stored label is an inference placeholder (`LocalCell<_>`). Add the minimal
+    annotation — `let b: BddBuilder<_, LocalCell> = bdd_builder!();` (which resolves to `Symbol` via the
+    cell's own default) — or pin by consumption (`let vars: Vec<Symbol> = f.variables().collect();`).
+    This release's sweep added roughly 32 builder annotations and 67 cover/expression annotations across
+    the doctests, unit and integration tests, examples and doc guides; the parallel `BoolExpr<V>` change
+    above needs the same one-time annotation at bare-path expression sites.
+  - **`Cover::to_expr` / `to_expr_by_index` / `to_exprs` are now bounded `I: StringLabel` and return
+    `BoolExpr<I>`** (previously `I: AsRef<str>`, always returning `BoolExpr<Symbol>`). A `Cover<String, _>`
+    now yields `BoolExpr<String>`, carrying the cover's own input label rather than collapsing to `Symbol`.
+  - **`Cover::add_bdd` / `add_expr` are now defined on `Cover<L, L>`** and require the handle's cell label
+    to equal the cover's label `L` (`ManagerCell<Label = L>`). Adding a handle built under a different
+    label type no longer type-checks — build or recover the handle under `L` first.
+  - **Cell label types additionally require `Ord + Borrow<str>`** (and `Send + Sync` for `SyncCell`).
+    `Symbol`, `String`, `Arc<str>` and `Box<str>` all qualify; `Cow<'_, str>` qualifies too, since the
+    standard library provides `impl Borrow<B> for Cow<'_, B>`.
 
 ## [5.6.0] - 2026-07-08
 

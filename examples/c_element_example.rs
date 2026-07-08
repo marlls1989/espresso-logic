@@ -3,7 +3,9 @@
 //!
 //! Run with: `cargo run --example c_element_example`
 
-use espresso_logic::{bdd_builder, expr, BoolExpr, Cover, CoverType, ExprNode, Minimizable};
+use espresso_logic::{
+    bdd_builder, expr, BddBuilder, BoolExpr, Cover, CoverType, ExprNode, LocalCell, Minimizable,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -155,7 +157,7 @@ fn main() -> std::io::Result<()> {
     // Stage 2: cube count from the canonical Bdd — build each function into one shared builder. The two
     // `next_q` formulations canonicalise to the *same* handle.
     println!("Stage 2: Canonical BDD form...");
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let bdds: Vec<(&str, _)> = functions
         .iter()
         .map(|&(name, expr)| (name, builder.build(expr)))

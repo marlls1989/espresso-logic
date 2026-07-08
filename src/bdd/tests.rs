@@ -42,16 +42,17 @@ fn sync_context_is_send_and_sync() {
     assert_sync::<super::Bdd<BrandB, SyncCell>>();
 }
 
-/// `S` is a phantom marker realised only at output boundaries, so it carries no bearing on Send/Sync: a
+/// The stored label type lives on the cell (`SyncCell<S>`), so it does bear on Send/Sync — but every
+/// [`StringLabel`](crate::StringLabel) a [`SyncCell`] admits is itself `Send + Sync`, so a
 /// [`SyncCell`]-backed builder/handle stays `Send + Sync` under a non-`Symbol` stored label type too.
 #[test]
 fn sync_context_is_send_and_sync_under_non_symbol_label() {
     fn assert_send<T: std::marker::Send>() {}
     fn assert_sync<T: std::marker::Sync>() {}
-    assert_send::<BddBuilder<BrandB, SyncCell, String>>();
-    assert_sync::<BddBuilder<BrandB, SyncCell, String>>();
-    assert_send::<super::Bdd<BrandB, SyncCell, String>>();
-    assert_sync::<super::Bdd<BrandB, SyncCell, String>>();
+    assert_send::<BddBuilder<BrandB, SyncCell<String>>>();
+    assert_sync::<BddBuilder<BrandB, SyncCell<String>>>();
+    assert_send::<super::Bdd<BrandB, SyncCell<String>>>();
+    assert_sync::<super::Bdd<BrandB, SyncCell<String>>>();
 }
 
 /// Compile-time witness that thread-safety follows the storage cell, not the brand: a
@@ -2097,7 +2098,7 @@ fn batch_compose_cross_manager_panics() {
 fn batch_compose_map_foreign_substitute_panics() {
     use crate::bdd::Composer;
     let make = || crate::bdd_builder!();
-    let one = make();
+    let one: BddBuilder<_, LocalCell> = make();
     let two = make();
     // One call site, so `one` and `two` share a brand type but own different managers: this type-checks.
     let f = one.var("a") & one.var("b");
@@ -2337,7 +2338,7 @@ fn scoped_restrict_to_agrees_with_owned() {
 #[should_panic(expected = "different managers")]
 fn owned_operator_across_clashing_brands_panics() {
     let make = || crate::bdd_builder!();
-    let one = make();
+    let one: BddBuilder<_, LocalCell> = make();
     let two = make();
     // One call site, so `one` and `two` share a brand type but own different managers: this type-checks,
     // then trips the runtime backstop.
@@ -2348,7 +2349,7 @@ fn owned_operator_across_clashing_brands_panics() {
 #[should_panic(expected = "different manager")]
 fn lift_across_clashing_brands_panics() {
     let make = || crate::bdd_builder!();
-    let one = make();
+    let one: BddBuilder<_, LocalCell> = make();
     let foreign = make().var("x");
     let _ = one.scope(|s| s.lift(&foreign));
 }
@@ -2357,31 +2358,78 @@ fn lift_across_clashing_brands_panics() {
 #[should_panic(expected = "different managers")]
 fn compose_across_clashing_brands_panics() {
     let make = || crate::bdd_builder!();
-    let one = make();
+    let one: BddBuilder<_, LocalCell> = make();
     let two = make();
     // Same brand clash as the other tests in this section, but through `compose`'s own
     // `assert_same_manager` check on `g`.
     let _ = one.var("x").compose("x", &two.var("y"));
 }
 
-// ---- Generic label parameter S (non-Symbol interop) -------------------------------------------------
+// ---- Stored label type on the cell (D7 non-Symbol interop) -----------------------------------------
 //
-// The manager stays Symbol-keyed; `S` is a phantom marker on `Bdd`/`BddBuilder`/`Scope`, realised only
-// at output boundaries via `S::from`. `bdd_builder!()`/`sync_bdd_builder!()` always mint the `Symbol`
-// default; `BddBuilder::relabel` is how a non-`Symbol` builder is minted. These tests exercise a
-// `String`-labelled builder end to end, mirroring the Symbol-default coverage above.
+// The label type is genuinely stored on the storage cell (`LocalCell<S>`/`SyncCell<S>`) and surfaces as
+// `ManagerCell::Label`, so the manager keys variable names by that type directly — there is no phantom
+// `S` and no `relabel`. A label-agnostic binding pins the cell's label through a one-time annotation
+// (`let b: BddBuilder<_, LocalCell> = bdd_builder!();`, resolving `Symbol` via the cell's own default) or
+// by consuming a labelled output. These tests exercise a `String`- and an `Arc<str>`-labelled builder end
+// to end, mirroring the Symbol-default coverage above.
+//
+// (The round-trip-only relabel tests and the cross-label `string_scope_lifts_symbol_handle` test were
+// deleted: `relabel` is gone and a scope can only lift a handle from its own cell, so both subjects no
+// longer exist. Cross-brand mixing stays covered by the compile_fail doctests on the builder/scope APIs.)
 
 #[test]
-fn relabelled_builder_var_and_parse_agree() {
-    let b = crate::bdd_builder!().relabel::<String>();
+fn default_cell_annotation_yields_symbol_labels() {
+    // The label-agnostic binding resolves to `Symbol` via the cell's own default.
+    let b: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     let f = b.var("a") & b.var("b");
     let parsed = b.parse("a & b").unwrap();
     assert!(f.equivalent_to(&parsed));
+    let vars: Vec<Symbol> = f.variables().collect();
+    assert_eq!(vars.len(), 2);
 }
 
 #[test]
-fn relabelled_builder_variables_yields_stored_type() {
-    let b = crate::bdd_builder!().relabel::<String>();
+fn string_cell_round_trips_end_to_end() {
+    // A `String`-labelled builder: var/parse agree, and variables/cover/minimize/to_expr all surface the
+    // stored `String` label.
+    let b: BddBuilder<_, LocalCell<String>> = crate::bdd_builder!();
+
+    let f = b.var("a") & b.var("b");
+    let parsed = b.parse("a & b").unwrap();
+    assert!(f.equivalent_to(&parsed));
+
+    let g = b.parse("c & a & b").unwrap();
+    let mut vars: Vec<String> = g.variables().collect();
+    vars.sort();
+    assert_eq!(
+        vars,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+
+    let cover: Cover<String, crate::Anonymous> = g.cover();
+    assert_eq!(
+        cover.input_labels(),
+        &["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+
+    // (a & b) | (a & !b) reduces to a.
+    let h = b.parse("(a & b) | (a & !b)").unwrap();
+    let minimized: Cover<String, crate::Anonymous> = h.minimize().unwrap();
+    assert_eq!(minimized.input_labels(), &["a".to_string()]);
+
+    // to_expr round-trips through build under L = String (the builder's own stored label type).
+    let original = b.parse("a & (b | !c)").unwrap();
+    let expr: crate::BoolExpr<String> = original.to_expr();
+    let rebuilt = b.build(&expr);
+    assert!(rebuilt.equivalent_to(&original));
+}
+
+#[test]
+fn cell_label_inferred_from_consumption() {
+    // No annotation on the builder: consuming `variables()` into a `Vec<String>` back-propagates and pins
+    // the cell's stored label to `String`.
+    let b = crate::bdd_builder!();
     let f = b.parse("a & b").unwrap();
     let mut vars: Vec<String> = f.variables().collect();
     vars.sort();
@@ -2389,51 +2437,63 @@ fn relabelled_builder_variables_yields_stored_type() {
 }
 
 #[test]
-fn relabelled_builder_cover_is_string_labelled_and_sorted() {
-    let b = crate::bdd_builder!().relabel::<String>();
-    let f = b.parse("c & a & b").unwrap();
-    let cover: Cover<String, crate::Anonymous> = f.cover();
-    assert_eq!(
-        cover.input_labels(),
-        &["a".to_string(), "b".to_string(), "c".to_string()]
-    );
+fn arc_str_cell_round_trips() {
+    let b: BddBuilder<_, LocalCell<Arc<str>>> = crate::bdd_builder!();
+    let f = b.var("a") & b.var("b");
+    let parsed = b.parse("a & b").unwrap();
+    assert!(f.equivalent_to(&parsed));
+
+    let mut vars: Vec<Arc<str>> = f.variables().collect();
+    vars.sort();
+    assert_eq!(vars.len(), 2);
+    assert_eq!(vars[0].as_ref(), "a");
+    assert_eq!(vars[1].as_ref(), "b");
 }
 
 #[test]
-fn relabelled_builder_minimize_returns_string_labelled_cover() {
-    let b = crate::bdd_builder!().relabel::<String>();
-    // (a & b) | (a & !b) reduces to a.
-    let f = b.parse("(a & b) | (a & !b)").unwrap();
-    let minimized: Cover<String, crate::Anonymous> = f.minimize().unwrap();
-    assert_eq!(minimized.input_labels(), &["a".to_string()]);
+fn sync_string_cell_builder_is_send_and_sync() {
+    fn assert_send<T: std::marker::Send>(_: &T) {}
+    fn assert_sync<T: std::marker::Sync>(_: &T) {}
+
+    // A `SyncCell<String>`-backed builder minted through `sync_bdd_builder!`, exercised end to end.
+    let b: BddBuilder<_, SyncCell<String>> = crate::sync_bdd_builder!();
+    let f = b.parse("a & b").unwrap();
+    let mut vars: Vec<String> = f.variables().collect();
+    vars.sort();
+    assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
+
+    // Both the builder and a handle into it are `Send + Sync` under the non-`Symbol` stored label.
+    assert_send(&b);
+    assert_sync(&b);
+    assert_send(&f);
+    assert_sync(&f);
 }
 
 #[test]
-fn relabelled_builder_to_expr_round_trips_through_build() {
-    let b = crate::bdd_builder!().relabel::<String>();
-    let original = b.parse("a & (b | !c)").unwrap();
-    let expr: crate::BoolExpr<String> = original.to_expr();
-    // build accepts L = String directly, matching the builder's own stored label type.
-    let rebuilt = b.build(&expr);
-    assert!(rebuilt.equivalent_to(&original));
-}
+#[should_panic(expected = "does not round-trip variable name")]
+fn lossy_cell_label_trips_round_trip_contract_at_insertion() {
+    // A test-local `StringLabel` whose `From<&str>` lowercases: distinct names would collapse onto one
+    // variable, so the manager's insertion-time round-trip check fires deterministically on the first
+    // `var`. `Lossy` satisfies the sealed `StringLabel` blanket automatically (Ord + Eq + Hash + Clone +
+    // AsRef<str> + From<&str>) and the cell's extra `Borrow<str>` bound.
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct Lossy(String);
+    impl From<&str> for Lossy {
+        fn from(s: &str) -> Self {
+            Lossy(s.to_lowercase())
+        }
+    }
+    impl AsRef<str> for Lossy {
+        fn as_ref(&self) -> &str {
+            &self.0
+        }
+    }
+    impl std::borrow::Borrow<str> for Lossy {
+        fn borrow(&self) -> &str {
+            &self.0
+        }
+    }
 
-#[test]
-fn relabel_round_trip_preserves_root() {
-    let builder = crate::bdd_builder!();
-    let f = builder.parse("a & b").unwrap();
-    let round_tripped = f.relabel::<String>().relabel::<Symbol>();
-    assert_eq!(round_tripped, f);
-}
-
-#[test]
-fn string_scope_lifts_symbol_handle() {
-    let symbol_builder = crate::bdd_builder!();
-    let owned = symbol_builder.var("a");
-    let string_builder = symbol_builder.relabel::<String>();
-    // The scope's own stored label (String) is independent of the lifted handle's (Symbol): `lift` is
-    // generic over the source handle's S2.
-    let f = string_builder.scope(|s| s.lift(&owned) & s.var("b"));
-    let expected = &owned & &symbol_builder.var("b");
-    assert!(f.relabel::<Symbol>().equivalent_to(&expected));
+    let b: BddBuilder<_, LocalCell<Lossy>> = crate::bdd_builder!();
+    let _ = b.var("A");
 }

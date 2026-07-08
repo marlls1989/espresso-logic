@@ -408,7 +408,7 @@ mod tests {
     /// equivalence is checked through the canonical BDD layer (`equivalent_to` is an O(1) canonical
     /// comparison once both are built into one builder).
     fn equiv(a: &BoolExpr, b: &BoolExpr) -> bool {
-        let builder = crate::bdd_builder!();
+        let builder: crate::bdd::BddBuilder<_, crate::bdd::LocalCell> = crate::bdd_builder!();
         builder.build(a).equivalent_to(&builder.build(b))
     }
 

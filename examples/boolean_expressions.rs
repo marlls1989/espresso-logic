@@ -7,7 +7,7 @@
 //! `BoolExpr` values, and operators bind `()` > `!`/`~` > `*`/`&` > `^` >
 //! `+`/`|`. String parsing via `BoolExpr::parse` is the other entry point.
 
-use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter};
+use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, PLAWriter, Symbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Boolean Expression Examples ===\n");
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "   Variables: {:?}",
         xor.variables().collect::<std::collections::BTreeSet<_>>()
     );
-    let mut xor_cover = Cover::new(CoverType::F);
+    let mut xor_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     xor_cover.add_expr(&xor, "xor")?;
     println!(
         "   Inputs: {}, Outputs: {}",
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .variables()
             .collect::<std::collections::BTreeSet<_>>()
     );
-    let mut parsed_cover = Cover::new(CoverType::F);
+    let mut parsed_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     parsed_cover.add_expr(&parsed_expr, "parsed")?;
     println!(
         "   Inputs: {}, Outputs: {}",
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<std::collections::BTreeSet<_>>()
     );
 
-    let mut redundant_cover = Cover::new(CoverType::F);
+    let mut redundant_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     redundant_cover.add_expr(&redundant, "out")?;
     redundant_cover = redundant_cover.minimize()?;
     let minimized = redundant_cover.to_expr("out")?;
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   XNOR = a & b | !a & !b");
     println!("   Before minimise: {}", xnor);
 
-    let mut xnor_cover = Cover::new(CoverType::F);
+    let mut xnor_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     xnor_cover.add_expr(&xnor, "out")?;
     xnor_cover = xnor_cover.minimize()?;
     let minimized_xnor = xnor_cover.to_expr("out")?;
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("6. Three-Variable Majority Function:");
     // Majority function: true if at least 2 of 3 inputs are true.
     let majority: BoolExpr = expr!("a" & "b" | "b" & "c" | "a" & "c");
-    let mut majority_cover = Cover::new(CoverType::F);
+    let mut majority_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     majority_cover.add_expr(&majority, "out")?;
 
     println!("   Majority = a & b | b & c | a & c");
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 7: Converting to PLA format
     println!("7. PLA Format Export:");
     let simple: BoolExpr = expr!("a" & "b");
-    let mut simple_cover = Cover::new(CoverType::F);
+    let mut simple_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     simple_cover.add_expr(&simple, "out")?;
 
     let pla_string = simple_cover.to_pla_string(CoverType::F)?;
@@ -144,12 +144,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 9: De Morgan's laws in action
     println!("9. De Morgan's Laws:");
     let demorgan1: BoolExpr = expr!(!("a" & "b"));
-    let mut cover1 = Cover::new(CoverType::F);
+    let mut cover1: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover1.add_expr(&demorgan1, "out")?;
     println!("   !(a & b) has {} variables", cover1.num_inputs());
 
     let demorgan2: BoolExpr = expr!(!("a" | "b"));
-    let mut cover2 = Cover::new(CoverType::F);
+    let mut cover2: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover2.add_expr(&demorgan2, "out")?;
     println!("   !(a | b) has {} variables", cover2.num_inputs());
     println!();
@@ -159,9 +159,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let expr1: BoolExpr = BoolExpr::parse("a & b | a & c")?;
     let expr2: BoolExpr = BoolExpr::parse("a & (b | c)")?;
 
-    let mut cover1 = Cover::new(CoverType::F);
+    let mut cover1: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover1.add_expr(&expr1, "out")?;
-    let mut cover2 = Cover::new(CoverType::F);
+    let mut cover2: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover2.add_expr(&expr2, "out")?;
 
     println!("    Expression 1: a & b | a & c");
@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 11: Cube Iteration
     println!("11. Cube Iteration:");
     let expr: BoolExpr = BoolExpr::parse("a & b | !a & c")?;
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover.add_expr(&expr, "out")?;
     println!("    Expression: a & b | !a & c");
     println!("    Cubes:");
