@@ -6,6 +6,7 @@
 //! `BddBuilder` (whose `equivalent_to` is O(1) canonical).
 
 use super::BoolExpr;
+use crate::bdd::{BddBuilder, LocalCell, SyncCell};
 use crate::expr;
 use std::collections::HashSet;
 
@@ -13,7 +14,7 @@ use std::collections::HashSet;
 /// semantic equivalence is checked through the canonical BDD layer: both are built into one builder and
 /// compared by `equivalent_to` (an O(1) canonical-root comparison).
 fn equivalent(a: &BoolExpr, b: &BoolExpr) -> bool {
-    let builder = crate::bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     builder.build(a).equivalent_to(&builder.build(b))
 }
 
@@ -117,7 +118,7 @@ fn operators_build_the_expected_functions() {
     // building into a builder (evaluation/equivalence are BDD-layer concerns — see `bdd::tests`).
     let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
-    let builder = crate::bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     let (ba, bb) = (builder.var("a"), builder.var("b"));
 
     assert!(builder
@@ -358,7 +359,7 @@ fn graft_accepts_postfix_expressions() {
 
 #[test]
 fn bdd_build_matches_parse() {
-    let builder = crate::bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     let f: BoolExpr = expr!("a" & "b" | "c");
     let built = builder.build(&f);
     let parsed = builder.parse("a & b | c").unwrap();
@@ -367,7 +368,7 @@ fn bdd_build_matches_parse() {
 
 #[test]
 fn bdd_build_canonicalises_commutativity() {
-    let builder = crate::bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     // a & b and b & a are different BoolExpr values but the same Bdd.
     let ab_expr: BoolExpr = expr!("a" & "b");
     let ba_expr: BoolExpr = expr!("b" & "a");
@@ -378,7 +379,7 @@ fn bdd_build_canonicalises_commutativity() {
 
 #[test]
 fn to_expr_round_trips_semantically() {
-    let builder = crate::bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = crate::bdd_builder!();
     let f = expr!(("a" & "b") | ("a" & "c"));
     let bdd = builder.build(&f);
     let recovered = bdd.to_expr();
@@ -388,7 +389,7 @@ fn to_expr_round_trips_semantically() {
 
 #[test]
 fn sync_context_build_works() {
-    let builder = crate::sync_bdd_builder!();
+    let builder: BddBuilder<_, SyncCell> = crate::sync_bdd_builder!();
     let f: BoolExpr = expr!("a" ^ "b");
     assert!(builder
         .build(&f)

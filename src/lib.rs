@@ -115,10 +115,10 @@
 //! [`bdd_builder!`](crate::bdd_builder):
 //!
 //! ```
-//! use espresso_logic::bdd_builder;
+//! use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let builder = bdd_builder!();
+//! let builder: BddBuilder<_, LocalCell> = bdd_builder!();
 //! let a = builder.var("a");
 //! let b = builder.var("b");
 //!
@@ -143,13 +143,13 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable};
+//! use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, Symbol};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let expr: BoolExpr = expr!("a" & "b" | "a" & !"b");
 //!
 //! // Create cover and add expression
-//! let mut cover = Cover::new(CoverType::F);
+//! let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
 //! cover.add_expr(&expr, "output")?;
 //!
 //! // Access cover properties

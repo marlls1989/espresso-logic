@@ -192,7 +192,7 @@ therefore always yields `Ok`:
 ```rust
 use espresso_logic::{bdd_builder, Minterm, Symbol};
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 // The expression is only needed as a function here, so build the BDD directly.
 let f = builder.parse("a & b | !a").unwrap();
 
@@ -268,7 +268,7 @@ repeated combination is cheaper than carrying syntax around.
 use espresso_logic::bdd_builder;
 
 let names = ["a", "b", "c", "d"];
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let conj = names.iter().map(|n| builder.var(*n)).reduce(|x, y| x & y).unwrap();
 
 // Canonical: a fold in the opposite order is the same function.
@@ -284,13 +284,16 @@ detailed next.
 
 ### Label types
 
-Both layers are generic over the type variable names are stored as: [`BoolExpr<S>`][`BoolExpr`],
-[`Bdd<B, C, S>`][`Bdd`] and [`BddBuilder<B, C, S>`][`BddBuilder`] take a stored label type `S`,
-bounded by [`StringLabel`], defaulting to [`Symbol`]. Every example above uses the default — the
-bare-path constructors (`var`/`constant`/`build`/`expr!`/`bdd_builder!`) are generic over `S`; they
-produced `Symbol` above only because nothing pinned `S` to anything else, so each binding fell through
-to that type-level default. Reach for a different `S` by parsing under a turbofish, an annotated
-binding, or letting downstream consumption fix the type:
+Both layers are generic over the type variable names are stored as. [`BoolExpr<S>`][`BoolExpr`] carries
+the stored label type `S` directly; [`Bdd<B, C>`][`Bdd`] and [`BddBuilder<B, C>`][`BddBuilder`] carry it
+on the storage cell `C` ([`LocalCell<S>`][`LocalCell`] / [`SyncCell<S>`][`SyncCell`]), surfaced as
+[`ManagerCell::Label`] — the manager keys variable names by that type directly, so a labelled output
+comes back as `S` with no relabelling step. `S` is bounded by [`StringLabel`] and defaults to
+[`Symbol`]. Every example above uses the default — the bare-path constructors
+(`var`/`constant`/`build`/`expr!`/`bdd_builder!`) leave `S` as an inference placeholder; they produced
+`Symbol` above only because nothing pinned it, so each binding fell through to that type-level default.
+Reach for a different `S` by parsing under a turbofish, an annotated binding, or letting downstream
+consumption fix the type:
 
 ```rust
 use espresso_logic::BoolExpr;
@@ -299,17 +302,15 @@ let f: BoolExpr<String> = "a & (b | !c)".parse().unwrap();
 assert_eq!(f.to_string(), "a & (b | !c)");
 ```
 
-`BoolExpr` has no relabelling method — get an expression under a different label type by constructing
-or parsing it there directly, as above, rather than building under `Symbol` first and converting.
-`Bdd`/`BddBuilder` differ: re-labelling a handle already built under `Symbol` is a free cell rewrap
-([`Bdd::relabel`] / [`BddBuilder::relabel`]) — variable names live in the manager as `Symbol`
-regardless of `S`, so no re-interning happens:
+Neither layer has a relabelling method — get an expression or a builder under a different label type by
+constructing it there directly, rather than building under `Symbol` first and converting. For a builder,
+name the cell's label on the binding (or let a labelled output pin it), and the manager stores and hands
+back that type end to end:
 
 ```rust
-use espresso_logic::bdd_builder;
+use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
 
-let symbol_builder = bdd_builder!();
-let string_builder = symbol_builder.relabel::<String>();
+let string_builder: BddBuilder<_, LocalCell<String>> = bdd_builder!();
 let f: espresso_logic::BoolExpr<String> = string_builder.var("a").to_expr();
 assert_eq!(f.to_string(), "a");
 ```
@@ -326,7 +327,7 @@ not a runtime check. A `Bdd` is `Clone` (a refcount bump), not `Copy`.
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b;            // handles are Clone (a refcount bump), not Copy
@@ -341,7 +342,7 @@ use espresso_logic::bdd_builder;
 
 // Build a handle, then drop the builder that made it.
 let a = {
-    let builder = bdd_builder!();
+    let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     builder.var("a")
 };
 // Recover a builder onto the same manager and keep building; equal functions are the identical handle.
@@ -355,7 +356,7 @@ brand even when two are named the same:
 ```rust
 use espresso_logic::bdd_builder;
 
-let routing = bdd_builder!(Routing);
+let routing: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!(Routing);
 let _ = routing.var("a");
 ```
 
@@ -367,7 +368,7 @@ A builder builds handles directly, from a [`BoolExpr`], or from a [`Cover`]:
 use espresso_logic::{bdd_builder, BoolExpr};
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 
 let a = builder.var("a");
 let one = builder.constant(true);
@@ -388,7 +389,7 @@ owned [`Bdd`] for the result leaves the closure. [`Scope::lift`] splices an exis
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 // (a ^ b) & !c, composed from Copy handles — no `.clone()`, an operand may be reused for free.
 let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
 assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
@@ -401,7 +402,7 @@ assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let s = builder.var("s");
 let a = builder.var("a");
 let b = builder.var("b");
@@ -419,7 +420,7 @@ share a canonical root:
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
@@ -439,7 +440,7 @@ and [`Bdd::exists`] quantify over a set of variables. A name absent from the fun
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b.clone();
@@ -457,7 +458,7 @@ assert!(f.exists(&["a"]).equivalent_to(&b));
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 
 assert!((a.clone() | !a.clone()).is_tautology());
@@ -469,7 +470,7 @@ assert!((a.clone() & !a).is_contradiction());
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = (a.clone() & b.clone()) | (!a & b);
@@ -492,7 +493,7 @@ which is a fully-assigned minterm):
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b;
@@ -514,7 +515,7 @@ assert_eq!(minterms.len(), 1);
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
@@ -544,7 +545,7 @@ temporary builder):
 ```rust
 use espresso_logic::{bdd_builder, Anonymous, BoolExpr, Cover, Symbol};
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let from_bdd: Cover<Symbol, Anonymous> = Cover::from(builder.var("a") & builder.var("b"));
 let from_expr: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b").unwrap());
 
@@ -576,12 +577,12 @@ and minimising once optimises them together:
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
 
-let mut cover = Cover::new(CoverType::F);
+let mut cover: Cover<espresso_logic::Symbol, espresso_logic::Symbol> = Cover::new(CoverType::F);
 cover.add_bdd(&(a.clone() & b.clone()), "p")?;
 cover.add_bdd(&((a & b.clone()) | (b & c)), "q")?;
 
@@ -602,7 +603,7 @@ println!("q = {q}");
 use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, Symbol};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut cover = Cover::new(CoverType::F);
+let mut cover: Cover<espresso_logic::Symbol, espresso_logic::Symbol> = Cover::new(CoverType::F);
 cover.add_expr(&BoolExpr::<Symbol>::parse("a & b")?, "and_out")?;
 cover.add_expr(&BoolExpr::<Symbol>::parse("a | c")?, "or_out")?;
 
@@ -653,7 +654,7 @@ println!("{factored}");
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
@@ -670,7 +671,7 @@ assert!(xnor.equivalent_to(&((a.clone() & b.clone()) | (!a & !b))));
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 // Compose in a scope: the handles are Copy, so each variable is named twice with no `.clone()`.
 let majority = builder.scope(|s| {
     let a = s.var("a");
@@ -689,7 +690,7 @@ assert!(majority.equivalent_to(&parsed));
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder = bdd_builder!();
+let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
@@ -753,10 +754,11 @@ match cover.minimize() {
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
 [`Bdd::builder`]: crate::bdd::Bdd::builder
-[`Bdd::relabel`]: crate::bdd::Bdd::relabel
 [`BddBuilder`]: crate::bdd::BddBuilder
 [`BddBuilder::scope`]: crate::bdd::BddBuilder::scope
-[`BddBuilder::relabel`]: crate::bdd::BddBuilder::relabel
+[`LocalCell`]: crate::bdd::LocalCell
+[`SyncCell`]: crate::bdd::SyncCell
+[`ManagerCell::Label`]: crate::bdd::ManagerCell::Label
 [`Scope`]: crate::bdd::Scope
 [`Scope::lift`]: crate::bdd::Scope::lift
 [`ScopedBdd`]: crate::bdd::ScopedBdd

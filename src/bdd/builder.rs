@@ -168,9 +168,9 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// composition inside the closure. An existing owned [`Bdd`] is spliced in with [`Scope::lift`].
     ///
     /// ```
-    /// use espresso_logic::bdd_builder;
+    /// use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     /// // (a ^ b) & !c, composed from Copy handles — no `.clone()`.
     /// let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
     /// assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));

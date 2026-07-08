@@ -2,7 +2,8 @@
 
 use espresso_logic::error::{ExpressionParseError, ParseBoolExprError};
 use espresso_logic::{
-    bdd_builder, expr, BoolExpr, Cover, CoverType, Minimizable, Minterm, PLAWriter, Symbol,
+    bdd_builder, expr, BddBuilder, BoolExpr, Cover, CoverType, LocalCell, Minimizable, Minterm,
+    PLAWriter, Symbol,
 };
 
 /// Build a complete `Minterm<Symbol>` fixing each `(name, value)` pair, for `Bdd::evaluate`.
@@ -19,7 +20,7 @@ fn test_cover_trait_basics() {
 
     // Should be able to use Cover with expressions
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -29,7 +30,7 @@ fn test_cover_trait_basics() {
 
     // Verify the cover can be converted back and evaluated correctly
     let retrieved = cover.to_expr("out").unwrap();
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let retrieved_bdd = builder.build(&retrieved);
 
     // Test: a=1,b=1 → 1
@@ -54,7 +55,7 @@ fn test_xor_expression() {
     let xor = &a ^ &b;
     assert_eq!(xor, BoolExpr::parse("a ^ b").unwrap());
 
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let xor_bdd = builder.build(&xor);
 
     // Verify XOR truth table.
@@ -83,7 +84,7 @@ fn test_xnor_expression() {
     let b = BoolExpr::var("b");
     let xnor = expr!(a & b | !a & !b);
 
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let xnor_bdd = builder.build(&xnor);
 
     // Verify XNOR truth table.
@@ -117,7 +118,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
 
     // Minimise via Cover/Espresso and recover the factored expression.
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -130,7 +131,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     assert!(vars.contains("a"));
     assert!(vars.contains("b"));
 
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let minimized_bdd = builder.build(&minimized);
 
     // Verify the minimised expression behaves like a*b.
@@ -163,7 +164,7 @@ fn test_de_morgan_laws() {
     let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
 
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
 
     // ~(a * b) = ~a + ~b (De Morgan's law)
     let expr1 = expr!(!(a & b));
@@ -210,7 +211,7 @@ fn test_cube_iteration() {
 
     // Should be able to iterate cubes via Cover
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -238,7 +239,7 @@ fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
 
     // Should be able to convert to PLA string via Cover
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -257,7 +258,7 @@ fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
     // Test absorption law: a + a*b should minimise to a
     let expr: BoolExpr = BoolExpr::parse("a + a * b").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -281,7 +282,7 @@ fn test_minimize_consensus() -> Result<(), Box<dyn std::error::Error>> {
     // Consensus theorem: a*b + ~a*c + b*c should minimise to a*b + ~a*c
     let expr: BoolExpr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -304,7 +305,7 @@ fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
     // a + a should minimise to a
     let expr: BoolExpr = BoolExpr::parse("a + a").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -332,7 +333,7 @@ fn test_complex_parentheses() {
     // Test with operator syntax
     let expr1 = expr!((a | b) & c);
     let cover1 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
         cover
     };
@@ -340,7 +341,7 @@ fn test_complex_parentheses() {
 
     // Parser version
     let expr2 = BoolExpr::parse("(a + b) * c").unwrap();
-    let mut cover2 = Cover::new(CoverType::F);
+    let mut cover2: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover2.add_expr(&expr2, "out").unwrap();
     assert_eq!(cover2.num_inputs(), 3);
 
@@ -361,7 +362,7 @@ fn test_nested_parentheses_operators() {
     // Operator syntax with nested grouping
     let expr1 = expr!(a & (b | c));
     let cover1 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
         cover
     };
@@ -397,12 +398,12 @@ fn test_parentheses_precedence() {
 
     // But different structure - verify by converting to PLA via Cover
     let cover1 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
         cover
     };
     let cover2 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr2, "out").unwrap();
         cover
     };
@@ -418,7 +419,7 @@ fn test_minimize_distributive() -> Result<(), Box<dyn std::error::Error>> {
     // a*(b+c) expands to a*b + a*c (already minimal)
     let expr: BoolExpr = BoolExpr::parse("a * (b + c)").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -440,7 +441,7 @@ fn test_complex_minimize_real_world() -> Result<(), Box<dyn std::error::Error>> 
     // Real-world example: a*b + a*c + b*c*d + a*b*d
     let expr: BoolExpr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -465,7 +466,7 @@ fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
     let expr: BoolExpr =
         BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -492,12 +493,12 @@ fn test_parentheses_with_negation() {
 
     // Should apply De Morgan's laws during DNF conversion
     let cover1 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr1, "out").unwrap();
         cover
     };
     let cover2 = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr2, "out").unwrap();
         cover
     };
@@ -510,7 +511,7 @@ fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> 
     // (a + b) * (a + c) expands to a + a*c + a*b + b*c = a + b*c
     let expr: BoolExpr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
     let cover = {
-        let mut cover = Cover::new(CoverType::F);
+        let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
         cover
     };
@@ -558,7 +559,7 @@ fn test_composition_nested_sub_expressions() {
 
     // Logical equality is now decided canonically by the BDD layer: build both sides into one builder
     // and compare roots.
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     assert!(builder
         .build(&level3)
         .equivalent_to(&builder.build(&expected)));
@@ -571,7 +572,7 @@ fn test_composition_with_cover_integration() {
     let term2 = expr!("c" | "d");
     let composed = expr!(term1 & term2); // (a*b) * (c+d) = a*b*c + a*b*d
 
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     cover.add_expr(&composed, "output").unwrap();
 
     assert_eq!(cover.num_inputs(), 4);
@@ -584,7 +585,7 @@ fn test_composition_with_cover_integration() {
     let expected: BoolExpr = BoolExpr::parse("(a * b) * (c + d)").unwrap();
 
     // Canonical equivalence via the BDD layer.
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     assert!(builder
         .build(&retrieved)
         .equivalent_to(&builder.build(&expected)));
@@ -681,7 +682,7 @@ fn test_parser_error_position_is_byte_offset_not_char_count() {
 
 #[test]
 fn test_cover_error_nonexistent_output() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     let a: BoolExpr = BoolExpr::var("a");
     cover.add_expr(&a, "out1").unwrap();
 
@@ -693,7 +694,7 @@ fn test_cover_error_nonexistent_output() {
 
 #[test]
 fn test_cover_error_duplicate_output() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     let a: BoolExpr = BoolExpr::var("a");
     let b: BoolExpr = BoolExpr::var("b");
 
@@ -707,7 +708,7 @@ fn test_cover_error_duplicate_output() {
 
 #[test]
 fn test_cover_error_output_index_out_of_bounds() {
-    let mut cover = Cover::new(CoverType::F);
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
     let a: BoolExpr = BoolExpr::var("a");
     cover.add_expr(&a, "out").unwrap();
 

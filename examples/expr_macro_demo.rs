@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run --example expr_macro_demo`
 
-use espresso_logic::{bdd_builder, expr, BoolExpr};
+use espresso_logic::{bdd_builder, expr, BddBuilder, BoolExpr, LocalCell};
 
 fn main() {
     // `BoolExpr::build` hands a closure an auxiliary builder. Its handles are `Copy` and implement the
@@ -23,7 +23,7 @@ fn main() {
     println!("expr!:   {selected}");
 
     // A `BoolExpr` is syntactic; build it into a `Bdd` to minimise or compare it.
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let minimised = builder.build(&selected).minimize().unwrap();
     println!("minimised cover:\n{minimised}");
 }

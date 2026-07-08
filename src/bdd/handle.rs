@@ -111,7 +111,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// // Build a handle, then drop the builder that made it.
     /// let a = {
-    ///     let builder = bdd_builder!();
+    ///     let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     ///     builder.var("a")
     /// };
     ///
@@ -228,7 +228,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");
@@ -261,7 +261,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::{bdd_builder, Minterm, Symbol};
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     ///
@@ -331,7 +331,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");
@@ -361,7 +361,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     ///
@@ -450,7 +450,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::{bdd_builder, Minterm, Symbol};
     ///
-    /// let builder = bdd_builder!();
+    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");

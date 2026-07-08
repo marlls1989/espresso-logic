@@ -6,7 +6,7 @@
 //!
 //! Run with: `cargo run --example dynamic_fold`
 
-use espresso_logic::{bdd_builder, BoolExpr};
+use espresso_logic::{bdd_builder, BddBuilder, BoolExpr, LocalCell};
 
 fn main() {
     // The variables are only known at runtime — here a slice, but it could be any iterator.
@@ -25,7 +25,7 @@ fn main() {
 
     // 2. BDD-builder fold — the canonical *function*. Handles are Clone and canonicalise as they
     //    combine, so shared structure is merged and equivalence is O(1).
-    let builder = bdd_builder!();
+    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
     let conj_bdd = names
         .iter()
         .map(|n| builder.var(*n))

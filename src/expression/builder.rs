@@ -326,7 +326,7 @@ mod tests {
         });
         let composed: BoolExpr = (BoolExpr::var("a") ^ BoolExpr::var("b")) & !BoolExpr::var("c");
 
-        let builder = crate::bdd_builder!();
+        let builder: crate::bdd::BddBuilder<_, crate::bdd::LocalCell> = crate::bdd_builder!();
         assert!(builder
             .build(&built)
             .equivalent_to(&builder.build(&composed)));

@@ -142,7 +142,8 @@ fn macro_and_operator_forms_are_equivalent_as_bdds() {
     let macro_form = expr!(a * !b + !a * b);
     let operator_form = (a.clone() & !b.clone()) | (!a.clone() & b.clone());
 
-    let builder = espresso_logic::bdd_builder!();
+    let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> =
+        espresso_logic::bdd_builder!();
     assert!(builder
         .build(&macro_form)
         .equivalent_to(&builder.build(&operator_form)));
