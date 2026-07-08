@@ -1,6 +1,6 @@
 [package]
 name = "espresso-logic"
-version = "5.6.0"
+version = "5.6.1"
 edition = "2021"
 rust-version = "1.82"
 authors = ["Marcos Sartori <marcos.sartori@ncl.ac.uk>"]
