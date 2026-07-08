@@ -13,22 +13,22 @@
 
 use super::rpn::Token;
 use super::BoolExpr;
-use crate::Symbol;
+use crate::{StringLabel, Symbol};
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 use std::sync::Arc;
 
 /// One node in the build arena. Operands are indices into the same arena.
-enum BuildNode {
-    Var(Symbol),
+enum BuildNode<S: StringLabel> {
+    Var(S),
     Const(bool),
     Not(u32),
     And(u32, u32),
     Or(u32, u32),
     Xor(u32, u32),
     /// An existing expression spliced in verbatim; its tokens are emitted as-is at serialisation.
-    Graft(BoolExpr),
+    Graft(BoolExpr<S>),
 }
 
 /// The central node arena a [`BoolExpr::build`] closure composes into.
@@ -37,14 +37,23 @@ enum BuildNode {
 /// growing structure; the [`Expr`] handles returned by its methods are featherweight indices into it.
 /// Methods take `&self` (interior mutability) so a single shared reference threads through the whole
 /// closure.
-#[derive(Default)]
-pub struct ExprBuilder {
-    nodes: RefCell<Vec<BuildNode>>,
+pub struct ExprBuilder<S: StringLabel = Symbol> {
+    nodes: RefCell<Vec<BuildNode<S>>>,
 }
 
-impl ExprBuilder {
+/// Hand-written (rather than derived) so it carries no `S: Default` bound: the arena starts empty
+/// regardless of the stored label type.
+impl<S: StringLabel> Default for ExprBuilder<S> {
+    fn default() -> Self {
+        ExprBuilder {
+            nodes: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl<S: StringLabel> ExprBuilder<S> {
     /// Append a node and return its arena index.
-    fn push(&self, node: BuildNode) -> u32 {
+    fn push(&self, node: BuildNode<S>) -> u32 {
         let mut nodes = self.nodes.borrow_mut();
         let id =
             u32::try_from(nodes.len()).expect("expression builder node count exceeds u32::MAX");
@@ -54,13 +63,13 @@ impl ExprBuilder {
 
     /// A variable leaf with the given name.
     #[must_use]
-    pub fn var<S: AsRef<str>>(&self, name: S) -> Expr<'_> {
-        Expr::new(self, self.push(BuildNode::Var(Symbol::from(name.as_ref()))))
+    pub fn var<N: AsRef<str>>(&self, name: N) -> Expr<'_, S> {
+        Expr::new(self, self.push(BuildNode::Var(S::from(name.as_ref()))))
     }
 
     /// A constant leaf (`true` or `false`).
     #[must_use]
-    pub fn constant(&self, value: bool) -> Expr<'_> {
+    pub fn constant(&self, value: bool) -> Expr<'_, S> {
         Expr::new(self, self.push(BuildNode::Const(value)))
     }
 
@@ -69,7 +78,7 @@ impl ExprBuilder {
     /// The expression's tokens are emitted verbatim when the build is serialised; holding it here is a
     /// refcount bump (its tokens are an [`Arc`]).
     #[must_use]
-    pub fn graft(&self, expr: &BoolExpr) -> Expr<'_> {
+    pub fn graft(&self, expr: &BoolExpr<S>) -> Expr<'_, S> {
         Expr::new(self, self.push(BuildNode::Graft(expr.clone())))
     }
 }
@@ -77,7 +86,7 @@ impl ExprBuilder {
 /// Opaque: the arena's nodes carry no useful `Debug` of their own, so only the accumulated node count is
 /// shown. `push` never holds the `RefCell` borrow across a call back into user code, so borrowing it here
 /// (e.g. from inside a `BoolExpr::build` closure) is safe.
-impl std::fmt::Debug for ExprBuilder {
+impl<S: StringLabel> std::fmt::Debug for ExprBuilder<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExprBuilder")
             .field("nodes", &self.nodes.borrow().len())
@@ -104,24 +113,24 @@ impl std::fmt::Debug for ExprBuilder {
 ///     a
 /// });
 /// ```
-pub struct Expr<'b> {
-    builder: &'b ExprBuilder,
+pub struct Expr<'b, S: StringLabel = Symbol> {
+    builder: &'b ExprBuilder<S>,
     id: u32,
     /// Invariant in `'b`, so the brand neither widens nor narrows.
     _brand: PhantomData<fn(&'b ()) -> &'b ()>,
 }
 
-impl<'b> Clone for Expr<'b> {
+impl<S: StringLabel> Clone for Expr<'_, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl Copy for Expr<'_> {}
+impl<S: StringLabel> Copy for Expr<'_, S> {}
 
 /// Shows the arena index and the owning builder's pointer, so two handles into the same build compare
 /// visibly. The node itself is not rendered — the arena is a private `ExprBuilder` implementation detail.
-impl std::fmt::Debug for Expr<'_> {
+impl<S: StringLabel> std::fmt::Debug for Expr<'_, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Expr")
             .field("id", &self.id)
@@ -130,8 +139,8 @@ impl std::fmt::Debug for Expr<'_> {
     }
 }
 
-impl<'b> Expr<'b> {
-    fn new(builder: &'b ExprBuilder, id: u32) -> Self {
+impl<'b, S: StringLabel> Expr<'b, S> {
+    fn new(builder: &'b ExprBuilder<S>, id: u32) -> Self {
         Expr {
             builder,
             id,
@@ -140,7 +149,7 @@ impl<'b> Expr<'b> {
     }
 
     /// Combine two handles under a binary node constructor.
-    fn combine(self, op: fn(u32, u32) -> BuildNode, rhs: Expr<'b>) -> Expr<'b> {
+    fn combine(self, op: fn(u32, u32) -> BuildNode<S>, rhs: Expr<'b, S>) -> Expr<'b, S> {
         // The shared `'b` already ties both handles to one builder; this guards against a future change
         // that lets the lifetimes coincide across builders.
         debug_assert!(
@@ -151,35 +160,35 @@ impl<'b> Expr<'b> {
     }
 }
 
-impl<'b> BitAnd for Expr<'b> {
-    type Output = Expr<'b>;
-    fn bitand(self, rhs: Expr<'b>) -> Expr<'b> {
+impl<'b, S: StringLabel> BitAnd for Expr<'b, S> {
+    type Output = Expr<'b, S>;
+    fn bitand(self, rhs: Expr<'b, S>) -> Expr<'b, S> {
         self.combine(BuildNode::And, rhs)
     }
 }
 
-impl<'b> BitOr for Expr<'b> {
-    type Output = Expr<'b>;
-    fn bitor(self, rhs: Expr<'b>) -> Expr<'b> {
+impl<'b, S: StringLabel> BitOr for Expr<'b, S> {
+    type Output = Expr<'b, S>;
+    fn bitor(self, rhs: Expr<'b, S>) -> Expr<'b, S> {
         self.combine(BuildNode::Or, rhs)
     }
 }
 
-impl<'b> BitXor for Expr<'b> {
-    type Output = Expr<'b>;
-    fn bitxor(self, rhs: Expr<'b>) -> Expr<'b> {
+impl<'b, S: StringLabel> BitXor for Expr<'b, S> {
+    type Output = Expr<'b, S>;
+    fn bitxor(self, rhs: Expr<'b, S>) -> Expr<'b, S> {
         self.combine(BuildNode::Xor, rhs)
     }
 }
 
-impl<'b> Not for Expr<'b> {
-    type Output = Expr<'b>;
-    fn not(self) -> Expr<'b> {
+impl<'b, S: StringLabel> Not for Expr<'b, S> {
+    type Output = Expr<'b, S>;
+    fn not(self) -> Expr<'b, S> {
         Expr::new(self.builder, self.builder.push(BuildNode::Not(self.id)))
     }
 }
 
-impl BoolExpr {
+impl<S: StringLabel> BoolExpr<S> {
     /// Build an expression through an auxiliary [`ExprBuilder`].
     ///
     /// The closure receives a shared [`ExprBuilder`] and returns the [`Expr`] handle for the result.
@@ -191,7 +200,7 @@ impl BoolExpr {
     /// use espresso_logic::BoolExpr;
     ///
     /// // (a ^ b) & !c, composed from handles — no `&` or `.clone()`.
-    /// let f = BoolExpr::build(|b| {
+    /// let f: BoolExpr = BoolExpr::build(|b| {
     ///     let a = b.var("a");
     ///     let c = b.var("c");
     ///     (a ^ b.var("b")) & !c
@@ -199,9 +208,9 @@ impl BoolExpr {
     /// assert_eq!(f, BoolExpr::parse("(a ^ b) & !c").unwrap());
     /// ```
     #[must_use]
-    pub fn build<F>(f: F) -> BoolExpr
+    pub fn build<F>(f: F) -> BoolExpr<S>
     where
-        F: for<'b> FnOnce(&'b ExprBuilder) -> Expr<'b>,
+        F: for<'b> FnOnce(&'b ExprBuilder<S>) -> Expr<'b, S>,
     {
         let builder = ExprBuilder::default();
         let root = f(&builder).id;
@@ -216,12 +225,12 @@ impl BoolExpr {
 /// each node emits its operands' tokens before its own operator, exactly the order the binary operators
 /// produce, and a [`Graft`](BuildNode::Graft) splices its tokens verbatim. A handle reused in two places
 /// is re-emitted at each use, since the token stream is a tree.
-fn serialise(nodes: &[BuildNode], root: u32) -> Arc<[Token]> {
-    enum Step {
+fn serialise<S: StringLabel>(nodes: &[BuildNode<S>], root: u32) -> Arc<[Token<S>]> {
+    enum Step<S: StringLabel> {
         /// Walk this node, emitting its operands before its own operator.
         Visit(u32),
         /// Emit an operator token once both operands have been emitted.
-        Emit(Token),
+        Emit(Token<S>),
     }
 
     // Size for the real token total: every non-graft node emits one token, while a `Graft` splices its
@@ -234,7 +243,7 @@ fn serialise(nodes: &[BuildNode], root: u32) -> Arc<[Token]> {
             _ => 1,
         })
         .sum();
-    let mut tokens: Vec<Token> = Vec::with_capacity(capacity);
+    let mut tokens: Vec<Token<S>> = Vec::with_capacity(capacity);
     let mut work = vec![Step::Visit(root)];
 
     while let Some(step) = work.pop() {

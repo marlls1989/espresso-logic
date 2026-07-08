@@ -32,11 +32,10 @@
 //! # Label types
 //!
 //! [`BoolExpr<S>`](BoolExpr) is generic over its stored variable-name type `S`, bounded by
-//! [`StringLabel`] and defaulting to [`Symbol`]. The bare-path
-//! constructors and `expr!` always produce `BoolExpr<Symbol>`; choosing another `S` goes through
-//! `parse::<BoolExpr<S>>()` or [`BoolExpr::relabel`]. `relabel` is a genuine conversion — it
-//! re-interns every variable name into the target type — unlike the free cell rewrap of the same
-//! name on [`Bdd::relabel`](crate::bdd::Bdd::relabel).
+//! [`StringLabel`] and defaulting to [`Symbol`]. The stored label type resolves by annotation, by
+//! turbofish, or by how the value is consumed: `let e: BoolExpr = BoolExpr::var("a")` pins it to the
+//! `Symbol` default, `BoolExpr::<String>::var("a")` selects `String`, and parsing chooses it from the
+//! target type — `"a & b".parse::<BoolExpr<String>>()`.
 
 // Submodules
 mod ast;
@@ -91,12 +90,12 @@ use std::sync::Arc;
 /// # The stored label type `S`
 ///
 /// The variable names are stored as the label type `S`, which defaults to [`Symbol`] and is bounded by
-/// [`StringLabel`] (so `String`, `Arc<str>`, … also qualify). The bare-path constructors
-/// ([`var`](Self::var), [`constant`](Self::constant), [`build`](Self::build), [`Default`]) and the
-/// [`expr!`](crate::expr) macro always produce `BoolExpr<Symbol>` with no annotation — type-parameter
-/// defaults do not drive inference, so this keeps them non-breaking. To construct a `BoolExpr<S>` with a
-/// different `S`, use [`parse::<BoolExpr<S>>()`](str::parse), [`relabel`](Self::relabel), or
-/// [`Bdd::to_expr`](crate::bdd::Bdd::to_expr).
+/// [`StringLabel`] (so `String`, `Arc<str>`, … also qualify). `S` is a genuine generic with a type-level
+/// default: the constructors ([`var`](Self::var), [`constant`](Self::constant), [`build`](Self::build),
+/// [`Default`]) and the [`expr!`](crate::expr) macro produce whichever `S` the binding, turbofish, or
+/// consuming context fixes, falling back to `Symbol` only where an annotation pins it there. To
+/// construct a `BoolExpr<S>` with a specific `S`, annotate the binding, turbofish the constructor
+/// (`BoolExpr::<String>::var("a")`), or parse into it (`"a & b".parse::<BoolExpr<String>>()`).
 ///
 /// # Internal representation
 ///
@@ -111,37 +110,33 @@ pub struct BoolExpr<S: StringLabel = Symbol> {
 
 /// The constant `false` — the identity element for `|`/`^`, so it composes cleanly as a starting
 /// accumulator.
-impl Default for BoolExpr {
+impl<S: StringLabel> Default for BoolExpr<S> {
     fn default() -> Self {
-        BoolExpr::constant(false)
+        Self::constant(false)
     }
 }
 
-impl BoolExpr {
+impl<S: StringLabel> BoolExpr<S> {
     /// Create a variable expression with the given name.
     ///
-    /// Returns a `BoolExpr<Symbol>`. For a different stored label type, parse via
-    /// [`parse::<BoolExpr<S>>()`](str::parse) or convert with [`relabel`](Self::relabel).
+    /// The stored label type `S` follows the binding or turbofish
+    /// (`BoolExpr::<String>::var("a")`), falling back to [`Symbol`] where an annotation pins it there
+    /// (`let e: BoolExpr = BoolExpr::var("a")`).
     #[must_use]
-    pub fn var<S: AsRef<str>>(name: S) -> Self {
+    pub fn var<N: AsRef<str>>(name: N) -> Self {
         BoolExpr {
-            tokens: Arc::from([Token::Var(Symbol::from(name.as_ref()))]),
+            tokens: Arc::from([Token::Var(S::from(name.as_ref()))]),
         }
     }
 
     /// Create a constant expression (`true` or `false`).
-    ///
-    /// Returns a `BoolExpr<Symbol>`. For a different stored label type, parse via
-    /// [`parse::<BoolExpr<S>>()`](str::parse) or convert with [`relabel`](Self::relabel).
     #[must_use]
     pub fn constant(value: bool) -> Self {
         BoolExpr {
             tokens: Arc::from([Token::Const(value)]),
         }
     }
-}
 
-impl<S: StringLabel> BoolExpr<S> {
     /// Build from an owned token stream (the single internal constructor over raw tokens).
     pub(crate) fn from_tokens(tokens: Arc<[Token<S>]>) -> Self {
         BoolExpr { tokens }
@@ -167,24 +162,15 @@ impl<S: StringLabel> BoolExpr<S> {
         }
     }
 
-    /// Convert to a `BoolExpr<T>` with a different stored label type, preserving every variable name.
+    /// Cast to a `BoolExpr<T>` with a different stored label type, preserving every variable name.
     ///
-    /// This is a **type conversion**: each variable name is re-interned into the target label type `T`
-    /// (via its `&str` view), while the operator and constant structure is copied unchanged. The
-    /// resulting expression is syntactically identical — same variables, same tree — only the stored
-    /// label representation differs. Unlike [`Cover::relabel`](crate::Cover::relabel), which *replaces*
-    /// labels position-for-position with new names, this preserves the names and changes only their
-    /// type.
+    /// Each variable name is re-interned into the target label type `T` (via its `&str` view) while the
+    /// operator and constant structure is copied unchanged, so the result is syntactically identical —
+    /// same variables, same tree — with only the stored label representation differing.
     ///
-    /// ```
-    /// use espresso_logic::BoolExpr;
-    ///
-    /// let f = "a & b".parse::<BoolExpr<String>>().unwrap();
-    /// let g: BoolExpr = f.relabel(); // back to the default `Symbol` label
-    /// assert_eq!(g, BoolExpr::parse("a & b").unwrap());
-    /// ```
-    #[must_use]
-    pub fn relabel<T: StringLabel>(&self) -> BoolExpr<T> {
+    /// Crate-internal and permanent: the Cover→expression bridge relies on it to re-key an extracted
+    /// expression into a caller's label type. It is not a transitional shim.
+    pub(crate) fn cast<T: StringLabel>(&self) -> BoolExpr<T> {
         let tokens: Arc<[Token<T>]> = self
             .tokens
             .iter()

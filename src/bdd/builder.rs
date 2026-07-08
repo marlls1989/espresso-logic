@@ -193,7 +193,7 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> BddBuilder<B, C, S> {
     ///
     /// Propagates a [`ParseBoolExprError`] if the text does not parse.
     pub fn parse<N: AsRef<str>>(&self, input: N) -> Result<Bdd<B, C, S>, ParseBoolExprError> {
-        Ok(self.build(&BoolExpr::parse(input)?))
+        Ok(self.build(&BoolExpr::<S>::parse(input)?))
     }
 
     /// Minimise a [`BoolExpr`]'s ON-set with Espresso, returning the minimised single-output [`Cover`].

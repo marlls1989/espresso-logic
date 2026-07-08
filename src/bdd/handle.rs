@@ -888,7 +888,7 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> Bdd<B, C, S> {
         self.cover()
             .to_expr_by_index(0)
             .expect("cover yields a single-output cover, so output index 0 is in bounds")
-            .relabel::<S>()
+            .cast::<S>()
     }
 }
 

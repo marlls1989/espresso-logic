@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`BoolExpr` is now genuinely generic over its stored label type** (`BoolExpr<V = Symbol>`): every
+  constructor and inherent method — `var`, `constant`, `parse`, `build`, `Default` — lives on the
+  generic `impl`, so the stored label type follows the binding, turbofish, or consuming context rather
+  than being fixed to `Symbol`. `let e: BoolExpr = BoolExpr::var("a")` still resolves to `Symbol` via
+  the type-level default, and `BoolExpr::<String>::var("a")` selects `String` directly. A bare
+  `let e = BoolExpr::var("a")` that is neither annotated nor consumed no longer infers `Symbol` and
+  needs an annotation or turbofish. The public `BoolExpr::relabel` method is removed; construct the
+  target label type directly (annotate, turbofish, or `"a & b".parse::<BoolExpr<String>>()`).
 - `Symbol` reshaped from 24 bytes to 16 bytes on 64-bit (8 bytes on 32-bit), sized *exactly* to its
   `Arc<str>` container rather than to `String`'s. The inline capacity is still derived at compile
   time and guarded by compile-time size asserts, now superseding 5.6.0's `size_of::<String>() - 2`
