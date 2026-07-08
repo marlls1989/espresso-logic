@@ -67,7 +67,7 @@
 //! placeholder (`LocalCell<_>` / `SyncCell<_>`), so it resolves like any other unconstrained type
 //! parameter: from a binding annotation (`let b: BddBuilder<_, LocalCell> = bdd_builder!();` picks
 //! `Symbol` via the cell's own default; `let b: BddBuilder<_, LocalCell<String>> = bdd_builder!();`
-//! picks another [`StringLabel`]), or from consuming a labelled output downstream. A builder whose
+//! picks another [`StringLabel`](crate::StringLabel)), or from consuming a labelled output downstream. A builder whose
 //! labels are never pinned either way needs the one-time annotation. There is no `relabel` — a builder
 //! or handle's label type is fixed for its lifetime once resolved.
 //!
