@@ -42,6 +42,18 @@ fn sync_context_is_send_and_sync() {
     assert_sync::<super::Bdd<BrandB, SyncCell>>();
 }
 
+/// `S` is a phantom marker realised only at output boundaries, so it carries no bearing on Send/Sync: a
+/// [`SyncCell`]-backed builder/handle stays `Send + Sync` under a non-`Symbol` stored label type too.
+#[test]
+fn sync_context_is_send_and_sync_under_non_symbol_label() {
+    fn assert_send<T: std::marker::Send>() {}
+    fn assert_sync<T: std::marker::Sync>() {}
+    assert_send::<BddBuilder<BrandB, SyncCell, String>>();
+    assert_sync::<BddBuilder<BrandB, SyncCell, String>>();
+    assert_send::<super::Bdd<BrandB, SyncCell, String>>();
+    assert_sync::<super::Bdd<BrandB, SyncCell, String>>();
+}
+
 /// Compile-time witness that thread-safety follows the storage cell, not the brand: a
 /// [`LocalCell`]-backed builder is `!Send` and a [`SyncCell`]-backed one is `Send`, whatever brand each
 /// carries.
@@ -2350,4 +2362,78 @@ fn compose_across_clashing_brands_panics() {
     // Same brand clash as the other tests in this section, but through `compose`'s own
     // `assert_same_manager` check on `g`.
     let _ = one.var("x").compose("x", &two.var("y"));
+}
+
+// ---- Generic label parameter S (non-Symbol interop) -------------------------------------------------
+//
+// The manager stays Symbol-keyed; `S` is a phantom marker on `Bdd`/`BddBuilder`/`Scope`, realised only
+// at output boundaries via `S::from`. `bdd_builder!()`/`sync_bdd_builder!()` always mint the `Symbol`
+// default; `BddBuilder::relabel` is how a non-`Symbol` builder is minted. These tests exercise a
+// `String`-labelled builder end to end, mirroring the Symbol-default coverage above.
+
+#[test]
+fn relabelled_builder_var_and_parse_agree() {
+    let b = crate::bdd_builder!().relabel::<String>();
+    let f = b.var("a") & b.var("b");
+    let parsed = b.parse("a & b").unwrap();
+    assert!(f.equivalent_to(&parsed));
+}
+
+#[test]
+fn relabelled_builder_variables_yields_stored_type() {
+    let b = crate::bdd_builder!().relabel::<String>();
+    let f = b.parse("a & b").unwrap();
+    let mut vars: Vec<String> = f.variables().collect();
+    vars.sort();
+    assert_eq!(vars, vec!["a".to_string(), "b".to_string()]);
+}
+
+#[test]
+fn relabelled_builder_cover_is_string_labelled_and_sorted() {
+    let b = crate::bdd_builder!().relabel::<String>();
+    let f = b.parse("c & a & b").unwrap();
+    let cover: Cover<String, crate::Anonymous> = f.cover();
+    assert_eq!(
+        cover.input_labels(),
+        &["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+#[test]
+fn relabelled_builder_minimize_returns_string_labelled_cover() {
+    let b = crate::bdd_builder!().relabel::<String>();
+    // (a & b) | (a & !b) reduces to a.
+    let f = b.parse("(a & b) | (a & !b)").unwrap();
+    let minimized: Cover<String, crate::Anonymous> = f.minimize().unwrap();
+    assert_eq!(minimized.input_labels(), &["a".to_string()]);
+}
+
+#[test]
+fn relabelled_builder_to_expr_round_trips_through_build() {
+    let b = crate::bdd_builder!().relabel::<String>();
+    let original = b.parse("a & (b | !c)").unwrap();
+    let expr: crate::BoolExpr<String> = original.to_expr();
+    // build accepts L = String directly, matching the builder's own stored label type.
+    let rebuilt = b.build(&expr);
+    assert!(rebuilt.equivalent_to(&original));
+}
+
+#[test]
+fn relabel_round_trip_preserves_root() {
+    let builder = crate::bdd_builder!();
+    let f = builder.parse("a & b").unwrap();
+    let round_tripped = f.relabel::<String>().relabel::<Symbol>();
+    assert_eq!(round_tripped, f);
+}
+
+#[test]
+fn string_scope_lifts_symbol_handle() {
+    let symbol_builder = crate::bdd_builder!();
+    let owned = symbol_builder.var("a");
+    let string_builder = symbol_builder.relabel::<String>();
+    // The scope's own stored label (String) is independent of the lifted handle's (Symbol): `lift` is
+    // generic over the source handle's S2.
+    let f = string_builder.scope(|s| s.lift(&owned) & s.var("b"));
+    let expected = &owned & &symbol_builder.var("b");
+    assert!(f.relabel::<Symbol>().equivalent_to(&expected));
 }

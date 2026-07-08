@@ -4,7 +4,7 @@
 //! including PLA I/O, Debug formatting, and conversions from expressions.
 
 use super::cubes::{Cube, CubeType};
-use super::label::Anonymous;
+use super::label::{Anonymous, StringLabel};
 use super::minterm::{InputField, Minterm};
 use super::output_set::OutputSet;
 use super::symbols::Symbols;
@@ -12,7 +12,6 @@ use super::Cover;
 use super::CoverType;
 use crate::bdd::{Bdd, Brand, ManagerCell};
 use crate::expression::BoolExpr;
-use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
 
@@ -67,16 +66,16 @@ pub(crate) fn anonymous_cover_from_raw(
 /// let cover: Cover<Symbol, Anonymous> = f.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<B: Brand, C: ManagerCell> From<Bdd<B, C>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: Bdd<B, C>) -> Self {
+impl<B: Brand, C: ManagerCell, S: StringLabel> From<Bdd<B, C, S>> for Cover<S, Anonymous> {
+    fn from(bdd: Bdd<B, C, S>) -> Self {
         bdd.cover()
     }
 }
 
 /// Borrowed counterpart of the `From<Bdd>` impl: [`Bdd::cover`] already borrows `&self`, so this
 /// defers straight to it.
-impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
-    fn from(bdd: &Bdd<B, C>) -> Self {
+impl<B: Brand, C: ManagerCell, S: StringLabel> From<&Bdd<B, C, S>> for Cover<S, Anonymous> {
+    fn from(bdd: &Bdd<B, C, S>) -> Self {
         bdd.cover()
     }
 }
@@ -99,8 +98,8 @@ impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
 /// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: BoolExpr) -> Self {
+impl<S: StringLabel> From<BoolExpr<S>> for Cover<S, Anonymous> {
+    fn from(expr: BoolExpr<S>) -> Self {
         Cover::from(&expr)
     }
 }
@@ -115,11 +114,11 @@ impl From<BoolExpr> for Cover<Symbol, Anonymous> {
 /// let cover = Cover::<Symbol, Anonymous>::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: &BoolExpr) -> Self {
+impl<S: StringLabel> From<&BoolExpr<S>> for Cover<S, Anonymous> {
+    fn from(expr: &BoolExpr<S>) -> Self {
         // The temporary builder lives for this call; the handle borrows it and is consumed by the
         // `Bdd → Cover` primitive before this function returns.
-        let builder = crate::bdd_builder!();
+        let builder = crate::bdd_builder!().relabel::<S>();
         Cover::from(builder.build(expr))
     }
 }

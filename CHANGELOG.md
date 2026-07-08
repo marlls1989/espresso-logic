@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stored-label type parameter on the expression and BDD layers**: `BoolExpr<S = Symbol>`,
+  `Bdd<B, C, S = Symbol>`, `BddBuilder<B, C, S = Symbol>`, and `Scope<'s, B, C, S = Symbol>`, all
+  bounded by the existing `StringLabel`. Label-producing outputs — `variables`, the
+  `cover`/`cover_fr`/`primes`/`maximize`/`maximize_fr`/`minimize`/`minimize_fr` families, `to_expr` —
+  now follow `S`. New `relabel` conversions carry a value from one stored label type to another:
+  `BoolExpr::relabel` re-interns each token's variable name, while `Bdd::relabel`/`BddBuilder::relabel`
+  are free cell rewraps (variable names live in the manager as `Symbol` regardless of the phantom `S`).
+  Non-`Symbol` construction goes through the annotation-driven `parse::<BoolExpr<S>>()` (`str::parse`)
+  and `bdd_builder!().relabel::<S>()`; the bare-path constructors (`var`/`constant`/`build`/`Default`/
+  `expr!`/`bdd_builder!`/`sync_bdd_builder!`/`scope`) stay concrete on `Symbol` so existing call sites
+  need no annotation. `BddBuilder::build`/`minimize`, `Scope::build`/`lift`, `Cover::add_bdd`/`add_expr`
+  and the `Cover`/`Bdd`/`BoolExpr` `From` bridges now accept an operand under any string-labelled `S`,
+  not just `Symbol`. Additive and non-breaking: every existing call site elaborates the same defaults
+  and compiles unchanged. One asterisk — an unannotated `.parse()` fed straight into the now-generic
+  `build`/`minimize` no longer has a type to infer from and needs a turbofish, e.g.
+  `builder.build(&"a & b".parse::<BoolExpr<String>>()?)`.
 - `Bdd::restrict_to` (mirrored on `ScopedBdd`): restrict a function to the subspace pinned by a
   `Minterm` — every field the minterm fixes is applied, a don't-care (or a variable the minterm does
   not carry) leaves that variable free, and an unknown name is ignored. Accepts any `StringLabel`.

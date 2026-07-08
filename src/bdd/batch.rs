@@ -18,6 +18,7 @@ use std::iter::FusedIterator;
 use super::encoding;
 use super::manager::{BddOps, NodeId, VarId};
 use super::{Bdd, Brand, ManagerCell, ScopedBdd};
+use crate::cover::StringLabel;
 
 mod sealed {
     use super::{ManagerCell, NodeId};
@@ -63,7 +64,7 @@ pub trait BatchHandle: Sealed {}
 
 impl<T: Sealed> BatchHandle for T {}
 
-impl<B: Brand, C: ManagerCell> Sealed for Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> Sealed for Bdd<B, C, S> {
     type Cell = C;
     type Held = C;
     fn root(&self) -> NodeId {

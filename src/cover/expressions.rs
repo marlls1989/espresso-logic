@@ -6,6 +6,7 @@
 use super::cubes::{Cube, CubeType};
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
+use super::label::StringLabel;
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::symbols::{identity_union, Symbols};
@@ -22,10 +23,15 @@ impl Cover<Symbol, Symbol> {
     /// variables are matched by name with existing variables, and new variables are appended.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
-    pub fn add_bdd<S: AsRef<str>, B: crate::bdd::Brand, C: crate::bdd::ManagerCell>(
+    pub fn add_bdd<
+        N: AsRef<str>,
+        B: crate::bdd::Brand,
+        C: crate::bdd::ManagerCell,
+        S: StringLabel,
+    >(
         &mut self,
-        bdd: &crate::bdd::Bdd<B, C>,
-        output_name: S,
+        bdd: &crate::bdd::Bdd<B, C, S>,
+        output_name: N,
     ) -> Result<(), AddExprError> {
         let output_name = output_name.as_ref();
         // `add_bdd` is a *labelled* operation, intended for empty or fully-labelled covers. Build
@@ -47,7 +53,7 @@ impl Cover<Symbol, Symbol> {
 
         // Extract the function's product terms as input minterms (canonical ON-set from the BDD).
         // Every minterm shares one header: the function's variables, sorted.
-        let on_set = bdd.cover();
+        let on_set = bdd.relabel::<Symbol>().cover();
         let cubes: Vec<Minterm<Symbol>> = on_set.cubes().map(|c| c.inputs().clone()).collect();
 
         // Union the cover's input header with the expression's variables, re-pointing existing cubes
@@ -113,10 +119,13 @@ impl Cover<Symbol, Symbol> {
     /// single-threaded builder (which canonicalises it), then its ON-set is added as a new output. The
     /// temporary builder lives only for this call; the handle is consumed before it returns.
     ///
-    /// This is the bridge *from* the `Symbol`-based expression layer, so it produces the natural
-    /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
-    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`); for `&str`-named
-    /// targets, [`rename`](Cover::rename) is the direct form.
+    /// This is the bridge *from* the expression layer, so it accepts a [`BoolExpr<L>`](BoolExpr) under
+    /// any string-like `L` — same for [`add_bdd`](Self::add_bdd)'s `Bdd<B, C, S>` — but always produces
+    /// the natural `Cover<Symbol, Symbol>` (via the free [`Bdd::relabel`](crate::bdd::Bdd::relabel) /
+    /// [`BoolExpr::relabel`](BoolExpr::relabel) cell rewraps upstream). To carry the result under a
+    /// different string label type, build it here and [`relabel`](Cover::relabel) (or
+    /// `relabel_inputs`/`relabel_outputs`); for `&str`-named targets, [`rename`](Cover::rename) is the
+    /// direct form.
     ///
     /// Each call builds and drops a throwaway BDD manager. Building many expressions into one cover goes
     /// through a single [`bdd_builder!`](crate::bdd_builder) plus [`add_bdd`](Self::add_bdd), which share
@@ -141,10 +150,10 @@ impl Cover<Symbol, Symbol> {
     /// let expr2 = expr!("b" | "a");
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
-    pub fn add_expr<S: AsRef<str>>(
+    pub fn add_expr<N: AsRef<str>, L: StringLabel>(
         &mut self,
-        expr: &BoolExpr,
-        output_name: S,
+        expr: &BoolExpr<L>,
+        output_name: N,
     ) -> Result<(), AddExprError> {
         // Mediate the syntactic → cube transformation through a throwaway BDD builder (canonicalises
         // the expression). The builder is local; the handle borrows it and is consumed by `add_bdd`

@@ -2870,3 +2870,35 @@ fn pla_writer_output_unchanged_for_dont_care_only_cover() {
         ".i 2\n.o 1\n.p 1\n-- 1\n.e\n"
     );
 }
+
+// ===== Cover <-> Bdd/BoolExpr bridge: non-Symbol stored label S =====
+
+/// [`Cover::add_bdd`] accepts a [`Bdd`](crate::bdd::Bdd) under any [`StringLabel`] `S`, not just
+/// `Symbol` — the bridge always lands a natural `Cover<Symbol, Symbol>`.
+#[test]
+fn add_bdd_accepts_arc_str_labelled_handle() {
+    let builder = crate::bdd_builder!().relabel::<Arc<str>>();
+    let f = builder.parse("a & b").unwrap();
+
+    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    cover.add_bdd(&f, "out").unwrap();
+
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.num_outputs(), 1);
+    assert_eq!(cover.input_labels()[0].as_ref(), "a");
+    assert_eq!(cover.input_labels()[1].as_ref(), "b");
+    assert_eq!(cover.output_labels()[0].as_ref(), "out");
+    assert!(cover.num_cubes() > 0);
+}
+
+/// `From<BoolExpr<String>> for Cover<String, Anonymous>` — the generic bridge instantiated at a
+/// non-`Symbol` stored label.
+#[test]
+fn from_boolexpr_string_yields_string_labelled_anonymous_cover() {
+    let f: crate::BoolExpr<String> = "a & b".parse().unwrap();
+    let cover: Cover<String, Anonymous> = f.into();
+
+    assert_eq!(cover.num_outputs(), 1);
+    assert_eq!(cover.num_inputs(), 2);
+    assert_eq!(cover.input_labels(), &["a".to_string(), "b".to_string()]);
+}

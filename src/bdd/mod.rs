@@ -52,6 +52,17 @@
 //! For allocation-free composition without `.clone()`, [`BddBuilder::scope`] hands a closure a [`Scope`]
 //! of `Copy`, by-reference [`ScopedBdd`] handles and returns the owned [`Bdd`] for the root.
 //!
+//! # Label types
+//!
+//! [`Bdd`], [`BddBuilder`] and [`Scope`] carry a third, phantom type parameter `S` — the stored
+//! label type, bounded by [`StringLabel`](crate::StringLabel) and defaulting to
+//! [`Symbol`](crate::Symbol) — that selects the type label-producing outputs ([`Bdd::variables`],
+//! the `cover`/`primes`/`maximize`/`minimize` families, [`Bdd::to_expr`]) come back as. Variable
+//! names always live in the manager as `Symbol`; `S` only chooses the presentation type, so
+//! [`Bdd::relabel`] / [`BddBuilder::relabel`] are free cell rewraps, not re-interning conversions.
+//! The macros mint the `Symbol` default; a builder under another `S` is
+//! `bdd_builder!().relabel::<S>()`.
+//!
 //! [`BoolExpr`]: crate::BoolExpr
 
 mod batch;
