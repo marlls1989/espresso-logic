@@ -2,54 +2,55 @@
 // Supports standard boolean operators with proper precedence:
 // Parentheses () > NOT (~, !) > AND (*, &) > XOR (^) > OR (+, |)
 //
-// Each rule builds a reverse-Polish (postfix) `Vec<RpnToken>` bottom-up; the caller wraps the
-// top-level program directly into an owned `BoolExpr`. The grammar keeps accepting
+// Each rule builds a reverse-Polish (postfix) `Vec<RpnToken<&'input str>>` bottom-up; the caller
+// wraps the top-level program directly into an owned `BoolExpr`. The grammar keeps accepting
 // both the `*`/`+`/`~` and the `&`/`|`/`!` spellings, but both lower to the single canonical token set.
+// Variable operands stay borrowed `&'input str` here — the grammar is label-agnostic; the caller
+// decides what label type to intern them into.
 //
 // `Token` is imported under the alias `RpnToken` to avoid colliding with lalrpop's own internal
 // `Token` lexer type in the generated parser.
 
 use crate::expression::rpn::Token as RpnToken;
-use crate::Symbol;
 
 grammar;
 
 // Main entry point: the postfix program.
-pub Expr: Vec<RpnToken> = {
+pub Expr: Vec<RpnToken<&'input str>> = {
     <ops:OrExpr> => ops,
 };
 
 // OR has lowest precedence (supports both + and |)
-OrExpr: Vec<RpnToken> = {
+OrExpr: Vec<RpnToken<&'input str>> = {
     <mut l:OrExpr> "+" <r:XorExpr> => { l.extend(r); l.push(RpnToken::Or); l },
     <mut l:OrExpr> "|" <r:XorExpr> => { l.extend(r); l.push(RpnToken::Or); l },
     XorExpr,
 };
 
 // XOR sits between OR and AND
-XorExpr: Vec<RpnToken> = {
+XorExpr: Vec<RpnToken<&'input str>> = {
     <mut l:XorExpr> "^" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Xor); l },
     AndExpr,
 };
 
 // AND has higher precedence (supports both * and &)
-AndExpr: Vec<RpnToken> = {
+AndExpr: Vec<RpnToken<&'input str>> = {
     <mut l:AndExpr> "*" <r:NotExpr> => { l.extend(r); l.push(RpnToken::And); l },
     <mut l:AndExpr> "&" <r:NotExpr> => { l.extend(r); l.push(RpnToken::And); l },
     NotExpr,
 };
 
 // NOT has highest precedence
-NotExpr: Vec<RpnToken> = {
+NotExpr: Vec<RpnToken<&'input str>> = {
     "~" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
     "!" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
     Term,
 };
 
 // Base terms
-Term: Vec<RpnToken> = {
+Term: Vec<RpnToken<&'input str>> = {
     // Variables (identifiers)
-    <v:Ident> => vec![RpnToken::Var(Symbol::from(v))],
+    <v:Ident> => vec![RpnToken::Var(v)],
 
     // Constants
     "0" => vec![RpnToken::Const(false)],
