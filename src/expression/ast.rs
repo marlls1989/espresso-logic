@@ -4,7 +4,7 @@
 
 use super::rpn;
 use super::BoolExpr;
-use crate::Symbol;
+use crate::{StringLabel, Symbol};
 use std::sync::Arc;
 
 /// Node type for expression tree folding
@@ -100,7 +100,7 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl BoolExpr {
+impl<S: StringLabel> BoolExpr<S> {
     /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
     /// A plain postfix-to-tree fold over the tokens (via the shared [`rpn::fold_postfix`] value-stack
@@ -110,7 +110,7 @@ impl BoolExpr {
     fn to_ast(&self) -> Arc<BoolExprAst> {
         rpn::fold_postfix(
             self.tokens(),
-            |name| Arc::new(BoolExprAst::Variable(name.clone())),
+            |name| Arc::new(BoolExprAst::Variable(Symbol::new(name.as_ref()))),
             |value| Arc::new(BoolExprAst::Constant(value)),
             |a| Arc::new(BoolExprAst::Not(a)),
             |l, r| Arc::new(BoolExprAst::And(l, r)),
@@ -152,7 +152,7 @@ impl BoolExpr {
     {
         rpn::fold_postfix(
             self.tokens(),
-            |name| f(ExprNode::Variable(name.as_str())),
+            |name| f(ExprNode::Variable(name.as_ref())),
             |value| f(ExprNode::Constant(value)),
             |inner| f(ExprNode::Not(inner)),
             |l, r| f(ExprNode::And(l, r)),

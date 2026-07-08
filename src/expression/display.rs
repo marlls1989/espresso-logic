@@ -7,6 +7,7 @@
 
 use super::rpn::{self, Token};
 use super::BoolExpr;
+use crate::StringLabel;
 use std::fmt;
 
 // Binding-tightness levels, highest binds tightest. NOT > AND > XOR > OR mirrors the parser's
@@ -32,7 +33,7 @@ const PREC_OR: u8 = 0;
 /// when its precedence is at most what the node needs, so a right-nested associative child keeps the
 /// parentheses that make the rendering round-trip. No recursion, so a deeply nested expression can't
 /// overflow the call stack.
-fn render(tokens: &[Token]) -> String {
+fn render<S: StringLabel>(tokens: &[Token<S>]) -> String {
     // Wrap `s` if its top operator (`have`) binds strictly more loosely than `need`. Used for the
     // left operand of a left-associative binary node (and for NOT's operand).
     fn wrap(s: String, have: u8, need: u8) -> String {
@@ -64,7 +65,7 @@ fn render(tokens: &[Token]) -> String {
     // its precedence is below what the surrounding operator needs.
     let (text, _) = rpn::fold_postfix(
         tokens,
-        |name| (name.to_string(), PREC_ATOM),
+        |name| (name.as_ref().to_string(), PREC_ATOM),
         |value| ((if value { "1" } else { "0" }).to_string(), PREC_ATOM),
         // `!` binds tighter than every binary operator, so any binary operand is wrapped.
         |(s, p)| (format!("!{}", wrap(s, p, PREC_NOT)), PREC_NOT),
@@ -114,7 +115,7 @@ fn render(tokens: &[Token]) -> String {
 /// let expr = expr!("a" & "b" | "c");
 /// assert_eq!(format!("{:?}", expr), "a & b | c"); // no unnecessary parentheses
 /// ```
-impl fmt::Debug for BoolExpr {
+impl<S: StringLabel> fmt::Debug for BoolExpr<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", render(self.tokens()))
     }
@@ -131,7 +132,7 @@ impl fmt::Debug for BoolExpr {
 /// let expr = expr!("a" & "b");
 /// assert_eq!(format!("{}", expr), "a & b");
 /// ```
-impl fmt::Display for BoolExpr {
+impl<S: StringLabel> fmt::Display for BoolExpr<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
     }
