@@ -28,10 +28,10 @@ about the *function* rather than the *syntax*.
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");        // variable constructor
-let b = BoolExpr::var("b");
-let t = BoolExpr::constant(true);
-let f = BoolExpr::constant(false);
+let a: BoolExpr = BoolExpr::var("a");        // variable constructor
+let b: BoolExpr = BoolExpr::var("b");
+let t: BoolExpr = BoolExpr::constant(true);
+let f: BoolExpr = BoolExpr::constant(false);
 ```
 
 Variable names can be any string: a Rust-style identifier, a multi-character name such as
@@ -47,11 +47,11 @@ string literal is a fresh variable, a bare identifier splices an existing `BoolE
 use espresso_logic::{expr, BoolExpr};
 
 // String literals are fresh variables. `&`/`*` AND, `|`/`+` OR, `^` XOR, `!`/`~` NOT.
-let xor = expr!("a" & !"b" | !"a" & "b");
+let xor: BoolExpr = expr!("a" & !"b" | !"a" & "b");
 
 // A bare identifier grafts an existing BoolExpr; `0`/`1` are constants.
-let enable = BoolExpr::var("enable");
-let gated = expr!(enable & "data" | 0);
+let enable: BoolExpr = BoolExpr::var("enable");
+let gated: BoolExpr = expr!(enable & "data" | 0);
 ```
 
 `expr!` lowers to a single [`BoolExpr::build`] call — it is sugar for the closure builder. `build`
@@ -61,7 +61,7 @@ so the whole expression is assembled and serialised in one pass:
 ```rust
 use espresso_logic::BoolExpr;
 
-let f = BoolExpr::build(|b| {
+let f: BoolExpr = BoolExpr::build(|b| {
     let a = b.var("a");
     let c = b.var("c");
     (a ^ b.var("b")) & !c
@@ -80,8 +80,8 @@ available by value and by reference, so the operands need not be cloned:
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
+let a: BoolExpr = BoolExpr::var("a");
+let b: BoolExpr = BoolExpr::var("b");
 
 let and = &a & &b;     // AND
 let or  = &a | &b;     // OR
@@ -98,8 +98,8 @@ operands type-checks, so an operand can be reused without an explicit clone:
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
+let a: BoolExpr = BoolExpr::var("a");
+let b: BoolExpr = BoolExpr::var("b");
 
 let by_ref   = &a & &b;        // both operands borrowed, `a`/`b` still usable afterwards
 let mixed    = a.clone() & &b; // left owned, right borrowed
@@ -141,16 +141,16 @@ use espresso_logic::BoolExpr;
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
 // The `*`/`+`/`~` and `&`/`|`/`!` spellings parse to the same operators.
-let maths   = BoolExpr::parse("a * b + ~c")?;
-let bitwise = BoolExpr::parse("a & b | !c")?;
+let maths: BoolExpr = BoolExpr::parse("a * b + ~c")?;
+let bitwise: BoolExpr = BoolExpr::parse("a & b | !c")?;
 assert_eq!(maths, bitwise);
 
 // Mixed spellings in one expression.
-let mixed = BoolExpr::parse("a * b | c")?;
+let mixed: BoolExpr = BoolExpr::parse("a * b | c")?;
 
 // Parentheses and constants.
-let grouped  = BoolExpr::parse("(a + b) * c")?;
-let with_one = BoolExpr::parse("a * 1")?;
+let grouped: BoolExpr = BoolExpr::parse("(a + b) * c")?;
+let with_one: BoolExpr = BoolExpr::parse("a * 1")?;
 # Ok(())
 # }
 ```
@@ -167,9 +167,9 @@ a canonical or factored form:
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
-let c = BoolExpr::var("c");
+let a: BoolExpr = BoolExpr::var("a");
+let b: BoolExpr = BoolExpr::var("b");
+let c: BoolExpr = BoolExpr::var("c");
 
 assert_eq!(format!("{}", &a & &b), "a & b");
 assert_eq!(format!("{}", &a & &b | &c), "a & b | c");
@@ -233,8 +233,8 @@ the same syntactic tree:
 ```rust
 use espresso_logic::BoolExpr;
 
-let a = BoolExpr::var("a");
-let b = BoolExpr::var("b");
+let a: BoolExpr = BoolExpr::var("a");
+let b: BoolExpr = BoolExpr::var("b");
 
 assert_eq!(a.clone() & b.clone(), a.clone() & b.clone()); // identical structure
 assert_ne!(a.clone() & b.clone(), b.clone() & a.clone()); // a & b is not b & a syntactically
@@ -253,7 +253,7 @@ to fold into an AND/OR tree — use [`BoolExpr::build`], whose closure is ordina
 use espresso_logic::BoolExpr;
 
 let names = ["a", "b", "c", "d"];
-let conj = BoolExpr::build(|b| {
+let conj: BoolExpr = BoolExpr::build(|b| {
     names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap()
 });
 assert_eq!(format!("{conj}"), "a & b & c & d");
@@ -369,7 +369,7 @@ let builder = bdd_builder!();
 let a = builder.var("a");
 let one = builder.constant(true);
 
-let expr = BoolExpr::parse("a & b")?;
+let expr: BoolExpr = BoolExpr::parse("a & b")?;
 let from_expr = builder.build(&expr);     // build a syntactic expression
 let parsed = builder.parse("a & b")?;     // parse and build in one step
 
@@ -553,10 +553,10 @@ These covers have a single anonymous output. To recover a factored expression fr
 [`Cover::to_expr_by_index`]:
 
 ```rust
-use espresso_logic::{Cover, BoolExpr, Minimizable};
+use espresso_logic::{Anonymous, BoolExpr, Cover, Minimizable, Symbol};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let cover = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
+let cover: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
 let minimized = cover.minimize()?;
 let expr = minimized.to_expr_by_index(0)?;
 println!("{expr}");
@@ -596,12 +596,12 @@ println!("q = {q}");
 [`Cover::add_expr`] is the syntactic counterpart, building each expression through a temporary builder:
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, Symbol};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let mut cover = Cover::new(CoverType::F);
-cover.add_expr(&BoolExpr::parse("a & b")?, "and_out")?;
-cover.add_expr(&BoolExpr::parse("a | c")?, "or_out")?;
+cover.add_expr(&BoolExpr::<Symbol>::parse("a & b")?, "and_out")?;
+cover.add_expr(&BoolExpr::<Symbol>::parse("a | c")?, "or_out")?;
 
 let minimized = cover.minimize()?;
 for (name, expr) in minimized.to_exprs() {
@@ -617,10 +617,10 @@ for (name, expr) in minimized.to_exprs() {
 `minimize_exact` is slower but guaranteed minimal:
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, Minimizable};
+use espresso_logic::{Anonymous, BoolExpr, Cover, Minimizable, Symbol};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let cover = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
+let cover: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b | a & b & c")?);
 
 let heuristic = cover.minimize()?;
 let exact = cover.minimize_exact()?;
@@ -636,7 +636,7 @@ lower:
 use espresso_logic::{BoolExpr, Cover, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let expr = BoolExpr::parse("a & b | a & b & c")?;
+let expr: BoolExpr = BoolExpr::parse("a & b | a & b & c")?;
 let factored = Cover::from(expr).minimize()?.to_expr_by_index(0)?;
 println!("{factored}");
 # Ok(())
@@ -701,11 +701,11 @@ assert!((!(a.clone() | b.clone())).equivalent_to(&(!a & !b)));
 [`BoolExpr::parse`] returns a [`ParseBoolExprError`] on malformed input:
 
 ```rust
-use espresso_logic::BoolExpr;
+use espresso_logic::{BoolExpr, Symbol};
 
-assert!(BoolExpr::parse("a & & b").is_err()); // double operator
-assert!(BoolExpr::parse("a @ b").is_err());   // @ is not an operator
-assert!(BoolExpr::parse("").is_err());        // empty input
+assert!(BoolExpr::<Symbol>::parse("a & & b").is_err()); // double operator
+assert!(BoolExpr::<Symbol>::parse("a @ b").is_err());   // @ is not an operator
+assert!(BoolExpr::<Symbol>::parse("").is_err());        // empty input
 ```
 
 ### Minimisation errors
@@ -713,10 +713,10 @@ assert!(BoolExpr::parse("").is_err());        // empty input
 `minimize` returns a `Result`:
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, Minimizable};
+use espresso_logic::{Anonymous, BoolExpr, Cover, Minimizable, Symbol};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let cover = Cover::from(BoolExpr::parse("a & b")?);
+let cover: Cover<Symbol, Anonymous> = Cover::from(BoolExpr::parse("a & b")?);
 match cover.minimize() {
     Ok(minimized) => println!("{} cubes", minimized.num_cubes()),
     Err(e) => eprintln!("minimisation failed: {e}"),

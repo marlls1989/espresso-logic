@@ -154,7 +154,7 @@ fn evaluate_matches_truth_table() {
 
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
     // f = a & b | !c.
-    let expr = expr!("a" & "b" | !"c");
+    let expr: crate::BoolExpr = expr!("a" & "b" | !"c");
     let f = builder.build(&expr);
 
     for mask in 0..8u32 {
@@ -1638,7 +1638,7 @@ fn scope_lift_round_trips() {
 fn scope_build_and_parse_agree_with_owned() {
     use crate::BoolExpr;
     let builder: BddBuilder<BrandA, LocalCell> = BddBuilder::new();
-    let expr = BoolExpr::parse("(a | b) & !c").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("(a | b) & !c").unwrap();
     let built = builder.scope(|s| s.build(&expr));
     let parsed = builder.scope(|s| s.parse("(a | b) & !c").unwrap());
     assert!(built.equivalent_to(&builder.build(&expr)));

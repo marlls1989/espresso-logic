@@ -13,7 +13,7 @@ fn assign(pairs: &[(&str, bool)]) -> Minterm<Symbol> {
 
 #[test]
 fn test_cover_trait_basics() {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let expr = expr!(a & b);
 
@@ -49,7 +49,7 @@ fn test_cover_trait_basics() {
 fn test_xor_expression() {
     // Exercise the built-in `^` end-to-end: the operator and the parser must agree on the same
     // syntactic structure.
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let xor = &a ^ &b;
     assert_eq!(xor, BoolExpr::parse("a ^ b").unwrap());
@@ -79,7 +79,7 @@ fn test_xor_expression() {
 #[test]
 fn test_xnor_expression() {
     // XNOR: a*b + ~a*~b
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let xnor = expr!(a & b | !a & !b);
 
@@ -109,7 +109,7 @@ fn test_xnor_expression() {
 fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
     // Create a redundant expression: a*b + a*b*c
     // Should minimise to just a*b
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
 
@@ -160,7 +160,7 @@ fn test_minimization() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_de_morgan_laws() {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
 
     let builder = bdd_builder!();
@@ -204,7 +204,7 @@ fn test_de_morgan_laws() {
 
 #[test]
 fn test_cube_iteration() {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let expr = expr!(a & b);
 
@@ -232,7 +232,7 @@ fn test_cube_iteration() {
 
 #[test]
 fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let expr = expr!(a & b);
 
@@ -255,7 +255,7 @@ fn test_to_pla_string() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
     // Test absorption law: a + a*b should minimise to a
-    let expr = BoolExpr::parse("a + a * b").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("a + a * b").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -279,7 +279,7 @@ fn test_minimize_absorption() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_minimize_consensus() -> Result<(), Box<dyn std::error::Error>> {
     // Consensus theorem: a*b + ~a*c + b*c should minimise to a*b + ~a*c
-    let expr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("a * b + ~a * c + b * c").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -302,7 +302,7 @@ fn test_minimize_consensus() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
     // a + a should minimise to a
-    let expr = BoolExpr::parse("a + a").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("a + a").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -325,7 +325,7 @@ fn test_minimize_idempotence() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_complex_parentheses() {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
 
@@ -353,7 +353,7 @@ fn test_complex_parentheses() {
 
 #[test]
 fn test_nested_parentheses_operators() {
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     let b = BoolExpr::var("b");
     let c = BoolExpr::var("c");
     let d = BoolExpr::var("d");
@@ -386,7 +386,7 @@ fn test_nested_parentheses_operators() {
 #[test]
 fn test_parentheses_precedence() {
     // (a + b) * c is different from a + b * c
-    let expr1 = BoolExpr::parse("(a + b) * c").unwrap();
+    let expr1: BoolExpr = BoolExpr::parse("(a + b) * c").unwrap();
     let expr2 = BoolExpr::parse("a + b * c").unwrap();
 
     // Both have same variables
@@ -416,7 +416,7 @@ fn test_parentheses_precedence() {
 #[test]
 fn test_minimize_distributive() -> Result<(), Box<dyn std::error::Error>> {
     // a*(b+c) expands to a*b + a*c (already minimal)
-    let expr = BoolExpr::parse("a * (b + c)").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("a * (b + c)").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -438,7 +438,7 @@ fn test_minimize_distributive() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_complex_minimize_real_world() -> Result<(), Box<dyn std::error::Error>> {
     // Real-world example: a*b + a*c + b*c*d + a*b*d
-    let expr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("a * b + a * c + b * c * d + a * b * d").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -462,7 +462,8 @@ fn test_complex_minimize_real_world() -> Result<(), Box<dyn std::error::Error>> 
 fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
     // Test Espresso minimisation on adjacent minterms
     // f(a,b,c) = m0 + m1 + m2 + m3 (all combinations where a=0)
-    let expr = BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
+    let expr: BoolExpr =
+        BoolExpr::parse("~a * ~b * ~c + ~a * ~b * c + ~a * b * ~c + ~a * b * c").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -486,8 +487,8 @@ fn test_minimize_adjacent_minterms() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_parentheses_with_negation() {
     // Test negation of parenthesised expressions
-    let expr1 = BoolExpr::parse("~(a * b)").unwrap();
-    let expr2 = BoolExpr::parse("~(a + b)").unwrap();
+    let expr1: BoolExpr = BoolExpr::parse("~(a * b)").unwrap();
+    let expr2: BoolExpr = BoolExpr::parse("~(a + b)").unwrap();
 
     // Should apply De Morgan's laws during DNF conversion
     let cover1 = {
@@ -507,7 +508,7 @@ fn test_parentheses_with_negation() {
 #[test]
 fn test_nested_parentheses_minimize() -> Result<(), Box<dyn std::error::Error>> {
     // (a + b) * (a + c) expands to a + a*c + a*b + b*c = a + b*c
-    let expr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
+    let expr: BoolExpr = BoolExpr::parse("(a + b) * (a + c)").unwrap();
     let cover = {
         let mut cover = Cover::new(CoverType::F);
         cover.add_expr(&expr, "out").unwrap();
@@ -548,12 +549,12 @@ fn test_cover_empty_to_expr() {
 #[test]
 fn test_composition_nested_sub_expressions() {
     // Build deeply nested composition: ((a*b) + (c+d)) * e
-    let level1_a = expr!("a" & "b");
+    let level1_a: BoolExpr = expr!("a" & "b");
     let level1_b = expr!("c" | "d");
     let level2 = expr!(level1_a | level1_b);
     let level3 = expr!(level2 & "e");
 
-    let expected = BoolExpr::parse("((a * b) + (c + d)) * e").unwrap();
+    let expected: BoolExpr = BoolExpr::parse("((a * b) + (c + d)) * e").unwrap();
 
     // Logical equality is now decided canonically by the BDD layer: build both sides into one builder
     // and compare roots.
@@ -566,7 +567,7 @@ fn test_composition_nested_sub_expressions() {
 #[test]
 fn test_composition_with_cover_integration() {
     // Build expression through composition, then use with Cover
-    let term1 = expr!("a" & "b");
+    let term1: BoolExpr = expr!("a" & "b");
     let term2 = expr!("c" | "d");
     let composed = expr!(term1 & term2); // (a*b) * (c+d) = a*b*c + a*b*d
 
@@ -580,7 +581,7 @@ fn test_composition_with_cover_integration() {
 
     // Verify the expression can be retrieved and is equivalent to what we put in
     let retrieved = cover.to_expr("output").unwrap();
-    let expected = BoolExpr::parse("(a * b) * (c + d)").unwrap();
+    let expected: BoolExpr = BoolExpr::parse("(a * b) * (c + d)").unwrap();
 
     // Canonical equivalence via the BDD layer.
     let builder = bdd_builder!();
@@ -593,43 +594,43 @@ fn test_composition_with_cover_integration() {
 
 #[test]
 fn test_parser_error_empty_string() {
-    assert!(BoolExpr::parse("").is_err());
+    assert!(BoolExpr::<Symbol>::parse("").is_err());
 }
 
 #[test]
 fn test_parser_error_invalid_syntax() {
     // Double operators
-    assert!(BoolExpr::parse("a * * b").is_err());
-    assert!(BoolExpr::parse("a + + b").is_err());
-    assert!(BoolExpr::parse("* a").is_err());
-    assert!(BoolExpr::parse("+ b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a * * b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a + + b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("* a").is_err());
+    assert!(BoolExpr::<Symbol>::parse("+ b").is_err());
 }
 
 #[test]
 fn test_parser_error_unbalanced_parentheses() {
-    assert!(BoolExpr::parse("(a + b").is_err());
-    assert!(BoolExpr::parse("a + b)").is_err());
-    assert!(BoolExpr::parse("((a + b)").is_err());
-    assert!(BoolExpr::parse("(a + b))").is_err());
+    assert!(BoolExpr::<Symbol>::parse("(a + b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a + b)").is_err());
+    assert!(BoolExpr::<Symbol>::parse("((a + b)").is_err());
+    assert!(BoolExpr::<Symbol>::parse("(a + b))").is_err());
 }
 
 #[test]
 fn test_parser_error_missing_operator() {
-    assert!(BoolExpr::parse("a b").is_err());
-    assert!(BoolExpr::parse("a b c").is_err());
-    assert!(BoolExpr::parse("(a)(b)").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a b c").is_err());
+    assert!(BoolExpr::<Symbol>::parse("(a)(b)").is_err());
 }
 
 #[test]
 fn test_parser_error_missing_operand() {
-    assert!(BoolExpr::parse("a +").is_err());
-    assert!(BoolExpr::parse("* b").is_err());
-    assert!(BoolExpr::parse("a + * b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a +").is_err());
+    assert!(BoolExpr::<Symbol>::parse("* b").is_err());
+    assert!(BoolExpr::<Symbol>::parse("a + * b").is_err());
 }
 
 /// Parse `input`, which must fail, and return the byte offset lalrpop reported.
 fn parse_error_position(input: &str) -> Option<usize> {
-    match BoolExpr::parse(input) {
+    match BoolExpr::<Symbol>::parse(input) {
         Err(ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
             position, ..
         })) => position,
@@ -681,7 +682,7 @@ fn test_parser_error_position_is_byte_offset_not_char_count() {
 #[test]
 fn test_cover_error_nonexistent_output() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     cover.add_expr(&a, "out1").unwrap();
 
     // Try to get non-existent output
@@ -693,8 +694,8 @@ fn test_cover_error_nonexistent_output() {
 #[test]
 fn test_cover_error_duplicate_output() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::var("a");
-    let b = BoolExpr::var("b");
+    let a: BoolExpr = BoolExpr::var("a");
+    let b: BoolExpr = BoolExpr::var("b");
 
     cover.add_expr(&a, "out").unwrap();
 
@@ -707,7 +708,7 @@ fn test_cover_error_duplicate_output() {
 #[test]
 fn test_cover_error_output_index_out_of_bounds() {
     let mut cover = Cover::new(CoverType::F);
-    let a = BoolExpr::var("a");
+    let a: BoolExpr = BoolExpr::var("a");
     cover.add_expr(&a, "out").unwrap();
 
     // Try to access out of bounds index

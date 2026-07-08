@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. Programmatic Construction (using the `expr!` macro):");
 
     // XOR function: a & !b | !a & b
-    let xor = expr!("a" & !"b" | !"a" & "b");
+    let xor: BoolExpr = expr!("a" & !"b" | !"a" & "b");
     println!("   XOR = a & !b | !a & b");
     println!(
         "   Variables: {:?}",
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 2: Parsing from string
     println!("2. Parsing from String:");
-    let parsed_expr = BoolExpr::parse("(a | b) & (c | d)")?;
+    let parsed_expr: BoolExpr = BoolExpr::parse("(a | b) & (c | d)")?;
     println!("   Expression: (a | b) & (c | d)");
     println!(
         "   Variables: {:?}",
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 3: Complex expression with negation
     println!("3. Complex Expression with Negation:");
-    let complex = BoolExpr::parse("!(a & b) | (c & !d)")?;
+    let complex: BoolExpr = BoolExpr::parse("!(a & b) | (c & !d)")?;
     println!("   Expression: !(a & b) | (c & !d)");
     println!(
         "   Variables: {:?}",
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4. Minimisation Example:");
     println!("   Original: a & b | a & b & c (redundant term)");
 
-    let redundant = expr!("a" & "b" | "a" & "b" & "c");
+    let redundant: BoolExpr = expr!("a" & "b" | "a" & "b" & "c");
 
     println!("   Before minimisation:");
     println!(
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 5: XNOR function
     println!("5. XNOR Function (equivalence):");
-    let xnor = expr!("a" & "b" | !"a" & !"b");
+    let xnor: BoolExpr = expr!("a" & "b" | !"a" & !"b");
 
     println!("   XNOR = a & b | !a & !b");
     println!("   Before minimise: {}", xnor);
@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 6: Three-variable function
     println!("6. Three-Variable Majority Function:");
     // Majority function: true if at least 2 of 3 inputs are true.
-    let majority = expr!("a" & "b" | "b" & "c" | "a" & "c");
+    let majority: BoolExpr = expr!("a" & "b" | "b" & "c" | "a" & "c");
     let mut majority_cover = Cover::new(CoverType::F);
     majority_cover.add_expr(&majority, "out")?;
 
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 7: Converting to PLA format
     println!("7. PLA Format Export:");
-    let simple = expr!("a" & "b");
+    let simple: BoolExpr = expr!("a" & "b");
     let mut simple_cover = Cover::new(CoverType::F);
     simple_cover.add_expr(&simple, "out")?;
 
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 8: Parsing with constants
     println!("8. Expressions with Constants:");
-    let expr_with_const = BoolExpr::parse("a & 1 | 0 & b")?;
+    let expr_with_const: BoolExpr = BoolExpr::parse("a & 1 | 0 & b")?;
     println!("   Expression: a & 1 | 0 & b");
     println!(
         "   Variables: {:?}",
@@ -143,12 +143,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 9: De Morgan's laws in action
     println!("9. De Morgan's Laws:");
-    let demorgan1 = expr!(!("a" & "b"));
+    let demorgan1: BoolExpr = expr!(!("a" & "b"));
     let mut cover1 = Cover::new(CoverType::F);
     cover1.add_expr(&demorgan1, "out")?;
     println!("   !(a & b) has {} variables", cover1.num_inputs());
 
-    let demorgan2 = expr!(!("a" | "b"));
+    let demorgan2: BoolExpr = expr!(!("a" | "b"));
     let mut cover2 = Cover::new(CoverType::F);
     cover2.add_expr(&demorgan2, "out")?;
     println!("   !(a | b) has {} variables", cover2.num_inputs());
@@ -156,8 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 10: Comparison - same logical function, different expressions
     println!("10. Equivalent Expressions:");
-    let expr1 = BoolExpr::parse("a & b | a & c")?;
-    let expr2 = BoolExpr::parse("a & (b | c)")?;
+    let expr1: BoolExpr = BoolExpr::parse("a & b | a & c")?;
+    let expr2: BoolExpr = BoolExpr::parse("a & (b | c)")?;
 
     let mut cover1 = Cover::new(CoverType::F);
     cover1.add_expr(&expr1, "out")?;
@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 11: Cube Iteration
     println!("11. Cube Iteration:");
-    let expr = BoolExpr::parse("a & b | !a & c")?;
+    let expr: BoolExpr = BoolExpr::parse("a & b | !a & c")?;
     let mut cover = Cover::new(CoverType::F);
     cover.add_expr(&expr, "out")?;
     println!("    Expression: a & b | !a & c");

@@ -14,7 +14,7 @@ fn main() {
 
     // 1. BoolExpr::build — a single-pass *syntactic* expression. The handles are Copy and compose
     //    with the operators, so the fold reads like ordinary Rust and serialises one token stream.
-    let conj_expr = BoolExpr::build(|b| {
+    let conj_expr: BoolExpr = BoolExpr::build(|b| {
         names
             .iter()
             .map(|n| b.var(*n))
