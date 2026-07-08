@@ -10,7 +10,7 @@ use super::output_set::OutputSet;
 use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
-use crate::bdd::{Bdd, Brand, ManagerCell};
+use crate::bdd::{Bdd, BddBuilder, Brand, LocalCell, ManagerCell};
 use crate::expression::BoolExpr;
 use std::fmt;
 use std::sync::Arc;
@@ -66,16 +66,16 @@ pub(crate) fn anonymous_cover_from_raw(
 /// let cover: Cover<Symbol, Anonymous> = f.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<B: Brand, C: ManagerCell, S: StringLabel> From<Bdd<B, C, S>> for Cover<S, Anonymous> {
-    fn from(bdd: Bdd<B, C, S>) -> Self {
+impl<B: Brand, C: ManagerCell> From<Bdd<B, C>> for Cover<C::Label, Anonymous> {
+    fn from(bdd: Bdd<B, C>) -> Self {
         bdd.cover()
     }
 }
 
 /// Borrowed counterpart of the `From<Bdd>` impl: [`Bdd::cover`] already borrows `&self`, so this
 /// defers straight to it.
-impl<B: Brand, C: ManagerCell, S: StringLabel> From<&Bdd<B, C, S>> for Cover<S, Anonymous> {
-    fn from(bdd: &Bdd<B, C, S>) -> Self {
+impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<C::Label, Anonymous> {
+    fn from(bdd: &Bdd<B, C>) -> Self {
         bdd.cover()
     }
 }
@@ -98,7 +98,11 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> From<&Bdd<B, C, S>> for Cover<S, 
 /// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<S: StringLabel> From<BoolExpr<S>> for Cover<S, Anonymous> {
+impl<S: StringLabel> From<BoolExpr<S>> for Cover<S, Anonymous>
+where
+    S: Ord + std::borrow::Borrow<str>,
+    LocalCell<S>: ManagerCell<Label = S>,
+{
     fn from(expr: BoolExpr<S>) -> Self {
         Cover::from(&expr)
     }
@@ -114,11 +118,15 @@ impl<S: StringLabel> From<BoolExpr<S>> for Cover<S, Anonymous> {
 /// let cover = Cover::<Symbol, Anonymous>::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl<S: StringLabel> From<&BoolExpr<S>> for Cover<S, Anonymous> {
+impl<S: StringLabel> From<&BoolExpr<S>> for Cover<S, Anonymous>
+where
+    S: Ord + std::borrow::Borrow<str>,
+    LocalCell<S>: ManagerCell<Label = S>,
+{
     fn from(expr: &BoolExpr<S>) -> Self {
         // The temporary builder lives for this call; the handle borrows it and is consumed by the
         // `Bdd → Cover` primitive before this function returns.
-        let builder = crate::bdd_builder!().relabel::<S>();
+        let builder: BddBuilder<_, LocalCell<S>> = crate::bdd_builder!();
         Cover::from(builder.build(expr))
     }
 }
