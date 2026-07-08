@@ -58,13 +58,13 @@ use crate::Symbol;
 ///     let _ = a & b; // error: distinct brands `B1` and `B2` do not unify
 /// }
 /// ```
-pub struct Bdd<B: Brand, C: ManagerCell> {
+pub struct Bdd<B: Brand, C: ManagerCell, S: StringLabel = Symbol> {
     cell: C,
     root: NodeId,
-    _brand: PhantomData<fn() -> B>,
+    _brand: PhantomData<fn() -> (B, S)>,
 }
 
-impl<B: Brand, C: ManagerCell> Clone for Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> Clone for Bdd<B, C, S> {
     fn clone(&self) -> Self {
         Bdd {
             cell: self.cell.clone(),
@@ -74,7 +74,7 @@ impl<B: Brand, C: ManagerCell> Clone for Bdd<B, C> {
     }
 }
 
-impl<B: Brand, C: ManagerCell> Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> Bdd<B, C, S> {
     /// Wrap a raw root node into a handle owning a refcounted clone of `cell`. Crate-internal: only the
     /// builder and the operator impls mint handles, so every `Bdd` is guaranteed to denote a node in
     /// `cell`'s manager.
@@ -122,8 +122,19 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(f.equivalent_to(&(builder.parse("a & b").unwrap())));
     /// ```
     #[must_use]
-    pub fn builder(&self) -> BddBuilder<B, C> {
+    pub fn builder(&self) -> BddBuilder<B, C, S> {
         BddBuilder::from_cell(&self.cell)
+    }
+
+    /// Re-label this handle's stored label type from `S` to `T` — a free cell rewrap.
+    ///
+    /// Variable names live in the manager as [`Symbol`]s regardless of the phantom stored label type, so
+    /// this changes only the type-level marker `S -> T`: it clones the storage cell and re-wraps the same
+    /// root, interning nothing. It is the cross-`S` interop primitive — bring two handles of different
+    /// stored label types to a common `S` before combining, comparing, or extracting from them.
+    #[must_use]
+    pub fn relabel<T: StringLabel>(&self) -> Bdd<B, C, T> {
+        Bdd::from_root(&self.cell, self.root)
     }
 
     /// Assert that two handles share one manager. A type-correct pair of handles came from the same
@@ -197,7 +208,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// result. A name that is **not** a variable of this function leaves it unchanged (a no-op);
     /// restricting every support variable collapses the function to a constant.
     #[must_use]
-    pub fn restrict<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
+    pub fn restrict<V: AsRef<str>>(&self, var: V, value: bool) -> Self {
         Self::from_root(
             &self.cell,
             super::encoding::restrict(&self.cell, self.root, var.as_ref(), value),
@@ -211,7 +222,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// multi-variable cofactor, use [`restrict_many`](Self::restrict_many) (or chain `restrict`/`cofactor`
     /// calls; or use [`forall`](Self::forall) / [`exists`](Self::exists) to quantify).
     #[must_use]
-    pub fn cofactor<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
+    pub fn cofactor<V: AsRef<str>>(&self, var: V, value: bool) -> Self {
         self.restrict(var, value)
     }
 
@@ -237,9 +248,9 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.is_contradiction());
     /// ```
     #[must_use]
-    pub fn restrict_many<S: AsRef<str>>(
+    pub fn restrict_many<V: AsRef<str>>(
         &self,
-        assignment: impl IntoIterator<Item = (S, bool)>,
+        assignment: impl IntoIterator<Item = (V, bool)>,
     ) -> Self {
         Self::from_root(
             &self.cell,
@@ -285,7 +296,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.forall(&["a", "b"])`), an
     /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn forall<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
+    pub fn forall<V: AsRef<str>>(&self, vars: impl IntoIterator<Item = V>) -> Self {
         self.quantify(vars, Self::and)
     }
 
@@ -298,15 +309,15 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.exists(&["a", "b"])`), an
     /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn exists<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
+    pub fn exists<V: AsRef<str>>(&self, vars: impl IntoIterator<Item = V>) -> Self {
         self.quantify(vars, Self::or)
     }
 
     /// Quantify over `vars`, folding `combine` across each variable's two cofactors. Universal and
     /// existential quantification differ only in `combine` (`and` vs `or`); this is the shared body.
-    fn quantify<S: AsRef<str>>(
+    fn quantify<V: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = S>,
+        vars: impl IntoIterator<Item = V>,
         combine: fn(&Self, &Self) -> Self,
     ) -> Self {
         let mut acc = self.clone();
@@ -343,7 +354,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.equivalent_to(&expected));
     /// ```
     #[must_use]
-    pub fn compose<S: AsRef<str>>(&self, var: S, g: &Self) -> Self {
+    pub fn compose<V: AsRef<str>>(&self, var: V, g: &Self) -> Self {
         self.assert_same_manager(g);
         let root = super::encoding::compose(&self.cell, self.root, var.as_ref(), g.root);
         Self::from_root(&self.cell, root)
@@ -371,15 +382,16 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.equivalent_to(&expected));
     /// ```
     #[must_use]
-    pub fn compose_map<'a, S: AsRef<str>>(
+    pub fn compose_map<'a, V: AsRef<str>>(
         &self,
-        map: impl IntoIterator<Item = (S, &'a Self)>,
+        map: impl IntoIterator<Item = (V, &'a Self)>,
     ) -> Self
     where
         B: 'a,
         C: 'a,
+        S: 'a,
     {
-        let entries: Vec<(S, NodeId)> = map
+        let entries: Vec<(V, NodeId)> = map
             .into_iter()
             .map(|(name, g)| {
                 self.assert_same_manager(g);
@@ -518,7 +530,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Evaluation is a semantic operation, so it lives here rather than on the syntactic
     /// [`BoolExpr`](crate::BoolExpr): build the expression into a builder with
     /// [`BddBuilder::build`](crate::bdd::BddBuilder::build) first.
-    pub fn evaluate<L: StringLabel>(&self, assignment: &Minterm<L>) -> Result<bool, Bdd<B, C>> {
+    pub fn evaluate<L: StringLabel>(&self, assignment: &Minterm<L>) -> Result<bool, Bdd<B, C, S>> {
         // Write-free fast path: if the fixed variables already determine the function, we're done
         // without interning a single node.
         if let Some(value) = self.evaluate_fast(assignment) {
@@ -544,7 +556,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// far enough to surface the next new variable, so callers that stop early (`.next()`, `.any(..)`,
     /// `.take(n)`) never pay for the whole-graph walk.
     #[must_use]
-    pub fn variables(&self) -> BddVariables<'_, B, C> {
+    pub fn variables(&self) -> BddVariables<'_, B, C, S> {
         // O(1) construction: seed the DFS frontier with the root and let `next()` do the walking.
         BddVariables {
             bdd: self,
@@ -617,14 +629,14 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// cover is the **characteristic function** of this BDD over its support variables. The returned cover
     /// is an `F` (ON-set) cover.
     #[must_use]
-    pub fn cover(&self) -> Cover<Symbol, Anonymous> {
+    pub fn cover(&self) -> Cover<S, Anonymous> {
         self.extract_cubes(CoverType::F)
     }
 
     /// Renamed to [`cover`](Self::cover).
     #[deprecated(since = "5.2.0", note = "renamed to `cover`")]
     #[must_use]
-    pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
+    pub fn to_cubes(&self) -> Cover<S, Anonymous> {
         self.cover()
     }
 
@@ -638,7 +650,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// in [`cover`](Self::cover). Feeding the result to [`minimize_fr`](Self::minimize_fr) minimises
     /// the on-set against this exact off-set rather than a recomputed complement.
     #[must_use]
-    pub fn cover_fr(&self) -> Cover<Symbol, Anonymous> {
+    pub fn cover_fr(&self) -> Cover<S, Anonymous> {
         self.extract_cubes(CoverType::FR)
     }
 
@@ -647,13 +659,20 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Walks every root→terminal path once under a single read guard, emitting an `F` cube per TRUE
     /// path and — only when `cover_type` carries an off-set — an `R` cube per FALSE path. The returned
     /// cover carries `cover_type` verbatim.
-    fn extract_cubes(&self, cover_type: CoverType) -> Cover<Symbol, Anonymous> {
-        // Canonical, alphabetically sorted header shared by every extracted cube. `variables()` yields
-        // the support in traversal (unsorted) order, so sort here to keep the header canonical.
-        let mut names: Vec<Symbol> = self.variables().collect();
+    fn extract_cubes(&self, cover_type: CoverType) -> Cover<S, Anonymous> {
+        // Canonical, alphabetically sorted header shared by every extracted cube. The manager keys
+        // variables by `Symbol` regardless of the phantom `S`, so collect the support through a free
+        // `Symbol` view; `variables()` yields it in traversal (unsorted) order, so sort here to keep the
+        // header canonical.
+        let sym_view = self.relabel::<Symbol>();
+        let mut names: Vec<Symbol> = sym_view.variables().collect();
         names.sort();
-        let vars: Arc<[Symbol]> = names.into();
-        let index: std::collections::HashMap<Symbol, usize> = vars
+        // The returned cover's header is in the caller's stored label type `S`, converted once from the
+        // sorted `Symbol` names (a content-preserving `From` on distinct strings stays distinct).
+        let vars: Arc<[S]> = names.iter().map(|n| S::from(n.as_str())).collect();
+        // The traversal below resolves variables through `mgr.var_name`, which yields `Symbol`s, so keep
+        // the header index `Symbol`-keyed rather than converting per lookup.
+        let index: std::collections::HashMap<Symbol, usize> = names
             .iter()
             .cloned()
             .enumerate()
@@ -672,7 +691,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
             SetPath(usize, Option<bool>),
         }
 
-        let mut cubes: Vec<Cube<Symbol, Anonymous>> = Vec::new();
+        let mut cubes: Vec<Cube<S, Anonymous>> = Vec::new();
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
         // No-reentrancy invariant: `mgr` is held across the whole walk below (dropped explicitly once the
@@ -736,7 +755,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Every prime implicant — not the reduced, irredundant cover [`minimize`](Self::minimize) yields.
     /// Equivalent to `self.cover().primes()`; see [`Cover::primes`].
     #[must_use]
-    pub fn primes(&self) -> Cover<Symbol, Anonymous> {
+    pub fn primes(&self) -> Cover<S, Anonymous> {
         self.cover().primes()
     }
 
@@ -751,10 +770,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over<S: AsRef<str>>(
+    pub fn cover_over<V: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = S>,
-    ) -> Cover<Symbol, Anonymous> {
+        vars: impl IntoIterator<Item = V>,
+    ) -> Cover<S, Anonymous> {
         self.cover().over_vars(vars)
     }
 
@@ -770,10 +789,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over_fr<S: AsRef<str>>(
+    pub fn cover_over_fr<V: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = S>,
-    ) -> Cover<Symbol, Anonymous> {
+        vars: impl IntoIterator<Item = V>,
+    ) -> Cover<S, Anonymous> {
         self.cover_fr().over_vars(vars)
     }
 
@@ -788,7 +807,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// Equivalent to `self.cover().maximize()`.
     #[must_use]
-    pub fn maximize(&self) -> Cover<Symbol, Anonymous> {
+    pub fn maximize(&self) -> Cover<S, Anonymous> {
         self.cover().maximize()
     }
 
@@ -801,7 +820,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// Equivalent to `self.cover_fr().maximize()`.
     #[must_use]
-    pub fn maximize_fr(&self) -> Cover<Symbol, Anonymous> {
+    pub fn maximize_fr(&self) -> Cover<S, Anonymous> {
         self.cover_fr().maximize()
     }
 
@@ -816,7 +835,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
-    pub fn minimize(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
+    pub fn minimize(&self) -> Result<Cover<S, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.cover().minimize()
     }
@@ -832,7 +851,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
-    pub fn minimize_fr(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
+    pub fn minimize_fr(&self) -> Result<Cover<S, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.cover_fr().minimize()
     }
@@ -847,28 +866,29 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `BoolExpr` is syntactic; building it back here yields the same canonical handle, but its token
     /// structure reflects the factored cubes, not this BDD's node graph.
     #[must_use]
-    pub fn to_expr(&self) -> BoolExpr {
+    pub fn to_expr(&self) -> BoolExpr<S> {
         self.cover()
             .to_expr_by_index(0)
             .expect("cover yields a single-output cover, so output index 0 is in bounds")
+            .relabel::<S>()
     }
 }
 
 /// Canonical equality: two handles are equal iff they denote the same function (same root within the
 /// shared manager). Only handles of the same brand are comparable, which guarantees they share a manager;
 /// the manager-pointer assert is a runtime backstop against a brand clash.
-impl<B: Brand, C: ManagerCell> PartialEq for Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> PartialEq for Bdd<B, C, S> {
     fn eq(&self, other: &Self) -> bool {
         self.equivalent_to(other)
     }
 }
 
-impl<B: Brand, C: ManagerCell> Eq for Bdd<B, C> {}
+impl<B: Brand, C: ManagerCell, S: StringLabel> Eq for Bdd<B, C, S> {}
 
 /// Agrees with [`PartialEq`]: hashes the manager identity (the cell's pointer address) together with the
 /// canonical root id, so `==` handles always land in the same bucket. Implemented by hand (rather than
 /// `#[derive(Hash)]`) so it does not require `B: Hash` or `C: Hash` bounds, matching the manual `PartialEq`.
-impl<B: Brand, C: ManagerCell> std::hash::Hash for Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::hash::Hash for Bdd<B, C, S> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.cell.as_ptr().hash(state);
         self.root.hash(state);
@@ -878,7 +898,7 @@ impl<B: Brand, C: ManagerCell> std::hash::Hash for Bdd<B, C> {
 /// Shows the canonical root id (the function's identity within its builder) and the manager pointer, so
 /// two handles that are `==` print equal roots. The decoded function is not rendered — use
 /// [`cover`](Bdd::cover) for that.
-impl<B: Brand, C: ManagerCell> std::fmt::Debug for Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::fmt::Debug for Bdd<B, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bdd")
             .field("root", &self.root)
@@ -896,20 +916,20 @@ impl<B: Brand, C: ManagerCell> std::fmt::Debug for Bdd<B, C> {
 // parameters. Mixing two different builders is a compile error: the operands must share the brand `B` and
 // cell `C`, and a mismatch fails to type-check (see the `Bdd` type docs for a `compile_fail` example).
 
-impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitAnd, bitand, and);
-impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitOr, bitor, or);
-impl_binary_operator!({B: Brand, C: ManagerCell} Bdd<B, C>, BitXor, bitxor, xor);
+impl_binary_operator!({B: Brand, C: ManagerCell, S: StringLabel} Bdd<B, C, S>, BitAnd, bitand, and);
+impl_binary_operator!({B: Brand, C: ManagerCell, S: StringLabel} Bdd<B, C, S>, BitOr, bitor, or);
+impl_binary_operator!({B: Brand, C: ManagerCell, S: StringLabel} Bdd<B, C, S>, BitXor, bitxor, xor);
 
-impl<B: Brand, C: ManagerCell> std::ops::Not for Bdd<B, C> {
-    type Output = Bdd<B, C>;
-    fn not(self) -> Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::ops::Not for Bdd<B, C, S> {
+    type Output = Bdd<B, C, S>;
+    fn not(self) -> Bdd<B, C, S> {
         Bdd::complement(&self)
     }
 }
 
-impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
-    type Output = Bdd<B, C>;
-    fn not(self) -> Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::ops::Not for &Bdd<B, C, S> {
+    type Output = Bdd<B, C, S>;
+    fn not(self) -> Bdd<B, C, S> {
         Bdd::complement(self)
     }
 }
@@ -921,9 +941,9 @@ impl<B: Brand, C: ManagerCell> std::ops::Not for &Bdd<B, C> {
 /// which it resolves and yields (first-encounter order, **not** sorted). Nothing is materialised up
 /// front, so a caller that stops early skips the rest of the walk. Because finishing the walk is the
 /// only way to know the count, this is not an [`ExactSizeIterator`].
-pub struct BddVariables<'a, B: Brand, C: ManagerCell> {
+pub struct BddVariables<'a, B: Brand, C: ManagerCell, S: StringLabel = Symbol> {
     /// The borrowed parent; supplies the manager cell and root, and ties the walk to its lifetime.
-    bdd: &'a Bdd<B, C>,
+    bdd: &'a Bdd<B, C, S>,
     /// DFS frontier of nodes still to visit (seeded with the root).
     stack: Vec<NodeId>,
     /// Nodes already popped, so a shared subgraph is walked once.
@@ -934,16 +954,16 @@ pub struct BddVariables<'a, B: Brand, C: ManagerCell> {
 
 /// Opaque: the borrowed graph carries no useful `Debug`, and the remaining count is unknown without
 /// finishing the walk.
-impl<B: Brand, C: ManagerCell> std::fmt::Debug for BddVariables<'_, B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::fmt::Debug for BddVariables<'_, B, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BddVariables").finish_non_exhaustive()
     }
 }
 
-impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
-    type Item = Symbol;
+impl<B: Brand, C: ManagerCell, S: StringLabel> Iterator for BddVariables<'_, B, C, S> {
+    type Item = S;
 
-    fn next(&mut self) -> Option<Symbol> {
+    fn next(&mut self) -> Option<S> {
         // Continue the deduplicated DFS under a brief read guard, stopping at the first not-yet-seen
         // decision variable. `visited`/`seen_vars` persist across calls, so a full drain performs one
         // whole-graph walk in total, and an early-stopping caller performs only part of it.
@@ -958,8 +978,9 @@ impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
                 self.stack.push(high);
                 if self.seen_vars.insert(var) {
                     // An unnamed decision var id should not occur; skip it rather than end the walk.
-                    if let Some(name) = mgr.var_name(var).cloned() {
-                        return Some(name);
+                    // Names live in the manager as `Symbol`s; realise the caller's `S` at the boundary.
+                    if let Some(name) = mgr.var_name(var) {
+                        return Some(S::from(name.as_str()));
                     }
                 }
             }
@@ -968,7 +989,10 @@ impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
     }
 }
 
-impl<B: Brand, C: ManagerCell> std::iter::FusedIterator for BddVariables<'_, B, C> {}
+impl<B: Brand, C: ManagerCell, S: StringLabel> std::iter::FusedIterator
+    for BddVariables<'_, B, C, S>
+{
+}
 
 /// One node of a [`Bdd`], as seen by [`Bdd::fold`] and [`Bdd::fold_with_context`].
 ///
@@ -992,7 +1016,7 @@ pub enum BddNode<'a, T> {
     },
 }
 
-impl<B: Brand, C: ManagerCell> Bdd<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> Bdd<B, C, S> {
     /// Fold the decision diagram bottom-up, combining each node's children results with `f`.
     ///
     /// Walks the BDD **as a BDD**: `f` sees a [`BddNode::Terminal`] for each terminal and a

@@ -282,6 +282,35 @@ yields the canonical *function* and discards the original syntax — reach for i
 about the Boolean function (equivalence, evaluation) rather than its text. The [`Bdd`] layer is
 detailed next.
 
+### Label types
+
+Both layers are generic over the type variable names are stored as: [`BoolExpr<S>`][`BoolExpr`],
+[`Bdd<B, C, S>`][`Bdd`] and [`BddBuilder<B, C, S>`][`BddBuilder`] take a stored label type `S`,
+bounded by [`StringLabel`], defaulting to [`Symbol`]. Every example above uses the default — the
+bare-path constructors (`var`/`constant`/`build`/`expr!`/`bdd_builder!`) always produce `Symbol`, so
+none of them needed an annotation. Reach for a different `S` by parsing under a turbofish:
+
+```rust
+use espresso_logic::BoolExpr;
+
+let f: BoolExpr<String> = "a & (b | !c)".parse().unwrap();
+assert_eq!(f.to_string(), "a & (b | !c)");
+```
+
+or by re-labelling a value already built under `Symbol`. On `BoolExpr` this re-interns every
+variable name into the target type ([`BoolExpr::relabel`]); on `Bdd`/`BddBuilder` it is a free cell
+rewrap ([`Bdd::relabel`] / [`BddBuilder::relabel`]) — variable names live in the manager as `Symbol`
+regardless of `S`, so no re-interning happens:
+
+```rust
+use espresso_logic::bdd_builder;
+
+let symbol_builder = bdd_builder!();
+let string_builder = symbol_builder.relabel::<String>();
+let f: espresso_logic::BoolExpr<String> = string_builder.var("a").to_expr();
+assert_eq!(f.to_string(), "a");
+```
+
 ## The `Bdd` layer
 
 ### Contexts
@@ -706,6 +735,9 @@ match cover.minimize() {
 [`BoolExpr::build`]: crate::BoolExpr::build
 [`BoolExpr::parse`]: crate::BoolExpr::parse
 [`BoolExpr::variables`]: crate::BoolExpr::variables
+[`BoolExpr::relabel`]: crate::BoolExpr::relabel
+[`StringLabel`]: crate::StringLabel
+[`Symbol`]: crate::Symbol
 [`Bdd`]: crate::bdd::Bdd
 [`Bdd::evaluate`]: crate::bdd::Bdd::evaluate
 [`Bdd::equivalent_to`]: crate::bdd::Bdd::equivalent_to
@@ -719,8 +751,10 @@ match cover.minimize() {
 [`Bdd::minimize`]: crate::bdd::Bdd::minimize
 [`Bdd::to_expr`]: crate::bdd::Bdd::to_expr
 [`Bdd::builder`]: crate::bdd::Bdd::builder
+[`Bdd::relabel`]: crate::bdd::Bdd::relabel
 [`BddBuilder`]: crate::bdd::BddBuilder
 [`BddBuilder::scope`]: crate::bdd::BddBuilder::scope
+[`BddBuilder::relabel`]: crate::bdd::BddBuilder::relabel
 [`Scope`]: crate::bdd::Scope
 [`Scope::lift`]: crate::bdd::Scope::lift
 [`ScopedBdd`]: crate::bdd::ScopedBdd

@@ -45,12 +45,12 @@ use crate::Symbol;
 /// [`LocalCell`](crate::bdd::manager_cell::LocalCell) is `!Send` whatever its brand, and one over
 /// [`SyncCell`](crate::bdd::manager_cell::SyncCell) is `Send + Sync` whatever its brand. This is
 /// asserted at compile time in this module's tests.
-pub struct BddBuilder<B: Brand, C: ManagerCell> {
+pub struct BddBuilder<B: Brand, C: ManagerCell, S: StringLabel = Symbol> {
     cell: C,
-    _brand: PhantomData<fn() -> B>,
+    _brand: PhantomData<fn() -> (B, S)>,
 }
 
-impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> BddBuilder<B, C, S> {
     /// Create a new builder owning a fresh, empty BDD manager (seeded with the two terminals).
     #[must_use]
     pub fn new() -> Self {
@@ -80,7 +80,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// A handle for the single variable `name`, creating it in this builder's variable ordering on first
     /// use.
     #[must_use]
-    pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<B, C> {
+    pub fn var<N: AsRef<str>>(&self, name: N) -> Bdd<B, C, S> {
         let id = self.cell.make_var(name.as_ref());
         let root = self.cell.make_node(id, FALSE_NODE, TRUE_NODE);
         Bdd::from_root(&self.cell, root)
@@ -88,7 +88,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
 
     /// A handle for a constant: `true` or `false`.
     #[must_use]
-    pub fn constant(&self, value: bool) -> Bdd<B, C> {
+    pub fn constant(&self, value: bool) -> Bdd<B, C, S> {
         let root = if value { TRUE_NODE } else { FALSE_NODE };
         Bdd::from_root(&self.cell, root)
     }
@@ -107,7 +107,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// cover to one output before building. Only `F` (ON-set) cubes contribute; `D`/`R` cubes are ignored,
     /// so the result is the ON-set of the cover.
     #[must_use]
-    pub fn build_cover<I: StringLabel, O>(&self, cover: &Cover<I, O>) -> Bdd<B, C> {
+    pub fn build_cover<I: StringLabel, O>(&self, cover: &Cover<I, O>) -> Bdd<B, C, S> {
         use crate::cover::CubeType;
         // Composed inside a `scope`: the OR-of-products fold runs on `Copy`, by-reference handles, so the
         // doubly-nested loop pays no per-operation refcount bump — only the returned root is materialised.
@@ -150,7 +150,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// Composed inside a [`scope`](Self::scope) so the fold runs on `Copy`, by-reference handles (one
     /// refcount bump for the returned root, not one per node); [`Scope::build`] does the postfix fold.
     #[must_use]
-    pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
+    pub fn build<L: StringLabel>(&self, expr: &BoolExpr<L>) -> Bdd<B, C, S> {
         self.scope(|s| s.build(expr))
     }
 
@@ -177,9 +177,9 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
     /// ```
     #[must_use]
-    pub fn scope<F>(&self, f: F) -> Bdd<B, C>
+    pub fn scope<F>(&self, f: F) -> Bdd<B, C, S>
     where
-        F: for<'s> FnOnce(Scope<'s, B, C>) -> ScopedBdd<'s, B, C>,
+        F: for<'s> FnOnce(Scope<'s, B, C, S>) -> ScopedBdd<'s, B, C>,
     {
         let root = f(Scope::new(self)).root();
         Bdd::from_root(&self.cell, root)
@@ -192,7 +192,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// # Errors
     ///
     /// Propagates a [`ParseBoolExprError`] if the text does not parse.
-    pub fn parse<S: AsRef<str>>(&self, input: S) -> Result<Bdd<B, C>, ParseBoolExprError> {
+    pub fn parse<N: AsRef<str>>(&self, input: N) -> Result<Bdd<B, C, S>, ParseBoolExprError> {
         Ok(self.build(&BoolExpr::parse(input)?))
     }
 
@@ -204,12 +204,27 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`] from the Espresso engine.
-    pub fn minimize(&self, expr: &BoolExpr) -> Result<Cover<Symbol, Anonymous>, MinimizationError> {
+    pub fn minimize<L: StringLabel>(
+        &self,
+        expr: &BoolExpr<L>,
+    ) -> Result<Cover<S, Anonymous>, MinimizationError> {
         self.build(expr).minimize()
+    }
+
+    /// Re-label this builder's stored label type from `S` to `T` — a free cell rewrap.
+    ///
+    /// Variable names live in the manager as [`Symbol`]s regardless of the phantom stored label type, so
+    /// this clones the storage cell and re-brands the builder to `T`, interning nothing. It is the way to
+    /// mint a builder whose stored label type is not [`Symbol`]: the `bdd_builder!` / `sync_bdd_builder!`
+    /// macros always mint the [`Symbol`] default, so `bdd_builder!().relabel::<String>()` produces a
+    /// `String`-labelled builder whose handles carry that stored label type.
+    #[must_use]
+    pub fn relabel<T: StringLabel>(&self) -> BddBuilder<B, C, T> {
+        BddBuilder::from_cell(&self.cell)
     }
 }
 
-impl<B: Brand, C: ManagerCell> Default for BddBuilder<B, C> {
+impl<B: Brand, C: ManagerCell, S: StringLabel> Default for BddBuilder<B, C, S> {
     fn default() -> Self {
         Self::new()
     }

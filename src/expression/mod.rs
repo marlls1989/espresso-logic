@@ -28,6 +28,15 @@
 //! // Structural equality: the same syntactic tree.
 //! assert_eq!(f, g);
 //! ```
+//!
+//! # Label types
+//!
+//! [`BoolExpr<S>`](BoolExpr) is generic over its stored variable-name type `S`, bounded by
+//! [`StringLabel`] and defaulting to [`Symbol`]. The bare-path
+//! constructors and `expr!` always produce `BoolExpr<Symbol>`; choosing another `S` goes through
+//! `parse::<BoolExpr<S>>()` or [`BoolExpr::relabel`]. `relabel` is a genuine conversion — it
+//! re-interns every variable name into the target type — unlike the free cell rewrap of the same
+//! name on [`Bdd::relabel`](crate::bdd::Bdd::relabel).
 
 // Submodules
 mod ast;

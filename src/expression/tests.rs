@@ -381,3 +381,36 @@ fn sync_context_build_works() {
         .build(&f)
         .equivalent_to(&builder.parse("a ^ b").unwrap()));
 }
+
+// ---- Generic label parameter S ---------------------------------------------------------------------
+
+#[test]
+fn parse_generic_label_displays_and_matches_relabelled_symbol_parse() {
+    let text = "a & (b | !c)";
+    let string_parsed: BoolExpr<String> = text.parse().unwrap();
+    let symbol_parsed = BoolExpr::parse(text).unwrap();
+
+    // Display round-trips to the original text under a non-Symbol stored label.
+    assert_eq!(string_parsed.to_string(), text);
+
+    // Structurally equal to the Symbol parse's relabel::<String>() (same variables, same tree).
+    assert_eq!(string_parsed, symbol_parsed.relabel::<String>());
+}
+
+#[test]
+fn variables_generic_label_yields_stored_type() {
+    let f: BoolExpr<String> = "a & (b | !c)".parse().unwrap();
+    let mut vars: Vec<String> = f.variables().collect();
+    vars.sort();
+    assert_eq!(
+        vars,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+#[test]
+fn relabel_to_arc_str_preserves_display() {
+    let f = BoolExpr::parse("a & (b | !c)").unwrap();
+    let arc: BoolExpr<std::sync::Arc<str>> = f.relabel();
+    assert_eq!(arc.to_string(), f.to_string());
+}
