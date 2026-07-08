@@ -52,8 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to equal the cover's label `L` (`ManagerCell<Label = L>`). Adding a handle built under a different
     label type no longer type-checks — build or recover the handle under `L` first.
   - **Cell label types additionally require `Ord + Borrow<str>`** (and `Send + Sync` for `SyncCell`).
-    `Symbol`, `String`, `Arc<str>` and `Box<str>` all qualify; `Cow<'_, str>` qualifies too, since the
-    standard library provides `impl Borrow<B> for Cow<'_, B>`.
+    `Symbol`, `String`, `Arc<str>` and `Box<str>` all qualify.
 
 ## [5.6.0] - 2026-07-08
 

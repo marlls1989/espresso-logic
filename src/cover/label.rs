@@ -92,7 +92,7 @@ impl Label for Anonymous {
 /// labelled cover from names ([`Cover::with_labels`](crate::Cover::with_labels)), reading a named
 /// [`PlaCover`](crate::PlaCover), and string-collision reconciliation ([`ReconcilableLabel`]) — so it
 /// is named once here instead of repeating the `Label + AsRef<str> + for<'a> From<&'a str>` cluster at
-/// every site. `String`, [`Symbol`](crate::Symbol), `Arc<str>`, `Box<str>`, `Cow<str>` all qualify;
+/// every site. `String`, [`Symbol`](crate::Symbol), `Arc<str>`, `Box<str>` all qualify;
 /// [`Anonymous`] does not (it is neither `AsRef<str>` nor `From<&str>`).
 ///
 /// Sealed via its [`Label`] supertrait and provided by a single blanket impl, so it is an alias
@@ -149,7 +149,7 @@ pub trait ReconcilableLabel: Label {
 
 /// String-like labels reconcile by suffixing a number to a clashing name (`x` → `x0` → `x1`, …). The
 /// construction bound (`From<&str>`) lives only on this impl; `String`, [`Symbol`](crate::Symbol),
-/// `Box<str>`, `Cow<str>` all qualify — `Anonymous` implements neither `AsRef<str>` nor `From<&str>`,
+/// `Box<str>` all qualify — `Anonymous` implements neither `AsRef<str>` nor `From<&str>`,
 /// so it is provably excluded (no overlap with the impls below).
 impl<T: StringLabel> ReconcilableLabel for T {
     fn reconcile(header: &[Self], additions: &[Self]) -> Vec<Self> {
