@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardcoded 32-bit BPI. Performance change only — no public API surface. Minimised covers are
   byte-identical across widths; cross-width regression coverage (ESPRESSO_REF_BPI=32
   ./tests/regression_test.sh) runs in CI.
+- `Symbol`'s inline capacity now follows the native platform: derived at compile time from
+  `size_of::<String>()` rather than a hardcoded constant, and guarded by a compile-time size-class
+  assertion. 22 bytes on 64-bit (unchanged); 10 bytes on 32-bit. Size/performance change only — no
+  public API surface (the constant is crate-private).
 
 ### Fixed
 
