@@ -27,7 +27,6 @@ use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Minterm, StringLabel};
 use crate::expression::rpn;
 use crate::expression::{BoolExpr, ParseBoolExprError};
-use crate::Symbol;
 
 /// A [`Copy`], by-reference handle into a [`BddBuilder::scope`] closure.
 ///
@@ -250,13 +249,13 @@ impl<B: Brand, C: ManagerCell> Not for ScopedBdd<'_, B, C> {
 /// ([`var`](Self::var), [`constant`](Self::constant)), expression builders ([`build`](Self::build),
 /// [`parse`](Self::parse)), and the splice [`lift`](Self::lift) all return [`ScopedBdd`] handles branded
 /// to this scope.
-pub struct Scope<'s, B: Brand, C: ManagerCell, S: StringLabel = Symbol> {
-    builder: &'s BddBuilder<B, C, S>,
+pub struct Scope<'s, B: Brand, C: ManagerCell> {
+    builder: &'s BddBuilder<B, C>,
 }
 
 /// Opaque: the borrowed builder carries no useful `Debug` of its own, so only the manager pointer is
 /// shown, as an identity hint.
-impl<B: Brand, C: ManagerCell, S: StringLabel> std::fmt::Debug for Scope<'_, B, C, S> {
+impl<B: Brand, C: ManagerCell> std::fmt::Debug for Scope<'_, B, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Scope")
             .field("mgr", &self.builder.cell().as_ptr())
@@ -264,9 +263,9 @@ impl<B: Brand, C: ManagerCell, S: StringLabel> std::fmt::Debug for Scope<'_, B, 
     }
 }
 
-impl<'s, B: Brand, C: ManagerCell, S: StringLabel> Scope<'s, B, C, S> {
+impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// Open a scope over `builder`. Crate-internal: only [`BddBuilder::scope`] mints one.
-    pub(super) fn new(builder: &'s BddBuilder<B, C, S>) -> Self {
+    pub(super) fn new(builder: &'s BddBuilder<B, C>) -> Self {
         Scope { builder }
     }
 
@@ -311,7 +310,7 @@ impl<'s, B: Brand, C: ManagerCell, S: StringLabel> Scope<'s, B, C, S> {
     /// Panics if `bdd` belongs to a different manager (only possible under a brand clash — two builders
     /// sharing a brand type), mirroring the owned operators' same-manager backstop.
     #[must_use]
-    pub fn lift<S2: StringLabel>(&self, bdd: &Bdd<B, C, S2>) -> ScopedBdd<'s, B, C> {
+    pub fn lift(&self, bdd: &Bdd<B, C>) -> ScopedBdd<'s, B, C> {
         let cell = self.builder.cell();
         assert!(
             bdd.cell().as_ptr() == cell.as_ptr(),
@@ -348,6 +347,6 @@ impl<'s, B: Brand, C: ManagerCell, S: StringLabel> Scope<'s, B, C, S> {
         &self,
         input: N,
     ) -> Result<ScopedBdd<'s, B, C>, ParseBoolExprError> {
-        Ok(self.build(&BoolExpr::<S>::parse(input)?))
+        Ok(self.build(&BoolExpr::<C::Label>::parse(input)?))
     }
 }

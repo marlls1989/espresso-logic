@@ -504,10 +504,20 @@ pub(crate) use impl_binary_operator;
 ///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
 ///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
-/// ```
-/// use espresso_logic::bdd_builder;
+/// # Label type resolution
 ///
-/// let builder = bdd_builder!();
+/// The manager cell carries the builder's stored label type as its own `S` parameter, defaulted to
+/// [`Symbol`](crate::Symbol). The macro leaves that parameter as an inference placeholder
+/// (`LocalCell<_>`), so it resolves like any other unconstrained type: from a binding annotation —
+/// `let b: BddBuilder<_, LocalCell> = bdd_builder!();` resolves to `Symbol` via the cell's own default,
+/// while `let b: BddBuilder<_, LocalCell<String>> = bdd_builder!();` picks another
+/// [`StringLabel`](crate::StringLabel) — or from consuming a labelled output downstream. A builder whose
+/// labels are never pinned either way needs the one-time annotation.
+///
+/// ```
+/// use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
+///
+/// let builder: BddBuilder<_, LocalCell> = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
 /// assert!((a & b).equivalent_to(&builder.parse("a & b").unwrap()));
@@ -522,7 +532,7 @@ macro_rules! bdd_builder {
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
         impl $crate::bdd::Brand for $name {}
-        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell>::new()
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell<_>>::new()
     }};
 }
 
@@ -533,10 +543,20 @@ macro_rules! bdd_builder {
 /// reference across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from
 /// two builders never mix (a compile error).
 ///
-/// ```
-/// use espresso_logic::sync_bdd_builder;
+/// # Label type resolution
 ///
-/// let builder = sync_bdd_builder!();
+/// The manager cell carries the builder's stored label type as its own `S` parameter, defaulted to
+/// [`Symbol`](crate::Symbol). The macro leaves that parameter as an inference placeholder
+/// (`SyncCell<_>`), so it resolves like any other unconstrained type: from a binding annotation —
+/// `let b: BddBuilder<_, SyncCell> = sync_bdd_builder!();` resolves to `Symbol` via the cell's own
+/// default, while `let b: BddBuilder<_, SyncCell<String>> = sync_bdd_builder!();` picks another
+/// [`StringLabel`](crate::StringLabel) — or from consuming a labelled output downstream. A builder whose
+/// labels are never pinned either way needs the one-time annotation.
+///
+/// ```
+/// use espresso_logic::{sync_bdd_builder, BddBuilder, SyncCell};
+///
+/// let builder: BddBuilder<_, SyncCell> = sync_bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
 /// assert!((a | b).equivalent_to(&builder.parse("a | b").unwrap()));
@@ -551,7 +571,7 @@ macro_rules! sync_bdd_builder {
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
         impl $crate::bdd::Brand for $name {}
-        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell>::new()
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell<_>>::new()
     }};
 }
 

@@ -5,9 +5,10 @@
 //!
 //! - a [`Brand`] — a sealed, zero-sized marker type that names one BDD namespace for uniqueness;
 //! - a [`ManagerCell`] — the storage backend, [`LocalCell`] (single-threaded) or [`SyncCell`]
-//!   (`Send + Sync`);
-//! - a builder — [`BddBuilder`], parameterised by both, that owns an independent BDD manager and hands out
-//!   handles branded to it;
+//!   (`Send + Sync`), itself generic over the stored label type through its
+//!   [`Label`](ManagerCell::Label) associated type;
+//! - a builder — [`BddBuilder`], parameterised by the brand and the cell, that owns an independent BDD
+//!   manager and hands out handles branded to it;
 //! - a [`Bdd`] handle — a lightweight, refcounted (`Clone`, not `Copy`) owner of a clone of the builder's
 //!   manager, denoting one canonical function.
 //!
@@ -37,7 +38,7 @@
 //!   [`ScopedBdd`] — plus [`Composer`], which streams one substitution across a whole iterator of
 //!   handles, sharing a single short-lived cache so overlapping functions are composed once.
 //! - Constant queries: [`Bdd::is_tautology`], [`Bdd::is_contradiction`].
-//! - Materialisation: [`Bdd::to_cubes`] (a single-output sum-of-products cover), [`Bdd::maximize`]
+//! - Materialisation: [`Bdd::cover`] (a single-output sum-of-products cover), [`Bdd::maximize`]
 //!   (the fully-expanded maximal cover over an explicit, widenable variable set), and
 //!   [`Bdd::minimize`].
 //! - Introspection: [`Bdd::variables`], [`Bdd::node_count`], [`Bdd::var_count`].
@@ -54,14 +55,21 @@
 //!
 //! # Label types
 //!
-//! [`Bdd`], [`BddBuilder`] and [`Scope`] carry a third, phantom type parameter `S` — the stored
-//! label type, bounded by [`StringLabel`](crate::StringLabel) and defaulting to
-//! [`Symbol`](crate::Symbol) — that selects the type label-producing outputs ([`Bdd::variables`],
-//! the `cover`/`primes`/`maximize`/`minimize` families, [`Bdd::to_expr`]) come back as. Variable
-//! names always live in the manager as `Symbol`; `S` only chooses the presentation type, so
-//! [`Bdd::relabel`] / [`BddBuilder::relabel`] are free cell rewraps, not re-interning conversions.
-//! The macros mint the `Symbol` default; a builder under another `S` is
-//! `bdd_builder!().relabel::<S>()`.
+//! [`Bdd`], [`BddBuilder`] and [`Scope`] are parameterised by only the [`Brand`] and the
+//! [`ManagerCell`]; the stored label type lives on the cell itself, as its
+//! [`Label`](ManagerCell::Label) associated type (bounded by [`StringLabel`](crate::StringLabel),
+//! defaulting to [`Symbol`](crate::Symbol) on both [`LocalCell`] and [`SyncCell`]). Variable names are
+//! genuinely stored as that type — not interned as `Symbol` and re-presented — so every label-producing
+//! output ([`Bdd::variables`], the `cover`/`primes`/`maximize`/`minimize` families, [`Bdd::to_expr`])
+//! comes back as `C::Label` directly, with no relabelling step.
+//!
+//! The `bdd_builder!` / `sync_bdd_builder!` macros leave the cell's label parameter as an inference
+//! placeholder (`LocalCell<_>` / `SyncCell<_>`), so it resolves like any other unconstrained type
+//! parameter: from a binding annotation (`let b: BddBuilder<_, LocalCell> = bdd_builder!();` picks
+//! `Symbol` via the cell's own default; `let b: BddBuilder<_, LocalCell<String>> = bdd_builder!();`
+//! picks another [`StringLabel`]), or from consuming a labelled output downstream. A builder whose
+//! labels are never pinned either way needs the one-time annotation. There is no `relabel` — a builder
+//! or handle's label type is fixed for its lifetime once resolved.
 //!
 //! [`BoolExpr`]: crate::BoolExpr
 
