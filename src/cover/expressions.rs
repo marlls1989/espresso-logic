@@ -121,9 +121,11 @@ impl Cover<Symbol, Symbol> {
     ///
     /// This is the bridge *from* the expression layer, so it accepts a [`BoolExpr<L>`](BoolExpr) under
     /// any string-like `L` — same for [`add_bdd`](Self::add_bdd)'s `Bdd<B, C, S>` — but always produces
-    /// the natural `Cover<Symbol, Symbol>` (via the free [`Bdd::relabel`](crate::bdd::Bdd::relabel) /
-    /// [`BoolExpr::relabel`](BoolExpr::relabel) cell rewraps upstream). To carry the result under a
-    /// different string label type, build it here and [`relabel`](Cover::relabel) (or
+    /// the natural `Cover<Symbol, Symbol>`: the temporary builder above is the default `Symbol` builder,
+    /// so it interns `expr`'s variable names directly into its own stored label type as it builds, and
+    /// [`add_bdd`](Self::add_bdd) reaches `Symbol` in turn via the free
+    /// [`Bdd::relabel`](crate::bdd::Bdd::relabel) cell rewrap. To carry the result under a different
+    /// string label type, build it here and [`relabel`](Cover::relabel) (or
     /// `relabel_inputs`/`relabel_outputs`); for `&str`-named targets, [`rename`](Cover::rename) is the
     /// direct form.
     ///
