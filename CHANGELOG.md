@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `Symbol` reshaped from 24 bytes to 16 bytes on 64-bit (8 bytes on 32-bit), sized *exactly* to its
+  `Arc<str>` container rather than to `String`'s. The inline capacity is still derived at compile
+  time and guarded by compile-time size asserts, now superseding 5.6.0's `size_of::<String>() - 2`
+  derivation with `size_of::<Arc<str>>() / 2 - 1` (7 bytes on 64-bit, 3 bytes on 32-bit).
+  Size/performance change only — no public API surface (`INLINE_CAP` is crate-private). One residual
+  effect: variable names of 8..=22 bytes that were stored inline under 5.6.0 now intern to the heap
+  instead — the content is identical, only the storage location changes.
+
 ## [5.6.0] - 2026-07-08
 
 ### Added

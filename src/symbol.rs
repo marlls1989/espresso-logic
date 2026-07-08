@@ -4,10 +4,10 @@
 //! is the storage we use for them, tuned for that workload:
 //!
 //! - **Small-string optimised.** A name of up to `INLINE_CAP` bytes — the inline capacity, derived from
-//!   the platform's `String` size — lives **inline**; this is virtually every real variable name
-//!   (`a`, `x0`, `carry_in`, …), with no heap allocation and an O(1),
-//!   `memcpy`-cheap [`Clone`]. An `Arc<str>` would heap-allocate a refcount header plus the bytes even
-//!   for `"a"`.
+//!   the platform's `Arc<str>` size so `Symbol` adds **zero** padding wherever it is embedded — lives
+//!   **inline**; this is virtually every real variable name (`a`, `x0`, `clk`, …), with no heap
+//!   allocation and an O(1), `memcpy`-cheap [`Clone`]. An `Arc<str>` would heap-allocate a refcount
+//!   header plus the bytes even for `"a"`.
 //! - **Interned.** Longer names are deduplicated through a process-global pool, so equal names share
 //!   one allocation and compare in O(1) by pointer. The pool holds **weak** references, so it never
 //!   keeps a name alive: when the last `Symbol` for a name drops, its allocation is freed and the dead
@@ -24,11 +24,13 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use weak_table::WeakHashSet;
 
 /// Maximum byte length stored inline (without heap allocation). Derived from the platform's
-/// `String` size — `size_of::<String>() - 2` (1 enum-tag byte + 1 `len: u8`) — rather than a
-/// hardcoded constant, so `size_of::<Symbol>()` stays in the `Arc<str>`/`String` class on every
-/// target: 22 bytes on 64-bit, 10 bytes on 32-bit (where `String` is 12 bytes; a hardcoded 22
-/// would bloat `Symbol` to 24 bytes there). Guarded by the compile-time size-class assert below.
-pub(crate) const INLINE_CAP: usize = std::mem::size_of::<String>() - 2;
+/// `Arc<str>` size — `size_of::<Arc<str>>() / 2 - 1` — rather than a hardcoded constant, so
+/// `Symbol` occupies *exactly* its `Arc<str>` container on every target, adding zero padding: the
+/// `/ 2` is the fat-pointer word the null-niche discriminant does not occupy (leaving one word for
+/// the inline payload), and the `- 1` is the `len: u8` prefix (a fixed `[u8; N]` array carries no
+/// length of its own, unlike a slice, so length must be stored alongside it). This evaluates to 7
+/// bytes on 64-bit, 3 bytes on 32-bit. Guarded by the compile-time size asserts below.
+pub(crate) const INLINE_CAP: usize = std::mem::size_of::<std::sync::Arc<str>>() / 2 - 1;
 
 /// The inline length is stored as a `u8` (`Repr::Inline { len: u8, .. }`), so the inline capacity
 /// must fit in a `u8` for the `len = bytes.len() as u8` cast to be lossless.
@@ -46,10 +48,22 @@ enum Repr {
     Heap(Arc<str>),
 }
 
-/// `Symbol`'s tag/niche layout is expected to keep it in the `String`/`Arc<str>` size class on
-/// every target; this turns that assumption into a build error rather than a silent regression,
-/// mirroring the `BPI` guard in `src/espresso/mod.rs`.
-const _: () = assert!(std::mem::size_of::<Symbol>() <= std::mem::size_of::<String>());
+/// `Symbol`'s tag/niche layout is expected to make it occupy *exactly* its `Arc<str>` container on
+/// every target — no padding; this turns that assumption into a build error rather than a silent
+/// regression, mirroring the `BPI` guard in `src/espresso/mod.rs`.
+const _: () = assert!(std::mem::size_of::<Symbol>() == std::mem::size_of::<std::sync::Arc<str>>());
+
+/// `INLINE_CAP` is the *largest* inline capacity that still fits the `Arc<str>` container: a probe
+/// `Repr` with one more inline byte must overflow it. This guards against a future change to
+/// `INLINE_CAP`'s derivation silently leaving the layout non-maximal (e.g. rounding differently).
+const _: () = {
+    #[allow(dead_code)]
+    enum Probe {
+        Inline { len: u8, buf: [u8; INLINE_CAP + 1] },
+        Heap(std::sync::Arc<str>),
+    }
+    assert!(std::mem::size_of::<Probe>() > std::mem::size_of::<std::sync::Arc<str>>());
+};
 
 impl Symbol {
     /// Intern a string as a `Symbol` (inline if short, pooled otherwise).
@@ -373,9 +387,9 @@ mod tests {
 
     #[test]
     fn from_arc_splits_inline_heap_by_bytes_not_chars() {
-        // 'é' is 2 bytes. `size_of::<String>()` is 3 words, so INLINE_CAP is even on real targets:
-        // INLINE_CAP / 2 copies of 'é' exactly fill it (bytes == INLINE_CAP) → inline; one byte more
-        // → heap. A char-count split would wrongly inline a name that overflows the buffer.
+        // 'é' is 2 bytes. INLINE_CAP / 2 copies of 'é' exactly fill it (bytes == INLINE_CAP, with an
+        // extra 'a' appended when INLINE_CAP is odd, as it is on real targets) → inline; one byte
+        // more → heap. A char-count split would wrongly inline a name that overflows the buffer.
         let mut fits = "é".repeat(INLINE_CAP / 2);
         if INLINE_CAP % 2 == 1 {
             fits.push('a');
@@ -404,8 +418,11 @@ mod tests {
 
     #[test]
     fn size_is_compact() {
-        // Stay in the Arc<str>/String class — no bloat.
-        assert!(std::mem::size_of::<Symbol>() <= std::mem::size_of::<String>());
+        // Exactly the Arc<str> container — no padding.
+        assert_eq!(
+            std::mem::size_of::<Symbol>(),
+            std::mem::size_of::<Arc<str>>()
+        );
     }
 
     #[test]
