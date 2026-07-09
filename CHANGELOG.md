@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.2] - 2026-07-09
+
+**5.6.0 and 5.6.1 are yanked from crates.io. Upgrade to 5.6.2 directly from 5.5.0.**
+
+Relative to 5.5.0, this release is **purely additive**: everything that compiled against 5.5.0 compiles
+against 5.6.2 unchanged. That is what 5.6.0 should have been. (The claim is about 5.5.0 → 5.6.2 only —
+5.6.0 and 5.6.1 were genuinely breaking, and moving *from* them to 5.6.2 means undoing their idioms.)
+
+### Regression
+
+5.6.0 introduced a stored-label type parameter `S` across the expression and BDD layers, as a phantom
+marker over a `Symbol`-keyed manager. 5.6.1 corrected the phantom by storing the label genuinely — on
+the cell (`LocalCell<S>` / `SyncCell<S>`, surfaced as the `ManagerCell::Label` associated type) keying
+`BddManager<S>`. Genuine storage was the right shape for the feature. The feature was the mistake, and
+neither release should have shipped.
+
+The cost fell entirely on callers. Because `bdd_builder!()` mints an unnameable brand type, downstream
+code that works with a builder is obliged to be generic over `<B: Brand, C: ManagerCell>`; the moment
+`ManagerCell` grew an associated `Label`, every such signature that touched a variable name had to pin
+it, and the bound propagated up to the public API. [cellsmith], the downstream consumer this crate is
+built for — a pure `Symbol` user, with no non-`Symbol` label anywhere in its source — needed 24 of its
+own signatures changed to `C: ManagerCell<Label = Symbol>`, 19 builder bindings annotated, and 7 call
+sites split into named temporaries because `builder.build(&expr!(...))` no longer inferred inline.
+
+[cellsmith]: https://github.com/marlls1989/cellsmith
+
+Nothing was bought in exchange. `Symbol` orders by string content, and BDD variable identifiers are
+assigned in first-seen order rather than by `Ord`, so a manager keyed on `String` and one keyed on
+`Symbol` build the same nodes in the same order and extract the same cubes. The parameter selected only
+the label type stamped on an output value — which `Cover::relabel_inputs` already produced after the
+fact.
+
+The impact of the interface change was underestimated before release, and the correction cost two yanks.
+Apologies to anyone who upgraded. From now on, a release candidate is built against cellsmith before
+publication, and an interface change that forces edits there is reconsidered rather than documented.
+
+Making the BDD layer generic over `Label` — admitting `u32` and other non-string labels, as `Cover`
+already does — remains intended, but for a major release, behind an abstraction that keeps the label out
+of downstream signatures. `ManagerCell::Label` was not a step toward it: bounded
+`StringLabel + Ord + Borrow<str>`, it cannot carry a `u32`, and the `Borrow<str>` is load-bearing in the
+manager's allocation-free variable lookup.
+
+### Added
+
+Carried over from 5.6.0 and unaffected by the revert, so new to anyone arriving from 5.5.0:
+
+- `Bdd::restrict_to` and `ScopedBdd::restrict_to`, restricting by a whole `Minterm` assignment.
+- `bdd::Composer`, a streaming batch compose over an iterator of handles, sharing a per-batch cache,
+  with `bdd::BatchHandle` and `bdd::ComposeMany`.
+- `sys::get_bpi`, exposing the C library's compiled cube word width.
+
+### Removed
+
+- **The stored-label type parameter is withdrawn from the BDD and expression layers.** `BoolExpr` is a
+  plain `Symbol`-keyed struct again, with no `S` type parameter, no `relabel` and no `cast`. `LocalCell`
+  and `SyncCell` lose their type parameter, the `ManagerCell::Label` associated type is removed, and
+  `BddManager` keys variable names on `Symbol`.
+
+  Everything else from 5.6.0 and 5.6.1 is retained: the compose unification onto `compose_map`, the
+  `restrict_many` re-entrancy fix, the machine-word cube width, the `wasm32-unknown-emscripten` link
+  fix, and the 16-byte `Symbol` reshape.
+
+### Changed
+
+- **The 5.5.0 signatures are restored** for `BoolExpr`, `ExprBuilder`, `Expr`, `Bdd`, `BddBuilder`,
+  `Scope`, `ScopedBdd`, `LocalCell`, `SyncCell` and `ManagerCell`. The one-time annotations 5.6.1
+  required are no longer needed: `let builder = bdd_builder!();` compiles without one,
+  `builder.build(&expr!(...))` type-checks inline, `BoolExpr::var("a")` needs no turbofish, and code
+  generic over the manager binds `C: ManagerCell` rather than `C: ManagerCell<Label = Symbol>`.
+- **`Cover::to_expr` / `to_expr_by_index` / `to_exprs` are bounded `I: AsRef<str>` again and return a
+  `Symbol`-keyed `BoolExpr`**, rather than `BoolExpr<I>`. `Cover::add_bdd` / `add_expr` return to their
+  5.5.0 receivers and drop the `ManagerCell<Label = L>` coupling, so a handle can be added to a cover
+  whatever the cover's own label type.
+- `Cover<I, O>` label genericity is unaffected, and `StringLabel` remains the Cover-layer trait it has
+  been since 5.5.0, bounding `Cover::with_labels`, `build_cover`, the `rename*` family and the
+  `ReconcilableLabel` string blanket impl.
+
 ## [5.6.1] - 2026-07-08
 
 ### Changed
