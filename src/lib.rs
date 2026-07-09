@@ -73,10 +73,10 @@
 //! `*`/`&` AND, `^` XOR, `+`/`|` OR:
 //!
 //! ```
-//! use espresso_logic::{expr, BoolExpr};
+//! use espresso_logic::expr;
 //!
 //! // XOR.
-//! let xor: BoolExpr = expr!("a" & !"b" | !"a" & "b");
+//! let xor = expr!("a" & !"b" | !"a" & "b");
 //! println!("{xor}");  // a & !b | !a & b (minimal parentheses)
 //! ```
 //!
@@ -88,8 +88,7 @@
 //! use espresso_logic::BoolExpr;
 //!
 //! let names = ["a", "b", "c"];
-//! let conj: BoolExpr =
-//!     BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
+//! let conj = BoolExpr::build(|b| names.iter().map(|n| b.var(*n)).reduce(|x, y| x & y).unwrap());
 //! println!("{conj}");  // a & b & c
 //! ```
 //!
@@ -103,7 +102,7 @@
 //! use espresso_logic::BoolExpr;
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let expr: BoolExpr = BoolExpr::parse("a & b | !a & !b")?;
+//! let expr = BoolExpr::parse("a & b | !a & !b")?;
 //! println!("{expr}");
 //! # Ok(())
 //! # }
@@ -115,10 +114,10 @@
 //! [`bdd_builder!`](crate::bdd_builder):
 //!
 //! ```
-//! use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
+//! use espresso_logic::bdd_builder;
 //!
 //! # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-//! let builder: BddBuilder<_, LocalCell> = bdd_builder!();
+//! let builder = bdd_builder!();
 //! let a = builder.var("a");
 //! let b = builder.var("b");
 //!
@@ -143,13 +142,13 @@
 //! representation and supports adding expressions:
 //!
 //! ```
-//! use espresso_logic::{expr, BoolExpr, Cover, CoverType, Minimizable, Symbol};
+//! use espresso_logic::{expr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let expr: BoolExpr = expr!("a" & "b" | "a" & !"b");
+//! let expr = expr!("a" & "b" | "a" & !"b");
 //!
 //! // Create cover and add expression
-//! let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+//! let mut cover = Cover::new(CoverType::F);
 //! cover.add_expr(&expr, "output")?;
 //!
 //! // Access cover properties
@@ -415,12 +414,12 @@ pub use symbol::Symbol;
 /// `( )` > `!` / `~` (NOT) > `*` / `&` (AND) > `^` (XOR) > `+` / `|` (OR).
 ///
 /// ```
-/// use espresso_logic::{expr, BoolExpr, Symbol};
+/// use espresso_logic::{expr, BoolExpr};
 ///
-/// let a: BoolExpr = BoolExpr::var("a");
-/// let b: BoolExpr = BoolExpr::var("b");
+/// let a = BoolExpr::var("a");
+/// let b = BoolExpr::var("b");
 /// assert_eq!(expr!(a & !b), a.clone() & !b.clone());          // splice existing expressions
-/// assert_eq!(expr!("x" + "y"), BoolExpr::<Symbol>::var("x") | BoolExpr::var("y")); // fresh variables
+/// assert_eq!(expr!("x" + "y"), BoolExpr::var("x") | BoolExpr::var("y")); // fresh variables
 ///
 /// // Graft operands may be paths, field accesses, or calls — any postfix expression.
 /// struct Gates { reset: BoolExpr }
@@ -504,20 +503,10 @@ pub(crate) use impl_binary_operator;
 ///   mismatch then reads `expected Routing, found Timing` instead of an opaque internal type name.
 ///   Give distinct builders distinct names; prefer the anonymous form when you do not need the label.
 ///
-/// # Label type resolution
-///
-/// The manager cell carries the builder's stored label type as its own `S` parameter, defaulted to
-/// [`Symbol`](crate::Symbol). The macro leaves that parameter as an inference placeholder
-/// (`LocalCell<_>`), so it resolves like any other unconstrained type: from a binding annotation —
-/// `let b: BddBuilder<_, LocalCell> = bdd_builder!();` resolves to `Symbol` via the cell's own default,
-/// while `let b: BddBuilder<_, LocalCell<String>> = bdd_builder!();` picks another
-/// [`StringLabel`](crate::StringLabel) — or from consuming a labelled output downstream. A builder whose
-/// labels are never pinned either way needs the one-time annotation.
-///
 /// ```
-/// use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
+/// use espresso_logic::bdd_builder;
 ///
-/// let builder: BddBuilder<_, LocalCell> = bdd_builder!();
+/// let builder = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
 /// assert!((a & b).equivalent_to(&builder.parse("a & b").unwrap()));
@@ -532,7 +521,7 @@ macro_rules! bdd_builder {
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
         impl $crate::bdd::Brand for $name {}
-        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell<_>>::new()
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::LocalCell>::new()
     }};
 }
 
@@ -543,20 +532,10 @@ macro_rules! bdd_builder {
 /// reference across, threads. Lock poisoning propagates. Each call mints a distinct brand, so handles from
 /// two builders never mix (a compile error).
 ///
-/// # Label type resolution
-///
-/// The manager cell carries the builder's stored label type as its own `S` parameter, defaulted to
-/// [`Symbol`](crate::Symbol). The macro leaves that parameter as an inference placeholder
-/// (`SyncCell<_>`), so it resolves like any other unconstrained type: from a binding annotation —
-/// `let b: BddBuilder<_, SyncCell> = sync_bdd_builder!();` resolves to `Symbol` via the cell's own
-/// default, while `let b: BddBuilder<_, SyncCell<String>> = sync_bdd_builder!();` picks another
-/// [`StringLabel`](crate::StringLabel) — or from consuming a labelled output downstream. A builder whose
-/// labels are never pinned either way needs the one-time annotation.
-///
 /// ```
-/// use espresso_logic::{sync_bdd_builder, BddBuilder, SyncCell};
+/// use espresso_logic::sync_bdd_builder;
 ///
-/// let builder: BddBuilder<_, SyncCell> = sync_bdd_builder!();
+/// let builder = sync_bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
 /// assert!((a | b).equivalent_to(&builder.parse("a | b").unwrap()));
@@ -571,7 +550,7 @@ macro_rules! sync_bdd_builder {
         struct $name;
         impl $crate::bdd::__macro_support::Sealed for $name {}
         impl $crate::bdd::Brand for $name {}
-        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell<_>>::new()
+        $crate::bdd::BddBuilder::<$name, $crate::bdd::__macro_support::SyncCell>::new()
     }};
 }
 

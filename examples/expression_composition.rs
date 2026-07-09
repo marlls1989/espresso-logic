@@ -4,7 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Expression Composition Example ===\n");
 
     // Parse expressions from user input (simulated)
-    let user_func1: BoolExpr = BoolExpr::parse("a & b | c")?;
+    let user_func1 = BoolExpr::parse("a & b | c")?;
     let user_func2 = BoolExpr::parse("d | e & f")?;
     let user_func3 = BoolExpr::parse("g & h")?;
 

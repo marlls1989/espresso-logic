@@ -7,9 +7,7 @@
 //!
 //! Run with: `cargo run --example threshold_gate_example`
 
-use espresso_logic::{
-    bdd_builder, expr, BddBuilder, BoolExpr, Cover, CoverType, ExprNode, LocalCell, Minimizable,
-};
+use espresso_logic::{bdd_builder, expr, BoolExpr, Cover, CoverType, ExprNode, Minimizable};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -169,7 +167,7 @@ fn main() -> std::io::Result<()> {
 
     // Stage 2: cube count from the canonical Bdd — build each function into one shared builder.
     println!("Stage 2: Canonical BDD form...");
-    let builder: BddBuilder<_, LocalCell> = bdd_builder!();
+    let builder = bdd_builder!();
     let bdds: Vec<(&str, _)> = functions
         .iter()
         .map(|&(name, expr)| (name, builder.build(expr)))

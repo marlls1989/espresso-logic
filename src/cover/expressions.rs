@@ -6,33 +6,26 @@
 use super::cubes::{Cube, CubeType};
 use super::error::{AddExprError, CoverError, ToExprError};
 use super::iterators::ToExprs;
-use super::label::StringLabel;
 use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::symbols::{identity_union, Symbols};
 use super::Cover;
-use crate::bdd::{BddBuilder, LocalCell};
 use crate::expression::BoolExpr;
 use crate::Symbol;
 use std::sync::Arc;
 
-/// `add_bdd`/`add_expr` are *labelled* operations — each adds a named output — so both sides of the
-/// cover must be nameable under one shared label type `L`.
-impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
+impl Cover<Symbol, Symbol> {
     /// Add a [`Bdd`](crate::bdd::Bdd)'s ON-set to a named output.
     ///
     /// This is the primitive Boolean-function → cover bridge: the handle's product terms
     /// ([`Bdd::cover`](crate::bdd::Bdd::cover)) become F cubes asserting `output_name`. Input
-    /// variables are matched by name with existing variables, and new variables are appended. The
-    /// handle's cell must genuinely store this cover's own label type `L` (`C::Label = L`) — there is
-    /// no relabelling step here, so build or recover the handle under `L` first if it currently carries
-    /// a different label type.
+    /// variables are matched by name with existing variables, and new variables are appended.
     ///
     /// Returns an error if the output name already exists (to prevent accidental overwrite).
-    pub fn add_bdd<N: AsRef<str>, B: crate::bdd::Brand, C: crate::bdd::ManagerCell<Label = L>>(
+    pub fn add_bdd<S: AsRef<str>, B: crate::bdd::Brand, C: crate::bdd::ManagerCell>(
         &mut self,
         bdd: &crate::bdd::Bdd<B, C>,
-        output_name: N,
+        output_name: S,
     ) -> Result<(), AddExprError> {
         let output_name = output_name.as_ref();
         // `add_bdd` is a *labelled* operation, intended for empty or fully-labelled covers. Build
@@ -52,15 +45,14 @@ impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
             .into());
         }
 
-        // Extract the function's product terms as input minterms (canonical ON-set from the BDD),
-        // already carried under this cover's own label type `L`. Every minterm shares one header: the
-        // function's variables, sorted.
+        // Extract the function's product terms as input minterms (canonical ON-set from the BDD).
+        // Every minterm shares one header: the function's variables, sorted.
         let on_set = bdd.cover();
-        let cubes: Vec<Minterm<L>> = on_set.cubes().map(|c| c.inputs().clone()).collect();
+        let cubes: Vec<Minterm<Symbol>> = on_set.cubes().map(|c| c.inputs().clone()).collect();
 
         // Union the cover's input header with the expression's variables, re-pointing existing cubes
         // onto the grown header (new inputs = don't-care). Reuse the shared identity-union helper
-        // rather than re-implementing union-by-name (for a string-like label, identity *is* the name).
+        // rather than re-implementing union-by-name (for `Symbol`, identity *is* the name).
         if let Some(expr_syms) = cubes.first().map(|m| m.symbols()) {
             let (new_syms, _, _) = identity_union(&self.input_symbols, expr_syms);
             if new_syms.arity() > self.num_inputs() {
@@ -73,12 +65,12 @@ impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
 
         // Append the new output to the output table; existing cubes gain an unasserted column.
         let output_index = self.num_outputs();
-        let out_header: Arc<[L]> = self
+        let out_header: Arc<[Symbol]> = self
             .output_symbols
             .labels()
             .iter()
             .cloned()
-            .chain(std::iter::once(L::from(output_name)))
+            .chain(std::iter::once(Symbol::from(output_name)))
             .collect();
         // The existing outputs are distinct and `output_name` was checked absent above, so the
         // extended header is distinct.
@@ -121,14 +113,10 @@ impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
     /// single-threaded builder (which canonicalises it), then its ON-set is added as a new output. The
     /// temporary builder lives only for this call; the handle is consumed before it returns.
     ///
-    /// This is the bridge *from* the expression layer, so it accepts a [`BoolExpr<V>`](BoolExpr) under
-    /// any string-like `V` — independent of this cover's own label type `L`. The temporary builder mints
-    /// directly over `L` (a [`LocalCell<L>`](crate::bdd::LocalCell)), so it re-interns `expr`'s variable
-    /// names straight into `L` as it builds, and [`add_bdd`](Self::add_bdd) then adds the result with no
-    /// further relabelling. To carry the result under a different label type than this cover's own,
-    /// build a fresh cover under that type instead, or [`relabel`](Cover::relabel) (or
-    /// `relabel_inputs`/`relabel_outputs`) an existing one; for `&str`-named targets,
-    /// [`rename`](Cover::rename) is the direct form.
+    /// This is the bridge *from* the `Symbol`-based expression layer, so it produces the natural
+    /// `Cover<Symbol, Symbol>`. To carry the result under a different string label type, build it here
+    /// and [`relabel`](Cover::relabel) (or `relabel_inputs`/`relabel_outputs`); for `&str`-named
+    /// targets, [`rename`](Cover::rename) is the direct form.
     ///
     /// Each call builds and drops a throwaway BDD manager. Building many expressions into one cover goes
     /// through a single [`bdd_builder!`](crate::bdd_builder) plus [`add_bdd`](Self::add_bdd), which share
@@ -139,10 +127,10 @@ impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{BoolExpr, Cover, CoverType, Symbol, expr};
+    /// use espresso_logic::{Cover, CoverType, expr};
     ///
-    /// let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    /// let expr: BoolExpr = expr!("a" & "b");
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let expr = expr!("a" & "b");
     ///
     /// // Add expression to cover
     /// cover.add_expr(&expr, "output1").unwrap();
@@ -150,32 +138,27 @@ impl<L: StringLabel + Ord + std::hash::Hash> Cover<L, L> {
     /// assert_eq!(cover.num_outputs(), 1);
     ///
     /// // Add another expression as a second output
-    /// let expr2: BoolExpr = expr!("b" | "a");
+    /// let expr2 = expr!("b" | "a");
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
-    pub fn add_expr<N: AsRef<str>, V: StringLabel>(
+    pub fn add_expr<S: AsRef<str>>(
         &mut self,
-        expr: &BoolExpr<V>,
-        output_name: N,
-    ) -> Result<(), AddExprError>
-    where
-        L: std::borrow::Borrow<str>,
-        LocalCell<L>: crate::bdd::ManagerCell<Label = L>,
-    {
-        // Mediate the syntactic → cube transformation through a throwaway BDD builder over this
-        // cover's own label type `L` (canonicalises the expression). The builder is local; the handle
-        // borrows it and is consumed by `add_bdd` before this function returns, so the lifetimes work
-        // out.
-        let builder: BddBuilder<_, LocalCell<L>> = crate::bdd_builder!();
+        expr: &BoolExpr,
+        output_name: S,
+    ) -> Result<(), AddExprError> {
+        // Mediate the syntactic → cube transformation through a throwaway BDD builder (canonicalises
+        // the expression). The builder is local; the handle borrows it and is consumed by `add_bdd`
+        // before this function returns, so the lifetimes work out.
+        let builder = crate::bdd_builder!();
         let bdd = builder.build(expr);
         self.add_bdd(&bdd, output_name)
     }
 }
 
 /// Rebuilding an expression depends only on the **input** variable names, so these conversions work
-/// for any string-like input label `I` (any [`StringLabel`]) whatever the output label type `O` is —
-/// including an anonymous-output cover from a `BoolExpr` (`Cover<Symbol, Anonymous>`).
-impl<I: StringLabel, O> Cover<I, O> {
+/// for any string-like input label `I` whatever the output label type `O` is — including an
+/// anonymous-output cover from a `BoolExpr` (`Cover<Symbol, Anonymous>`).
+impl<I: AsRef<str>, O> Cover<I, O> {
     /// Convert a specific output index to a boolean expression
     ///
     /// Returns an error if the index is out of bounds.
@@ -183,16 +166,16 @@ impl<I: StringLabel, O> Cover<I, O> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType, Symbol};
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
-    /// let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    /// let a: BoolExpr = BoolExpr::var("a");
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "out").unwrap();
     /// let expr = cover.to_expr_by_index(0).unwrap();
     /// println!("Output 0: {}", expr);
     /// ```
-    pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr<I>, ToExprError> {
+    pub fn to_expr_by_index(&self, output_idx: usize) -> Result<BoolExpr, ToExprError> {
         if output_idx >= self.num_outputs() {
             return Err(CoverError::OutputIndexOutOfBounds {
                 index: output_idx,
@@ -219,11 +202,11 @@ impl<I: StringLabel, O> Cover<I, O> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType, Symbol};
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
-    /// let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    /// let a: BoolExpr = BoolExpr::var("a");
-    /// let b: BoolExpr = BoolExpr::var("b");
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::var("a");
+    /// let b = BoolExpr::var("b");
     ///
     /// cover.add_expr(&a, "out1").unwrap();
     /// cover.add_expr(&b, "out2").unwrap();
@@ -241,7 +224,7 @@ impl<I: StringLabel, O> Cover<I, O> {
 }
 
 /// Looking an output up by name additionally needs a string-like **output** label.
-impl<I: StringLabel, O: AsRef<str>> Cover<I, O> {
+impl<I: AsRef<str>, O: AsRef<str>> Cover<I, O> {
     /// Convert a specific named output to a boolean expression
     ///
     /// Returns an error if the output name doesn't exist.
@@ -249,16 +232,16 @@ impl<I: StringLabel, O: AsRef<str>> Cover<I, O> {
     /// # Examples
     ///
     /// ```
-    /// use espresso_logic::{Cover, BoolExpr, CoverType, Symbol};
+    /// use espresso_logic::{Cover, BoolExpr, CoverType};
     ///
-    /// let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    /// let a: BoolExpr = BoolExpr::var("a");
+    /// let mut cover = Cover::new(CoverType::F);
+    /// let a = BoolExpr::var("a");
     ///
     /// cover.add_expr(&a, "result").unwrap();
     /// let expr = cover.to_expr("result").unwrap();
     /// println!("result: {}", expr);
     /// ```
-    pub fn to_expr<S: AsRef<str>>(&self, output_name: S) -> Result<BoolExpr<I>, ToExprError> {
+    pub fn to_expr<S: AsRef<str>>(&self, output_name: S) -> Result<BoolExpr, ToExprError> {
         let output_name = output_name.as_ref();
         let output_idx = self
             .output_symbols()
@@ -277,15 +260,15 @@ impl<I: StringLabel, O: AsRef<str>> Cover<I, O> {
 ///
 /// Reads each cube's input pattern against the input variable names (`variables`, one label per input
 /// — the caller always passes the cover's full input header).
-pub(super) fn cubes_to_expr<'a, I: StringLabel + 'a, O: 'a>(
+pub(super) fn cubes_to_expr<'a, I: AsRef<str> + 'a, O: 'a>(
     cubes: impl IntoIterator<Item = &'a Cube<I, O>>,
     variables: &[I],
-) -> BoolExpr<I> {
+) -> BoolExpr {
     use std::collections::BTreeMap;
 
     // Each cube becomes a product term (a `name -> polarity` literal map) for the factoriser, which
     // requires an owned collection it can scan repeatedly. Input labels are interned into `Symbol`s
-    // (the expression layer's internal AST keying — see `ast.rs`) at this boundary.
+    // (the expression layer's name type) at this boundary.
     let product_terms: Vec<(BTreeMap<Symbol, bool>, bool)> = cubes
         .into_iter()
         .map(|cube| {
@@ -304,7 +287,6 @@ pub(super) fn cubes_to_expr<'a, I: StringLabel + 'a, O: 'a>(
         return BoolExpr::constant(false);
     }
 
-    // Apply algebraic factorisation to produce more compact multi-level logic, then re-key the
-    // resulting `Symbol`-keyed expression into the caller's own label type `I`.
-    crate::expression::factorization::factorise_cubes(product_terms).cast::<I>()
+    // Apply algebraic factorization to produce more compact multi-level logic
+    crate::expression::factorization::factorise_cubes(product_terms)
 }

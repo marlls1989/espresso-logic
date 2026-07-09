@@ -12,10 +12,8 @@
 //! - [`SyncCell`] — `Arc<RwLock<BddManager>>`, `Send`/`Sync`, backing a thread-safe builder.
 //!
 //! [`ManagerCell`] is the second of a BDD handle's two orthogonal type parameters: a
-//! [`Brand`](crate::bdd::Brand) marks one namespace for uniqueness, while the cell selects both the
-//! storage backend (single-threaded versus thread-safe) and the stored label type (its
-//! [`Label`](ManagerCell::Label) associated type) — variable names are genuinely stored as that type,
-//! not interned as `Symbol` and realised later. The two are independent — any brand pairs with either
+//! [`Brand`](crate::bdd::Brand) marks one namespace for uniqueness, while the cell selects the storage
+//! backend (single-threaded versus thread-safe). The two are independent — any brand pairs with either
 //! cell.
 //!
 //! The trait is **sealed** (via [`cell_seal::Sealed`]): no downstream crate can add another cell, so the
@@ -30,8 +28,6 @@
 //! correct for both cells.
 
 use super::manager::BddManager;
-use crate::cover::StringLabel;
-use crate::Symbol;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -41,26 +37,21 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 ///
 /// Implemented only by [`LocalCell`] and [`SyncCell`] (the trait is sealed). It is the second of a
 /// handle's two orthogonal type parameters — a [`Brand`](crate::bdd::Brand) marks the namespace, this
-/// cell selects single-threaded or thread-safe storage and, through its [`Label`](Self::Label)
-/// associated type, the label type the manager genuinely stores variable names as. The BDD engine in the
-/// crate's internal `manager` module is generic over this trait, so its node-construction and `ite`
-/// logic is written exactly once and shared by both backends.
+/// cell selects single-threaded or thread-safe storage. The BDD engine in the crate's internal `manager`
+/// module is generic over this trait, so its node-construction and `ite` logic is written exactly once
+/// and shared by both backends.
 ///
 /// `Clone` is a refcount bump (`Rc::clone` / `Arc::clone`): every clone shares the same underlying
 /// manager. A [`BddBuilder`](crate::bdd::BddBuilder) owns one cell; each [`Bdd`](crate::bdd::Bdd) handle
 /// it mints holds its own refcounted clone, so a handle keeps its manager alive independently of the
 /// builder.
 pub trait ManagerCell: Clone + cell_seal::Sealed {
-    /// The stored label type — how this cell's manager keys and hands back variable names. The cell
-    /// selects it alongside the storage backend; names are genuinely stored as this type (not interned
-    /// as `Symbol` and realised later).
-    type Label: StringLabel + Ord + std::borrow::Borrow<str>;
     /// Shared-borrow guard, dereferencing to the `BddManager` for read-only access.
-    type ReadGuard<'a>: core::ops::Deref<Target = BddManager<Self::Label>>
+    type ReadGuard<'a>: core::ops::Deref<Target = BddManager>
     where
         Self: 'a;
     /// Exclusive-borrow guard, dereferencing mutably to the `BddManager`.
-    type WriteGuard<'a>: core::ops::DerefMut<Target = BddManager<Self::Label>>
+    type WriteGuard<'a>: core::ops::DerefMut<Target = BddManager>
     where
         Self: 'a;
 
@@ -87,25 +78,16 @@ pub trait ManagerCell: Clone + cell_seal::Sealed {
 /// A [`BddBuilder`](crate::bdd::BddBuilder) parameterised by this cell is single-threaded and pays no
 /// synchronisation cost; the [`bdd_builder!`](crate::bdd_builder) macro mints builders over it.
 #[derive(Clone)]
-pub struct LocalCell<S: StringLabel + Ord + std::borrow::Borrow<str> = Symbol>(
-    Rc<RefCell<BddManager<S>>>,
-);
+pub struct LocalCell(Rc<RefCell<BddManager>>);
 
-impl<S: StringLabel + Ord + std::borrow::Borrow<str>> cell_seal::Sealed for LocalCell<S> {}
+impl cell_seal::Sealed for LocalCell {}
 
-impl<S: StringLabel + Ord + std::borrow::Borrow<str>> ManagerCell for LocalCell<S> {
-    type Label = S;
-    type ReadGuard<'a>
-        = Ref<'a, BddManager<S>>
-    where
-        Self: 'a;
-    type WriteGuard<'a>
-        = RefMut<'a, BddManager<S>>
-    where
-        Self: 'a;
+impl ManagerCell for LocalCell {
+    type ReadGuard<'a> = Ref<'a, BddManager>;
+    type WriteGuard<'a> = RefMut<'a, BddManager>;
 
     fn new_empty() -> Self {
-        LocalCell(Rc::new(RefCell::new(BddManager::<S>::new_empty())))
+        LocalCell(Rc::new(RefCell::new(BddManager::new_empty())))
     }
 
     fn read(&self) -> Self::ReadGuard<'_> {
@@ -129,28 +111,16 @@ impl<S: StringLabel + Ord + std::borrow::Borrow<str>> ManagerCell for LocalCell<
 /// A [`BddBuilder`](crate::bdd::BddBuilder) parameterised by this cell is `Send + Sync`; the
 /// [`sync_bdd_builder!`](crate::sync_bdd_builder) macro mints builders over it.
 #[derive(Clone)]
-pub struct SyncCell<S: StringLabel + Ord + std::borrow::Borrow<str> + Send + Sync = Symbol>(
-    Arc<RwLock<BddManager<S>>>,
-);
+pub struct SyncCell(Arc<RwLock<BddManager>>);
 
-impl<S: StringLabel + Ord + std::borrow::Borrow<str> + Send + Sync> cell_seal::Sealed
-    for SyncCell<S>
-{
-}
+impl cell_seal::Sealed for SyncCell {}
 
-impl<S: StringLabel + Ord + std::borrow::Borrow<str> + Send + Sync> ManagerCell for SyncCell<S> {
-    type Label = S;
-    type ReadGuard<'a>
-        = RwLockReadGuard<'a, BddManager<S>>
-    where
-        Self: 'a;
-    type WriteGuard<'a>
-        = RwLockWriteGuard<'a, BddManager<S>>
-    where
-        Self: 'a;
+impl ManagerCell for SyncCell {
+    type ReadGuard<'a> = RwLockReadGuard<'a, BddManager>;
+    type WriteGuard<'a> = RwLockWriteGuard<'a, BddManager>;
 
     fn new_empty() -> Self {
-        SyncCell(Arc::new(RwLock::new(BddManager::<S>::new_empty())))
+        SyncCell(Arc::new(RwLock::new(BddManager::new_empty())))
     }
 
     fn read(&self) -> Self::ReadGuard<'_> {

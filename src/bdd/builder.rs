@@ -27,6 +27,7 @@ use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
 use crate::expression::{BoolExpr, ParseBoolExprError};
+use crate::Symbol;
 
 /// An owned BDD namespace over a brand `B` and a storage backend `C`.
 ///
@@ -79,7 +80,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// A handle for the single variable `name`, creating it in this builder's variable ordering on first
     /// use.
     #[must_use]
-    pub fn var<N: AsRef<str>>(&self, name: N) -> Bdd<B, C> {
+    pub fn var<S: AsRef<str>>(&self, name: S) -> Bdd<B, C> {
         let id = self.cell.make_var(name.as_ref());
         let root = self.cell.make_node(id, FALSE_NODE, TRUE_NODE);
         Bdd::from_root(&self.cell, root)
@@ -149,7 +150,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// Composed inside a [`scope`](Self::scope) so the fold runs on `Copy`, by-reference handles (one
     /// refcount bump for the returned root, not one per node); [`Scope::build`] does the postfix fold.
     #[must_use]
-    pub fn build<L: StringLabel>(&self, expr: &BoolExpr<L>) -> Bdd<B, C> {
+    pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
         self.scope(|s| s.build(expr))
     }
 
@@ -168,9 +169,9 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// composition inside the closure. An existing owned [`Bdd`] is spliced in with [`Scope::lift`].
     ///
     /// ```
-    /// use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
+    /// use espresso_logic::bdd_builder;
     ///
-    /// let builder: BddBuilder<_, LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// // (a ^ b) & !c, composed from Copy handles — no `.clone()`.
     /// let f = builder.scope(|s| (s.var("a") ^ s.var("b")) & !s.var("c"));
     /// assert!(f.equivalent_to(&builder.parse("(a ^ b) & !c").unwrap()));
@@ -191,8 +192,8 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// # Errors
     ///
     /// Propagates a [`ParseBoolExprError`] if the text does not parse.
-    pub fn parse<N: AsRef<str>>(&self, input: N) -> Result<Bdd<B, C>, ParseBoolExprError> {
-        Ok(self.build(&BoolExpr::<C::Label>::parse(input)?))
+    pub fn parse<S: AsRef<str>>(&self, input: S) -> Result<Bdd<B, C>, ParseBoolExprError> {
+        Ok(self.build(&BoolExpr::parse(input)?))
     }
 
     /// Minimise a [`BoolExpr`]'s ON-set with Espresso, returning the minimised single-output [`Cover`].
@@ -203,10 +204,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`] from the Espresso engine.
-    pub fn minimize<L: StringLabel>(
-        &self,
-        expr: &BoolExpr<L>,
-    ) -> Result<Cover<C::Label, Anonymous>, MinimizationError> {
+    pub fn minimize(&self, expr: &BoolExpr) -> Result<Cover<Symbol, Anonymous>, MinimizationError> {
         self.build(expr).minimize()
     }
 }

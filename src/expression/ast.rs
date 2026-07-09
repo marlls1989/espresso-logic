@@ -4,7 +4,7 @@
 
 use super::rpn;
 use super::BoolExpr;
-use crate::{StringLabel, Symbol};
+use crate::Symbol;
 use std::sync::Arc;
 
 /// Node type for expression tree folding
@@ -100,7 +100,7 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl<S: StringLabel> BoolExpr<S> {
+impl BoolExpr {
     /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
     /// A plain postfix-to-tree fold over the tokens (via the shared [`rpn::fold_postfix`] value-stack
@@ -110,7 +110,7 @@ impl<S: StringLabel> BoolExpr<S> {
     fn to_ast(&self) -> Arc<BoolExprAst> {
         rpn::fold_postfix(
             self.tokens(),
-            |name| Arc::new(BoolExprAst::Variable(Symbol::new(name.as_ref()))),
+            |name| Arc::new(BoolExprAst::Variable(name.clone())),
             |value| Arc::new(BoolExprAst::Constant(value)),
             |a| Arc::new(BoolExprAst::Not(a)),
             |l, r| Arc::new(BoolExprAst::And(l, r)),
@@ -134,9 +134,9 @@ impl<S: StringLabel> BoolExpr<S> {
     /// Count the number of operations in an expression:
     ///
     /// ```
-    /// use espresso_logic::{expr, BoolExpr, ExprNode};
+    /// use espresso_logic::{expr, ExprNode};
     ///
-    /// let expr: BoolExpr = expr!("a" & "b");
+    /// let expr = expr!("a" & "b");
     ///
     /// let op_count = expr.fold(|node| match node {
     ///     ExprNode::Variable(_) | ExprNode::Constant(_) => 0,
@@ -152,7 +152,7 @@ impl<S: StringLabel> BoolExpr<S> {
     {
         rpn::fold_postfix(
             self.tokens(),
-            |name| f(ExprNode::Variable(name.as_ref())),
+            |name| f(ExprNode::Variable(name.as_str())),
             |value| f(ExprNode::Constant(value)),
             |inner| f(ExprNode::Not(inner)),
             |l, r| f(ExprNode::And(l, r)),
@@ -185,9 +185,9 @@ impl<S: StringLabel> BoolExpr<S> {
     /// Track depth top-down and take the maximum bottom-up:
     ///
     /// ```
-    /// use espresso_logic::{expr, BoolExpr, ExprNode};
+    /// use espresso_logic::{expr, ExprNode};
     ///
-    /// let expr: BoolExpr = expr!(!("a" & "b"));
+    /// let expr = expr!(!("a" & "b"));
     ///
     /// let max_depth = expr.fold_with_context(
     ///     0,

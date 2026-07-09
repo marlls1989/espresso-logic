@@ -272,7 +272,7 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// A handle for the single variable `name`, creating it in the builder's variable ordering on first
     /// use.
     #[must_use]
-    pub fn var<N: AsRef<str>>(&self, name: N) -> ScopedBdd<'s, B, C> {
+    pub fn var<S: AsRef<str>>(&self, name: S) -> ScopedBdd<'s, B, C> {
         let cell = self.builder.cell();
         let id = cell.make_var(name.as_ref());
         let root = cell.make_node(id, FALSE_NODE, TRUE_NODE);
@@ -325,10 +325,10 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// Interprets the expression's reverse-Polish token stream into canonical nodes through this scope's
     /// handles, iteratively (no recursion), so an arbitrarily deep expression cannot overflow the stack.
     #[must_use]
-    pub fn build<L: StringLabel>(&self, expr: &BoolExpr<L>) -> ScopedBdd<'s, B, C> {
+    pub fn build(&self, expr: &BoolExpr) -> ScopedBdd<'s, B, C> {
         rpn::fold_postfix(
             expr.tokens(),
-            |name| self.var(name.as_ref()),
+            |name| self.var(name.as_str()),
             |value| self.constant(value),
             |a| !a,
             |l, r| l & r,
@@ -343,10 +343,10 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// # Errors
     ///
     /// Propagates a [`ParseBoolExprError`] if the text does not parse.
-    pub fn parse<N: AsRef<str>>(
+    pub fn parse<S: AsRef<str>>(
         &self,
-        input: N,
+        input: S,
     ) -> Result<ScopedBdd<'s, B, C>, ParseBoolExprError> {
-        Ok(self.build(&BoolExpr::<C::Label>::parse(input)?))
+        Ok(self.build(&BoolExpr::parse(input)?))
     }
 }
