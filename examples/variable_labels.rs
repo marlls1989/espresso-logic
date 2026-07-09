@@ -88,8 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("-------------------------------------------------------");
 
     // Create expression: (x AND y) OR (y AND z)
-    let expr: espresso_logic::BoolExpr = expr!("x" & "y" | "y" & "z");
-    let mut expr_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let expr = expr!("x" & "y" | "y" & "z");
+    let mut expr_cover = Cover::new(CoverType::F);
     expr_cover.add_expr(&expr, "output").unwrap();
 
     println!("Created Cover from boolean expression");

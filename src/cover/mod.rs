@@ -75,13 +75,13 @@
 //! ## With Boolean Expressions
 //!
 //! ```
-//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, Symbol};
+//! use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 //!
 //! # fn main() -> std::io::Result<()> {
-//! let expr: BoolExpr = BoolExpr::parse("a * b + a * b * c")?;
+//! let expr = BoolExpr::parse("a * b + a * b * c")?;
 //!
 //! // Convert expression to cover
-//! let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+//! let mut cover = Cover::new(CoverType::F);
 //! cover.add_expr(&expr, "output")?;
 //!
 //! // Minimise
@@ -283,11 +283,11 @@ impl CoverType {
 /// ## From Boolean Expression
 ///
 /// ```
-/// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, Symbol};
+/// use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let expr: BoolExpr = BoolExpr::parse("a * b + b * c")?;
-/// let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+/// let expr = BoolExpr::parse("a * b + b * c")?;
+/// let mut cover = Cover::new(CoverType::F);
 /// cover.add_expr(&expr, "output")?;
 ///
 /// let minimised = cover.minimize()?;

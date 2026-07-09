@@ -539,9 +539,9 @@ fn test_dynamic_growth_preserves_existing_cubes() {
 
 #[test]
 fn test_add_expr_basic() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let expr = expr!(a & b);
 
@@ -557,9 +557,9 @@ fn test_add_expr_basic() {
 
 #[test]
 fn test_add_expr_variable_matching() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let c = crate::BoolExpr::var("c");
 
@@ -581,10 +581,10 @@ fn test_add_expr_variable_matching() {
 
 #[test]
 fn test_add_expr_duplicate_output_error() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
-    let b: crate::BoolExpr = crate::BoolExpr::var("b");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
 
     // Add first expression
     cover.add_expr(&a, "result").unwrap();
@@ -597,35 +597,35 @@ fn test_add_expr_duplicate_output_error() {
 
 #[test]
 fn test_add_expr_to_different_cover_types() {
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
     // F type
-    let mut f_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut f_cover = Cover::new(CoverType::F);
     f_cover.add_expr(&expr!(a & b), "out").unwrap();
     assert_eq!(f_cover.cover_type(), CoverType::F);
 
     // FD type
-    let mut fd_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::FD);
+    let mut fd_cover = Cover::new(CoverType::FD);
     fd_cover.add_expr(&expr!(a | b), "out").unwrap();
     assert_eq!(fd_cover.cover_type(), CoverType::FD);
 
     // FR type
-    let mut fr_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::FR);
+    let mut fr_cover = Cover::new(CoverType::FR);
     fr_cover.add_expr(&a, "out").unwrap();
     assert_eq!(fr_cover.cover_type(), CoverType::FR);
 
     // FDR type
-    let mut fdr_cover: Cover<Symbol, Symbol> = Cover::new(CoverType::FDR);
+    let mut fdr_cover = Cover::new(CoverType::FDR);
     fdr_cover.add_expr(&expr!(!a), "out").unwrap();
     assert_eq!(fdr_cover.cover_type(), CoverType::FDR);
 }
 
 #[test]
 fn test_add_expr_multiple_outputs() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let c = crate::BoolExpr::var("c");
 
@@ -648,9 +648,9 @@ fn test_add_expr_multiple_outputs() {
 
 #[test]
 fn test_add_expr_variable_ordering_preserved() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let z: crate::BoolExpr = crate::BoolExpr::var("z");
+    let z = crate::BoolExpr::var("z");
     let a = crate::BoolExpr::var("a");
     let m = crate::BoolExpr::var("m");
 
@@ -669,9 +669,9 @@ fn test_add_expr_variable_ordering_preserved() {
 
 #[test]
 fn test_to_expr_basic() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&expr!(a & b), "result").unwrap();
@@ -689,8 +689,8 @@ fn test_to_expr_basic() {
 fn to_expr_and_from_pla_string_accept_owned_string() {
     // `Cover::to_expr` and `PlaCover::from_pla_string` take any `AsRef<str>`, not only `&str` — an
     // owned `String` behaves identically to the `&str` form (no string type is privileged).
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let mut cover = Cover::new(CoverType::F);
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     cover.add_expr(&expr!(a & b), "result").unwrap();
     let from_string = cover.to_expr(String::from("result")).unwrap();
@@ -708,9 +708,9 @@ fn to_expr_and_from_pla_string_accept_owned_string() {
 
 #[test]
 fn test_to_expr_by_index() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
 
     cover.add_expr(&a, "out0").unwrap();
     cover.add_expr(&expr!(!a), "out1").unwrap();
@@ -724,9 +724,9 @@ fn test_to_expr_by_index() {
 
 #[test]
 fn test_to_expr_nonexistent() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     cover.add_expr(&a, "exists").unwrap();
 
     // Try to get non-existent output
@@ -737,9 +737,9 @@ fn test_to_expr_nonexistent() {
 
 #[test]
 fn test_to_expr_index_out_of_bounds() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     cover.add_expr(&a, "out").unwrap();
 
     // Try to get out of bounds index
@@ -750,11 +750,11 @@ fn test_to_expr_index_out_of_bounds() {
 
 #[test]
 fn test_to_exprs_iterator() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
-    let b: crate::BoolExpr = crate::BoolExpr::var("b");
-    let c: crate::BoolExpr = crate::BoolExpr::var("c");
+    let a = crate::BoolExpr::var("a");
+    let b = crate::BoolExpr::var("b");
+    let c = crate::BoolExpr::var("c");
 
     cover.add_expr(&a, "out1").unwrap();
     cover.add_expr(&b, "out2").unwrap();
@@ -778,8 +778,8 @@ fn to_exprs_works_for_any_string_input_label() {
     use std::sync::Arc;
 
     // Build a named cover, then relabel both sides to a *different* string type (Arc<str>).
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let mut cover = Cover::new(CoverType::F);
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     cover.add_expr(&expr!(a & b), "out").unwrap();
 
@@ -804,9 +804,9 @@ fn to_exprs_works_for_any_string_input_label() {
 
 #[test]
 fn test_to_exprs_after_minimization() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let c = crate::BoolExpr::var("c");
 
@@ -939,9 +939,9 @@ fn test_fdr_type_cover() {
 
 #[test]
 fn test_complex_expression_with_minimization() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let c = crate::BoolExpr::var("c");
 
@@ -974,9 +974,9 @@ fn test_empty_cover_to_expr() {
 
 #[test]
 fn test_expression_with_constants() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
 
     // Expression with constant: a * true = a
     let expr = expr!(a & 1);
@@ -989,9 +989,9 @@ fn test_expression_with_constants() {
 
 #[test]
 fn test_pla_roundtrip_with_expressions() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&expr!(a & b), "output").unwrap();
@@ -1998,9 +1998,9 @@ fn cover_hash_and_blanket_default() {
 
 #[test]
 fn test_minimize_preserves_structure() {
-    let mut cover: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
+    let mut cover = Cover::new(CoverType::F);
 
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
 
     cover.add_expr(&expr!(a & b), "out1").unwrap();
@@ -2183,14 +2183,10 @@ fn extend_aligns_named_inputs_anonymous_outputs() {
 fn extend_equals_merge_for_distinct_named_outputs() {
     // When the two covers' output names DON'T collide, extend (append) and merge (overlay) coincide:
     // both keep the two distinct columns. They diverge only on a collision (tests below).
-    let mut by_extend: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    by_extend
-        .add_expr(&crate::BoolExpr::<crate::Symbol>::var("x"), "f")
-        .unwrap();
+    let mut by_extend = Cover::new(CoverType::F);
+    by_extend.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut other = Cover::new(CoverType::F);
-    other
-        .add_expr(&crate::BoolExpr::<crate::Symbol>::var("y"), "g")
-        .unwrap();
+    other.add_expr(&crate::BoolExpr::var("y"), "g").unwrap();
 
     let mut by_merge = by_extend.clone();
     by_extend.extend(&other);
@@ -2209,12 +2205,10 @@ fn extend_equals_merge_for_distinct_named_outputs() {
 #[test]
 fn extend_renames_colliding_named_outputs() {
     // Both covers output "f"; extend always appends, reconciling the clash to "f0".
-    let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::<crate::Symbol>::var("x"), "f")
-        .unwrap();
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::<crate::Symbol>::var("y"), "f")
-        .unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
 
     a.extend(&b);
     assert_eq!(a.num_outputs(), 2); // distinct columns, not overlaid
@@ -2227,15 +2221,12 @@ fn extend_renames_colliding_named_outputs() {
 fn extend_reconciles_repeated_output_collisions() {
     // Three covers all output "f"; each extend reconciles against the names already present, so the
     // suffixes advance f -> f0 -> f1 rather than colliding again.
-    let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::<crate::Symbol>::var("x"), "f")
-        .unwrap();
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::<crate::Symbol>::var("y"), "f")
-        .unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
     let mut c = Cover::new(CoverType::F);
-    c.add_expr(&crate::BoolExpr::<crate::Symbol>::var("z"), "f")
-        .unwrap();
+    c.add_expr(&crate::BoolExpr::var("z"), "f").unwrap();
 
     a.extend(&b);
     a.extend(&c);
@@ -2250,12 +2241,10 @@ fn extend_reconciles_repeated_output_collisions() {
 #[test]
 fn merge_overlays_colliding_named_outputs() {
     // Both covers output "f"; merge overlays them onto one column (pins the divergence from extend).
-    let mut a: Cover<Symbol, Symbol> = Cover::new(CoverType::F);
-    a.add_expr(&crate::BoolExpr::<crate::Symbol>::var("x"), "f")
-        .unwrap();
+    let mut a = Cover::new(CoverType::F);
+    a.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
     let mut b = Cover::new(CoverType::F);
-    b.add_expr(&crate::BoolExpr::<crate::Symbol>::var("y"), "f")
-        .unwrap();
+    b.add_expr(&crate::BoolExpr::var("y"), "f").unwrap();
 
     a.merge(&b);
     assert_eq!(a.num_outputs(), 1); // single overlaid column
@@ -2268,7 +2257,7 @@ fn merge_overlays_colliding_named_outputs() {
 
 #[test]
 fn expr_via_bdd_to_anonymous_output_cover_roundtrips() {
-    let a: crate::BoolExpr = crate::BoolExpr::var("a");
+    let a = crate::BoolExpr::var("a");
     let b = crate::BoolExpr::var("b");
     let expr = expr!(a & b | a & b); // redundant on purpose
 
@@ -2315,9 +2304,7 @@ fn from_expr_and_from_bdd_agree() {
 #[test]
 fn relabel_outputs_keeps_inputs() {
     let mut named = Cover::new(CoverType::F);
-    named
-        .add_expr(&crate::BoolExpr::<crate::Symbol>::var("x"), "f")
-        .unwrap();
+    named.add_expr(&crate::BoolExpr::var("x"), "f").unwrap();
 
     // Drop only the output label, keeping the named inputs.
     let anon_out: Cover<Symbol, Anonymous> = named.clone().relabel_outputs([Anonymous]).unwrap();
@@ -2882,36 +2869,4 @@ fn pla_writer_output_unchanged_for_dont_care_only_cover() {
         cover.to_pla_string(CoverType::F).unwrap(),
         ".i 2\n.o 1\n.p 1\n-- 1\n.e\n"
     );
-}
-
-// ===== Cover <-> Bdd/BoolExpr bridge: non-Symbol stored label S =====
-
-/// [`Cover::add_bdd`] requires the handle's cell label to equal the cover's own label `L`. Here both are
-/// `Arc<str>`, exercising the bridge at a non-`Symbol` stored label.
-#[test]
-fn add_bdd_accepts_arc_str_labelled_handle() {
-    let builder: crate::bdd::BddBuilder<_, crate::bdd::LocalCell<Arc<str>>> = crate::bdd_builder!();
-    let f = builder.parse("a & b").unwrap();
-
-    let mut cover: Cover<Arc<str>, Arc<str>> = Cover::new(CoverType::F);
-    cover.add_bdd(&f, "out").unwrap();
-
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.num_outputs(), 1);
-    assert_eq!(cover.input_labels()[0].as_ref(), "a");
-    assert_eq!(cover.input_labels()[1].as_ref(), "b");
-    assert_eq!(cover.output_labels()[0].as_ref(), "out");
-    assert!(cover.num_cubes() > 0);
-}
-
-/// `From<BoolExpr<String>> for Cover<String, Anonymous>` — the generic bridge instantiated at a
-/// non-`Symbol` stored label.
-#[test]
-fn from_boolexpr_string_yields_string_labelled_anonymous_cover() {
-    let f: crate::BoolExpr<String> = "a & b".parse().unwrap();
-    let cover: Cover<String, Anonymous> = f.into();
-
-    assert_eq!(cover.num_outputs(), 1);
-    assert_eq!(cover.num_inputs(), 2);
-    assert_eq!(cover.input_labels(), &["a".to_string(), "b".to_string()]);
 }

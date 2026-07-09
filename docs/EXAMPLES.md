@@ -22,10 +22,10 @@ This guide provides examples for using espresso-logic across its two layers: the
 where string literals are fresh variables (`*`/`&` AND, `+`/`|` OR, `^` XOR, `~`/`!` NOT):
 
 ```rust
-use espresso_logic::{expr, BoolExpr};
+use espresso_logic::expr;
 
-let xor: BoolExpr = expr!("a" ^ "b");
-let sop: BoolExpr = expr!("a" & "b" | !"a" & "c");
+let xor = expr!("a" ^ "b");
+let sop = expr!("a" & "b" | !"a" & "c");
 
 println!("{xor}");
 println!("{sop}");
@@ -42,11 +42,11 @@ use espresso_logic::BoolExpr;
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
 // The grammar accepts both `*`/`+`/`~` and `&`/`|`/`!`, which may be mixed.
-let maths: BoolExpr   = BoolExpr::parse("(a + b) * (c + d)")?;
-let bitwise: BoolExpr = BoolExpr::parse("(a | b) & (c | d)")?;
+let maths   = BoolExpr::parse("(a + b) * (c + d)")?;
+let bitwise = BoolExpr::parse("(a | b) & (c | d)")?;
 assert_eq!(maths, bitwise);
 
-let mixed: BoolExpr = BoolExpr::parse("a * b | c & d")?;
+let mixed = BoolExpr::parse("a * b | c & d")?;
 println!("{mixed}");
 # Ok(())
 # }
@@ -58,10 +58,10 @@ Evaluation is a semantic operation, so it goes through the `Bdd` layer: build th
 builder and evaluate the handle.
 
 ```rust
-use espresso_logic::{bdd_builder, expr, BoolExpr, Minterm, Symbol};
+use espresso_logic::{bdd_builder, expr, Minterm, Symbol};
 
-let expr: BoolExpr = expr!("a" & "b" | !"a");
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let expr = expr!("a" & "b" | !"a");
+let builder = bdd_builder!();
 let f = builder.build(&expr);
 
 // The assignment is a Minterm fixing each variable; a complete one over the support yields `Ok`.
@@ -76,7 +76,7 @@ assert_eq!(f.evaluate(&assignment), Ok(false));
 ```rust
 use espresso_logic::BoolExpr;
 
-let expr: BoolExpr = BoolExpr::parse("a & b | c & d").unwrap();
+let expr = BoolExpr::parse("a & b | c & d").unwrap();
 // `variables()` is a lazy iterator in token order; sort to compare.
 let mut names: Vec<String> = expr.variables().map(|s| s.to_string()).collect();
 names.sort();
@@ -95,7 +95,7 @@ manager; mint one with [`bdd_builder!`] (or [`sync_bdd_builder!`] for a thread-s
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 
 // Compose without `.clone()` in a scope: `ScopedBdd` handles are Copy, so an operand is reused for free.
 let f = builder.scope(|s| {
@@ -116,7 +116,7 @@ assert!(f.equivalent_to(&g));
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 
@@ -134,7 +134,7 @@ assert!(consensus.equivalent_to(&reduced));
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = a.clone() & b.clone();
@@ -156,7 +156,7 @@ assert!((a.clone() & !a).is_contradiction());
 ```rust
 use espresso_logic::bdd_builder;
 
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
@@ -178,7 +178,7 @@ assert!(swapped.equivalent_to(&(b & !a)));
 use espresso_logic::bdd_builder;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
@@ -246,12 +246,12 @@ together.
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let c = builder.var("c");
 
-let mut cover: Cover<espresso_logic::Symbol, espresso_logic::Symbol> = Cover::new(CoverType::F);
+let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&(a.clone() & b.clone()), "and_out")?;
 cover.add_bdd(&(a.clone() | c.clone()), "or_out")?;
 cover.add_bdd(&((a & b.clone()) | (b & c)), "complex_out")?;
@@ -268,12 +268,12 @@ for (name, expr) in minimized.to_exprs() {
 The same works from syntactic expressions with [`Cover::add_expr`]:
 
 ```rust
-use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable, Symbol};
+use espresso_logic::{BoolExpr, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let mut cover: Cover<espresso_logic::Symbol, espresso_logic::Symbol> = Cover::new(CoverType::F);
-cover.add_expr(&BoolExpr::<Symbol>::parse("a & b | c & d")?, "f1")?;
-cover.add_expr(&BoolExpr::<Symbol>::parse("x & y | z")?, "f2")?;
+let mut cover = Cover::new(CoverType::F);
+cover.add_expr(&BoolExpr::parse("a & b | c & d")?, "f1")?;
+cover.add_expr(&BoolExpr::parse("x & y | z")?, "f2")?;
 
 let minimized = cover.minimize()?;
 for (name, expr) in minimized.to_exprs() {
@@ -294,7 +294,7 @@ negation in the next-state logic does not blow up into an exponential sum-of-pro
 use espresso_logic::{bdd_builder, Cover, CoverType, Minimizable};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+let builder = bdd_builder!();
 
 // Activation: at least 4 of 5 inputs high.
 let activation = builder.parse(
@@ -320,7 +320,7 @@ let deactivation = builder.parse(
 // already-built activation/deactivation handles in (a zero-cost re-view) — no `.clone()`.
 let next_q = builder.scope(|s| (s.lift(&activation) | s.var("q")) & !s.lift(&deactivation));
 
-let mut cover: Cover<espresso_logic::Symbol, espresso_logic::Symbol> = Cover::new(CoverType::F);
+let mut cover = Cover::new(CoverType::F);
 cover.add_bdd(&activation, "activation")?;
 cover.add_bdd(&deactivation, "deactivation")?;
 cover.add_bdd(&next_q, "next_q")?;
@@ -470,7 +470,7 @@ for handle in handles {
 use espresso_logic::sync_bdd_builder;
 use std::thread;
 
-let builder: espresso_logic::BddBuilder<_, espresso_logic::SyncCell> = sync_bdd_builder!();
+let builder = sync_bdd_builder!();
 let a = builder.var("a");
 let b = builder.var("b");
 let f = a & b;

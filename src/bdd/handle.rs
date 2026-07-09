@@ -6,11 +6,8 @@
 //! outlive the builder that minted it.
 //!
 //! A handle carries two orthogonal type parameters: a [`Brand`] `B` (uniqueness only) and a
-//! [`ManagerCell`] `C` (the storage backend, which also fixes the stored label type through its
-//! [`Label`](ManagerCell::Label) associated type — variable names are genuinely stored as that type, and
-//! every label-producing output is handed back as `C::Label`). Two handles can be combined only when they
-//! share both — i.e. when they came from the same builder. Mixing handles of two different brands is a
-//! compile error,
+//! [`ManagerCell`] `C` (the storage backend). Two handles can be combined only when they share both — i.e.
+//! when they came from the same builder. Mixing handles of two different brands is a compile error,
 //! enforced by the invariant brand parameter. As a runtime backstop against a brand clash (two builders
 //! that happen to share a brand type), every binary operation asserts the two handles point at the same
 //! manager.
@@ -24,13 +21,14 @@ use std::sync::Arc;
 
 use super::brand::Brand;
 use super::builder::BddBuilder;
-use crate::bdd::manager::{BddNode as ManagerNode, BddOps, NodeId, VarId, FALSE_NODE, TRUE_NODE};
+use crate::bdd::manager::{BddNode as ManagerNode, BddOps, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{
     Anonymous, Cover, CoverType, Cube, CubeType, Minterm, OutputSet, StringLabel, Symbols,
 };
 use crate::expression::BoolExpr;
 use crate::impl_binary_operator;
+use crate::Symbol;
 
 /// An owned, refcounted handle to a canonical BDD root within one builder.
 ///
@@ -111,7 +109,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// // Build a handle, then drop the builder that made it.
     /// let a = {
-    ///     let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    ///     let builder = bdd_builder!();
     ///     builder.var("a")
     /// };
     ///
@@ -199,7 +197,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// result. A name that is **not** a variable of this function leaves it unchanged (a no-op);
     /// restricting every support variable collapses the function to a constant.
     #[must_use]
-    pub fn restrict<V: AsRef<str>>(&self, var: V, value: bool) -> Self {
+    pub fn restrict<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
         Self::from_root(
             &self.cell,
             super::encoding::restrict(&self.cell, self.root, var.as_ref(), value),
@@ -213,7 +211,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// multi-variable cofactor, use [`restrict_many`](Self::restrict_many) (or chain `restrict`/`cofactor`
     /// calls; or use [`forall`](Self::forall) / [`exists`](Self::exists) to quantify).
     #[must_use]
-    pub fn cofactor<V: AsRef<str>>(&self, var: V, value: bool) -> Self {
+    pub fn cofactor<S: AsRef<str>>(&self, var: S, value: bool) -> Self {
         self.restrict(var, value)
     }
 
@@ -228,7 +226,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");
@@ -239,9 +237,9 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.is_contradiction());
     /// ```
     #[must_use]
-    pub fn restrict_many<V: AsRef<str>>(
+    pub fn restrict_many<S: AsRef<str>>(
         &self,
-        assignment: impl IntoIterator<Item = (V, bool)>,
+        assignment: impl IntoIterator<Item = (S, bool)>,
     ) -> Self {
         Self::from_root(
             &self.cell,
@@ -261,7 +259,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::{bdd_builder, Minterm, Symbol};
     ///
-    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     ///
@@ -287,7 +285,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.forall(&["a", "b"])`), an
     /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn forall<V: AsRef<str>>(&self, vars: impl IntoIterator<Item = V>) -> Self {
+    pub fn forall<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::and)
     }
 
@@ -300,15 +298,15 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `vars` accepts anything iterable of `AsRef<str>` — a slice reference (`f.exists(&["a", "b"])`), an
     /// owned `Vec<String>`, or an adaptor chain (`names.iter().filter(..)`) — not just borrowed slices.
     #[must_use]
-    pub fn exists<V: AsRef<str>>(&self, vars: impl IntoIterator<Item = V>) -> Self {
+    pub fn exists<S: AsRef<str>>(&self, vars: impl IntoIterator<Item = S>) -> Self {
         self.quantify(vars, Self::or)
     }
 
     /// Quantify over `vars`, folding `combine` across each variable's two cofactors. Universal and
     /// existential quantification differ only in `combine` (`and` vs `or`); this is the shared body.
-    fn quantify<V: AsRef<str>>(
+    fn quantify<S: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = V>,
+        vars: impl IntoIterator<Item = S>,
         combine: fn(&Self, &Self) -> Self,
     ) -> Self {
         let mut acc = self.clone();
@@ -331,7 +329,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");
@@ -345,7 +343,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.equivalent_to(&expected));
     /// ```
     #[must_use]
-    pub fn compose<V: AsRef<str>>(&self, var: V, g: &Self) -> Self {
+    pub fn compose<S: AsRef<str>>(&self, var: S, g: &Self) -> Self {
         self.assert_same_manager(g);
         let root = super::encoding::compose(&self.cell, self.root, var.as_ref(), g.root);
         Self::from_root(&self.cell, root)
@@ -361,7 +359,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::bdd_builder;
     ///
-    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     ///
@@ -373,15 +371,15 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// assert!(result.equivalent_to(&expected));
     /// ```
     #[must_use]
-    pub fn compose_map<'a, V: AsRef<str>>(
+    pub fn compose_map<'a, S: AsRef<str>>(
         &self,
-        map: impl IntoIterator<Item = (V, &'a Self)>,
+        map: impl IntoIterator<Item = (S, &'a Self)>,
     ) -> Self
     where
         B: 'a,
         C: 'a,
     {
-        let entries: Vec<(V, NodeId)> = map
+        let entries: Vec<(S, NodeId)> = map
             .into_iter()
             .map(|(name, g)| {
                 self.assert_same_manager(g);
@@ -450,7 +448,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// ```
     /// use espresso_logic::{bdd_builder, Minterm, Symbol};
     ///
-    /// let builder: espresso_logic::BddBuilder<_, espresso_logic::LocalCell> = bdd_builder!();
+    /// let builder = bdd_builder!();
     /// let a = builder.var("a");
     /// let b = builder.var("b");
     /// let c = builder.var("c");
@@ -615,19 +613,18 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// Each root→TRUE path becomes one input cube: a variable on the path is fixed `Some(true)` /
     /// `Some(false)`, a variable off the path is a don't-care (`None`). Variables are carried by name
-    /// (the cell's stored label type `C::Label`); the output side is a single [`Anonymous`] column,
-    /// asserted by every cube — i.e. the
+    /// (`Symbol`); the output side is a single [`Anonymous`] column, asserted by every cube — i.e. the
     /// cover is the **characteristic function** of this BDD over its support variables. The returned cover
     /// is an `F` (ON-set) cover.
     #[must_use]
-    pub fn cover(&self) -> Cover<C::Label, Anonymous> {
+    pub fn cover(&self) -> Cover<Symbol, Anonymous> {
         self.extract_cubes(CoverType::F)
     }
 
     /// Renamed to [`cover`](Self::cover).
     #[deprecated(since = "5.2.0", note = "renamed to `cover`")]
     #[must_use]
-    pub fn to_cubes(&self) -> Cover<C::Label, Anonymous> {
+    pub fn to_cubes(&self) -> Cover<Symbol, Anonymous> {
         self.cover()
     }
 
@@ -637,12 +634,11 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// off-set cube ([`CubeType::R`]); a variable on a path is fixed `Some(true)` / `Some(false)`, one
     /// off the path is a don't-care (`None`). The two sides partition the minterm space — a BDD path
     /// reaches exactly one terminal, so the on-set and off-set are disjoint and jointly exhaustive.
-    /// Variables are carried by name (the cell's stored label type `C::Label`) over a single asserted
-    /// [`Anonymous`] output column, as
+    /// Variables are carried by name (`Symbol`) over a single asserted [`Anonymous`] output column, as
     /// in [`cover`](Self::cover). Feeding the result to [`minimize_fr`](Self::minimize_fr) minimises
     /// the on-set against this exact off-set rather than a recomputed complement.
     #[must_use]
-    pub fn cover_fr(&self) -> Cover<C::Label, Anonymous> {
+    pub fn cover_fr(&self) -> Cover<Symbol, Anonymous> {
         self.extract_cubes(CoverType::FR)
     }
 
@@ -651,18 +647,20 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Walks every root→terminal path once under a single read guard, emitting an `F` cube per TRUE
     /// path and — only when `cover_type` carries an off-set — an `R` cube per FALSE path. The returned
     /// cover carries `cover_type` verbatim.
-    fn extract_cubes(&self, cover_type: CoverType) -> Cover<C::Label, Anonymous> {
+    fn extract_cubes(&self, cover_type: CoverType) -> Cover<Symbol, Anonymous> {
         // Canonical, alphabetically sorted header shared by every extracted cube. `variables()` yields
-        // the support as the cell's stored label type `C::Label` in traversal (unsorted) order, so sort
-        // here (Ord from the `Label` bound) to keep the header canonical.
-        let mut names: Vec<C::Label> = self.variables().collect();
+        // the support in traversal (unsorted) order, so sort here to keep the header canonical.
+        let mut names: Vec<Symbol> = self.variables().collect();
         names.sort();
-        // The support variables are distinct, so the header cannot carry a duplicate: the manager
-        // round-trip-verifies each stored name at insertion time (see `get_or_create_var`), so two
-        // distinct names never collapse into one here.
-        let symbols = Symbols::new(names.clone().into()).expect(
-            "BDD support variables are distinct - this indicates a bug in the BDD implementation",
-        );
+        let vars: Arc<[Symbol]> = names.into();
+        let index: std::collections::HashMap<Symbol, usize> = vars
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, v)| (v, i))
+            .collect();
+        // A BDD's support variables are distinct, so the header cannot carry a duplicate.
+        let symbols = Symbols::new(vars).expect("BDD support variables are distinct");
         // One asserted Anonymous output column, shared by every cube.
         let output_symbols = Symbols::<Anonymous>::anonymous(1);
 
@@ -674,7 +672,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
             SetPath(usize, Option<bool>),
         }
 
-        let mut cubes: Vec<Cube<C::Label, Anonymous>> = Vec::new();
+        let mut cubes: Vec<Cube<Symbol, Anonymous>> = Vec::new();
         let mut path: Vec<Option<bool>> = vec![None; symbols.arity()];
 
         // No-reentrancy invariant: `mgr` is held across the whole walk below (dropped explicitly once the
@@ -683,13 +681,6 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
         // (`SyncCell`) or panics the `RefCell` (`LocalCell`). The loop body below only reads through `mgr`
         // and pushes onto local `stack`/`path` state — keep it that way.
         let mgr = self.cell.read();
-        // Resolve each sorted header name to its VarId once, under the same read guard, so the Decision
-        // arm maps a node's `var` straight to its header slot with no per-node name resolution.
-        let index: HashMap<VarId, usize> = names
-            .iter()
-            .enumerate()
-            .filter_map(|(i, name)| mgr.var_id(name.as_ref()).map(|v| (v, i)))
-            .collect();
         let mut stack = vec![Work::Node(self.root)];
         while let Some(work) = stack.pop() {
             match work {
@@ -716,7 +707,12 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         }
                     }
                     ManagerNode::Decision { var, low, high } => {
-                        let i = index[var];
+                        let var_name = mgr.var_name(*var).expect(
+                            "Invalid variable ID encountered during cube extraction - this indicates a bug in the BDD implementation",
+                        );
+                        let i = *index.get(var_name).expect(
+                            "BDD variable absent from the collected header - this indicates a bug in the BDD implementation",
+                        );
                         stack.push(Work::SetPath(i, None));
                         stack.push(Work::Node(*high));
                         stack.push(Work::SetPath(i, Some(true)));
@@ -740,7 +736,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// Every prime implicant — not the reduced, irredundant cover [`minimize`](Self::minimize) yields.
     /// Equivalent to `self.cover().primes()`; see [`Cover::primes`].
     #[must_use]
-    pub fn primes(&self) -> Cover<C::Label, Anonymous> {
+    pub fn primes(&self) -> Cover<Symbol, Anonymous> {
         self.cover().primes()
     }
 
@@ -755,10 +751,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over<V: AsRef<str>>(
+    pub fn cover_over<S: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = V>,
-    ) -> Cover<C::Label, Anonymous> {
+        vars: impl IntoIterator<Item = S>,
+    ) -> Cover<Symbol, Anonymous> {
         self.cover().over_vars(vars)
     }
 
@@ -774,10 +770,10 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// `vars` names a variable *set*: a repeated name is deduplicated (see [`Cover::over_vars`]).
     #[must_use]
-    pub fn cover_over_fr<V: AsRef<str>>(
+    pub fn cover_over_fr<S: AsRef<str>>(
         &self,
-        vars: impl IntoIterator<Item = V>,
-    ) -> Cover<C::Label, Anonymous> {
+        vars: impl IntoIterator<Item = S>,
+    ) -> Cover<Symbol, Anonymous> {
         self.cover_fr().over_vars(vars)
     }
 
@@ -792,7 +788,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// Equivalent to `self.cover().maximize()`.
     #[must_use]
-    pub fn maximize(&self) -> Cover<C::Label, Anonymous> {
+    pub fn maximize(&self) -> Cover<Symbol, Anonymous> {
         self.cover().maximize()
     }
 
@@ -805,7 +801,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     ///
     /// Equivalent to `self.cover_fr().maximize()`.
     #[must_use]
-    pub fn maximize_fr(&self) -> Cover<C::Label, Anonymous> {
+    pub fn maximize_fr(&self) -> Cover<Symbol, Anonymous> {
         self.cover_fr().maximize()
     }
 
@@ -820,7 +816,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
-    pub fn minimize(&self) -> Result<Cover<C::Label, Anonymous>, crate::error::MinimizationError> {
+    pub fn minimize(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.cover().minimize()
     }
@@ -836,9 +832,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`](crate::error::MinimizationError) from the Espresso engine.
-    pub fn minimize_fr(
-        &self,
-    ) -> Result<Cover<C::Label, Anonymous>, crate::error::MinimizationError> {
+    pub fn minimize_fr(&self) -> Result<Cover<Symbol, Anonymous>, crate::error::MinimizationError> {
         use crate::Minimizable;
         self.cover_fr().minimize()
     }
@@ -853,7 +847,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// `BoolExpr` is syntactic; building it back here yields the same canonical handle, but its token
     /// structure reflects the factored cubes, not this BDD's node graph.
     #[must_use]
-    pub fn to_expr(&self) -> BoolExpr<C::Label> {
+    pub fn to_expr(&self) -> BoolExpr {
         self.cover()
             .to_expr_by_index(0)
             .expect("cover yields a single-output cover, so output index 0 is in bounds")
@@ -947,9 +941,9 @@ impl<B: Brand, C: ManagerCell> std::fmt::Debug for BddVariables<'_, B, C> {
 }
 
 impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
-    type Item = C::Label;
+    type Item = Symbol;
 
-    fn next(&mut self) -> Option<C::Label> {
+    fn next(&mut self) -> Option<Symbol> {
         // Continue the deduplicated DFS under a brief read guard, stopping at the first not-yet-seen
         // decision variable. `visited`/`seen_vars` persist across calls, so a full drain performs one
         // whole-graph walk in total, and an early-stopping caller performs only part of it.
@@ -964,9 +958,8 @@ impl<B: Brand, C: ManagerCell> Iterator for BddVariables<'_, B, C> {
                 self.stack.push(high);
                 if self.seen_vars.insert(var) {
                     // An unnamed decision var id should not occur; skip it rather than end the walk.
-                    // Names are genuinely stored as the cell's `C::Label`, so hand back a clone directly.
-                    if let Some(name) = mgr.var_name(var) {
-                        return Some(name.clone());
+                    if let Some(name) = mgr.var_name(var).cloned() {
+                        return Some(name);
                     }
                 }
             }
@@ -1071,7 +1064,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                         .cloned()
                         .expect("high child folded before combine");
                     let result = f(BddNode::Decision {
-                        variable: variable.as_ref(),
+                        variable: variable.as_str(),
                         low: low_t,
                         high: high_t,
                     });
@@ -1131,7 +1124,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     } => {
                         let (low_ctx, high_ctx) = descend(
                             BddNode::Decision {
-                                variable: variable.as_ref(),
+                                variable: variable.as_str(),
                                 low: (),
                                 high: (),
                             },
@@ -1150,7 +1143,7 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
                     let low = results.pop().expect("low child result");
                     results.push(combine(
                         BddNode::Decision {
-                            variable: variable.as_ref(),
+                            variable: variable.as_str(),
                             low,
                             high,
                         },
@@ -1168,9 +1161,9 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
     /// [`fold_with_context`](Self::fold_with_context) walks run their user closures guard-free and may
     /// re-enter the builder. Node ids are stable, so the snapshotted ids stay valid after the guard
     /// drops.
-    fn snapshot_reachable(&self) -> HashMap<NodeId, SnapNode<C::Label>> {
+    fn snapshot_reachable(&self) -> HashMap<NodeId, SnapNode> {
         let mgr = self.cell.read();
-        let mut snapshot: HashMap<NodeId, SnapNode<C::Label>> = HashMap::new();
+        let mut snapshot: HashMap<NodeId, SnapNode> = HashMap::new();
         let mut stack = vec![self.root];
         while let Some(node) = stack.pop() {
             if snapshot.contains_key(&node) {
@@ -1202,12 +1195,12 @@ impl<B: Brand, C: ManagerCell> Bdd<B, C> {
 /// [`Bdd::fold_with_context`] can run their user closures after the guard is released. Mirrors the
 /// manager's node shape but owns the tested variable's name (so the borrow handed to the fold closures
 /// outlives the read guard).
-enum SnapNode<L> {
+enum SnapNode {
     /// A terminal leaf — the constant `false` or `true`.
     Terminal(bool),
     /// A decision node testing `variable`, with its `low`/`high` child ids.
     Decision {
-        variable: L,
+        variable: Symbol,
         low: NodeId,
         high: NodeId,
     },

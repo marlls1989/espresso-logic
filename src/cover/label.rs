@@ -97,16 +97,6 @@ impl Label for Anonymous {
 ///
 /// Sealed via its [`Label`] supertrait and provided by a single blanket impl, so it is an alias
 /// callers name but never implement.
-///
-/// # Round-trip contract
-///
-/// An implementor's `From<&str>` must be **content-preserving** with respect to its `AsRef<str>`:
-/// converting a `&str` and reading the label back must yield the same string (`S::from(name).as_ref()
-/// == name`), so in particular two distinct names never collapse into one label. The BDD manager stores
-/// variable names genuinely as its label type `S` and enforces this contract at variable **insertion**:
-/// `BddManager::get_or_create_var` mints `S::from(name)` and panics if the round-trip alters the name,
-/// so a lossy `From` (e.g. one that case-folds) fails deterministically at the first insertion rather
-/// than silently keying two distinct variable columns to the same label.
 pub trait StringLabel: Label + AsRef<str> + for<'a> From<&'a str> {}
 
 impl<T: Label + AsRef<str> + for<'a> From<&'a str>> StringLabel for T {}

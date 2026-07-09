@@ -8,7 +8,8 @@
 //! - Variable ordering (first-seen / insertion order)
 
 use super::manager_cell::ManagerCell;
-use crate::cover::{Anonymous, Minterm, StringLabel};
+use crate::cover::{Anonymous, Minterm};
+use crate::Symbol;
 use std::collections::{BTreeMap, HashMap};
 
 /// Node identifier in the BDD
@@ -63,21 +64,21 @@ pub(crate) enum BddNode {
 // so it is opaque outside the crate.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BddManager<S> {
+pub struct BddManager {
     /// All nodes in the BDD (terminals at indices 0 and 1)
     /// INVARIANT: Nodes are never removed or reordered - only appended
     pub(super) nodes: Vec<BddNode>,
     /// Unique table: (var, low, high) -> NodeId for hash consing
     pub(super) unique_table: HashMap<(VarId, NodeId, NodeId), NodeId>,
     /// Variable ordering: variable name -> variable id
-    pub(super) var_to_id: BTreeMap<S, VarId>,
+    pub(super) var_to_id: BTreeMap<Symbol, VarId>,
     /// Reverse mapping: variable id -> variable name
-    pub(super) id_to_var: Vec<S>,
+    pub(super) id_to_var: Vec<Symbol>,
     /// Cache for ITE operations: (f, g, h) -> result
     pub(super) ite_cache: HashMap<NodeTriple, NodeId>,
 }
 
-impl<S: StringLabel + Ord + std::borrow::Borrow<str>> BddManager<S> {
+impl BddManager {
     /// Resolve an ITE triple **without** Shannon expansion.
     ///
     /// Returns `Some(node)` when `(f, g, h)` is a terminal case or already lives in `ite_cache`,
@@ -143,30 +144,17 @@ impl<S: StringLabel + Ord + std::borrow::Borrow<str>> BddManager<S> {
     /// `VarId` without creating it (a name absent from the ordering yields `None`, which the cofactor /
     /// quantification primitives treat as a no-op).
     pub(crate) fn var_id(&self, name: &str) -> Option<VarId> {
-        // `S: Borrow<str>`, so the lookup borrows `name` directly rather than minting a throwaway
-        // `S` (and, for an interning label like `Symbol`, locking the global intern pool for a long
-        // name) on every call.
+        // `Symbol: Borrow<str>`, so the lookup borrows `name` directly rather than minting a throwaway
+        // `Symbol` (and locking the global intern pool for a long name) on every call.
         self.var_to_id.get(name).copied()
     }
 
     /// Append `name` as a new variable (or return its id if already present). Caller holds the write lock.
     fn get_or_create_var(&mut self, name: &str) -> VarId {
-        // Hit path: the zero-alloc `Borrow<str>` lookup resolves a known variable without minting an `S`.
-        if let Some(id) = self.var_id(name) {
+        let key: Symbol = Symbol::from(name);
+        if let Some(&id) = self.var_to_id.get(&key) {
             id
         } else {
-            // Miss path: mint the stored label once. Enforce the `StringLabel` round-trip contract at
-            // insertion (D8) — a `From<&str>` → `AsRef<str>` that alters the name would let two distinct
-            // names key the same variable (a lossy `S` silently collapsing columns); catching it here
-            // makes such an `S` fail deterministically at first insertion, and the round-trip identity
-            // keeps the hit path above alloc-free.
-            let key = S::from(name);
-            let got = key.as_ref();
-            if got != name {
-                panic!(
-                    "label type does not round-trip variable name {name:?} (From<&str> then AsRef<str> yielded {got:?}); its From<&str> conversion must be content-preserving — see the StringLabel round-trip contract"
-                );
-            }
             let id = self.id_to_var.len();
             self.var_to_id.insert(key.clone(), id);
             self.id_to_var.push(key);
@@ -175,7 +163,7 @@ impl<S: StringLabel + Ord + std::borrow::Borrow<str>> BddManager<S> {
     }
 
     /// Get variable name from ID
-    pub(crate) fn var_name(&self, id: VarId) -> Option<&S> {
+    pub(crate) fn var_name(&self, id: VarId) -> Option<&Symbol> {
         self.id_to_var.get(id)
     }
 
@@ -823,7 +811,6 @@ fn ite_combine_step<C: ManagerCell>(
 mod tests {
     use super::*;
     use crate::bdd::manager_cell::{LocalCell, SyncCell};
-    use crate::Symbol;
 
     /// Build `(a & b) | (a ^ c)` over an arbitrary cell, exercising `make_var`, `make_node`, `ite`, and
     /// `xor` and returning the root and the variable arity. Used to assert both cells produce the same
@@ -847,7 +834,7 @@ mod tests {
     /// engine abstraction, and a `RefCell` panics on overlap where the `RwLock` would deadlock.
     #[test]
     fn engine_runs_on_local_cell() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let (root, arity) = build_sample(&cell);
         assert_eq!(arity, 3);
         // Re-deriving an identical expression must hit the caches and yield the same canonical root.
@@ -859,8 +846,8 @@ mod tests {
     /// `LocalCell` — the two cells share one generic engine, so structure must be identical.
     #[test]
     fn both_cells_agree() {
-        let local = LocalCell::<Symbol>::new_empty();
-        let sync = SyncCell::<Symbol>::new_empty();
+        let local = LocalCell::new_empty();
+        let sync = SyncCell::new_empty();
         let (local_root, local_arity) = build_sample(&local);
         let (sync_root, sync_arity) = build_sample(&sync);
         assert_eq!(local_root, sync_root);
@@ -888,7 +875,7 @@ mod tests {
     /// `RefCell`-backed [`LocalCell`] to exercise the borrow discipline of the iterative walk.
     #[test]
     fn restrict_cofactors_on_local_cell() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let a = cell.make_var("a");
         let b = cell.make_var("b");
         let a_node = cell.make_node(a, FALSE_NODE, TRUE_NODE);
@@ -911,7 +898,7 @@ mod tests {
     /// or left free) against `f = (a & b) | (a ^ c)`.
     #[test]
     fn restrict_many_agrees_with_chained_restrict() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let (f, _) = build_sample(&cell);
         let a = cell.read().var_id("a").unwrap();
         let b = cell.read().var_id("b").unwrap();
@@ -955,7 +942,7 @@ mod tests {
     /// is unchanged before and after (the zero-write witness).
     #[test]
     fn restrict_many_full_assignment_zero_new_nodes() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let (f, _) = build_sample(&cell); // (a & b) | (a ^ c)
         let a = cell.read().var_id("a").unwrap();
         let b = cell.read().var_id("b").unwrap();
@@ -982,7 +969,7 @@ mod tests {
     /// folding it with `ite`.
     #[test]
     fn restrict_deep_chain_no_overflow() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let n = 50_000;
         let ids: Vec<VarId> = (0..n).map(|i| cell.make_var(&format!("v{i}"))).collect();
         // f = v0 & v1 & ... & v(n-1), built bottom-up: each node's low = FALSE, high = the child.
@@ -1006,7 +993,7 @@ mod tests {
     /// function is likewise a no-op — restricting nothing the function tests leaves it unchanged.
     #[test]
     fn restrict_empty_and_absent() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let (f, _) = build_sample(&cell);
 
         // All-free assignment: no-op.
@@ -1021,7 +1008,7 @@ mod tests {
     /// must not trip the `RefCell`'s borrow discipline.
     #[test]
     fn deep_chain_on_local_cell() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let names: Vec<String> = (0..400).map(|i| format!("v{i}")).collect();
         let mut acc = {
             let id = cell.make_var(&names[0]);
@@ -1042,7 +1029,7 @@ mod tests {
     /// degenerate to `restrict_to(.., true)` (setting the variable true).
     #[test]
     fn compose_substitutes_on_local_cell() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let a = cell.make_var("a");
         let b = cell.make_var("b");
         let c = cell.make_var("c");
@@ -1073,7 +1060,7 @@ mod tests {
     /// under the same substitution re-derives the same canonical nodes and mints none.
     #[test]
     fn repeated_compose_reuses_canonical_nodes() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let a = cell.make_var("a");
         let b = cell.make_var("b");
         let c = cell.make_var("c");
@@ -1095,7 +1082,7 @@ mod tests {
     /// recursive implementation would overflow on. Mirrors `restrict_deep_chain_no_overflow`.
     #[test]
     fn compose_deep_chain_no_overflow() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let n = 50_000;
         let ids: Vec<VarId> = (0..n).map(|i| cell.make_var(&format!("v{i}"))).collect();
         // f = v0 & v1 & ... & v(n-1), built bottom-up: each node's low = FALSE, high = the child.
@@ -1125,7 +1112,7 @@ mod tests {
     /// non-canonical restructuring.
     #[test]
     fn compose_map_hoist_stays_canonical() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let a = cell.make_var("a"); // id 0
         let b = cell.make_var("b"); // id 1
         let c = cell.make_var("c"); // id 2
@@ -1146,7 +1133,7 @@ mod tests {
     /// recorded once in the shared memo. This is the mechanism the streaming batch compose relies on.
     #[test]
     fn compose_into_shares_memo_across_functions() {
-        let cell = LocalCell::<Symbol>::new_empty();
+        let cell = LocalCell::new_empty();
         let a = cell.make_var("a");
         let b = cell.make_var("b");
         let c = cell.make_var("c");

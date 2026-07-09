@@ -18,14 +18,13 @@ use std::sync::Arc;
 
 /// One step of a reverse-Polish Boolean expression program.
 ///
-/// The variable operand carries a label `S` — the expression layer's interned name type
-/// [`Symbol`] by default, not a raw `String`. There is a single canonical operator set —
-/// `&`/`|`/`^`/`!` (AND/OR/XOR/NOT) — even though the text parser additionally accepts the
-/// `*`/`+`/`~` spellings.
+/// The variable operand carries a [`Symbol`] (the expression layer's interned name type), not a raw
+/// `String`. There is a single canonical operator set — `&`/`|`/`^`/`!` (AND/OR/XOR/NOT) — even though
+/// the text parser additionally accepts the `*`/`+`/`~` spellings.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Token<S = Symbol> {
+pub(crate) enum Token {
     /// Push a variable by name.
-    Var(S),
+    Var(Symbol),
     /// Push a constant.
     Const(bool),
     /// Pop one operand, push its negation.
@@ -42,11 +41,7 @@ pub(crate) enum Token<S = Symbol> {
 ///
 /// Concatenating two postfix programs and appending the operator yields the postfix program of the
 /// combined expression — the algebraic basis of all the binary [operators](super::operators).
-pub(crate) fn binary<S: Clone>(
-    op: Token<S>,
-    left: &[Token<S>],
-    right: &[Token<S>],
-) -> Arc<[Token<S>]> {
+pub(crate) fn binary(op: Token, left: &[Token], right: &[Token]) -> Arc<[Token]> {
     debug_assert!(matches!(op, Token::And | Token::Or | Token::Xor));
     let mut tokens = Vec::with_capacity(left.len() + right.len() + 1);
     tokens.extend_from_slice(left);
@@ -56,7 +51,7 @@ pub(crate) fn binary<S: Clone>(
 }
 
 /// Compose a unary negation: `child ++ [Not]`.
-pub(crate) fn unary_not<S: Clone>(child: &[Token<S>]) -> Arc<[Token<S>]> {
+pub(crate) fn unary_not(child: &[Token]) -> Arc<[Token]> {
     let mut tokens = Vec::with_capacity(child.len() + 1);
     tokens.extend_from_slice(child);
     tokens.push(Token::Not);
@@ -78,9 +73,9 @@ pub(crate) fn unary_not<S: Clone>(child: &[Token<S>]) -> Arc<[Token<S>]> {
 ///
 /// [`Bdd`]: crate::bdd::Bdd
 /// [`ExprNode`]: super::ExprNode
-pub(crate) fn fold_postfix<S, T>(
-    tokens: &[Token<S>],
-    mut var: impl FnMut(&S) -> T,
+pub(crate) fn fold_postfix<T>(
+    tokens: &[Token],
+    mut var: impl FnMut(&Symbol) -> T,
     mut constant: impl FnMut(bool) -> T,
     mut not: impl FnMut(T) -> T,
     mut and: impl FnMut(T, T) -> T,

@@ -179,10 +179,10 @@ impl<I: Iterator, H: BatchHandle> fmt::Debug for ComposeMany<I, H> {
 /// variable a function does not test — or an empty map — leaves that function unchanged.
 ///
 /// ```
-/// use espresso_logic::{bdd_builder, BddBuilder, LocalCell};
+/// use espresso_logic::bdd_builder;
 /// use espresso_logic::bdd::Composer;
 ///
-/// let builder: BddBuilder<_, LocalCell> = bdd_builder!();
+/// let builder = bdd_builder!();
 /// let a = builder.var("a");
 /// let b = builder.var("b");
 /// let c = builder.var("c");

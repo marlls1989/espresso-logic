@@ -3,7 +3,6 @@
 //! This module provides iterator types for traversing cubes and converting
 //! outputs to boolean expressions.
 
-use super::label::StringLabel;
 use super::Cover;
 use crate::expression::BoolExpr;
 use std::fmt;
@@ -35,7 +34,7 @@ impl<'a, T> Iterator for CubesIter<'a, T> {
 ///
 /// Generates boolean expressions on-demand for each output, yielding the output label (borrowed from
 /// the cover) paired with the rebuilt expression. Generic over the cover's input label `I` (which must
-/// be string-like, any [`StringLabel`], to name the variables) and output label `O`.
+/// be string-like to name the variables) and output label `O`.
 pub struct ToExprs<'a, I, O> {
     pub(super) cover: &'a Cover<I, O>,
     pub(super) current_idx: usize,
@@ -51,8 +50,8 @@ impl<I, O> fmt::Debug for ToExprs<'_, I, O> {
     }
 }
 
-impl<'a, I: StringLabel, O> Iterator for ToExprs<'a, I, O> {
-    type Item = (&'a O, BoolExpr<I>);
+impl<'a, I: AsRef<str>, O> Iterator for ToExprs<'a, I, O> {
+    type Item = (&'a O, BoolExpr);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_idx >= self.cover.num_outputs() {
