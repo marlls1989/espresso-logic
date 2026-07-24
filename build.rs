@@ -16,7 +16,7 @@
 // C code requiring libc functions. Use Emscripten instead.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     // Compile lalrpop grammar files to OUT_DIR for cargo publish compatibility
@@ -42,6 +42,9 @@ fn main() {
     // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
     // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
+    // Re-run when the manual clang-args override changes, so toggling it re-discovers (or stops
+    // discovering) the resource directory below.
+    println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
 
     // Get all C source files except main.c (we'll use this as a library)
     let c_files = vec![
@@ -223,6 +226,20 @@ fn main() {
         }
     }
 
+    // On systems where libclang is installed under a versioned prefix (for example
+    // RHEL's `clang-libs` package, which puts it in /usr/lib64/llvm17/lib without a
+    // `clang` driver on PATH), libclang can fail to locate its own builtin headers.
+    // The first `#include` while parsing the vendored C then dies with
+    // "'stddef.h' file not found". Point bindgen at the resource directory we
+    // discover from the loaded library so the vendored C parses on such systems out
+    // of the box. An explicit BINDGEN_EXTRA_CLANG_ARGS override wins, and the
+    // Emscripten path (which supplies its own sysroot above) is left untouched.
+    if !is_emscripten && env::var_os("BINDGEN_EXTRA_CLANG_ARGS").is_none() {
+        if let Some(resource_dir) = find_clang_resource_dir() {
+            builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
+        }
+    }
+
     let bindings = builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Allowlist only the FFI surface the wrapper actually calls (PLA I/O is pure Rust, so the
@@ -285,4 +302,53 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+/// Locate libclang's resource directory — the one holding the compiler-provided
+/// headers (`stddef.h`, `stdarg.h`, …) that its own `#include` resolution needs.
+///
+/// This is derived from the libclang that bindgen itself will load (via clang-sys),
+/// so it works regardless of install prefix — `/usr/lib64`, a versioned
+/// `/usr/lib64/llvm17/lib`, a Homebrew cellar, a Nix store path — and needs no
+/// `clang` driver on PATH. Returns the directory to pass as `-resource-dir`, or
+/// `None` when it cannot be determined, in which case libclang's built-in search is
+/// left to resolve the headers as usual.
+fn find_clang_resource_dir() -> Option<PathBuf> {
+    // Load libclang the same way bindgen will, then ask where the library file sits.
+    clang_sys::load().ok()?;
+    let library = clang_sys::get_library()?;
+    let lib_dir = library.path().parent()?.to_path_buf();
+
+    // The builtin headers live in `<prefix>/lib/clang/<version>/include`. Relative to
+    // the library directory (typically `<prefix>/lib`), the `clang` directory is a
+    // sibling or one level up.
+    [lib_dir.join("clang"), lib_dir.join("..").join("clang")]
+        .iter()
+        .find_map(|root| newest_versioned_resource_dir(root))
+}
+
+/// Given a `.../clang` directory, return the version subdirectory that actually
+/// carries `include/stddef.h`, choosing the highest version when several coexist.
+fn newest_versioned_resource_dir(root: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("include").join("stddef.h").is_file())
+        .collect();
+    candidates.sort_by_key(|dir| version_key(dir));
+    candidates.pop()
+}
+
+/// Sort key for a resource directory named after its clang version (`17`, `17.0.6`),
+/// so the numerically newest sorts last.
+fn version_key(dir: &Path) -> Vec<u64> {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            name.split('.')
+                .map(|part| part.parse::<u64>().unwrap_or(0))
+                .collect()
+        })
+        .unwrap_or_default()
 }

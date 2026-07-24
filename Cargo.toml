@@ -53,6 +53,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 cc = "1.0"
 bindgen = "0.69"
 lalrpop = "0.20"
+# Used at build time only, to locate libclang's resource directory (its builtin
+# headers) when it lives under a versioned prefix and cannot find them itself.
+# bindgen already pulls clang-sys in with the `runtime` feature; we reuse it.
+clang-sys = { version = "1", features = ["runtime"] }
 
 [lib]
 name = "espresso_logic"
