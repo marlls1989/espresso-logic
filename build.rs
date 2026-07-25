@@ -42,10 +42,10 @@ fn main() {
     // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
     // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
-    // Both of these steer clang-sys to a different libclang, and the resource directory discovered
-    // below is derived from whichever one gets loaded. (`BINDGEN_EXTRA_CLANG_ARGS` and its
-    // target-specific variants need no line here: bindgen reads them through `CargoCallbacks`,
-    // which emits the `rerun-if-env-changed` itself.)
+    // Both of these steer clang-sys to a different libclang, which decides whether bindgen parses
+    // the vendored C unaided and, if it does not, which resource directory the fallback below
+    // finds. (`BINDGEN_EXTRA_CLANG_ARGS` and its target-specific variants need no line here:
+    // bindgen reads them through `CargoCallbacks`, which emits the `rerun-if-env-changed` itself.)
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
     println!("cargo:rerun-if-env-changed=LLVM_CONFIG_PATH");
 
@@ -229,27 +229,7 @@ fn main() {
         }
     }
 
-    // On systems where libclang is installed under a versioned prefix (for example
-    // RHEL's `clang-libs` package, which puts it in /usr/lib64/llvm17/lib without a
-    // `clang` driver on PATH), libclang can fail to locate its own builtin headers.
-    // The first `#include` while parsing the vendored C then dies with
-    // "'stddef.h' file not found". Point bindgen at the resource directory we
-    // discover from the loaded library so the vendored C parses on such systems out
-    // of the box. The Emscripten path (which supplies its own sysroot above) is left
-    // untouched.
-    //
-    // No guard on BINDGEN_EXTRA_CLANG_ARGS: bindgen appends those args after the ones
-    // set here, and clang takes the last `-resource-dir` on the command line, so an
-    // explicit override already wins. Skipping discovery when the variable is set
-    // would instead let an unrelated use of it (an extra `-I`, say) silently disable
-    // this fix on precisely the hosts that need it.
-    if !is_emscripten {
-        if let Some(resource_dir) = find_clang_resource_dir() {
-            builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
-        }
-    }
-
-    let bindings = builder
+    let builder = builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Allowlist only the FFI surface the wrapper actually calls (PLA I/O is pure Rust, so the
         // `read_pla`/`*_PLA`/`fprint_pla` family and the standalone `simplify`/`expand`/`irredundant`/
@@ -303,9 +283,9 @@ fn main() {
         .allowlist_function("guarded_primes")
         // Generate good Rust types
         .derive_default(true)
-        .derive_debug(true)
-        .generate()
-        .expect("Unable to generate bindings");
+        .derive_debug(true);
+
+    let bindings = generate_bindings(builder, is_emscripten);
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
@@ -313,15 +293,51 @@ fn main() {
         .expect("Couldn't write bindings!");
 }
 
+/// Run bindgen, retrying with an explicitly discovered resource directory if — and
+/// only if — the plain invocation fails.
+///
+/// On a working toolchain the first attempt succeeds and this is the whole story: no
+/// resource directory is discovered, no extra flag is passed, and the bindings are
+/// exactly what bindgen would have produced on its own. The fallback exists for hosts
+/// where libclang cannot find its own builtin headers — for example RHEL's
+/// `clang-libs` package, which installs the library under /usr/lib64/llvm17/lib with
+/// no `clang` driver on PATH. There the first `#include` while parsing the vendored C
+/// dies with "'stddef.h' file not found", and pointing clang at the resource directory
+/// belonging to the loaded library gets the parse through.
+///
+/// Emscripten is excluded from the retry: it supplies its own sysroot, and a host
+/// resource directory has no business in a wasm parse.
+fn generate_bindings(builder: bindgen::Builder, is_emscripten: bool) -> bindgen::Bindings {
+    let error = match builder.clone().generate() {
+        Ok(bindings) => return bindings,
+        Err(error) => error,
+    };
+
+    if !is_emscripten {
+        if let Some(resource_dir) = find_clang_resource_dir() {
+            if let Ok(bindings) = builder
+                .clang_arg(format!("-resource-dir={}", resource_dir.display()))
+                .generate()
+            {
+                return bindings;
+            }
+        }
+    }
+
+    // Report the original failure: it is the one that describes the actual problem,
+    // whereas the retry's would just be the same parse failing the same way.
+    panic!("Unable to generate bindings: {error}");
+}
+
 /// Locate libclang's resource directory — the one holding the compiler-provided
 /// headers (`stddef.h`, `stdarg.h`, …) that its own `#include` resolution needs.
 ///
-/// This is derived from the libclang that bindgen itself will load (via clang-sys),
-/// so it works regardless of install prefix — `/usr/lib64`, a versioned
-/// `/usr/lib64/llvm17/lib`, a Homebrew cellar, a Nix store path — and needs no
-/// `clang` driver on PATH. Returns the directory to pass as `-resource-dir`, or
-/// `None` when it cannot be determined, in which case libclang's built-in search is
-/// left to resolve the headers as usual.
+/// This is derived from the libclang that bindgen itself loads (via clang-sys), so it
+/// works regardless of install prefix — `/usr/lib64`, a versioned
+/// `/usr/lib64/llvm17/lib`, a Homebrew cellar, a Nix store path — and needs no `clang`
+/// driver on PATH. Returns the directory to pass as `-resource-dir`, or `None` when it
+/// cannot be determined, in which case the caller reports the parse failure as it
+/// stands. Only reached after a plain bindgen run has already failed.
 fn find_clang_resource_dir() -> Option<PathBuf> {
     // Load libclang the same way bindgen will, then ask where the library file sits.
     clang_sys::load().ok()?;
