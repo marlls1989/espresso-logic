@@ -42,9 +42,12 @@ fn main() {
     // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
     // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
-    // Re-run when the manual clang-args override changes, so toggling it re-discovers (or stops
-    // discovering) the resource directory below.
-    println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+    // Both of these steer clang-sys to a different libclang, and the resource directory discovered
+    // below is derived from whichever one gets loaded. (`BINDGEN_EXTRA_CLANG_ARGS` and its
+    // target-specific variants need no line here: bindgen reads them through `CargoCallbacks`,
+    // which emits the `rerun-if-env-changed` itself.)
+    println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
+    println!("cargo:rerun-if-env-changed=LLVM_CONFIG_PATH");
 
     // Get all C source files except main.c (we'll use this as a library)
     let c_files = vec![
@@ -232,9 +235,15 @@ fn main() {
     // The first `#include` while parsing the vendored C then dies with
     // "'stddef.h' file not found". Point bindgen at the resource directory we
     // discover from the loaded library so the vendored C parses on such systems out
-    // of the box. An explicit BINDGEN_EXTRA_CLANG_ARGS override wins, and the
-    // Emscripten path (which supplies its own sysroot above) is left untouched.
-    if !is_emscripten && env::var_os("BINDGEN_EXTRA_CLANG_ARGS").is_none() {
+    // of the box. The Emscripten path (which supplies its own sysroot above) is left
+    // untouched.
+    //
+    // No guard on BINDGEN_EXTRA_CLANG_ARGS: bindgen appends those args after the ones
+    // set here, and clang takes the last `-resource-dir` on the command line, so an
+    // explicit override already wins. Skipping discovery when the variable is set
+    // would instead let an unrelated use of it (an extra `-I`, say) silently disable
+    // this fix on precisely the hosts that need it.
+    if !is_emscripten {
         if let Some(resource_dir) = find_clang_resource_dir() {
             builder = builder.clang_arg(format!("-resource-dir={}", resource_dir.display()));
         }
@@ -322,14 +331,62 @@ fn find_clang_resource_dir() -> Option<PathBuf> {
     // The builtin headers live in `<prefix>/lib/clang/<version>/include`. Relative to
     // the library directory (typically `<prefix>/lib`), the `clang` directory is a
     // sibling or one level up.
-    [lib_dir.join("clang"), lib_dir.join("..").join("clang")]
+    let roots = [
+        Some(lib_dir.join("clang")),
+        lib_dir.parent().map(|prefix| prefix.join("clang")),
+    ];
+    let version = loaded_clang_version();
+    roots
         .iter()
-        .find_map(|root| newest_versioned_resource_dir(root))
+        .flatten()
+        .find_map(|root| best_resource_dir(root, version.as_deref()))
+}
+
+/// The version libclang reports for itself, as the digit groups of the version
+/// number: `[17, 0, 6]` from "clang version 17.0.6", `[21, 0, 0]` from
+/// "Apple clang version 21.0.0 (clang-2100.1.1.101)".
+fn loaded_clang_version() -> Option<Vec<u64>> {
+    // SAFETY: `find_clang_resource_dir` has already loaded libclang into this thread,
+    // so the dispatch behind these three calls resolves. The `CXString` is read before
+    // it is disposed, and never used afterwards.
+    let version = unsafe {
+        let string = clang_sys::clang_getClangVersion();
+        let text = clang_sys::clang_getCString(string);
+        let owned = (!text.is_null()).then(|| {
+            std::ffi::CStr::from_ptr(text)
+                .to_string_lossy()
+                .into_owned()
+        });
+        clang_sys::clang_disposeString(string);
+        owned?
+    };
+
+    // Take the first dotted run of digits, skipping the vendor and "version" words.
+    version
+        .split_whitespace()
+        .find(|word| {
+            word.contains('.')
+                && word
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|word| {
+            word.split('.')
+                .map(|part| part.parse().unwrap_or(0))
+                .collect()
+        })
 }
 
 /// Given a `.../clang` directory, return the version subdirectory that actually
-/// carries `include/stddef.h`, choosing the highest version when several coexist.
-fn newest_versioned_resource_dir(root: &Path) -> Option<PathBuf> {
+/// carries `include/stddef.h`.
+///
+/// Several versions routinely coexist in one such directory — Debian and Ubuntu put
+/// every installed `llvm-N` under `/usr/lib/clang` — and handing libclang another
+/// version's builtin headers breaks in its own way. So prefer a directory whose name
+/// matches the loaded library's version (`17` and `17.0.6` both match a 17.0.6
+/// libclang), and fall back to the highest version present only when nothing matches
+/// or the version could not be read.
+fn best_resource_dir(root: &Path, version: Option<&[u64]>) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = std::fs::read_dir(root)
         .ok()?
         .filter_map(|entry| entry.ok())
@@ -337,11 +394,24 @@ fn newest_versioned_resource_dir(root: &Path) -> Option<PathBuf> {
         .filter(|dir| dir.join("include").join("stddef.h").is_file())
         .collect();
     candidates.sort_by_key(|dir| version_key(dir));
+
+    if let Some(version) = version {
+        // A directory matches when its name is a prefix of the reported version, which
+        // is how the abbreviated `<major>` layout used since clang 16 lines up with a
+        // full `<major>.<minor>.<patch>` report.
+        if let Some(matched) = candidates.iter().rfind(|dir| {
+            let key = version_key(dir);
+            !key.is_empty() && version.starts_with(&key)
+        }) {
+            return Some(matched.clone());
+        }
+    }
     candidates.pop()
 }
 
-/// Sort key for a resource directory named after its clang version (`17`, `17.0.6`),
-/// so the numerically newest sorts last.
+/// The digit groups of a resource directory named after its clang version (`17`,
+/// `17.0.6`), used both to sort the newest last and to compare against the version the
+/// loaded library reports. Empty when the name is not readable as UTF-8.
 fn version_key(dir: &Path) -> Vec<u64> {
     dir.file_name()
         .and_then(|name| name.to_str())
