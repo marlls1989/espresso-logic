@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.3] - 2026-07-25
+
+A build fix. No API change; 5.6.2 code compiles against 5.6.3 unchanged.
+
+### Fixed
+
+- Building on hosts where libclang cannot locate its own builtin headers. The trigger is an
+  installation under a versioned prefix — RHEL's `clang-libs` package puts libclang in
+  `/usr/lib64/llvm17/lib` with no `clang` driver on PATH — where the first `#include` while parsing
+  the vendored C died with `'stddef.h' file not found`. Working around it previously meant installing
+  `clang-devel`, which needs root.
+
+  `build.rs` now runs bindgen unaided first and, only if that fails, derives libclang's resource
+  directory from the loaded library's own path and retries with `-resource-dir`. A toolchain that
+  already worked never reaches the discovery code, so nothing changes on hosts that were building
+  successfully. When the retry cannot help either, the original parse error is what gets reported.
+
+  The discovered directory is matched against the version libclang reports for itself, since several
+  versions routinely coexist under one `clang` directory — Debian and Ubuntu install every `llvm-N`
+  under `/usr/lib/clang` — and another version's builtin headers break in their own way.
+
+### Documentation
+
+- Added `GUIDELINES.md`, the project's standing rules for API design, the C boundary, testing, lints,
+  git and versioning.
+- Rewrote `CONTRIBUTING.md`, which described a module layout the crate has not had for several major
+  versions and omitted the regression suite that actually gates a change.
+
 ## [5.6.2] - 2026-07-09
 
 **5.6.0 and 5.6.1 are yanked from crates.io. Upgrade to 5.6.2 directly from 5.5.0.**

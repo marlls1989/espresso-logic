@@ -16,7 +16,7 @@
 // C code requiring libc functions. Use Emscripten instead.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     // Compile lalrpop grammar files to OUT_DIR for cargo publish compatibility
@@ -42,6 +42,12 @@ fn main() {
     // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
     // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
+    // Both of these steer clang-sys to a different libclang, which decides whether bindgen parses
+    // the vendored C unaided and, if it does not, which resource directory the fallback below
+    // finds. (`BINDGEN_EXTRA_CLANG_ARGS` and its target-specific variants need no line here:
+    // bindgen reads them through `CargoCallbacks`, which emits the `rerun-if-env-changed` itself.)
+    println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
+    println!("cargo:rerun-if-env-changed=LLVM_CONFIG_PATH");
 
     // Get all C source files except main.c (we'll use this as a library)
     let c_files = vec![
@@ -223,7 +229,7 @@ fn main() {
         }
     }
 
-    let bindings = builder
+    let builder = builder
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Allowlist only the FFI surface the wrapper actually calls (PLA I/O is pure Rust, so the
         // `read_pla`/`*_PLA`/`fprint_pla` family and the standalone `simplify`/`expand`/`irredundant`/
@@ -277,12 +283,158 @@ fn main() {
         .allowlist_function("guarded_primes")
         // Generate good Rust types
         .derive_default(true)
-        .derive_debug(true)
-        .generate()
-        .expect("Unable to generate bindings");
+        .derive_debug(true);
+
+    let bindings = generate_bindings(builder, is_emscripten);
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+/// Run bindgen, retrying with an explicitly discovered resource directory if — and
+/// only if — the plain invocation fails.
+///
+/// On a working toolchain the first attempt succeeds and this is the whole story: no
+/// resource directory is discovered, no extra flag is passed, and the bindings are
+/// exactly what bindgen would have produced on its own. The fallback exists for hosts
+/// where libclang cannot find its own builtin headers — for example RHEL's
+/// `clang-libs` package, which installs the library under /usr/lib64/llvm17/lib with
+/// no `clang` driver on PATH. There the first `#include` while parsing the vendored C
+/// dies with "'stddef.h' file not found", and pointing clang at the resource directory
+/// belonging to the loaded library gets the parse through.
+///
+/// Emscripten is excluded from the retry: it supplies its own sysroot, and a host
+/// resource directory has no business in a wasm parse.
+fn generate_bindings(builder: bindgen::Builder, is_emscripten: bool) -> bindgen::Bindings {
+    let error = match builder.clone().generate() {
+        Ok(bindings) => return bindings,
+        Err(error) => error,
+    };
+
+    if !is_emscripten {
+        if let Some(resource_dir) = find_clang_resource_dir() {
+            if let Ok(bindings) = builder
+                .clang_arg(format!("-resource-dir={}", resource_dir.display()))
+                .generate()
+            {
+                return bindings;
+            }
+        }
+    }
+
+    // Report the original failure: it is the one that describes the actual problem,
+    // whereas the retry's would just be the same parse failing the same way.
+    panic!("Unable to generate bindings: {error}");
+}
+
+/// Locate libclang's resource directory — the one holding the compiler-provided
+/// headers (`stddef.h`, `stdarg.h`, …) that its own `#include` resolution needs.
+///
+/// This is derived from the libclang that bindgen itself loads (via clang-sys), so it
+/// works regardless of install prefix — `/usr/lib64`, a versioned
+/// `/usr/lib64/llvm17/lib`, a Homebrew cellar, a Nix store path — and needs no `clang`
+/// driver on PATH. Returns the directory to pass as `-resource-dir`, or `None` when it
+/// cannot be determined, in which case the caller reports the parse failure as it
+/// stands. Only reached after a plain bindgen run has already failed.
+fn find_clang_resource_dir() -> Option<PathBuf> {
+    // Load libclang the same way bindgen will, then ask where the library file sits.
+    clang_sys::load().ok()?;
+    let library = clang_sys::get_library()?;
+    let lib_dir = library.path().parent()?.to_path_buf();
+
+    // The builtin headers live in `<prefix>/lib/clang/<version>/include`. Relative to
+    // the library directory (typically `<prefix>/lib`), the `clang` directory is a
+    // sibling or one level up.
+    let roots = [
+        Some(lib_dir.join("clang")),
+        lib_dir.parent().map(|prefix| prefix.join("clang")),
+    ];
+    let version = loaded_clang_version();
+    roots
+        .iter()
+        .flatten()
+        .find_map(|root| best_resource_dir(root, version.as_deref()))
+}
+
+/// The version libclang reports for itself, as the digit groups of the version
+/// number: `[17, 0, 6]` from "clang version 17.0.6", `[21, 0, 0]` from
+/// "Apple clang version 21.0.0 (clang-2100.1.1.101)".
+fn loaded_clang_version() -> Option<Vec<u64>> {
+    // SAFETY: `find_clang_resource_dir` has already loaded libclang into this thread,
+    // so the dispatch behind these three calls resolves. The `CXString` is read before
+    // it is disposed, and never used afterwards.
+    let version = unsafe {
+        let string = clang_sys::clang_getClangVersion();
+        let text = clang_sys::clang_getCString(string);
+        let owned = (!text.is_null()).then(|| {
+            std::ffi::CStr::from_ptr(text)
+                .to_string_lossy()
+                .into_owned()
+        });
+        clang_sys::clang_disposeString(string);
+        owned?
+    };
+
+    // Take the first dotted run of digits, skipping the vendor and "version" words.
+    version
+        .split_whitespace()
+        .find(|word| {
+            word.contains('.')
+                && word
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|word| {
+            word.split('.')
+                .map(|part| part.parse().unwrap_or(0))
+                .collect()
+        })
+}
+
+/// Given a `.../clang` directory, return the version subdirectory that actually
+/// carries `include/stddef.h`.
+///
+/// Several versions routinely coexist in one such directory — Debian and Ubuntu put
+/// every installed `llvm-N` under `/usr/lib/clang` — and handing libclang another
+/// version's builtin headers breaks in its own way. So prefer a directory whose name
+/// matches the loaded library's version (`17` and `17.0.6` both match a 17.0.6
+/// libclang), and fall back to the highest version present only when nothing matches
+/// or the version could not be read.
+fn best_resource_dir(root: &Path, version: Option<&[u64]>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("include").join("stddef.h").is_file())
+        .collect();
+    candidates.sort_by_key(|dir| version_key(dir));
+
+    if let Some(version) = version {
+        // A directory matches when its name is a prefix of the reported version, which
+        // is how the abbreviated `<major>` layout used since clang 16 lines up with a
+        // full `<major>.<minor>.<patch>` report.
+        if let Some(matched) = candidates.iter().rfind(|dir| {
+            let key = version_key(dir);
+            !key.is_empty() && version.starts_with(&key)
+        }) {
+            return Some(matched.clone());
+        }
+    }
+    candidates.pop()
+}
+
+/// The digit groups of a resource directory named after its clang version (`17`,
+/// `17.0.6`), used both to sort the newest last and to compare against the version the
+/// loaded library reports. Empty when the name is not readable as UTF-8.
+fn version_key(dir: &Path) -> Vec<u64> {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            name.split('.')
+                .map(|part| part.parse::<u64>().unwrap_or(0))
+                .collect()
+        })
+        .unwrap_or_default()
 }
