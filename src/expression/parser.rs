@@ -53,6 +53,18 @@ impl BoolExpr {
     /// - Parentheses for grouping
     /// - Constants: `0`, `1`, `true`, `false`
     ///
+    /// A variable name is one or more segments joined by `/` or `.`, so it can carry the hierarchical
+    /// path a netlist gives a node — `xtop/xcore/net12`, or `xtop.xcore.net12` in the dotted spelling.
+    /// The first segment opens with a letter or underscore, which is what keeps the constants above
+    /// readable; later segments may be wholly numeric. Any segment may carry a bus index, `data<3>` or
+    /// `data[3]`, or a range, `data<7:0>` / `data[7:0]`, in either the angle spelling Spectre writes or
+    /// the bracket spelling Verilog does.
+    ///
+    /// The whole name is one variable: `bus[3]` and `bus[4]` are unrelated variables rather than one
+    /// indexed object, and nothing reads structure into the path or the index. The characters admitted
+    /// are those the operator set leaves free, so a name can never swallow an operator — which is why
+    /// `!` and `+` stay out of names even though netlists use them (`vdd!`).
+    ///
     /// All binary operators are left-associative. The result is the owned, syntactic [`BoolExpr`] of
     /// the parsed text (both the `*`/`+`/`~` and `&`/`|`/`!` spellings lower to the same canonical
     /// operator set).

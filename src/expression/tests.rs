@@ -381,3 +381,60 @@ fn sync_context_build_works() {
         .build(&f)
         .equivalent_to(&builder.parse("a ^ b").unwrap()));
 }
+
+#[test]
+fn a_variable_may_carry_a_hierarchical_path() {
+    // Extracted netlists name a node by its path, in the `/` spelling Spectre writes or the dotted one
+    // other tools do. The whole path is ONE variable — nothing here splits it or reads structure into
+    // it. A later segment may be wholly numeric, an instance often being named by number.
+    for src in ["xtop/xcore/net12", "xtop.xcore.net12", "u1/2/net", "_x/y"] {
+        let e = BoolExpr::parse(src).unwrap_or_else(|err| panic!("{src}: {err}"));
+        assert_eq!(e.variables().collect::<Vec<_>>(), [src]);
+    }
+}
+
+#[test]
+fn a_variable_may_carry_a_bus_index() {
+    // Both spellings, single index and range. `bus[3]` and `bus[4]` are two unrelated variables — the
+    // index is part of the name and is never interpreted.
+    for src in [
+        "data<3>",
+        "data[3]",
+        "data<7:0>",
+        "data[7:0]",
+        "xtop/xcore/data<3>",
+    ] {
+        let e = BoolExpr::parse(src).unwrap_or_else(|err| panic!("{src}: {err}"));
+        assert_eq!(e.variables().collect::<Vec<_>>(), [src]);
+    }
+    let e = BoolExpr::parse("data[3] * data[4]").expect("indexed names are ordinary variables");
+    assert_eq!(e.variables().collect::<Vec<_>>(), ["data[3]", "data[4]"]);
+}
+
+#[test]
+fn a_path_never_swallows_an_operator() {
+    // The characters a name admits are those the operator set leaves free, so widening the name did not
+    // cost the parser an operator: each of these still reads as two variables and one operator.
+    for src in ["a/b+c/d", "a.b*c.d", "a[0]&b[1]", "a<0>|b<1>", "a/b^c/d"] {
+        let e = BoolExpr::parse(src).unwrap_or_else(|err| panic!("{src}: {err}"));
+        assert_eq!(e.variables().count(), 2, "{src} reads as two variables");
+    }
+    // A prefix NOT binds to the path that follows it rather than joining it.
+    let e = BoolExpr::parse("!a/b").expect("NOT applies to a path");
+    assert_eq!(e.variables().collect::<Vec<_>>(), ["a/b"]);
+}
+
+#[test]
+fn a_malformed_path_is_an_error_rather_than_a_name() {
+    // A name is segments joined by single separators, so a stray or doubled one is rejected rather than
+    // absorbed — a typo becomes an error instead of a variable nothing else mentions. A leading digit
+    // stays out so `0`, `1`, `true` and `false` keep reading as the constants they are.
+    for src in ["a//b", "a/", "/a", "a.", "0/a", "a<>", "a[3", "a b"] {
+        assert!(
+            BoolExpr::parse(src).is_err(),
+            "{src} is not a name and does not parse"
+        );
+    }
+    assert_eq!(BoolExpr::parse("0").unwrap().variables().count(), 0);
+    assert_eq!(BoolExpr::parse("true").unwrap().variables().count(), 0);
+}

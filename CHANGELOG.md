@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A parsed variable name may carry a hierarchical path and a bus index.** `BoolExpr::parse` reads
+  `xtop/xcore/net12` and the dotted `xtop.xcore.net12`, and any segment may carry an index — `data<3>`
+  or `data[3]` — or a range, `data<7:0>` / `data[7:0]`, in either the angle spelling Spectre writes or
+  the bracket spelling Verilog does. This is what lets an expression name a node of an extracted
+  netlist as the netlist names it.
+
+  The whole name is one variable: `bus[3]` and `bus[4]` are unrelated variables rather than one indexed
+  object, and nothing reads structure into the path or the index. A first segment still opens with a
+  letter or underscore, so `0`, `1`, `true` and `false` keep reading as the constants they are; later
+  segments may be wholly numeric. The characters admitted are those the operator set leaves free, so no
+  name can swallow an operator — which is why `!` and `+` stay out of names even where a netlist uses
+  them, as in `vdd!`. A stray or doubled separator is an error rather than part of a name.
+
+  Every name the grammar accepts survives a PLA round-trip, `.ilb`/`.ob` being space-separated.
+
 ## [5.6.3] - 2026-07-25
 
 A build fix. No API change; 5.6.2 code compiles against 5.6.3 unchanged.
