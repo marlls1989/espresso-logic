@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.6.4] - 2026-08-02
+
 ### Added
 
 - **A parsed variable name may carry a hierarchical path and a bus index.** `BoolExpr::parse` reads
