@@ -64,8 +64,23 @@ Term: Vec<RpnToken> = {
 // Lexer rules
 
 // Match identifiers (variable names)
-// Standard Rust identifier: starts with letter or underscore,
-// followed by letters, digits, or underscores
+//
+// A name is one or more segments joined by `/` or `.`, so a variable can carry the hierarchical path
+// a netlist gives it — `xtop/xcore/net12`, or `xtop.xcore.net12` in the dotted spelling. The first
+// segment opens with a letter or underscore, keeping `0`, `1`, `true` and `false` readable as the
+// constants they are; later segments may be wholly numeric, as extracted netlists often name an
+// instance by number.
+//
+// Any segment may carry a bus index — `data<3>` or `data[3]` — or a range, `data<7:0>` / `data[7:0]`,
+// in either the angle spelling Spectre writes or the bracket spelling Verilog does. A name is one
+// variable whatever its shape: `bus[3]` and `bus[4]` are two unrelated variables, not one indexed
+// object, and nothing here interprets the index.
+//
+// The characters admitted — `/`, `.`, `<`, `>`, `[`, `]`, `:` — are exactly those the operator set
+// leaves free, so no name can swallow an operator. `!` and `+` stay out even though netlists use them
+// (`vdd!`, and `+` in some tools): both are operators here, and a name carrying one would have to be
+// quoted to be read back.
+//
 // Note: Operators must be listed explicitly before identifiers to avoid
 // being treated as special regex characters
 match {
@@ -86,8 +101,8 @@ match {
     "0",
     "1",
 
-    // Identifiers (matches variable names)
-    r"[a-zA-Z_][a-zA-Z0-9_]*" => Ident,
+    // Identifiers (matches variable names, including hierarchical paths and bus indices)
+    r"[a-zA-Z_][a-zA-Z0-9_]*(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?([./][a-zA-Z0-9_]+(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?)*" => Ident,
 
     // Skip whitespace
     r"\s+" => { },
