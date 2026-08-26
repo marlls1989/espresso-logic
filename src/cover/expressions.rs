@@ -10,7 +10,7 @@ use super::minterm::Minterm;
 use super::output_set::OutputSet;
 use super::symbols::{identity_union, Symbols};
 use super::Cover;
-use crate::expression::BoolExpr;
+use crate::expression::{BoolExpr, Syntax};
 use crate::Symbol;
 use std::sync::Arc;
 
@@ -141,10 +141,10 @@ impl Cover<Symbol, Symbol> {
     /// let expr2 = expr!("b" | "a");
     /// cover.add_expr(&expr2, "output2").unwrap();
     /// ```
-    pub fn add_expr<S: AsRef<str>>(
+    pub fn add_expr<T: AsRef<str>, S: Syntax>(
         &mut self,
-        expr: &BoolExpr,
-        output_name: S,
+        expr: &BoolExpr<S>,
+        output_name: T,
     ) -> Result<(), AddExprError> {
         // Mediate the syntactic → cube transformation through a throwaway BDD builder (canonicalises
         // the expression). The builder is local; the handle borrows it and is consumed by `add_bdd`

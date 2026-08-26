@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BoolExpr now carries a syntax type parameter.** `BoolExpr` gains a type parameter `S` defaulting to
+  `StdSyntax`, which governs the operator spellings accepted when parsing, the spellings emitted by
+  `Display`, and the operator precedence applied. The default preserves existing behaviour; existing
+  code compiles unchanged. `as_syntax` is a zero-cost retag operation that reinterprets a term's
+  syntax without inspecting or modifying its tokens. Text-based parsing chooses the syntax via a
+  generic `FromStr` bound — for example, `"a & b".parse::<BoolExpr<VerilogSyntax>>()` — rather than
+  an inherent per-syntax method.
+
 ## [5.6.4] - 2026-08-02
 
 ### Added

@@ -26,7 +26,7 @@ use crate::bdd::manager::{BddOps, NodeId, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Minterm, StringLabel};
 use crate::expression::rpn;
-use crate::expression::{BoolExpr, ParseBoolExprError};
+use crate::expression::{BoolExpr, ParseBoolExprError, Syntax};
 
 /// A [`Copy`], by-reference handle into a [`BddBuilder::scope`] closure.
 ///
@@ -325,7 +325,7 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
     /// Interprets the expression's reverse-Polish token stream into canonical nodes through this scope's
     /// handles, iteratively (no recursion), so an arbitrarily deep expression cannot overflow the stack.
     #[must_use]
-    pub fn build(&self, expr: &BoolExpr) -> ScopedBdd<'s, B, C> {
+    pub fn build<S: Syntax>(&self, expr: &BoolExpr<S>) -> ScopedBdd<'s, B, C> {
         rpn::fold_postfix(
             expr.tokens(),
             |name| self.var(name.as_str()),
@@ -339,6 +339,9 @@ impl<'s, B: Brand, C: ManagerCell> Scope<'s, B, C> {
 
     /// Parse a Boolean expression from a string and build it into a [`ScopedBdd`] (the scoped analogue of
     /// [`BddBuilder::parse`]).
+    ///
+    /// Input is read as [`StdSyntax`](crate::StdSyntax); to build from another syntax, parse it explicitly
+    /// and pass the result to [`build`](Self::build): `scope.build(&text.parse::<BoolExpr<VerilogSyntax>>()?)`.
     ///
     /// # Errors
     ///

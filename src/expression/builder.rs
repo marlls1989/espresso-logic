@@ -12,7 +12,7 @@
 //! cannot escape the closure or be mixed with another build: both are compile errors.
 
 use super::rpn::Token;
-use super::BoolExpr;
+use super::{BoolExpr, Syntax};
 use crate::Symbol;
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -28,7 +28,7 @@ enum BuildNode {
     Or(u32, u32),
     Xor(u32, u32),
     /// An existing expression spliced in verbatim; its tokens are emitted as-is at serialisation.
-    Graft(BoolExpr),
+    Graft(Arc<[Token]>),
 }
 
 /// The central node arena a [`BoolExpr::build`] closure composes into.
@@ -69,8 +69,11 @@ impl ExprBuilder {
     /// The expression's tokens are emitted verbatim when the build is serialised; holding it here is a
     /// refcount bump (its tokens are an [`Arc`]).
     #[must_use]
-    pub fn graft(&self, expr: &BoolExpr) -> Expr<'_> {
-        Expr::new(self, self.push(BuildNode::Graft(expr.clone())))
+    pub fn graft<S: Syntax>(&self, expr: &BoolExpr<S>) -> Expr<'_> {
+        Expr::new(
+            self,
+            self.push(BuildNode::Graft(Arc::clone(expr.tokens_arc()))),
+        )
     }
 }
 
@@ -230,7 +233,7 @@ fn serialise(nodes: &[BuildNode], root: u32) -> Arc<[Token]> {
     let capacity: usize = nodes
         .iter()
         .map(|node| match node {
-            BuildNode::Graft(expr) => expr.tokens().len(),
+            BuildNode::Graft(toks) => toks.len(),
             _ => 1,
         })
         .sum();
@@ -242,7 +245,7 @@ fn serialise(nodes: &[BuildNode], root: u32) -> Arc<[Token]> {
             Step::Visit(id) => match &nodes[id as usize] {
                 BuildNode::Var(name) => tokens.push(Token::Var(name.clone())),
                 BuildNode::Const(value) => tokens.push(Token::Const(*value)),
-                BuildNode::Graft(expr) => tokens.extend_from_slice(expr.tokens()),
+                BuildNode::Graft(toks) => tokens.extend_from_slice(toks),
                 BuildNode::Not(inner) => {
                     work.push(Step::Emit(Token::Not));
                     work.push(Step::Visit(*inner));

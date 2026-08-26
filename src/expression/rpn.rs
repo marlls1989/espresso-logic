@@ -21,8 +21,12 @@ use std::sync::Arc;
 /// The variable operand carries a [`Symbol`] (the expression layer's interned name type), not a raw
 /// `String`. There is a single canonical operator set — `&`/`|`/`^`/`!` (AND/OR/XOR/NOT) — even though
 /// the text parser additionally accepts the `*`/`+`/`~` spellings.
+///
+/// Crate-internal: nominally `pub` only so that it can be named in the `pub(crate)` sealing trait behind
+/// [`Syntax`](super::Syntax) without tripping `private_interfaces`. The enclosing `rpn` module is
+/// `pub(crate)`, so nothing downstream can reach this type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Token {
+pub enum Token {
     /// Push a variable by name.
     Var(Symbol),
     /// Push a constant.
