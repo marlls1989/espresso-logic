@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generic `FromStr` bound — for example, `"a & b".parse::<BoolExpr<VerilogSyntax>>()` — rather than
   an inherent per-syntax method.
 
+  Two syntaxes ship. `StdSyntax` is the crate's own, unchanged from before and what the parameter
+  defaults to. `VerilogSyntax` reads and writes Verilog's spellings: `~` for NOT, `&`, `|` and `^`
+  for AND, OR and XOR, `^~` and `~^` for XNOR, and `1'b1`/`1'b0` for the constants, which are also
+  read in the `1'B` case and as the bare digits `1` and `0`. The precedence order is the one Verilog
+  shares with `StdSyntax`. Each syntax reads its own lexicon and nothing else, so `*`, `+` and a bare
+  `'` are rejected as Verilog, and `true`/`false` read as ordinary identifiers there — which is what
+  they are in Verilog.
+
+  XNOR carries no token of its own: `a ^~ b` lowers to the same XOR-then-NOT pair as `~(a ^ b)` and
+  renders back in that form. The spelling alone decides the reading, the lexer taking the longest
+  match, so `a ^~ b` is XNOR while `a ^ ~b` is XOR of a NOT.
+
 ## [5.6.4] - 2026-08-02
 
 ### Added

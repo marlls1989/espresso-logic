@@ -1,7 +1,11 @@
 //! Parsing support for boolean expressions.
 //!
-//! The lalrpop grammar (`bool_expr.lalrpop`) emits a reverse-Polish [`Token`] program directly, which
-//! [`BoolExpr::parse`] wraps into an owned [`BoolExpr`].
+//! One lalrpop grammar per surface syntax — `bool_expr.lalrpop` for [`StdSyntax`](super::StdSyntax),
+//! `verilog_expr.lalrpop` for [`VerilogSyntax`](super::VerilogSyntax) — each emitting a reverse-Polish
+//! [`Token`] program directly, which [`BoolExpr::parse`] or the [`FromStr`](std::str::FromStr) impl
+//! wraps into an owned [`BoolExpr`]. The grammars are separate files because each carries its own
+//! `match` block, and therefore its own tokenizer: sharing one would let either syntax's spellings win
+//! the longest match inside the other's input.
 
 use super::error::{ExpressionParseError, ParseBoolExprError};
 use super::rpn::Token;
@@ -16,6 +20,14 @@ lalrpop_util::lalrpop_mod!(
     #[allow(clippy::all)]
     parser_impl,
     "/expression/bool_expr.rs"
+);
+
+// The Verilog grammar's generated parser, included the same way. A second module rather than a second
+// entry point in the first: each grammar owns its lexer.
+lalrpop_util::lalrpop_mod!(
+    #[allow(clippy::all)]
+    verilog_impl,
+    "/expression/verilog_expr.rs"
 );
 
 /// Turn a lalrpop parse error over `input` into this crate's [`ParseBoolExprError`].
@@ -53,6 +65,17 @@ pub(crate) fn map_error<T: std::fmt::Display>(
 /// face.
 pub(crate) fn parse_std(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
     parser_impl::ExprParser::new()
+        .parse(input)
+        .map_err(|e| map_error(input, e))
+}
+
+/// Parse a string in the Verilog syntax into a reverse-Polish [`Token`] program.
+///
+/// The grammar entry point behind [`VerilogSyntax`](super::VerilogSyntax). It has no inherent public
+/// face — a second inherent `parse` would make the method name ambiguous — so Verilog text reaches it
+/// through the [`FromStr`](std::str::FromStr) impl, `text.parse::<BoolExpr<VerilogSyntax>>()`.
+pub(crate) fn parse_verilog(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+    verilog_impl::ExprParser::new()
         .parse(input)
         .map_err(|e| map_error(input, e))
 }

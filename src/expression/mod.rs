@@ -50,7 +50,7 @@ pub use ast::ExprNode;
 pub use builder::{Expr, ExprBuilder};
 
 // The surface syntax an expression is spelled in.
-pub use syntax::{StdSyntax, Syntax};
+pub use syntax::{StdSyntax, Syntax, VerilogSyntax};
 
 use crate::Symbol;
 use rpn::Token;
@@ -195,6 +195,36 @@ impl<S: Syntax> BoolExpr<S> {
     ///
     /// This is not a [`From`] impl: a blanket `From<BoolExpr<S>> for BoolExpr<T>` would overlap the
     /// reflexive `From<T> for T` in `core` and is rejected for it.
+    ///
+    /// # Examples
+    ///
+    /// Equality relates expressions of one syntax, so the retag is what brings two differently spelled
+    /// expressions onto common ground:
+    ///
+    /// ```
+    /// use espresso_logic::{BoolExpr, VerilogSyntax};
+    ///
+    /// # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+    /// let standard = BoolExpr::parse("a & b | !c")?;
+    /// let verilog = "a & b | ~c".parse::<BoolExpr<VerilogSyntax>>()?;
+    ///
+    /// assert_eq!(standard.as_syntax::<VerilogSyntax>(), verilog);
+    /// assert_eq!(verilog.to_string(), "a & b | ~c");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Comparing across syntaxes without the retag is a compile error rather than a silent `false`:
+    ///
+    /// ```compile_fail
+    /// use espresso_logic::{BoolExpr, VerilogSyntax};
+    ///
+    /// let standard = BoolExpr::parse("a & b").unwrap();
+    /// let verilog = "a & b".parse::<BoolExpr<VerilogSyntax>>().unwrap();
+    ///
+    /// // error[E0308]: mismatched types — `PartialEq` relates one syntax to itself only.
+    /// let _ = standard == verilog;
+    /// ```
     #[must_use]
     pub fn as_syntax<T: Syntax>(&self) -> BoolExpr<T> {
         BoolExpr::from_tokens(Arc::clone(&self.tokens))
@@ -251,5 +281,7 @@ impl Iterator for ExprVariables<'_> {
 // Once the token stream is exhausted the cursor stays exhausted, so `None` is terminal.
 impl std::iter::FusedIterator for ExprVariables<'_> {}
 
+#[cfg(test)]
+mod syntax_tests;
 #[cfg(test)]
 mod tests;

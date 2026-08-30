@@ -39,9 +39,11 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=espresso-src");
-    // Regenerate the parser when the grammar changes. Without this, the explicit `rerun-if-changed`
-    // above suppresses cargo's default "rerun on any change", so grammar edits would be missed.
+    // Regenerate the parsers when a grammar changes. Without these, the explicit `rerun-if-changed`
+    // above suppresses cargo's default "rerun on any change", so grammar edits would be missed. One
+    // line per grammar file — a syntax added without its line would silently not rebuild.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
+    println!("cargo:rerun-if-changed=src/expression/verilog_expr.lalrpop");
     // Both of these steer clang-sys to a different libclang, which decides whether bindgen parses
     // the vendored C unaided and, if it does not, which resource directory the fallback below
     // finds. (`BINDGEN_EXTRA_CLANG_ARGS` and its target-specific variants need no line here:

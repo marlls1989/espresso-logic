@@ -6,7 +6,13 @@
 //! canonical reverse-Polish token stream over `&`/`|`/`^`/`!`, whichever syntax labels it.
 //!
 //! [`StdSyntax`] is the crate's own surface form: `&`/`|`/`^`/`!` with `1`/`0` for the constants, in the
-//! precedence order (loosest to tightest) `|` < `^` < `&` < `!` < atom.
+//! precedence order (loosest to tightest) `|` < `^` < `&` < `!` < atom. [`VerilogSyntax`] spells the
+//! same operators as Verilog does — `~` for NOT, `^~`/`~^` for XNOR, `1'b1`/`1'b0` for the constants —
+//! over that same precedence order, which Verilog shares.
+//!
+//! Each syntax is strict: it accepts its own lexicon and no other, so text is read the way the syntax
+//! naming it reads it rather than by whichever grammar happens to admit it. Whatever a syntax emits it
+//! also parses, so `Display` output re-parses to the expression it came from.
 //!
 //! The trait is **sealed**: it cannot be implemented outside this crate. A syntax is inseparable from an
 //! in-crate grammar that parses its spellings, so a downstream marker type would have nothing to parse
@@ -119,3 +125,77 @@ impl syntax_seal::Sealed for StdSyntax {
 }
 
 impl Syntax for StdSyntax {}
+
+/// Verilog's expression syntax.
+///
+/// # Lexicon
+///
+/// | Meaning | Accepted | Emitted |
+/// |---------|----------|---------|
+/// | OR      | `\|`         | `\|`      |
+/// | XOR     | `^`          | `^`     |
+/// | XNOR    | `^~` or `~^` | — (see below) |
+/// | AND     | `&`          | `&`     |
+/// | NOT     | `~` or `!`   | `~`     |
+/// | `true`  | `1'b1`, `1'B1` or `1` | `1'b1` |
+/// | `false` | `1'b0`, `1'B0` or `0` | `1'b0` |
+///
+/// Parentheses group. The precedence order (loosest to tightest) is `|` < `^`/`^~` < `&` < `~` < atom,
+/// the same order [`StdSyntax`] uses; the binary operators are left-associative.
+///
+/// The lexicon is Verilog's and nothing else: the `*`, `+` and `'` characters the standard syntax
+/// admits are rejected here, `&&` fails at its second `&`, and `true`/`false` are read as ordinary
+/// identifiers — they name variables in Verilog, not constants.
+///
+/// XNOR is not a distinct operator in the token stream: `a ^~ b` lowers to the XOR-then-NOT pair, which
+/// renders back as `~(a ^ b)`. The lexer takes the longest match, so `a ^~ b` is XNOR while `a ^ ~b`,
+/// with the `~` separated from the `^`, is XOR of a NOT — two different expressions.
+///
+/// # Obtaining one
+///
+/// Verilog text is parsed by naming the syntax on the target type, since the syntax is not a parameter
+/// of [`BoolExpr::parse`](super::BoolExpr::parse):
+///
+/// ```
+/// use espresso_logic::{BoolExpr, VerilogSyntax};
+///
+/// # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+/// let f = "a ^~ b".parse::<BoolExpr<VerilogSyntax>>()?;
+/// assert_eq!(f.to_string(), "~(a ^ b)");
+///
+/// // An expression already in hand is relabelled rather than re-parsed.
+/// let g = BoolExpr::parse("a & b | !c")?.as_syntax::<VerilogSyntax>();
+/// assert_eq!(g.to_string(), "a & b | ~c");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct VerilogSyntax;
+
+impl syntax_seal::Sealed for VerilogSyntax {
+    // Verilog's lexicon over the standard syntax's binding order, which Verilog shares. NOT emits `~`
+    // (`!` is accepted on the way in only), and the constants emit in the lowercase `1'b` spelling.
+    //
+    // XNOR needs no entry: its Xor-then-Not token pair renders as `~(a ^ b)` from the parts below,
+    // `prec_xor < prec_not` forcing the parentheses.
+    const SPEC: SyntaxSpec = SyntaxSpec {
+        and: "&",
+        or: "|",
+        xor: "^",
+        not_prefix: "~",
+        not_suffix: "",
+        one: "1'b1",
+        zero: "1'b0",
+        prec_atom: 4,
+        prec_not: 3,
+        prec_and: 2,
+        prec_xor: 1,
+        prec_or: 0,
+    };
+
+    fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+        super::parser::parse_verilog(input)
+    }
+}
+
+impl Syntax for VerilogSyntax {}
