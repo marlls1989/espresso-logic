@@ -132,8 +132,10 @@ impl<S: Syntax> std::hash::Hash for BoolExpr<S> {
 }
 
 /// The constant `false` — the identity element for `|`/`^`, so it composes cleanly as a starting
-/// accumulator.
-impl<S: Syntax> Default for BoolExpr<S> {
+/// accumulator. Originates in the standard syntax, like [`var`](Self::var) and
+/// [`constant`](Self::constant); reach for another syntax with
+/// [`as_syntax`](Self::as_syntax).
+impl Default for BoolExpr {
     fn default() -> Self {
         // Built from tokens rather than through `constant`, which originates in the standard syntax
         // only; the constant `false` is the same single token whichever syntax spells it.
@@ -141,8 +143,9 @@ impl<S: Syntax> Default for BoolExpr<S> {
     }
 }
 
-// Origination is deliberately concrete: `var`, `constant`, `parse` and `build` all sit on a bare
-// `impl BoolExpr` block, which is `impl BoolExpr<StdSyntax>` through the type-position default.
+// Origination is deliberately concrete: `var`, `constant`, `parse`, `build` and `default` all sit on
+// a bare `impl BoolExpr` (or, for `default`, `impl Default for BoolExpr`) block, which is
+// `impl BoolExpr<StdSyntax>` through the type-position default.
 //
 // Type parameter defaults do not participate in inference on stable Rust (checked against rustc
 // 1.96.0). Making these constructors generic over the syntax therefore leaves every existing
@@ -151,6 +154,14 @@ impl<S: Syntax> Default for BoolExpr<S> {
 // items in scope`. So no per-syntax inherent constructor is added: an expression in another syntax
 // comes from text through the `FromStr` impl, `text.parse::<BoolExpr<OtherSyntax>>()`, and from an
 // existing expression through `as_syntax`.
+//
+// This keeps origination call sites unaffected — `var`, `constant`, `parse`, `build` and `default`
+// called without an explicit type argument. It does not reach a call site whose syntax used to be
+// inferred from a *consumer* rather than named at origination: an unannotated `.parse()` fed
+// straight into `BddBuilder::build`, e.g. `builder.build(&"a & b".parse().unwrap())`, used to have
+// its `BoolExpr` pinned by `build`'s (then-concrete) parameter type. Now that `build` is itself
+// generic over the syntax, there is nothing left to infer from, and the parse needs its type named,
+// e.g. `text.parse::<BoolExpr>()`.
 impl BoolExpr {
     /// Create a variable expression with the given name.
     #[must_use]

@@ -49,9 +49,13 @@ OrExpr: Vec<RpnToken> = {
 //
 // Its three alternatives are one left-associative tier, so `a * b c` is `(a & b) & c` however the
 // conjunctions are spelled. The third is juxtaposition: two operands with nothing between them. It stays
-// LR(1) because the token that opens a right operand can never also follow a complete `AndExpr` in an
-// enclosing rule — follow(AndExpr) and first(XorExpr) are disjoint — so on seeing `Ident`, `(`, `!`, `0`
-// or `1` the parser can only be starting another conjunct.
+// LR(1) because the tokens that can open a right operand — `Ident`, `(`, `!`, `0` or `1`, i.e.
+// first(XorExpr) — are disjoint from the tokens that can follow a *complete* `OrExpr` — `+`, `|`, `)` or
+// end of input, i.e. follow(OrExpr). (It is follow(OrExpr), not follow(AndExpr), that has to be disjoint
+// from first(XorExpr) here: follow(AndExpr) is not the relevant set, since it also contains `*`, `&` and
+// first(XorExpr) itself — juxtaposition puts every one of those right after a completed AndExpr by
+// construction.) So on seeing one of the former the parser can only be extending the current conjunction,
+// never finishing the enclosing `OrExpr`.
 //
 // `&&` is not an operator here: an input carrying one fails at its second `&`, where an operand is
 // expected.

@@ -208,6 +208,14 @@ fn liberty_text_round_trips_through_display() {
         "a ^ (b ^ c)",
         "(a * b)' + (a * c)'",
         "a * (b ^ c)'",
+        // Liberty's XOR already binds tighter than AND, so these are the two shapes where its
+        // parenthesisation diverges from the standard and Verilog syntaxes on the way out. `a * (b ^ c)`
+        // carries redundant parentheses — `b ^ c` groups first regardless — so it renders bare as
+        // `a * b ^ c`; `(a * b) ^ c` carries load-bearing ones, since without them the same text would
+        // reparse as `a * (b ^ c)`. Both must still round-trip to the same tree, so this compares token
+        // streams rather than pinning either rendered form.
+        "a * (b ^ c)",
+        "(a * b) ^ c",
         "1 * a + 0",
     ];
 
@@ -374,12 +382,30 @@ fn three_way_retag_respells_one_tree() {
 #[test]
 fn syntax_parameter_leaks_no_bounds() {
     // `Clone`, `PartialEq`, `Eq` and `Hash` are hand-written rather than derived, and the marker is
-    // `PhantomData<fn() -> S>` rather than `S`. Between them, an expression is `Send`/`Sync`/`Clone`/
-    // `Default` without the syntax type having to satisfy anything itself. Instantiating this for all
-    // three syntaxes is the check; it fails to compile if a bound ever leaks through.
-    fn assert_props<T: Send + Sync + Clone + Default>() {}
+    // `PhantomData<fn() -> S>` rather than `S`. Between them, an expression is `Send`/`Sync`/`Clone`
+    // without the syntax type having to satisfy anything itself. Instantiating this for all three
+    // syntaxes is the check; it fails to compile if a bound ever leaks through.
+    //
+    // `Default` is deliberately not part of this check: like `var`/`constant`/`parse`/`build`, it is
+    // an origination point and stays concrete on `BoolExpr<StdSyntax>` rather than generic over `S`
+    // (see `syntax_tests::default_is_the_unannotated_constant_false` below), so
+    // `BoolExpr<VerilogSyntax>`/`BoolExpr<LibertySyntax>` are not `Default` at all.
+    fn assert_props<T: Send + Sync + Clone>() {}
 
     assert_props::<BoolExpr<StdSyntax>>();
     assert_props::<BoolExpr<VerilogSyntax>>();
     assert_props::<BoolExpr<LibertySyntax>>();
+}
+
+#[test]
+fn default_is_the_unannotated_constant_false() {
+    // `BoolExpr::default()` must resolve on its own, with nothing else in the expression naming a
+    // type or pinning `S` through unification — that is the whole point of keeping `Default`
+    // concrete (`impl Default for BoolExpr`, not `impl<S: Syntax> Default for BoolExpr<S>`).
+    // `src/expression/tests.rs::default_is_constant_false` compares against `BoolExpr::constant(false)`
+    // instead, which pins `S` via `PartialEq` regardless of how `Default` is declared, so it would not
+    // catch a regression back to the generic impl. Asserting on `to_string()` here does not reintroduce
+    // that: `Display` is implemented for every `S: Syntax`, so it adds no constraint of its own.
+    let d = BoolExpr::default();
+    assert_eq!(d.to_string(), "0");
 }

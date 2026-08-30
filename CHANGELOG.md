@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BoolExpr now carries a syntax type parameter.** `BoolExpr` gains a type parameter `S` defaulting to
   `StdSyntax`, which governs the operator spellings accepted when parsing, the spellings emitted by
-  `Display`, and the operator precedence applied. The default preserves existing behaviour; existing
-  code compiles unchanged. `as_syntax` is a zero-cost retag operation that reinterprets a term's
-  syntax without inspecting or modifying its tokens. Text-based parsing chooses the syntax via a
-  generic `FromStr` bound — for example, `"a & b".parse::<BoolExpr<VerilogSyntax>>()` — rather than
-  an inherent per-syntax method.
+  `Display`, and the operator precedence applied. The default preserves existing behaviour, and
+  existing code compiles unchanged — with one asterisk: a call site that relied on a *consumer* to
+  infer `BoolExpr`'s syntax rather than naming it, such as `builder.build(&"a & b".parse().unwrap())`,
+  has nothing left to infer from now that `build` is itself generic over the syntax, and needs the
+  type named explicitly, e.g. `text.parse::<BoolExpr>()`. `as_syntax` is a zero-cost retag operation
+  that reinterprets a term's syntax without inspecting or modifying its tokens. Text-based parsing
+  chooses the syntax via a generic `FromStr` bound — for example,
+  `"a & b".parse::<BoolExpr<VerilogSyntax>>()` — rather than an inherent per-syntax method.
 
   Three syntaxes ship. `StdSyntax` is the crate's own, unchanged from before and what the parameter
   defaults to. `VerilogSyntax` reads and writes Verilog's spellings: `~` for NOT, `&`, `|` and `^`
