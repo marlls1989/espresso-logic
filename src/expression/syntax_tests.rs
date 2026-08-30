@@ -1,18 +1,22 @@
 //! Unit tests for the surface [`Syntax`](super::Syntax) parameter, exercised through
-//! [`VerilogSyntax`](super::VerilogSyntax).
+//! [`VerilogSyntax`](super::VerilogSyntax) and [`LibertySyntax`](super::LibertySyntax).
 //!
-//! These cover the Verilog lexicon — its XNOR spellings, its constants, and the spellings it rejects —
-//! the round trip from text through `Display` and back, and the retag between syntaxes. The assertions
-//! compare token streams rather than rendered strings wherever the *structure* is the point: two
-//! spellings of one expression must reach the same canonical stream, and two different expressions must
-//! not, whatever they print as. That is why this module sits inside the crate, where
-//! [`tokens`](super::BoolExpr::tokens) is reachable.
+//! These cover each syntax's lexicon — its spellings and the spellings it rejects — the round trip from
+//! text through `Display` and back, and the retag between syntaxes, including the three-way retag that
+//! carries one tree through all three lexicons. Liberty is where the precedence itself diverges (its XOR
+//! binds tighter than its AND, the opposite of the order the standard and Verilog syntaxes share), so its
+//! tests also cover that structurally. The assertions compare token streams rather than rendered strings
+//! wherever the *structure* is the point: two spellings of one expression must reach the same canonical
+//! stream, and two different expressions must not, whatever they print as. That is why this module sits
+//! inside the crate, where [`tokens`](super::BoolExpr::tokens) is reachable.
 //!
-//! Every parse is spelled `text.parse::<BoolExpr<VerilogSyntax>>()`: origination is concrete on
-//! `BoolExpr<StdSyntax>`, so there is no per-syntax inherent `parse` to call.
+//! Every parse is spelled `text.parse::<BoolExpr<VerilogSyntax>>()` (or `<LibertySyntax>`): origination
+//! is concrete on `BoolExpr<StdSyntax>`, so there is no per-syntax inherent `parse` to call.
 
 use super::rpn::Token;
-use super::{BoolExpr, ExpressionParseError, ParseBoolExprError, StdSyntax, VerilogSyntax};
+use super::{
+    BoolExpr, ExpressionParseError, LibertySyntax, ParseBoolExprError, StdSyntax, VerilogSyntax,
+};
 use crate::Symbol;
 
 /// Parse Verilog text that is expected to read, reporting the parse error if it does not.
@@ -32,6 +36,22 @@ fn var(name: &str) -> Token {
 /// variant of each is an exhaustive match, so there is no catch-all arm to write.
 fn verilog_error_position(text: &str) -> Option<usize> {
     match text.parse::<BoolExpr<VerilogSyntax>>() {
+        Err(ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
+            position, ..
+        })) => position,
+        Ok(_) => panic!("expected a parse error for {text:?}"),
+    }
+}
+
+/// Parse Liberty text that is expected to read, reporting the parse error if it does not.
+fn liberty(text: &str) -> BoolExpr<LibertySyntax> {
+    text.parse::<BoolExpr<LibertySyntax>>()
+        .unwrap_or_else(|e| panic!("{text:?} should parse as Liberty: {e}"))
+}
+
+/// Parse Liberty text that must fail, and return the byte offset lalrpop reported.
+fn liberty_error_position(text: &str) -> Option<usize> {
+    match text.parse::<BoolExpr<LibertySyntax>>() {
         Err(ParseBoolExprError::Parse(ExpressionParseError::InvalidSyntax {
             position, ..
         })) => position,
@@ -167,6 +187,146 @@ fn empty_input_errs_at_offset_zero() {
     assert_eq!(verilog_error_position(""), Some(0));
 }
 
+// ---- Round-tripping (Liberty) ----------------------------------------------------------------------
+
+#[test]
+fn liberty_text_round_trips_through_display() {
+    // As with Verilog, the right-nested shapes are what a lossy renderer would collapse: `a * (b * c)`
+    // is a different tree from `(a * b) * c`, and Liberty's postfix `'` needs the same care as any other
+    // operator.
+    let corpus = [
+        "a",
+        "a'",
+        "a''",
+        "a * b",
+        "a + b",
+        "a ^ b",
+        "a * b + c'",
+        "a * (b + c)",
+        "a * (b * c)",
+        "a + (b + c)",
+        "a ^ (b ^ c)",
+        "(a * b)' + (a * c)'",
+        "a * (b ^ c)'",
+        "1 * a + 0",
+    ];
+
+    for text in corpus {
+        let parsed = liberty(text);
+        let rendered = parsed.to_string();
+        let reparsed = liberty(&rendered);
+        assert_eq!(
+            parsed.tokens(),
+            reparsed.tokens(),
+            "{text:?} rendered as {rendered:?}"
+        );
+    }
+}
+
+// ---- Liberty's postfix NOT -------------------------------------------------------------------------
+
+#[test]
+fn liberty_postfix_not_parenthesises_binary_operands_only() {
+    // A binary operand needs parentheses to keep the `'` attached to the whole subexpression rather
+    // than just its rightmost operand; an atom or another NOT does not.
+    let grouped = liberty("(a + b)'");
+    assert_eq!(grouped.to_string(), "(a + b)'");
+    let reparsed = liberty(&grouped.to_string());
+    assert_eq!(grouped.tokens(), reparsed.tokens());
+
+    let bare = liberty("a'");
+    assert_eq!(bare.to_string(), "a'");
+
+    // Two primes are two `Not` tokens: the second negates what the first produced.
+    let double = liberty("a''");
+    assert_eq!(
+        double.tokens(),
+        [var("a"), Token::Not, Token::Not].as_slice()
+    );
+    assert_eq!(double.to_string(), "a''");
+
+    // The prefix `!` is accepted on input but never emitted, so two prefix NOTs read the same tree as
+    // two postfix primes and render the same way.
+    let prefix_double = liberty("!!a");
+    assert_eq!(prefix_double.tokens(), double.tokens());
+    assert_eq!(prefix_double.to_string(), "a''");
+}
+
+// ---- Juxtaposition ----------------------------------------------------------------------------------
+
+#[test]
+fn juxtaposition_reads_as_and_but_never_writes_out() {
+    // Juxtaposition is an input spelling only: whichever conjunction spelling parses, the `*` is what
+    // comes back out.
+    let spelled = liberty("a * b");
+    let juxtaposed = liberty("a b");
+    assert_eq!(juxtaposed.tokens(), spelled.tokens());
+    assert_eq!(juxtaposed.to_string(), "a * b");
+    assert_eq!(spelled.to_string(), "a * b");
+
+    // A postfix NOT immediately followed by another identifier juxtaposes too: `a'b` is `!a & b`.
+    let negated_juxt = liberty("a'b");
+    assert_eq!(
+        negated_juxt.tokens(),
+        [var("a"), Token::Not, var("b"), Token::And].as_slice()
+    );
+
+    // Juxtaposition reaches over a parenthesised group as well.
+    let over_group = liberty("a (b + c)");
+    assert_eq!(
+        over_group.tokens(),
+        [var("a"), var("b"), var("c"), Token::Or, Token::And].as_slice()
+    );
+    assert_eq!(over_group.to_string(), "a * (b + c)");
+}
+
+// ---- Precedence divergence --------------------------------------------------------------------------
+
+#[test]
+fn xor_binds_tighter_than_and_in_liberty() {
+    // Liberty's XOR sits inside AND, the opposite of the order the standard and Verilog syntaxes share:
+    // `a ^ b * c` groups as `(a ^ b) & c` here, unparenthesised, where the standard syntax needs explicit
+    // parentheses to say the same thing.
+    let bare = liberty("a ^ b * c");
+    let grouped = liberty("(a ^ b) * c");
+    let other_grouping = liberty("a ^ (b * c)");
+
+    assert_eq!(bare.tokens(), grouped.tokens());
+    assert_ne!(bare.tokens(), other_grouping.tokens());
+
+    // Retagging onto the standard syntax makes the same tree need the parentheses Liberty dropped.
+    assert_eq!(bare.as_syntax::<StdSyntax>().to_string(), "(a ^ b) & c");
+}
+
+// ---- Constants and identifiers (Liberty) ------------------------------------------------------------
+
+#[test]
+fn true_is_an_ordinary_identifier_in_liberty() {
+    // A Liberty function names its constants `1` and `0`; `true` carries no meaning here and reads as a
+    // variable rather than a constant.
+    let f = liberty("true");
+    assert_eq!(f.tokens(), [var("true")].as_slice());
+}
+
+// ---- What the lexicon excludes (Liberty) ------------------------------------------------------------
+
+#[test]
+fn liberty_rejects_spellings_outside_its_lexicon() {
+    // `~` is the standard/Verilog NOT and no part of Liberty's lexicon; `&&` is not this grammar's AND,
+    // so it fails at its second `&`, where an operand is expected.
+    for text in ["~a", "a && b"] {
+        assert!(
+            text.parse::<BoolExpr<LibertySyntax>>().is_err(),
+            "{text:?} should not parse as Liberty"
+        );
+    }
+}
+
+#[test]
+fn liberty_empty_input_errs_at_offset_zero() {
+    assert_eq!(liberty_error_position(""), Some(0));
+}
+
 // ---- Retagging across syntaxes --------------------------------------------------------------------
 
 #[test]
@@ -188,16 +348,38 @@ fn retagging_respells_the_same_tokens() {
     assert_eq!(back.to_string(), "a & b | !c");
 }
 
+#[test]
+fn three_way_retag_respells_one_tree() {
+    // `a ^~ b` is Verilog's XNOR: the XOR-then-NOT pair, with no operator of its own in either the
+    // standard or the Liberty lexicon, so each retag falls back to parenthesising the XOR under its own
+    // NOT spelling.
+    let as_verilog = verilog("a ^~ b");
+
+    let as_std = as_verilog.as_syntax::<StdSyntax>();
+    assert_eq!(as_std.tokens(), as_verilog.tokens());
+    assert_eq!(as_std.to_string(), "!(a ^ b)");
+
+    let as_liberty = as_verilog.as_syntax::<LibertySyntax>();
+    assert_eq!(as_liberty.tokens(), as_verilog.tokens());
+    assert_eq!(as_liberty.to_string(), "(a ^ b)'");
+
+    // Retagging back recovers the syntax the tokens started in, tokens and rendering both.
+    let back: BoolExpr<VerilogSyntax> = as_liberty.as_syntax::<VerilogSyntax>();
+    assert_eq!(back, as_verilog);
+    assert_eq!(back.to_string(), "~(a ^ b)");
+}
+
 // ---- The parameter's footprint --------------------------------------------------------------------
 
 #[test]
 fn syntax_parameter_leaks_no_bounds() {
     // `Clone`, `PartialEq`, `Eq` and `Hash` are hand-written rather than derived, and the marker is
     // `PhantomData<fn() -> S>` rather than `S`. Between them, an expression is `Send`/`Sync`/`Clone`/
-    // `Default` without the syntax type having to satisfy anything itself. Instantiating this for both
-    // syntaxes is the check; it fails to compile if a bound ever leaks through.
+    // `Default` without the syntax type having to satisfy anything itself. Instantiating this for all
+    // three syntaxes is the check; it fails to compile if a bound ever leaks through.
     fn assert_props<T: Send + Sync + Clone + Default>() {}
 
     assert_props::<BoolExpr<StdSyntax>>();
     assert_props::<BoolExpr<VerilogSyntax>>();
+    assert_props::<BoolExpr<LibertySyntax>>();
 }

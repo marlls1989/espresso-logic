@@ -1,0 +1,135 @@
+// Liberty expression grammar for lalrpop
+// Supports the spellings a Liberty `function` attribute is written in, over Liberty's own precedence:
+// Parentheses () > postfix NOT (') > prefix NOT (!) > XOR (^) > AND (*, &, juxtaposition) > OR (+, |)
+//
+// The tier order is *not* the one `bool_expr.lalrpop` and `verilog_expr.lalrpop` share: in Liberty XOR
+// binds tighter than AND, so `a ^ b * c` parses as `(a ^ b) & c` — the opposite grouping to the standard
+// syntax, where the same text reads `a ^ (b & c)`. The tiers below are therefore written loosest to
+// tightest as OR > AND > XOR, and the `prec_*` levels in `LibertySyntax`'s specification mirror that
+// order so a rendered expression re-parses to the tree it came from.
+//
+// NOT has two spellings with two fixities, and they sit in separate tiers because they group
+// differently: the prefix `!` takes everything to its right that binds at least as tightly, while the
+// postfix `'` attaches to the single operand it follows. So `!a'` is `!(a')` — the prime binds first —
+// and `a''` is a double negation, the second prime applying to the first. Juxtaposition is AND with no
+// operator written at all: `a'b` is `!a & b`, and `a (b + c)` conjoins `a` with a parenthesised group.
+// No lexer change buys this — the whitespace-skipping lexer already yields `a b` as two adjacent
+// `Ident`s, and adjacency alone is the production.
+//
+// Each rule builds a reverse-Polish (postfix) `Vec<RpnToken>` bottom-up, exactly as the other two
+// grammars do; the caller wraps the top-level program into an owned `BoolExpr<LibertySyntax>`. All three
+// produce the same canonical token set — only the spellings and the grouping that reach it differ.
+//
+// This is a separate file rather than extra alternatives in `bool_expr.lalrpop` because both grammars use
+// lalrpop's built-in lexer and each `match` block is its own tokenizer. It could not be folded in even
+// with one lexer: the two disagree on what `a ^ b * c` means, and on whether `a b` is an expression at
+// all.
+//
+// `Token` is imported under the alias `RpnToken` to avoid colliding with lalrpop's own internal `Token`
+// lexer type in the generated parser.
+
+use crate::expression::rpn::Token as RpnToken;
+use crate::Symbol;
+
+grammar;
+
+// Main entry point: the postfix program.
+pub Expr: Vec<RpnToken> = {
+    <ops:OrExpr> => ops,
+};
+
+// OR has lowest precedence (Liberty writes it `+`; `|` is accepted on the way in and never emitted)
+OrExpr: Vec<RpnToken> = {
+    <mut l:OrExpr> "+" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Or); l },
+    <mut l:OrExpr> "|" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Or); l },
+    AndExpr,
+};
+
+// AND sits between OR and XOR — the tier order that separates Liberty from the other two syntaxes
+//
+// Its three alternatives are one left-associative tier, so `a * b c` is `(a & b) & c` however the
+// conjunctions are spelled. The third is juxtaposition: two operands with nothing between them. It stays
+// LR(1) because the token that opens a right operand can never also follow a complete `AndExpr` in an
+// enclosing rule — follow(AndExpr) and first(XorExpr) are disjoint — so on seeing `Ident`, `(`, `!`, `0`
+// or `1` the parser can only be starting another conjunct.
+//
+// `&&` is not an operator here: an input carrying one fails at its second `&`, where an operand is
+// expected.
+AndExpr: Vec<RpnToken> = {
+    <mut l:AndExpr> "*" <r:XorExpr> => { l.extend(r); l.push(RpnToken::And); l },
+    <mut l:AndExpr> "&" <r:XorExpr> => { l.extend(r); l.push(RpnToken::And); l },
+    <mut l:AndExpr> <r:XorExpr> => { l.extend(r); l.push(RpnToken::And); l },
+    XorExpr,
+};
+
+// XOR binds tighter than AND, so `a ^ b * c` is `(a ^ b) & c` and `a b ^ c` is `a & (b ^ c)`
+XorExpr: Vec<RpnToken> = {
+    <mut l:XorExpr> "^" <r:NotExpr> => { l.extend(r); l.push(RpnToken::Xor); l },
+    NotExpr,
+};
+
+// Prefix NOT. Liberty spells NOT `'` on output; `!` is accepted on the way in and never emitted, and `~`
+// is no part of the lexicon at all.
+NotExpr: Vec<RpnToken> = {
+    "!" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
+    PrimeExpr,
+};
+
+// Postfix NOT, binding tighter than every operator and than the prefix `!`
+//
+// Left-recursive, so the primes of `a''` apply outwards one at a time: the inner one negates `a` and the
+// outer one negates that.
+PrimeExpr: Vec<RpnToken> = {
+    <mut e:PrimeExpr> "'" => { e.push(RpnToken::Not); e },
+    Term,
+};
+
+// Base terms
+Term: Vec<RpnToken> = {
+    // Variables (identifiers). `true` and `false` carry no meaning in a Liberty function, so they lex as
+    // ordinary identifiers here and read as variables.
+    <v:Ident> => vec![RpnToken::Var(Symbol::from(v))],
+
+    // Constants, written as Liberty writes them
+    "0" => vec![RpnToken::Const(false)],
+    "1" => vec![RpnToken::Const(true)],
+
+    // Parenthesized expressions (still a postfix program — only the top-level `Expr` realises one)
+    "(" <e:OrExpr> ")" => e,
+};
+
+// Lexer rules
+//
+// The lexicon is Liberty's, so `~` — the NOT the standard and Verilog grammars both take — is absent, as
+// are the `^~`/`~^` XNOR spellings Verilog admits. A character outside the set below is an
+// `InvalidToken` at its own offset rather than a quietly different reading: `~a` and `a @ b` both fail
+// where the stray character sits.
+//
+// The identifier regex below is copied verbatim from `bool_expr.lalrpop`, which holds the master copy
+// along with the commentary on what a name may look like: hierarchical paths joined by `/` or `.`, and
+// bus indices or ranges in either the angle or the bracket spelling. Keep the two in step.
+//
+// Note: Operators must be listed explicitly before identifiers to avoid
+// being treated as special regex characters
+match {
+    // Operators (must come before identifiers)
+    "*",
+    "&",
+    "+",
+    "|",
+    "^",
+    "!",
+    "'",
+    "(",
+    ")",
+
+    // Constants
+    "0",
+    "1",
+
+    // Identifiers (matches variable names, including hierarchical paths and bus indices)
+    r"[a-zA-Z_][a-zA-Z0-9_]*(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?([./][a-zA-Z0-9_]+(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?)*" => Ident,
+
+    // Skip whitespace
+    r"\s+" => { },
+}

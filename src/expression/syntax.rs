@@ -8,7 +8,9 @@
 //! [`StdSyntax`] is the crate's own surface form: `&`/`|`/`^`/`!` with `1`/`0` for the constants, in the
 //! precedence order (loosest to tightest) `|` < `^` < `&` < `!` < atom. [`VerilogSyntax`] spells the
 //! same operators as Verilog does — `~` for NOT, `^~`/`~^` for XNOR, `1'b1`/`1'b0` for the constants —
-//! over that same precedence order, which Verilog shares.
+//! over that same precedence order, which Verilog shares. [`LibertySyntax`] differs in more than
+//! spelling: alongside `*`/`+` and a postfix `'` for NOT, it binds `^` *tighter* than `*`, so text that
+//! reads in both syntaxes does not always denote the same expression in both.
 //!
 //! Each syntax is strict: it accepts its own lexicon and no other, so text is read the way the syntax
 //! naming it reads it rather than by whichever grammar happens to admit it. Whatever a syntax emits it
@@ -199,3 +201,93 @@ impl syntax_seal::Sealed for VerilogSyntax {
 }
 
 impl Syntax for VerilogSyntax {}
+
+/// The expression syntax of a Liberty `function` attribute.
+///
+/// # Lexicon
+///
+/// | Meaning | Accepted | Emitted |
+/// |---------|----------|---------|
+/// | OR      | `+` or `\|` | `+` |
+/// | AND     | `*`, `&`, or juxtaposition — `a b` | `*` |
+/// | XOR     | `^`         | `^`     |
+/// | NOT     | prefix `!` or postfix `'` | postfix `'` |
+/// | `true`  | `1`         | `1`     |
+/// | `false` | `0`         | `0`     |
+///
+/// Parentheses group. The precedence order (loosest to tightest) is `+` < `*` < `^` < `!` < `'` < atom,
+/// and the binary operators are left-associative.
+///
+/// That order puts XOR *inside* AND, which neither [`StdSyntax`] nor [`VerilogSyntax`] does: `a ^ b * c`
+/// is `(a ^ b) & c` here and `a ^ (b & c)` there. Text that reads in both syntaxes can therefore denote
+/// two different expressions, and one tree renders two different ways — the standard syntax parenthesises
+/// `(a ^ b) & c` where this one writes it bare.
+///
+/// The two fixities of NOT are separate levels: the postfix `'` binds tighter than the prefix `!`, so
+/// `!a'` is `!(a')`. A second `'` negates what the first produced, making `a''` a double negation.
+///
+/// Juxtaposition is an input spelling only. `a b`, `a'b` and `a (b + c)` are conjunctions — `!a & b` for
+/// the second — and each renders with its `*` written out, so nothing depends on adjacency to read the
+/// output back.
+///
+/// The lexicon is Liberty's and nothing else: `~` is rejected wherever it appears, `&&` fails at its
+/// second `&`, and `true`/`false` are read as ordinary identifiers, since a Liberty function names its
+/// constants `1` and `0`.
+///
+/// # Obtaining one
+///
+/// Liberty text is parsed by naming the syntax on the target type, since the syntax is not a parameter
+/// of [`BoolExpr::parse`](super::BoolExpr::parse):
+///
+/// ```
+/// use espresso_logic::{BoolExpr, LibertySyntax};
+///
+/// # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+/// let f = "a ^ b * c".parse::<BoolExpr<LibertySyntax>>()?;
+/// assert_eq!(f.to_string(), "a ^ b * c");
+///
+/// // Juxtaposition reads as AND, and the AND is written back out.
+/// let g = "a (b + c)".parse::<BoolExpr<LibertySyntax>>()?;
+/// assert_eq!(g.to_string(), "a * (b + c)");
+///
+/// // An expression already in hand is relabelled rather than re-parsed.
+/// let h = BoolExpr::parse("!(a | b)")?.as_syntax::<LibertySyntax>();
+/// assert_eq!(h.to_string(), "(a + b)'");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct LibertySyntax;
+
+impl syntax_seal::Sealed for LibertySyntax {
+    // Liberty's lexicon over Liberty's own binding order, which is where this syntax parts company with
+    // the other two: `prec_xor` above `prec_and` is the whole of the divergence, and it is what leaves
+    // `a ^ b * c` unparenthesised here while the standard syntax needs `(a ^ b) & c`.
+    //
+    // NOT is postfix, so the prefix is empty and the suffix carries the `'`. The renderer wraps NOT's
+    // operand at `prec_not`, which keeps an atom (4) and a second `'` (3) bare — `a''` — and
+    // parenthesises any binary operand (at most 2): `(a + b)'`.
+    //
+    // AND always emits `*`. Juxtaposition is an input spelling, and dropping the operator on output would
+    // hide the conjunction behind adjacency.
+    const SPEC: SyntaxSpec = SyntaxSpec {
+        and: "*",
+        or: "+",
+        xor: "^",
+        not_prefix: "",
+        not_suffix: "'",
+        one: "1",
+        zero: "0",
+        prec_atom: 4,
+        prec_not: 3,
+        prec_xor: 2,
+        prec_and: 1,
+        prec_or: 0,
+    };
+
+    fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+        super::parser::parse_liberty(input)
+    }
+}
+
+impl Syntax for LibertySyntax {}

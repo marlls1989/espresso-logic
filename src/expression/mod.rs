@@ -50,7 +50,7 @@ pub use ast::ExprNode;
 pub use builder::{Expr, ExprBuilder};
 
 // The surface syntax an expression is spelled in.
-pub use syntax::{StdSyntax, Syntax, VerilogSyntax};
+pub use syntax::{LibertySyntax, StdSyntax, Syntax, VerilogSyntax};
 
 use crate::Symbol;
 use rpn::Token;

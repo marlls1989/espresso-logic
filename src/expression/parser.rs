@@ -1,11 +1,12 @@
 //! Parsing support for boolean expressions.
 //!
 //! One lalrpop grammar per surface syntax — `bool_expr.lalrpop` for [`StdSyntax`](super::StdSyntax),
-//! `verilog_expr.lalrpop` for [`VerilogSyntax`](super::VerilogSyntax) — each emitting a reverse-Polish
-//! [`Token`] program directly, which [`BoolExpr::parse`] or the [`FromStr`](std::str::FromStr) impl
-//! wraps into an owned [`BoolExpr`]. The grammars are separate files because each carries its own
-//! `match` block, and therefore its own tokenizer: sharing one would let either syntax's spellings win
-//! the longest match inside the other's input.
+//! `verilog_expr.lalrpop` for [`VerilogSyntax`](super::VerilogSyntax) and `liberty_expr.lalrpop` for
+//! [`LibertySyntax`](super::LibertySyntax) — each emitting a reverse-Polish [`Token`] program directly,
+//! which [`BoolExpr::parse`] or the [`FromStr`](std::str::FromStr) impl wraps into an owned
+//! [`BoolExpr`]. The grammars are separate files because each carries its own `match` block, and
+//! therefore its own tokenizer: sharing one would let one syntax's spellings win the longest match
+//! inside another's input.
 
 use super::error::{ExpressionParseError, ParseBoolExprError};
 use super::rpn::Token;
@@ -28,6 +29,15 @@ lalrpop_util::lalrpop_mod!(
     #[allow(clippy::all)]
     verilog_impl,
     "/expression/verilog_expr.rs"
+);
+
+// The Liberty grammar's generated parser, a third module for the same reason — and here the grammars
+// disagree on more than spelling: Liberty's XOR binds tighter than its AND, so one lexer could not serve
+// both even if the lexicons matched.
+lalrpop_util::lalrpop_mod!(
+    #[allow(clippy::all)]
+    liberty_impl,
+    "/expression/liberty_expr.rs"
 );
 
 /// Turn a lalrpop parse error over `input` into this crate's [`ParseBoolExprError`].
@@ -76,6 +86,17 @@ pub(crate) fn parse_std(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
 /// through the [`FromStr`](std::str::FromStr) impl, `text.parse::<BoolExpr<VerilogSyntax>>()`.
 pub(crate) fn parse_verilog(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
     verilog_impl::ExprParser::new()
+        .parse(input)
+        .map_err(|e| map_error(input, e))
+}
+
+/// Parse a string in the Liberty syntax into a reverse-Polish [`Token`] program.
+///
+/// The grammar entry point behind [`LibertySyntax`](super::LibertySyntax). Like the Verilog one it has
+/// no inherent public face, so Liberty text reaches it through the [`FromStr`](std::str::FromStr) impl,
+/// `text.parse::<BoolExpr<LibertySyntax>>()`.
+pub(crate) fn parse_liberty(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+    liberty_impl::ExprParser::new()
         .parse(input)
         .map_err(|e| map_error(input, e))
 }

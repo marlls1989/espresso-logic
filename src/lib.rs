@@ -389,7 +389,8 @@ pub use cover::{
 };
 pub use espresso::{EspressoConfig, EspressoCubes};
 pub use expression::{
-    BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables, StdSyntax, Syntax, VerilogSyntax,
+    BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables, LibertySyntax, StdSyntax, Syntax,
+    VerilogSyntax,
 };
 pub use symbol::Symbol;
 

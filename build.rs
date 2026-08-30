@@ -44,6 +44,7 @@ fn main() {
     // line per grammar file — a syntax added without its line would silently not rebuild.
     println!("cargo:rerun-if-changed=src/expression/bool_expr.lalrpop");
     println!("cargo:rerun-if-changed=src/expression/verilog_expr.lalrpop");
+    println!("cargo:rerun-if-changed=src/expression/liberty_expr.lalrpop");
     // Both of these steer clang-sys to a different libclang, which decides whether bindgen parses
     // the vendored C unaided and, if it does not, which resource directory the fallback below
     // finds. (`BINDGEN_EXTRA_CLANG_ARGS` and its target-specific variants need no line here:
