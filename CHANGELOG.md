@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BoolExpr now carries a syntax type parameter.** `BoolExpr` gains a type parameter `S` defaulting to
+  `StdSyntax`, which governs the operator spellings accepted when parsing, the spellings emitted by
+  `Display`, and the operator precedence applied. The default preserves existing behaviour, and
+  existing code compiles unchanged — with one asterisk: a call site that relied on a *consumer* to
+  infer `BoolExpr`'s syntax rather than naming it, such as `builder.build(&"a & b".parse().unwrap())`,
+  has nothing left to infer from now that `build` is itself generic over the syntax, and needs the
+  type named explicitly, e.g. `text.parse::<BoolExpr>()`. `as_syntax` is a zero-cost retag operation
+  that reinterprets a term's syntax without inspecting or modifying its tokens. Text-based parsing
+  chooses the syntax via a generic `FromStr` bound — for example,
+  `"a & b".parse::<BoolExpr<VerilogSyntax>>()` — rather than an inherent per-syntax method.
+
+  Three syntaxes ship. `StdSyntax` is the crate's own, unchanged from before and what the parameter
+  defaults to. `VerilogSyntax` reads and writes Verilog's spellings: `~` for NOT, `&`, `|` and `^`
+  for AND, OR and XOR, `^~` and `~^` for XNOR, and `1'b1`/`1'b0` for the constants, which are also
+  read in the `1'B` case and as the bare digits `1` and `0`. The precedence order is the one Verilog
+  shares with `StdSyntax`. Each syntax reads its own lexicon and nothing else, so `*`, `+` and a bare
+  `'` are rejected as Verilog, and `true`/`false` read as ordinary identifiers there — which is what
+  they are in Verilog.
+
+  XNOR carries no token of its own: `a ^~ b` lowers to the same XOR-then-NOT pair as `~(a ^ b)` and
+  renders back in that form. The spelling alone decides the reading, the lexer taking the longest
+  match, so `a ^~ b` is XNOR while `a ^ ~b` is XOR of a NOT.
+
+  `LibertySyntax` reads and writes the spellings a Liberty `function` attribute is written in: `*`,
+  `&` or juxtaposition (`a b`) for AND, `+` or `|` for OR, `^` for XOR, and a postfix `'` for NOT
+  (`!` is accepted as a prefix on the way in and never emitted). Juxtaposition is an input spelling
+  only — the parsed tree always renders with its `*` explicit. Liberty rejects `~` outright, and
+  reads `true`/`false` as ordinary identifiers, since a Liberty function names its constants `1` and
+  `0`.
+
+  Liberty's precedence order diverges from the other two, not just its spellings: XOR binds *tighter*
+  than AND, `+` < `*` < `^` < `!` < `'` < atom, where `StdSyntax` and `VerilogSyntax` both nest XOR
+  between AND and OR. Text that parses in both syntaxes therefore does not always parse to the same
+  tree — `a ^ b * c` is `(a ^ b) & c` under Liberty and `a ^ (b & c)` under the standard syntax — and
+  `as_syntax` respells a tree without reparsing it, so retagging one syntax's parse into another's
+  spellings keeps the original grouping rather than adopting the target syntax's own reading of the
+  same text.
+
 ## [5.6.4] - 2026-08-02
 
 ### Added

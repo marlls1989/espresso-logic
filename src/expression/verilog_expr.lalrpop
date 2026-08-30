@@ -1,0 +1,122 @@
+// Verilog expression grammar for lalrpop
+// Supports the Verilog operator spellings with proper precedence:
+// Parentheses () > NOT (~, !) > AND (&) > XOR (^) / XNOR (^~, ~^) > OR (|)
+//
+// Each rule builds a reverse-Polish (postfix) `Vec<RpnToken>` bottom-up, exactly as the standard
+// grammar in `bool_expr.lalrpop` does; the caller wraps the top-level program into an owned
+// `BoolExpr<VerilogSyntax>`. The two grammars produce the same canonical token set — only the
+// spellings that reach it differ.
+//
+// This is a separate file rather than extra alternatives in `bool_expr.lalrpop` because both grammars
+// use lalrpop's built-in lexer and each `match` block is its own tokenizer. Sharing one lexer would let
+// the Verilog terminals win the longest match inside standard-syntax input, silently turning `a ^~ b`
+// into XNOR and `1'b1` into a constant in text the standard syntax reads differently. So
+// `bool_expr.lalrpop` stays untouched and this file carries its own `match` block.
+//
+// `Token` is imported under the alias `RpnToken` to avoid colliding with lalrpop's own internal
+// `Token` lexer type in the generated parser.
+
+use crate::expression::rpn::Token as RpnToken;
+use crate::Symbol;
+
+grammar;
+
+// Main entry point: the postfix program.
+pub Expr: Vec<RpnToken> = {
+    <ops:OrExpr> => ops,
+};
+
+// OR has lowest precedence
+OrExpr: Vec<RpnToken> = {
+    <mut l:OrExpr> "|" <r:XorExpr> => { l.extend(r); l.push(RpnToken::Or); l },
+    XorExpr,
+};
+
+// XOR sits between OR and AND, together with its complement
+//
+// XNOR gets no token of its own: `^~` and `~^` lower to the XOR-then-NOT pair, which is exactly the
+// tree `~(a ^ b)` denotes and what the renderer prints back.
+//
+// The lexer takes the longest match, so the spelling alone decides which of the two an input means:
+// `a ^~ b` is XNOR, while `a ^ ~b` — the `~` separated from the `^` — is XOR of a NOT.
+XorExpr: Vec<RpnToken> = {
+    <mut l:XorExpr> "^" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Xor); l },
+    <mut l:XorExpr> "^~" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Xor); l.push(RpnToken::Not); l },
+    <mut l:XorExpr> "~^" <r:AndExpr> => { l.extend(r); l.push(RpnToken::Xor); l.push(RpnToken::Not); l },
+    AndExpr,
+};
+
+// AND binds tighter than XOR
+//
+// Only the single `&`: the logical `&&` is not an operator here, and an input carrying one fails at its
+// second `&`, where an operand is expected.
+AndExpr: Vec<RpnToken> = {
+    <mut l:AndExpr> "&" <r:NotExpr> => { l.extend(r); l.push(RpnToken::And); l },
+    NotExpr,
+};
+
+// NOT has highest precedence (Verilog spells it `~`; `!` is accepted on the way in and never emitted)
+NotExpr: Vec<RpnToken> = {
+    "~" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
+    "!" <mut e:NotExpr> => { e.push(RpnToken::Not); e },
+    Term,
+};
+
+// Base terms
+Term: Vec<RpnToken> = {
+    // Variables (identifiers). `true` and `false` are ordinary identifiers in Verilog, so they read as
+    // variables here rather than as constants.
+    <v:Ident> => vec![RpnToken::Var(Symbol::from(v))],
+
+    // Constants, sized as Verilog writes a single bit and unsized as a bare digit. Both letter cases of
+    // the base are read; the lowercase `1'b` spelling is the one emitted.
+    "1'b0" => vec![RpnToken::Const(false)],
+    "1'b1" => vec![RpnToken::Const(true)],
+    "1'B0" => vec![RpnToken::Const(false)],
+    "1'B1" => vec![RpnToken::Const(true)],
+    "0" => vec![RpnToken::Const(false)],
+    "1" => vec![RpnToken::Const(true)],
+
+    // Parenthesized expressions (still a postfix program — only the top-level `Expr` realises one)
+    "(" <e:OrExpr> ")" => e,
+};
+
+// Lexer rules
+//
+// The lexicon is Verilog's, so the spellings the standard grammar also accepts for AND and OR — `*` and
+// `+` — are absent, as is a `'` outside a sized constant. Each is an `InvalidToken` at its own offset
+// rather than a quietly different reading.
+//
+// The identifier regex below is copied verbatim from `bool_expr.lalrpop`, which holds the master copy
+// along with the commentary on what a name may look like: hierarchical paths joined by `/` or `.`, and
+// bus indices or ranges in either the angle or the bracket spelling. Keep the two in step.
+//
+// Note: Operators must be listed explicitly before identifiers to avoid
+// being treated as special regex characters
+match {
+    // Operators (must come before identifiers). The two-character XNOR spellings win the longest match
+    // over the one-character `^` and `~` they open with.
+    "&",
+    "|",
+    "^",
+    "^~",
+    "~^",
+    "~",
+    "!",
+    "(",
+    ")",
+
+    // Constants
+    "1'b0",
+    "1'b1",
+    "1'B0",
+    "1'B1",
+    "0",
+    "1",
+
+    // Identifiers (matches variable names, including hierarchical paths and bus indices)
+    r"[a-zA-Z_][a-zA-Z0-9_]*(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?([./][a-zA-Z0-9_]+(\[[0-9]+(:[0-9]+)?\]|<[0-9]+(:[0-9]+)?>)?)*" => Ident,
+
+    // Skip whitespace
+    r"\s+" => { },
+}

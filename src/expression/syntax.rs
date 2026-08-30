@@ -1,0 +1,293 @@
+//! The sealed syntax marker governing a [`BoolExpr`](super::BoolExpr)'s surface form.
+//!
+//! A *syntax* is a zero-sized marker type that fixes the **surface form** of an expression: which
+//! operator spellings its text form accepts when parsed, which spellings it emits when displayed, and
+//! what precedence binds them. It selects no semantics — underneath, every expression is the same
+//! canonical reverse-Polish token stream over `&`/`|`/`^`/`!`, whichever syntax labels it.
+//!
+//! [`StdSyntax`] is the crate's own surface form: `&`/`|`/`^`/`!` with `1`/`0` for the constants, in the
+//! precedence order (loosest to tightest) `|` < `^` < `&` < `!` < atom. [`VerilogSyntax`] spells the
+//! same operators as Verilog does — `~` for NOT, `^~`/`~^` for XNOR, `1'b1`/`1'b0` for the constants —
+//! over that same precedence order, which Verilog shares. [`LibertySyntax`] differs in more than
+//! spelling: alongside `*`/`+` and a postfix `'` for NOT, it binds `^` *tighter* than `*`, so text that
+//! reads in both syntaxes does not always denote the same expression in both.
+//!
+//! Each syntax is strict: it accepts its own lexicon and no other, so text is read the way the syntax
+//! naming it reads it rather than by whichever grammar happens to admit it. Whatever a syntax emits it
+//! also parses, so `Display` output re-parses to the expression it came from.
+//!
+//! The trait is **sealed**: it cannot be implemented outside this crate. A syntax is inseparable from an
+//! in-crate grammar that parses its spellings, so a downstream marker type would have nothing to parse
+//! with and could not be made to work.
+
+use super::error::ParseBoolExprError;
+use super::rpn::Token;
+
+/// A surface syntax for [`BoolExpr`](super::BoolExpr): accepted spellings, emitted spellings and
+/// operator precedence.
+///
+/// Sealed: only this crate can implement it (see the module docs). A syntax carries no data — it is a
+/// type-level marker that selects the grammar an expression's text form is parsed with and the
+/// specification it is rendered against. `Copy + 'static` keeps syntax values trivially duplicable.
+///
+/// ```compile_fail
+/// use espresso_logic::Syntax;
+///
+/// #[derive(Clone, Copy)]
+/// struct MySyntax;
+/// // error: `Syntax` is sealed; only `espresso_logic` can implement it.
+/// impl Syntax for MySyntax {}
+/// ```
+pub trait Syntax: syntax_seal::Sealed + Copy + 'static {}
+
+pub(crate) mod syntax_seal {
+    use super::{ParseBoolExprError, SyntaxSpec, Token};
+
+    /// Sealing supertrait for [`Syntax`](super::Syntax): only impls inside this crate can name it, so
+    /// the syntax trait cannot be implemented downstream. Not part of the public API.
+    ///
+    /// The seal also *carries* the per-syntax payload — the specification a syntax renders against and
+    /// the entry point into the grammar it parses with. Both speak in crate-internal types
+    /// ([`SyntaxSpec`], [`Token`]); this module's `pub(crate)` visibility, and that of the `rpn` module
+    /// [`Token`] lives in, keep the whole surface out of anything nameable downstream.
+    pub trait Sealed: 'static {
+        /// The spellings and binding tightnesses this syntax renders with.
+        const SPEC: SyntaxSpec;
+
+        /// Parse text in this syntax into a reverse-Polish [`Token`] program.
+        fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError>;
+    }
+}
+
+/// The surface spellings and binding tightnesses of one syntax.
+///
+/// The operator spellings are plain strings, and NOT is given as a `not_prefix`/`not_suffix` **pair**
+/// rather than a fixity flag: a prefix form leaves the suffix empty, a postfix form leaves the prefix
+/// empty, and the renderer emits both around the operand either way.
+///
+/// The `prec_*` fields are binding-tightness levels, highest binds tightest. An atom (variable or
+/// constant) binds tighter than any operator, and the relative order of the operator levels mirrors the
+/// syntax's own grammar, so that a rendered expression re-parses to the tree it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SyntaxSpec {
+    /// Spelling of AND, as an infix operator.
+    pub and: &'static str,
+    /// Spelling of OR, as an infix operator.
+    pub or: &'static str,
+    /// Spelling of XOR, as an infix operator.
+    pub xor: &'static str,
+    /// Text emitted before NOT's operand (empty for a postfix syntax).
+    pub not_prefix: &'static str,
+    /// Text emitted after NOT's operand (empty for a prefix syntax).
+    pub not_suffix: &'static str,
+    /// Spelling of the constant `true`.
+    pub one: &'static str,
+    /// Spelling of the constant `false`.
+    pub zero: &'static str,
+    /// Binding tightness of a variable or constant.
+    pub prec_atom: u8,
+    /// Binding tightness of NOT.
+    pub prec_not: u8,
+    /// Binding tightness of AND.
+    pub prec_and: u8,
+    /// Binding tightness of XOR.
+    pub prec_xor: u8,
+    /// Binding tightness of OR.
+    pub prec_or: u8,
+}
+
+/// The crate's own expression syntax, and the default for [`BoolExpr`](super::BoolExpr).
+///
+/// Renders as `&` (AND), `|` (OR), `^` (XOR), `!` (NOT) and `1`/`0` for the constants, with the
+/// precedence order (loosest to tightest) `|` < `^` < `&` < `!` < atom. Parsing additionally accepts the
+/// `*`/`+`/`~` spellings and the `true`/`false` constants, all of which lower to the same canonical
+/// token set — see [`BoolExpr::parse`](super::BoolExpr::parse) for the full lexicon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct StdSyntax;
+
+impl syntax_seal::Sealed for StdSyntax {
+    const SPEC: SyntaxSpec = SyntaxSpec {
+        and: "&",
+        or: "|",
+        xor: "^",
+        not_prefix: "!",
+        not_suffix: "",
+        one: "1",
+        zero: "0",
+        prec_atom: 4,
+        prec_not: 3,
+        prec_and: 2,
+        prec_xor: 1,
+        prec_or: 0,
+    };
+
+    fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+        super::parser::parse_std(input)
+    }
+}
+
+impl Syntax for StdSyntax {}
+
+/// Verilog's expression syntax.
+///
+/// # Lexicon
+///
+/// | Meaning | Accepted | Emitted |
+/// |---------|----------|---------|
+/// | OR      | `\|`         | `\|`      |
+/// | XOR     | `^`          | `^`     |
+/// | XNOR    | `^~` or `~^` | — (see below) |
+/// | AND     | `&`          | `&`     |
+/// | NOT     | `~` or `!`   | `~`     |
+/// | `true`  | `1'b1`, `1'B1` or `1` | `1'b1` |
+/// | `false` | `1'b0`, `1'B0` or `0` | `1'b0` |
+///
+/// Parentheses group. The precedence order (loosest to tightest) is `|` < `^`/`^~` < `&` < `~` < atom,
+/// the same order [`StdSyntax`] uses; the binary operators are left-associative.
+///
+/// The lexicon is Verilog's and nothing else: the `*`, `+` and `'` characters the standard syntax
+/// admits are rejected here, `&&` fails at its second `&`, and `true`/`false` are read as ordinary
+/// identifiers — they name variables in Verilog, not constants.
+///
+/// XNOR is not a distinct operator in the token stream: `a ^~ b` lowers to the XOR-then-NOT pair, which
+/// renders back as `~(a ^ b)`. The lexer takes the longest match, so `a ^~ b` is XNOR while `a ^ ~b`,
+/// with the `~` separated from the `^`, is XOR of a NOT — two different expressions.
+///
+/// # Obtaining one
+///
+/// Verilog text is parsed by naming the syntax on the target type, since the syntax is not a parameter
+/// of [`BoolExpr::parse`](super::BoolExpr::parse):
+///
+/// ```
+/// use espresso_logic::{BoolExpr, VerilogSyntax};
+///
+/// # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+/// let f = "a ^~ b".parse::<BoolExpr<VerilogSyntax>>()?;
+/// assert_eq!(f.to_string(), "~(a ^ b)");
+///
+/// // An expression already in hand is relabelled rather than re-parsed.
+/// let g = BoolExpr::parse("a & b | !c")?.as_syntax::<VerilogSyntax>();
+/// assert_eq!(g.to_string(), "a & b | ~c");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct VerilogSyntax;
+
+impl syntax_seal::Sealed for VerilogSyntax {
+    // Verilog's lexicon over the standard syntax's binding order, which Verilog shares. NOT emits `~`
+    // (`!` is accepted on the way in only), and the constants emit in the lowercase `1'b` spelling.
+    //
+    // XNOR needs no entry: its Xor-then-Not token pair renders as `~(a ^ b)` from the parts below,
+    // `prec_xor < prec_not` forcing the parentheses.
+    const SPEC: SyntaxSpec = SyntaxSpec {
+        and: "&",
+        or: "|",
+        xor: "^",
+        not_prefix: "~",
+        not_suffix: "",
+        one: "1'b1",
+        zero: "1'b0",
+        prec_atom: 4,
+        prec_not: 3,
+        prec_and: 2,
+        prec_xor: 1,
+        prec_or: 0,
+    };
+
+    fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+        super::parser::parse_verilog(input)
+    }
+}
+
+impl Syntax for VerilogSyntax {}
+
+/// The expression syntax of a Liberty `function` attribute.
+///
+/// # Lexicon
+///
+/// | Meaning | Accepted | Emitted |
+/// |---------|----------|---------|
+/// | OR      | `+` or `\|` | `+` |
+/// | AND     | `*`, `&`, or juxtaposition — `a b` | `*` |
+/// | XOR     | `^`         | `^`     |
+/// | NOT     | prefix `!` or postfix `'` | postfix `'` |
+/// | `true`  | `1`         | `1`     |
+/// | `false` | `0`         | `0`     |
+///
+/// Parentheses group. The precedence order (loosest to tightest) is `+` < `*` < `^` < `!` < `'` < atom,
+/// and the binary operators are left-associative.
+///
+/// That order puts XOR *inside* AND, which neither [`StdSyntax`] nor [`VerilogSyntax`] does: `a ^ b * c`
+/// is `(a ^ b) & c` here and `a ^ (b & c)` there. Text that reads in both syntaxes can therefore denote
+/// two different expressions, and one tree renders two different ways — the standard syntax parenthesises
+/// `(a ^ b) & c` where this one writes it bare.
+///
+/// The two fixities of NOT are separate levels: the postfix `'` binds tighter than the prefix `!`, so
+/// `!a'` is `!(a')`. A second `'` negates what the first produced, making `a''` a double negation.
+///
+/// Juxtaposition is an input spelling only. `a b`, `a'b` and `a (b + c)` are conjunctions — `!a & b` for
+/// the second — and each renders with its `*` written out, so nothing depends on adjacency to read the
+/// output back.
+///
+/// The lexicon is Liberty's and nothing else: `~` is rejected wherever it appears, `&&` fails at its
+/// second `&`, and `true`/`false` are read as ordinary identifiers, since a Liberty function names its
+/// constants `1` and `0`.
+///
+/// # Obtaining one
+///
+/// Liberty text is parsed by naming the syntax on the target type, since the syntax is not a parameter
+/// of [`BoolExpr::parse`](super::BoolExpr::parse):
+///
+/// ```
+/// use espresso_logic::{BoolExpr, LibertySyntax};
+///
+/// # fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+/// let f = "a ^ b * c".parse::<BoolExpr<LibertySyntax>>()?;
+/// assert_eq!(f.to_string(), "a ^ b * c");
+///
+/// // Juxtaposition reads as AND, and the AND is written back out.
+/// let g = "a (b + c)".parse::<BoolExpr<LibertySyntax>>()?;
+/// assert_eq!(g.to_string(), "a * (b + c)");
+///
+/// // An expression already in hand is relabelled rather than re-parsed.
+/// let h = BoolExpr::parse("!(a | b)")?.as_syntax::<LibertySyntax>();
+/// assert_eq!(h.to_string(), "(a + b)'");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct LibertySyntax;
+
+impl syntax_seal::Sealed for LibertySyntax {
+    // Liberty's lexicon over Liberty's own binding order, which is where this syntax parts company with
+    // the other two: `prec_xor` above `prec_and` is the whole of the divergence, and it is what leaves
+    // `a ^ b * c` unparenthesised here while the standard syntax needs `(a ^ b) & c`.
+    //
+    // NOT is postfix, so the prefix is empty and the suffix carries the `'`. The renderer wraps NOT's
+    // operand at `prec_not`, which keeps an atom (4) and a second `'` (3) bare — `a''` — and
+    // parenthesises any binary operand (at most 2): `(a + b)'`.
+    //
+    // AND always emits `*`. Juxtaposition is an input spelling, and dropping the operator on output would
+    // hide the conjunction behind adjacency.
+    const SPEC: SyntaxSpec = SyntaxSpec {
+        and: "*",
+        or: "+",
+        xor: "^",
+        not_prefix: "",
+        not_suffix: "'",
+        one: "1",
+        zero: "0",
+        prec_atom: 4,
+        prec_not: 3,
+        prec_xor: 2,
+        prec_and: 1,
+        prec_or: 0,
+    };
+
+    fn parse_tokens(input: &str) -> Result<Vec<Token>, ParseBoolExprError> {
+        super::parser::parse_liberty(input)
+    }
+}
+
+impl Syntax for LibertySyntax {}
