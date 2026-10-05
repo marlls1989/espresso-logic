@@ -388,7 +388,10 @@ pub use cover::{
     StringLabel,
 };
 pub use espresso::{EspressoConfig, EspressoCubes};
-pub use expression::{BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables};
+pub use expression::{
+    BoolExpr, Expr, ExprBuilder, ExprNode, ExprVariables, LibertySyntax, StdSyntax, Syntax,
+    VerilogSyntax,
+};
 pub use symbol::Symbol;
 
 /// Build a [`BoolExpr`] from infix Boolean syntax.

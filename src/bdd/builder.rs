@@ -26,7 +26,7 @@ use crate::bdd::manager::{BddOps, FALSE_NODE, TRUE_NODE};
 use crate::bdd::manager_cell::ManagerCell;
 use crate::cover::{Anonymous, Cover, StringLabel};
 use crate::error::MinimizationError;
-use crate::expression::{BoolExpr, ParseBoolExprError};
+use crate::expression::{BoolExpr, ParseBoolExprError, Syntax};
 use crate::Symbol;
 
 /// An owned BDD namespace over a brand `B` and a storage backend `C`.
@@ -150,7 +150,7 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// Composed inside a [`scope`](Self::scope) so the fold runs on `Copy`, by-reference handles (one
     /// refcount bump for the returned root, not one per node); [`Scope::build`] does the postfix fold.
     #[must_use]
-    pub fn build(&self, expr: &BoolExpr) -> Bdd<B, C> {
+    pub fn build<S: Syntax>(&self, expr: &BoolExpr<S>) -> Bdd<B, C> {
         self.scope(|s| s.build(expr))
     }
 
@@ -189,6 +189,9 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     ///
     /// A convenience for `self.build(&BoolExpr::parse(input)?)`.
     ///
+    /// Input is read as [`StdSyntax`](crate::StdSyntax); to build from another syntax, parse it explicitly
+    /// and pass the result to [`build`](Self::build): `builder.build(&text.parse::<BoolExpr<VerilogSyntax>>()?)`.
+    ///
     /// # Errors
     ///
     /// Propagates a [`ParseBoolExprError`] if the text does not parse.
@@ -204,7 +207,10 @@ impl<B: Brand, C: ManagerCell> BddBuilder<B, C> {
     /// # Errors
     ///
     /// Propagates any [`MinimizationError`] from the Espresso engine.
-    pub fn minimize(&self, expr: &BoolExpr) -> Result<Cover<Symbol, Anonymous>, MinimizationError> {
+    pub fn minimize<S: Syntax>(
+        &self,
+        expr: &BoolExpr<S>,
+    ) -> Result<Cover<Symbol, Anonymous>, MinimizationError> {
         self.build(expr).minimize()
     }
 }

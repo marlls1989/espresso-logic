@@ -158,6 +158,134 @@ let with_one = BoolExpr::parse("a * 1")?;
 All binary operators are left-associative. XOR sits between AND and OR (mirroring Rust's `| < ^ < &`),
 so `a + b ^ c` parses as `a + (b ^ c)` and `a ^ b * c` as `a ^ (b * c)`.
 
+### Syntaxes
+
+The spellings above are those of [`StdSyntax`], the syntax `BoolExpr` carries when its type parameter
+is left unwritten: `BoolExpr` means `BoolExpr<StdSyntax>`. The parameter selects the **surface form**
+only — which spellings the text is read with, which are emitted, and what precedence binds them. The
+expression underneath is the same canonical token stream over `&`, `|`, `^` and `!` in every syntax.
+
+Three syntaxes ship. Each cell below gives the spelling `Display` emits first; the others are read on
+input only:
+
+| Meaning | [`StdSyntax`] | [`VerilogSyntax`] | [`LibertySyntax`] |
+|---------|---------------|--------------------|--------------------|
+| OR      | `\|` or `+`     | `\|`                 | `+` or `\|`          |
+| XOR     | `^`           | `^` (also reads `^~`/`~^` as XNOR) | `^` |
+| AND     | `&` or `*`    | `&`                | `*`, `&`, or juxtaposition (`a b`) |
+| NOT     | `!` or `~`    | `~` (also reads `!`) | postfix `'` (also reads prefix `!`) |
+| `true`  | `1` or `true` | `1'b1` (also reads `1'B1`, `1`) | `1` |
+| `false` | `0` or `false`| `1'b0` (also reads `1'B0`, `0`) | `0` |
+| Precedence, loosest to tightest | `\|` < `^` < `&` < `!` < atom | `\|` < `^` < `&` < `~` < atom | `+` < `*` < `^` < `!` < `'` < atom |
+
+`VerilogSyntax` shares `StdSyntax`'s precedence order; `LibertySyntax` does not. Its XOR sits *inside*
+AND rather than between AND and OR, so text that parses in both syntaxes does not always parse to the
+same tree — see the `a ^ b * c` example below.
+
+Each syntax is strict — it reads its own lexicon and nothing else. `StdSyntax` is the broad one because
+its own lexicon is broad, accepting `*`/`+`/`~` alongside `&`/`|`/`!`; there is no permissive mode that
+accepts everything. Verilog rejects `*` and `+` outright, and reads `true` and `false` as ordinary
+identifiers, because that is what they are in Verilog. Liberty rejects `~` outright, and reads `true`
+and `false` as ordinary identifiers too, since a Liberty function names its constants `1` and `0`.
+Whatever a syntax emits it also parses, so `Display` output always re-reads as the expression it came
+from.
+
+The syntax is named on the target type, since it is not a parameter of [`BoolExpr::parse`]:
+
+```rust
+use espresso_logic::{BoolExpr, VerilogSyntax};
+
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let f = "a & b | ~c".parse::<BoolExpr<VerilogSyntax>>()?;
+assert_eq!(f.to_string(), "a & b | ~c");
+
+// XNOR carries no token of its own: `^~` lowers to XOR followed by NOT, which prints as that tree.
+let xnor = "a ^~ b".parse::<BoolExpr<VerilogSyntax>>()?;
+assert_eq!(xnor.to_string(), "~(a ^ b)");
+
+// The lexer takes the longest match, so separating the `~` from the `^` is a different expression.
+let xor_of_not = "a ^ ~b".parse::<BoolExpr<VerilogSyntax>>()?;
+assert_ne!(xnor, xor_of_not);
+
+// Constants are read sized or bare, and emitted in the lowercase sized spelling.
+let one = "1'B1".parse::<BoolExpr<VerilogSyntax>>()?;
+assert_eq!(one.to_string(), "1'b1");
+# Ok(())
+# }
+```
+
+[`LibertySyntax`] is named on the target type the same way. Its NOT is postfix, and it accepts
+juxtaposition — two operands with nothing between them — as AND, though juxtaposition is an input
+spelling only: the parsed tree is always written back out with its `*` explicit.
+
+```rust
+use espresso_logic::{BoolExpr, LibertySyntax};
+
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+// Postfix NOT: `'` attaches to the operand it follows, tighter than every binary operator.
+let primed = "a'".parse::<BoolExpr<LibertySyntax>>()?;
+assert_eq!(primed.to_string(), "a'");
+
+// Juxtaposition reads as AND, but never comes back out: the rendered form always spells the `*`.
+let adjacent = "a b".parse::<BoolExpr<LibertySyntax>>()?;
+assert_eq!(adjacent.to_string(), "a * b");
+
+// The two fixities of NOT bind at different levels, the postfix tighter than the prefix: `!a'` is
+// `!(a')`, a double negation, which renders the same way `a''` does.
+let mixed_not = "!a'".parse::<BoolExpr<LibertySyntax>>()?;
+assert_eq!(mixed_not.to_string(), "a''");
+# Ok(())
+# }
+```
+
+Liberty's precedence divergence is visible on the same text parsed two ways. `a ^ b * c` reads as
+`(a ^ b) & c` under Liberty, where the standard syntax reads it as `a ^ (b & c)`;
+[`BoolExpr::as_syntax`] carries the *tree* across syntaxes, not the text, so retagging the standard
+parse into Liberty's spellings keeps the standard grouping and needs the parentheses Liberty's own
+parse does not:
+
+```rust
+use espresso_logic::{BoolExpr, LibertySyntax};
+
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let liberty = "a ^ b * c".parse::<BoolExpr<LibertySyntax>>()?;
+assert_eq!(liberty.to_string(), "a ^ b * c"); // (a ^ b) & c, unparenthesised
+
+let standard = BoolExpr::parse("a ^ b * c")?;
+assert_eq!(standard.to_string(), "a ^ b & c"); // a ^ (b & c), under the standard syntax
+
+// Retagging carries the standard tree's grouping along, so it renders differently from Liberty's own
+// parse of the identical text — and the two are unequal as values, not just as strings.
+let retagged = standard.as_syntax::<LibertySyntax>();
+assert_eq!(retagged.to_string(), "a ^ (b * c)");
+assert_ne!(retagged, liberty);
+# Ok(())
+# }
+```
+
+[`BoolExpr::as_syntax`] respells an expression already in hand. It is a relabelling — a reference-count
+bump on the shared tokens, with no re-parse and no rewrite — so only the rendering changes:
+
+```rust
+use espresso_logic::{BoolExpr, StdSyntax, VerilogSyntax};
+
+# fn main() -> Result<(), espresso_logic::expression::ParseBoolExprError> {
+let standard = BoolExpr::parse("a & b | !c")?;
+assert_eq!(standard.to_string(), "a & b | !c");
+
+let verilog = standard.as_syntax::<VerilogSyntax>();
+assert_eq!(verilog.to_string(), "a & b | ~c");
+
+// Retagging back recovers the standard type, and with it the standard spellings.
+let back: BoolExpr<StdSyntax> = verilog.as_syntax::<StdSyntax>();
+assert_eq!(back, standard);
+# Ok(())
+# }
+```
+
+Equality relates two expressions of the *same* syntax, so comparing across syntaxes is a compile error
+rather than a silent `false`; retag one side first.
+
 ### Display
 
 `Display` and `Debug` render an expression's own structure with minimal parentheses, using the
@@ -706,6 +834,10 @@ match cover.minimize() {
 [`BoolExpr::build`]: crate::BoolExpr::build
 [`BoolExpr::parse`]: crate::BoolExpr::parse
 [`BoolExpr::variables`]: crate::BoolExpr::variables
+[`BoolExpr::as_syntax`]: crate::BoolExpr::as_syntax
+[`StdSyntax`]: crate::StdSyntax
+[`VerilogSyntax`]: crate::VerilogSyntax
+[`LibertySyntax`]: crate::LibertySyntax
 [`Bdd`]: crate::bdd::Bdd
 [`Bdd::evaluate`]: crate::bdd::Bdd::evaluate
 [`Bdd::equivalent_to`]: crate::bdd::Bdd::equivalent_to

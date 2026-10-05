@@ -20,10 +20,11 @@
 
 use espresso_logic::espresso::{CubeType, Espresso, EspressoCover};
 use espresso_logic::EspressoConfig;
+use std::ffi::c_void;
 use std::mem;
 
 extern "C" {
-    fn malloc(size: usize) -> *mut u8;
+    fn malloc(size: usize) -> *mut c_void;
 }
 
 fn main() {
@@ -35,7 +36,7 @@ fn main() {
     println!("Creating intentional leak 1: C malloc without free");
     unsafe {
         for _ in 0..100 {
-            let ptr = malloc(1024); // Allocate 1KB
+            let ptr = malloc(1024).cast::<u8>(); // Allocate 1KB
             if !ptr.is_null() {
                 // Write to it to ensure it's not optimized away
                 *ptr = 42;

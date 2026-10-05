@@ -11,7 +11,7 @@ use super::symbols::Symbols;
 use super::Cover;
 use super::CoverType;
 use crate::bdd::{Bdd, Brand, ManagerCell};
-use crate::expression::BoolExpr;
+use crate::expression::{BoolExpr, Syntax};
 use crate::Symbol;
 use std::fmt;
 use std::sync::Arc;
@@ -99,8 +99,8 @@ impl<B: Brand, C: ManagerCell> From<&Bdd<B, C>> for Cover<Symbol, Anonymous> {
 /// let cover: Cover<Symbol, Anonymous> = expr.into();
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: BoolExpr) -> Self {
+impl<S: Syntax> From<BoolExpr<S>> for Cover<Symbol, Anonymous> {
+    fn from(expr: BoolExpr<S>) -> Self {
         Cover::from(&expr)
     }
 }
@@ -115,8 +115,8 @@ impl From<BoolExpr> for Cover<Symbol, Anonymous> {
 /// let cover = Cover::<Symbol, Anonymous>::from(&a);
 /// assert_eq!(cover.num_outputs(), 1);
 /// ```
-impl From<&BoolExpr> for Cover<Symbol, Anonymous> {
-    fn from(expr: &BoolExpr) -> Self {
+impl<S: Syntax> From<&BoolExpr<S>> for Cover<Symbol, Anonymous> {
+    fn from(expr: &BoolExpr<S>) -> Self {
         // The temporary builder lives for this call; the handle borrows it and is consumed by the
         // `Bdd → Cover` primitive before this function returns.
         let builder = crate::bdd_builder!();

@@ -3,7 +3,7 @@
 //! This module contains the AST types and fold operations for boolean expressions.
 
 use super::rpn;
-use super::BoolExpr;
+use super::{BoolExpr, Syntax};
 use crate::Symbol;
 use std::sync::Arc;
 
@@ -100,7 +100,7 @@ impl Drop for BoolExprAst {
     }
 }
 
-impl BoolExpr {
+impl<S: Syntax> BoolExpr<S> {
     /// Reconstruct the expression's own syntactic tree from its reverse-Polish token stream.
     ///
     /// A plain postfix-to-tree fold over the tokens (via the shared [`rpn::fold_postfix`] value-stack
